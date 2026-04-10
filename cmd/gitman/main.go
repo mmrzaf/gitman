@@ -21,7 +21,17 @@ import (
 
 func main() {
 	// Setup modern structured logging (Go 1.21+)
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	cfg := config.LoadConfig()
+
+	level := config.ParseLogLevel(cfg.LogLevel)
+
+	logger := slog.New(
+		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+			Level: level,
+		}),
+	)
+
 	slog.SetDefault(logger)
 
 	// Delegate to a run function so deferred statements (like db.Close)

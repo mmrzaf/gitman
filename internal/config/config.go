@@ -2,6 +2,7 @@ package config
 
 import (
 	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 )
@@ -14,6 +15,7 @@ type Config struct {
 	BinaryPath   string // Auto-detected path to the running executable
 	SSHUser      string // Usually 'git'
 	ServerHost   string // e.g., 'git.example.com' or 'localhost'
+	LogLevel     string
 }
 
 func LoadConfig() *Config {
@@ -28,12 +30,13 @@ func LoadConfig() *Config {
 
 	return &Config{
 		Port:         getEnv("GITMAN_PORT", "8080"),
-		DBPath:       getEnv("GITMAN_DB", "/home/git/gitman/db/gitman.sqlite"),
-		ReposPath:    getEnv("GITMAN_REPOS", "/home/git/gitman/repos"),
-		AuthKeysPath: getEnv("GITMAN_AUTH_KEYS", "/home/git/gitman/authorized_keys"),
+		DBPath:       getEnv("GITMAN_DB", ".data/db/gitman.sqlite"),
+		ReposPath:    getEnv("GITMAN_REPOS", ".data/repos"),
+		AuthKeysPath: getEnv("GITMAN_AUTH_KEYS", ".data/authorized_keys"),
 		BinaryPath:   getEnv("GITMAN_BINARY_PATH", exePath),
 		SSHUser:      getEnv("GITMAN_SSH_USER", "git"),
 		ServerHost:   getEnv("GITMAN_SERVER_HOST", "localhost"),
+		LogLevel:     getEnv("GITMAN_LOG_LEVEL", "debug"),
 	}
 }
 
@@ -42,4 +45,17 @@ func getEnv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func ParseLogLevel(level string) slog.Level {
+	switch level {
+	case "debug":
+		return slog.LevelDebug
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
 }
