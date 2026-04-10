@@ -1,0 +1,49 @@
+{{define "content"}}
+<div class="page-header">
+  <h2>
+    <a
+      href="/{{.Data.Owner.Username}}"
+      style="text-decoration: none; color: inherit"
+      >{{.Data.Owner.Username}}</a
+    >
+    /
+    <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}"
+      >{{.Data.Repository.Name}}</a
+    >
+  </h2>
+</div>
+
+<div style="margin-bottom: 1rem">
+  <a
+    href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/tree/{{.Data.CurrentRef}}"
+    >Files</a
+  >
+  |
+  <a
+    href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/commits/{{.Data.CurrentRef}}"
+    >Commits</a
+  >
+</div>
+<hr />
+
+<div style="margin-bottom: 1rem">
+  <strong>Path:</strong> /{{.Data.CurrentPath}}
+  <span class="muted">({{.Data.BlobSize}} B)</span>
+</div>
+
+<div class="card" style="padding: 0; overflow-x: auto">
+  {{if .Data.IsTooBig}}
+  <div style="padding: 2rem; text-align: center">
+    <p class="muted">
+      This file is too large to render in the browser ({{.Data.BlobSize}}
+      bytes).
+    </p>
+  </div>
+  {{else}}
+  <!-- Using pre and code without inner margins for clean text rendering -->
+  <pre
+    style="margin: 0; padding: 1rem; background-color: transparent"
+  ><code style="background-color: transparent; padding: 0;">{{.Data.BlobContent}}</code></pre>
+  {{end}}
+</div>
+{{end}}

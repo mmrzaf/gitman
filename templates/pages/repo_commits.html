@@ -1,0 +1,67 @@
+{{define "content"}}
+<div class="page-header">
+  <h2>
+    <a
+      href="/{{.Data.Owner.Username}}"
+      style="text-decoration: none; color: inherit"
+      >{{.Data.Owner.Username}}</a
+    >
+    /
+    <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}"
+      >{{.Data.Repository.Name}}</a
+    >
+  </h2>
+</div>
+{{if .Data.IsEmpty}}
+<div class="card">
+  <h3>Quick Setup</h3>
+  <p>
+    This repository is empty. To get started, push an existing repository from
+    the command line:
+  </p>
+  <pre><code>
+git remote add origin {{$.Config.SSHUser}}@{{$.Config.ServerHost}}:{{.Data.Owner.Username}}/{{.Data.Repository.Name}}.git<br>
+git branch -M main<br>
+git push -u origin main</code></pre>
+</div>
+
+{{else}}
+<div style="margin-bottom: 1rem">
+  <a
+    href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/tree/{{if .Data.CurrentRef}}{{.Data.CurrentRef}}{{else}}main{{end}}"
+    >Files</a
+  >
+  |
+  <strong>Commits</strong>
+</div>
+<hr />
+
+<div style="margin-bottom: 1rem">
+  <strong>Branch:</strong> <code>{{.Data.CurrentRef}}</code>
+</div>
+
+<div class="commits-list">
+  {{range .Data.Commits}}
+  <div class="card" style="margin-bottom: 1rem; padding: 15px">
+    <div style="font-size: 1.1em; margin-bottom: 5px">
+      <strong>{{.Message}}</strong>
+    </div>
+    <div class="muted" style="font-size: 0.9em; display: flex; gap: 10px">
+      <span
+        style="
+          font-family: monospace;
+          background: rgba(0, 0, 0, 0.05);
+          padding: 2px 6px;
+          border-radius: 4px;
+        "
+        >{{printf "%.7s" .Hash}}</span
+      >
+      <span>
+        <strong>{{.Author}}</strong>
+        committed on {{.Date.Format "2006-01-0215:04:05"}}
+      </span>
+    </div>
+  </div>
+  {{end}}
+</div>
+{{end}} {{end}}
