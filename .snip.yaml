@@ -1,0 +1,191 @@
+version: 1
+root: .
+name: gitman
+default_profile: api
+
+output:
+  dir: /home/darius/tmp
+  pattern: gitman_{profile}_{ts}_{gitsha}.md
+  latest: ""
+  stdout_default: false
+
+render:
+  format: md
+  newline: |4+
+  code_fences: true
+  include_tree: true
+  tree_depth: 4
+  include_manifest: true
+  manifest:
+    group_by_slice: true
+    include_line_counts: true
+    include_byte_counts: true
+    include_truncation_notes: true
+    include_unreadable_notes: true
+  file_block:
+    header: <<<FILE:{path}>>>
+    footer: ""
+
+budgets:
+  max_chars: 120000
+  per_file_max_lines: 600
+  per_file_max_bytes: 262144
+  drop_policy: drop_low_priority
+
+ignore:
+  use_gitignore: true
+  always:
+    - .git/**
+    - node_modules/**
+    - dist/**
+    - build/**
+    - .venv/**
+    - .pytest_cache/**
+    - coverage/**
+    - target/**
+    - .snip/**
+    - bin/**
+    - data/**
+  binary_extensions:
+    - .png
+    - .jpg
+    - .jpeg
+    - .gif
+    - .pdf
+    - .zip
+    - .tar
+    - .gz
+    - .7z
+    - .exe
+    - .dll
+    - .so
+    - .dylib
+
+sensitive:
+  exclude_globs:
+    - .env*
+    - "**/*secret*"
+    - "**/*secrets*"
+    - "**/*.pem"
+    - "**/*.key"
+    - "**/id_rsa*"
+    - "**/*serviceAccount*.json"
+
+slices:
+  api:
+    include:
+      - cmd/gitman/**
+      - internal/handlers/**
+      - internal/middleware/**
+      - internal/config/**
+    priority: 100
+
+  cli:
+    include:
+      - cmd/**
+    exclude:
+      - cmd/gitman/**
+    priority: 20
+
+  domain:
+    include:
+      - internal/models/**
+    priority: 60
+
+  persistence:
+    include:
+      - internal/db/**
+    priority: 70
+
+  infra:
+    include:
+      - internal/git/**
+      - internal/ssh/**
+    priority: 65
+
+  schema:
+    include:
+      - go.mod
+      - internal/models/**
+    priority: 40
+
+  docs:
+    include:
+      - README*
+    priority: 30
+
+  web:
+    include:
+      - templates/**
+    priority: 50
+
+  scripts:
+    include:
+      - scripts/**
+    priority: 5
+
+  tests:
+    include:
+      - "**/*_test.go"
+    priority: 80
+
+profiles:
+  api:
+    enable:
+      - api
+      - domain
+      - persistence
+      - infra
+      - schema
+    budgets:
+      max_chars: 120000
+    render:
+      tree_depth: 4
+
+  debug:
+    enable:
+      - api
+      - domain
+      - persistence
+      - infra
+      - schema
+      - web
+    budgets:
+      max_chars: 220000
+    render:
+      tree_depth: 5
+
+  full:
+    enable:
+      - api
+      - domain
+      - persistence
+      - infra
+      - schema
+      - web
+      - cli
+      - docs
+    budgets:
+      max_chars: 220000
+    render:
+      tree_depth: 5
+
+  minimal:
+    enable:
+      - api
+      - domain
+    budgets:
+      max_chars: 80000
+    render:
+      tree_depth: 3
+
+  tests:
+    enable:
+      - api
+      - domain
+      - persistence
+      - tests
+    budgets:
+      max_chars: 120000
+    render:
+      tree_depth: 4
