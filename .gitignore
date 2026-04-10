@@ -36,7 +36,7 @@ go.work.sum
 /main
 
 # Runtime data
-/data/
+.data/
 *.sqlite
 
 # OS / editor
