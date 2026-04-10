@@ -1,0 +1,53 @@
+{{define "repos_panel"}}
+<div id="repos-panel">
+    {{template "flash" .}}
+
+    <div class="repos-list">
+        {{if .Data.Repos}} {{range .Data.Repos}}
+        <div class="card">
+            <div
+                class="card-header"
+                style="
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: start;
+                "
+            >
+                <div>
+                    <strong>{{.Name}}</strong>
+                    <span class="muted"
+                        >· {{if .IsPrivate}}private{{else}}public{{end}}</span
+                    >
+                </div>
+                <form
+                    hx-post="/repos/{{.ID}}/delete"
+                    hx-target="#repos-panel"
+                    hx-swap="outerHTML"
+                    hx-confirm="Delete repository {{.Name}}? This cannot be undone."
+                >
+                    <button
+                        type="submit"
+                        class="danger"
+                        style="padding: 2px 8px; background-color: #d9534f"
+                    >
+                        Delete
+                    </button>
+                </form>
+            </div>
+            {{if .Description}}
+            <p class="muted">{{.Description}}</p>
+            {{end}}
+            <p>
+                <span class="muted">Clone:</span>
+                <code
+                    >git clone
+                    {{$.Config.SSHUser}}@{{$.Config.ServerHost}}:{{$.User.Username}}/{{.Name}}.git</code
+                >
+            </p>
+        </div>
+        {{end}} {{else}}
+        <p class="muted">You don't have any repositories yet.</p>
+        {{end}}
+    </div>
+</div>
+{{end}}
