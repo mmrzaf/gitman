@@ -22,7 +22,7 @@ func (db *DB) CreateSession(ctx context.Context, userID string) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	expiresAt := time.Now().Add(24 * time.Hour) // 1 day session
+	expiresAt := time.Now().Add(24 * time.Hour).Unix()
 
 	_, err = db.ExecContext(ctx,
 		"INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)",
@@ -33,17 +33,19 @@ func (db *DB) CreateSession(ctx context.Context, userID string) (string, error) 
 
 func (db *DB) GetUserBySession(ctx context.Context, token string) (*models.User, error) {
 	var user models.User
+
 	query := `
 		SELECT u.id, u.username, u.created_at, u.updated_at
 		FROM users u
 		JOIN sessions s ON u.id = s.user_id
 		WHERE s.token = ? AND s.expires_at > ?
 	`
-	err := db.QueryRowContext(ctx, query, token, time.Now()).
-		Scan(&user.ID, &user.Username, &user.CreatedAt, &user.UpdatedAt)
-	if err != nil {
+
+	if err := db.QueryRowContext(ctx, query, token, time.Now().Unix()).
+		Scan(&user.ID, &user.Username, &user.CreatedAt, &user.UpdatedAt); err != nil {
 		return nil, err
 	}
+
 	return &user, nil
 }
 
