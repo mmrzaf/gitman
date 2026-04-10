@@ -15,7 +15,12 @@ import (
 
 type contextKey string
 
-const userContextKey contextKey = "user"
+const (
+	userContextKey      contextKey = "user"
+	repoContextKey      contextKey = "repo"
+	repoPathContextKey  contextKey = "repoPath"
+	repoOwnerContextKey contextKey = "repoOwner"
+)
 
 var embeddedFiles = gitman.FS
 
@@ -72,13 +77,15 @@ func NewStaticFS() (http.FileSystem, error) {
 
 func (app *App) renderTemplate(w http.ResponseWriter, tmplMapKey string, executeName string, data PageData) {
 	data.Config = app.Config
-	if t, ok := app.Templates[tmplMapKey]; ok {
-		err := t.ExecuteTemplate(w, executeName, data)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-	} else {
-		http.Error(w, "Template not found", http.StatusInternalServerError)
+
+	t, ok := app.Templates[tmplMapKey]
+	if !ok {
+		app.renderError(w, data, "Template not found", http.StatusInternalServerError)
+		return
+	}
+
+	if err := t.ExecuteTemplate(w, executeName, data); err != nil {
+		app.renderError(w, data, "Failed to render template", http.StatusInternalServerError)
 	}
 }
 
@@ -88,6 +95,17 @@ func (app *App) renderPage(w http.ResponseWriter, page string, data PageData) {
 
 func (app *App) renderPartial(w http.ResponseWriter, tmplMapKey string, partialName string, data PageData) {
 	app.renderTemplate(w, tmplMapKey, partialName, data)
+}
+
+func (app *App) renderError(w http.ResponseWriter, data PageData, msg string, code int) {
+	w.WriteHeader(code)
+
+	errData := data
+	errData.Title = "Error"
+	errData.User = nil
+	errData.Error = msg
+
+	app.renderPage(w, "error.html", errData)
 }
 
 func (app *App) AuthMiddleware(next http.Handler) http.Handler {
@@ -111,7 +129,7 @@ func (app *App) AuthMiddleware(next http.Handler) http.Handler {
 
 func (app *App) RequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Context().Value("user") == nil {
+		if r.Context().Value(userContextKey) == nil {
 			if r.Header.Get("HX-Request") == "true" {
 				w.Header().Set("HX-Redirect", "/login")
 				w.WriteHeader(http.StatusUnauthorized)
@@ -125,7 +143,7 @@ func (app *App) RequireAuth(next http.Handler) http.Handler {
 }
 
 func GetUser(r *http.Request) *models.User {
-	if user, ok := r.Context().Value("user").(*models.User); ok {
+	if user, ok := r.Context().Value(userContextKey).(*models.User); ok {
 		return user
 	}
 	return nil
@@ -142,4 +160,25 @@ func securityHeaders(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func GetRepo(r *http.Request) *models.Repository {
+	if repo, ok := r.Context().Value(repoContextKey).(*models.Repository); ok {
+		return repo
+	}
+	return nil
+}
+
+func GetRepoPath(r *http.Request) string {
+	if path, ok := r.Context().Value(repoPathContextKey).(string); ok {
+		return path
+	}
+	return ""
+}
+
+func GetRepoOwner(r *http.Request) *models.User {
+	if owner, ok := r.Context().Value(repoOwnerContextKey).(*models.User); ok {
+		return owner
+	}
+	return nil
 }

@@ -75,7 +75,7 @@ func (app *App) HandleReposPOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = git.InitBareRepo(repoPath)
+	err = git.InitBareRepo(r.Context(), repoPath)
 	if err != nil {
 		_ = app.DB.DeleteRepository(r.Context(), repoID, user.ID)
 		app.renderPartial(w, "repos.html", "repos_panel", PageData{

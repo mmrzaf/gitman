@@ -14,7 +14,9 @@
                 "
             >
                 <div>
-                    <strong>{{.Name}}</strong>
+                    <a href="/{{$.User.Username}}/{{.Name}}" style="text-decoration: none; font-size: 1.2em;">
+                        <strong>{{.Name}}</strong>
+                    </a>
                     <span class="muted"
                         >· {{if .IsPrivate}}private{{else}}public{{end}}</span
                     >
@@ -51,3 +53,4 @@
     </div>
 </div>
 {{end}}
+

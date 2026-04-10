@@ -45,6 +45,15 @@ func SetupRouter(app *App) *chi.Mux {
 		r.Post("/repos", app.HandleReposPOST)
 		r.Post("/repos/{id}/delete", app.HandleRepoDeletePOST)
 	})
+	r.Route("/{username}/{repo_name}", func(r chi.Router) {
+		r.Use(app.RepoAccessMiddleware)
+
+		r.Get("/", app.HandleRepoTreeGET)                 // Root of default branch
+		r.Get("/tree/{ref}", app.HandleRepoTreeGET)       // Root of a specific branch/commit
+		r.Get("/tree/{ref}/*", app.HandleRepoTreeGET)     // Subdirectories
+		r.Get("/blob/{ref}/*", app.HandleRepoBlobGET)     // View file
+		r.Get("/commits/{ref}", app.HandleRepoCommitsGET) // View commit history
+	})
 
 	return r
 }
