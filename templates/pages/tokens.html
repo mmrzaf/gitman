@@ -1,0 +1,27 @@
+{{define "content"}}
+<div class="page-header">
+    <h2>Personal Access Tokens</h2>
+    <p class="muted">
+        Tokens can be used instead of passwords for Git over HTTP.
+    </p>
+</div>
+
+{{template "tokens_panel" .}}
+
+<hr />
+<h3>Generate New Token</h3>
+<form hx-post="/tokens" hx-target="#tokens-panel" hx-swap="outerHTML">
+    <p>
+        <label for="token-name">Token Name (e.g., Work Laptop)</label><br />
+        <input
+            id="token-name"
+            type="text"
+            name="name"
+            required
+            style="width: 100%"
+        />
+    </p>
+    <button type="submit">Generate Token</button>
+</form>
+{{end}}
+

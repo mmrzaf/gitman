@@ -41,9 +41,20 @@ func SetupRouter(app *App) *chi.Mux {
 		r.Post("/keys", app.HandleKeysPOST)
 		r.Post("/keys/{id}/delete", app.HandleKeyDeletePOST)
 
+		r.Get("/tokens", app.HandleTokensGET)
+		r.Post("/tokens", app.HandleTokensPOST)
+		r.Post("/tokens/{id}/delete", app.HandleTokenDeletePOST)
+
 		r.Get("/repos", app.HandleReposGET)
 		r.Post("/repos", app.HandleReposPOST)
 		r.Post("/repos/{id}/delete", app.HandleRepoDeletePOST)
+	})
+	r.Route("/{username}/{repo_name}.git", func(r chi.Router) {
+		r.Use(app.GitHTTPAuthMiddleware)
+
+		r.Get("/info/refs", app.HandleGitHTTP)
+		r.Post("/git-upload-pack", app.HandleGitHTTP)
+		r.Post("/git-receive-pack", app.HandleGitHTTP)
 	})
 	r.Route("/{username}/{repo_name}", func(r chi.Router) {
 		r.Use(app.RepoAccessMiddleware)
