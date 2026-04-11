@@ -63,3 +63,48 @@ func VerifyPassword(hashedPassword, password string) bool {
 	err := bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(password))
 	return err == nil
 }
+
+// UpdateUserPassword hashes a new password and updates it for the given username
+func (db *DB) UpdateUserPassword(ctx context.Context, username, password string) error {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+
+	res, err := db.ExecContext(
+		ctx,
+		"UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE username = ?",
+		string(hash), username,
+	)
+	if err != nil {
+		return err
+	}
+
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return errors.New("user not found")
+	}
+
+	return nil
+}
+
+// DeleteUserByUsername removes a user and their associated data (cascading deletes handles the rest)
+func (db *DB) DeleteUserByUsername(ctx context.Context, username string) error {
+	res, err := db.ExecContext(ctx, "DELETE FROM users WHERE username = ?", username)
+	if err != nil {
+		return err
+	}
+
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return errors.New("user not found")
+	}
+
+	return nil
+}

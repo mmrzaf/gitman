@@ -71,6 +71,8 @@ func run(args []string, out io.Writer) error {
 		return runSSH(cfg, database, args[2:])
 	case "web":
 		return runWeb(cfg, database, args[2:])
+	case "admin":
+		return runAdmin(cfg, database, args[2:])
 	case "help", "-h", "--help":
 		printHelp(out)
 		return nil
@@ -188,6 +190,7 @@ Usage:
 Commands:
   web                 Start the web interface
   serve <keyID>       SSH git handler (internal use)
+  admin               Administration commands
 
 Options (web):
   --port <port>       Override configured web port
@@ -195,5 +198,7 @@ Options (web):
 Examples:
   gitman web
   gitman web --port 8081
+  gitman admin users create myuser mypassword123
+  gitman admin repos backup /path/to/backup
   gitman serve 42`)
 }

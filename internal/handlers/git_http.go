@@ -136,4 +136,3 @@ func (app *App) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
 
 	handler.ServeHTTP(w, r)
 }
-
