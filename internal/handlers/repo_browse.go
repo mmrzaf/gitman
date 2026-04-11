@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/mmrzaf/gitman/internal/git"
@@ -13,17 +14,18 @@ import (
 )
 
 type RepoPageData struct {
-	Owner       *models.User
-	Repository  *models.Repository
-	CurrentRef  string
-	CurrentPath string
-	Branches    []string
-	IsEmpty     bool
-	Tree        []git.TreeEntry
-	Commits     []git.Commit
-	BlobContent string
-	BlobSize    int64
-	IsTooBig    bool
+	Owner         *models.User
+	Repository    *models.Repository
+	CurrentRef    string
+	CurrentPath   string
+	Branches      []string
+	IsEmpty       bool
+	Tree          []git.TreeEntry
+	Commits       []git.Commit
+	BlobContent   string
+	BlobSize      int64
+	IsTooBig      bool
+	Collaborators []models.Collaborator
 }
 
 // RepoAccessMiddleware ensures the repository exists and is accessible.
@@ -47,7 +49,12 @@ func (app *App) RepoAccessMiddleware(next http.Handler) http.Handler {
 		currentUser := GetUser(r)
 
 		if repo.IsPrivate {
-			if currentUser == nil || currentUser.ID != repo.OwnerID {
+			hasAccess := currentUser != nil && currentUser.ID == repo.OwnerID
+			if currentUser != nil && !hasAccess {
+				hasAccess, _ = app.DB.HasRepoAccess(r.Context(), repo.ID, currentUser.ID, "read")
+			}
+
+			if !hasAccess {
 				app.renderError(w, PageData{User: currentUser}, "Repository not found", http.StatusNotFound)
 				return
 			}
@@ -94,11 +101,7 @@ func (app *App) HandleRepoTreeGET(w http.ResponseWriter, r *http.Request) {
 	refParam := chi.URLParam(r, "ref")
 	ref, err := git.ResolveRef(ctx, repoPath, refParam)
 	if err != nil {
-		slog.Error("Failed to resolve ref for tree",
-			"repoPath", repoPath,
-			"refParam", refParam,
-			"error", err,
-		)
+		slog.Error("Failed to resolve ref for tree", "repoPath", repoPath, "refParam", refParam, "error", err)
 		app.renderError(w, PageData{User: GetUser(r)}, "Failed to determine branch", http.StatusInternalServerError)
 		return
 	}
@@ -106,13 +109,12 @@ func (app *App) HandleRepoTreeGET(w http.ResponseWriter, r *http.Request) {
 	// 3. Collect basic data.
 	data.CurrentRef = ref
 	data.CurrentPath = chi.URLParam(r, "*")
-	branches, _ := git.GetBranches(ctx, repoPath) // ignore error for UI; empty slice is fine
+	branches, _ := git.GetBranches(ctx, repoPath)
 	data.Branches = branches
 
 	// 4. Fetch tree.
 	tree, err := git.GetTree(ctx, repoPath, ref, data.CurrentPath)
 	if err != nil {
-		// If Git itself reports empty, show empty state (defensive, though IsEmpty handled earlier).
 		if errors.Is(err, git.ErrRepoEmpty) {
 			data.IsEmpty = true
 			app.renderPage(w, "repo_view.html", PageData{
@@ -122,13 +124,6 @@ func (app *App) HandleRepoTreeGET(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-
-		slog.Error("Failed to read repository tree",
-			"repoPath", repoPath,
-			"ref", ref,
-			"path", data.CurrentPath,
-			"error", err,
-		)
 		app.renderError(w, PageData{User: GetUser(r)}, "Failed to read repository tree", http.StatusInternalServerError)
 		return
 	}
@@ -157,13 +152,11 @@ func (app *App) HandleRepoBlobGET(w http.ResponseWriter, r *http.Request) {
 		CurrentPath: path,
 	}
 
-	// 1. Empty repository -> 404.
 	if git.IsEmpty(ctx, repoPath) {
 		app.renderError(w, PageData{User: GetUser(r)}, "Repository is empty", http.StatusNotFound)
 		return
 	}
 
-	// 2. Resolve reference through git.ResolveRef.
 	ref, err := git.ResolveRef(ctx, repoPath, refParam)
 	if err != nil {
 		if errors.Is(err, git.ErrRepoEmpty) {
@@ -181,11 +174,9 @@ func (app *App) HandleRepoBlobGET(w http.ResponseWriter, r *http.Request) {
 	}
 	data.CurrentRef = ref
 
-	// 3. Branch list (for header / UI).
 	branches, _ := git.GetBranches(ctx, repoPath)
 	data.Branches = branches
 
-	// 4. Blob size first.
 	size, err := git.GetBlobSize(ctx, repoPath, ref, path)
 	if err != nil {
 		slog.Error("Failed to get blob size",
@@ -199,13 +190,11 @@ func (app *App) HandleRepoBlobGET(w http.ResponseWriter, r *http.Request) {
 	}
 	data.BlobSize = size
 
-	// 5. Big file: do not load content.
-	if size > 2*1024*1024 { // 2MB
+	if size > 2*1024*1024 {
 		data.IsTooBig = true
 	} else {
 		content, err := git.GetBlob(ctx, repoPath, ref, path)
 		if err != nil {
-			// again, check for empty defensively
 			if errors.Is(err, git.ErrRepoEmpty) {
 				app.renderError(w, PageData{User: GetUser(r)}, "Repository is empty", http.StatusNotFound)
 				return
@@ -242,7 +231,6 @@ func (app *App) HandleRepoCommitsGET(w http.ResponseWriter, r *http.Request) {
 		Repository: repo,
 	}
 
-	// 1. If repo is empty, show empty state + branches (if any).
 	if git.IsEmpty(ctx, repoPath) {
 		data.IsEmpty = true
 		data.Branches, _ = git.GetBranches(ctx, repoPath)
@@ -254,7 +242,6 @@ func (app *App) HandleRepoCommitsGET(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. Resolve ref using git.ResolveRef.
 	refParam := chi.URLParam(r, "ref")
 	ref, err := git.ResolveRef(ctx, repoPath, refParam)
 	if err != nil {
@@ -278,11 +265,9 @@ func (app *App) HandleRepoCommitsGET(w http.ResponseWriter, r *http.Request) {
 	}
 	data.CurrentRef = ref
 
-	// 3. Branch list.
 	branches, _ := git.GetBranches(ctx, repoPath)
 	data.Branches = branches
 
-	// 4. Fetch commits.
 	commits, err := git.GetCommits(ctx, repoPath, ref, 0, 50)
 	if err != nil {
 		if errors.Is(err, git.ErrRepoEmpty) {
@@ -318,42 +303,47 @@ func (app *App) HandleRepoArchiveGET(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	refParam := chi.URLParam(r, "ref")
-	format := chi.URLParam(r, "format")
+	filename := chi.URLParam(r, "filename")
 
-	if format != "zip" && format != "tar.gz" && format != "tar" {
+	// Detect format
+	var format string
+	var contentType string
+
+	switch {
+	case strings.HasSuffix(filename, ".tar.gz"):
+		format = "tar.gz"
+		contentType = "application/gzip"
+	case strings.HasSuffix(filename, ".tar"):
+		format = "tar"
+		contentType = "application/x-tar"
+	case strings.HasSuffix(filename, ".zip"):
+		format = "zip"
+		contentType = "application/zip"
+	default:
 		app.renderError(w, PageData{User: GetUser(r)}, "Unsupported archive format", http.StatusBadRequest)
 		return
 	}
 
+	// Extract ref from: repoName-ref.format
+	base := strings.TrimSuffix(filename, "."+format)
+	parts := strings.SplitN(base, "-", 2)
+	if len(parts) != 2 {
+		app.renderError(w, PageData{User: GetUser(r)}, "Invalid archive name", http.StatusBadRequest)
+		return
+	}
+
+	refParam := parts[1]
+
 	ref, err := git.ResolveRef(ctx, repoPath, refParam)
 	if err != nil {
-		if errors.Is(err, git.ErrRepoEmpty) {
-			app.renderError(w, PageData{User: GetUser(r)}, "Repository is empty", http.StatusNotFound)
-			return
-		}
 		slog.Error("Failed to resolve ref for archive", "error", err)
 		app.renderError(w, PageData{User: GetUser(r)}, "Invalid reference", http.StatusBadRequest)
 		return
 	}
 
-	contentType := "application/zip"
-	ext := ".zip"
-	if format == "tar.gz" {
-		contentType = "application/gzip"
-		ext = ".tar.gz"
-	} else if format == "tar" {
-		contentType = "application/x-tar"
-		ext = ".tar"
-	}
-
-	filename := fmt.Sprintf("%s-%s%s", repo.Name, ref, ext)
-
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
 
-	// If streaming fails midway, we can't send an HTTP error page anymore because headers
-	// and partial content are already sent, so we log it.
 	if err := git.StreamArchive(ctx, repoPath, ref, format, w); err != nil {
 		slog.Error("Failed to stream archive",
 			"repo", repo.Name,

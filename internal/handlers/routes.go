@@ -10,17 +10,19 @@ import (
 func SetupRouter(app *App) *chi.Mux {
 	r := chi.NewRouter()
 
+	// Global middleware
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
+	r.Use(middleware.RedirectSlashes)
 	r.Use(app.AuthMiddleware)
 	r.Use(securityHeaders)
 
-	// Serve embedded static files
+	// Static files
 	r.Handle("/static/*", http.StripPrefix("/static/",
 		http.FileServer(app.StaticFS),
 	))
 
-	// Public routes
+	// Public pages
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 		app.renderPage(w, "home.html", PageData{
 			User: GetUser(r),
@@ -34,9 +36,10 @@ func SetupRouter(app *App) *chi.Mux {
 	r.Post("/register", app.HandleRegisterPOST)
 	r.Get("/logout", app.HandleLogout)
 
-	// Protected routes
+	// Authenticated user routes (keys, tokens, repos list)
 	r.Group(func(r chi.Router) {
 		r.Use(app.RequireAuth)
+
 		r.Get("/keys", app.HandleKeysGET)
 		r.Post("/keys", app.HandleKeysPOST)
 		r.Post("/keys/{id}/delete", app.HandleKeyDeletePOST)
@@ -49,6 +52,9 @@ func SetupRouter(app *App) *chi.Mux {
 		r.Post("/repos", app.HandleReposPOST)
 		r.Post("/repos/{id}/delete", app.HandleRepoDeletePOST)
 	})
+
+	// Git (smart HTTP) routes
+	// Must remain ABOVE repo UI routes
 	r.Route("/{username}/{repo_name}.git", func(r chi.Router) {
 		r.Use(app.GitHTTPAuthMiddleware)
 
@@ -56,15 +62,30 @@ func SetupRouter(app *App) *chi.Mux {
 		r.Post("/git-upload-pack", app.HandleGitHTTP)
 		r.Post("/git-receive-pack", app.HandleGitHTTP)
 	})
+
+	// Web interface for repositories
 	r.Route("/{username}/{repo_name}", func(r chi.Router) {
 		r.Use(app.RepoAccessMiddleware)
 
-		r.Get("/", app.HandleRepoTreeGET)                          // Root of default branch
-		r.Get("/tree/{ref}", app.HandleRepoTreeGET)                // Root of a specific branch/commit
-		r.Get("/tree/{ref}/*", app.HandleRepoTreeGET)              // Subdirectories
-		r.Get("/blob/{ref}/*", app.HandleRepoBlobGET)              // View file
-		r.Get("/commits/{ref}", app.HandleRepoCommitsGET)          // View commit history
-		r.Get("/archive/{ref}/{format}", app.HandleRepoArchiveGET) // Download repo
+		// Repo root tree
+		r.Get("/", app.HandleRepoTreeGET)
+
+		// Navigation & browsing
+		r.Get("/tree/{ref}", app.HandleRepoTreeGET)
+		r.Get("/tree/{ref}/*", app.HandleRepoTreeGET)
+
+		r.Get("/blob/{ref}/*", app.HandleRepoBlobGET)
+
+		// Commits
+		r.Get("/commits/{ref}", app.HandleRepoCommitsGET)
+
+		// Archive download
+		r.Get("/archive/{filename}", app.HandleRepoArchiveGET)
+
+		// Collaborators — fixes 404
+		r.Get("/collaborators", app.HandleRepoCollaboratorsGET)
+		r.Post("/collaborators/add", app.HandleRepoCollaboratorsAddPOST)
+		r.Post("/collaborators/remove", app.HandleRepoCollaboratorsRemovePOST)
 	})
 
 	return r
