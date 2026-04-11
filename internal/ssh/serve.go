@@ -61,14 +61,29 @@ func Serve(keyIDStr string, cfg *config.Config, database *db.DB) {
 		log.Fatalf("fatal: repository not found")
 	}
 
-	// Access Control: currently only owner
-	if user.ID != repoOwner.ID {
-		log.Fatalf("fatal: access denied")
-	}
 	repo, err := database.GetRepositoryByOwnerAndName(ctx, repoOwner.ID, reqRepoName)
 	if err != nil || repo == nil {
 		log.Fatalf("fatal: repository not found")
 	}
+	hasAccess := false
+	if user.ID == repoOwner.ID {
+		hasAccess = true
+	} else {
+		requiredLevel := "read"
+		if action == "git-receive-pack" {
+			requiredLevel = "write"
+		}
+
+		access, err := database.HasRepoAccess(ctx, repo.ID, user.ID, requiredLevel)
+		if err == nil && access {
+			hasAccess = true
+		}
+	}
+
+	if !hasAccess {
+		log.Fatalf("fatal: access denied")
+	}
+
 	fullDiskPath, err := git.SecureRepoPath(cfg.ReposPath, reqUsername, reqRepoName)
 	if err != nil {
 		log.Fatalf("fatal: invalid repository path")

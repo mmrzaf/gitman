@@ -75,9 +75,34 @@ func (app *App) GitHTTPAuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		if isPushing && currentUser.ID != repo.OwnerID {
-			http.Error(w, "Forbidden: You don't have push access", http.StatusForbidden)
-			return
+		isOwner := currentUser != nil && currentUser.ID == repo.OwnerID
+
+		hasReadAccess := isOwner
+		hasWriteAccess := isOwner
+
+		if currentUser != nil && !isOwner {
+			read, _ := app.DB.HasRepoAccess(r.Context(), repo.ID, currentUser.ID, "read")
+			write, _ := app.DB.HasRepoAccess(r.Context(), repo.ID, currentUser.ID, "write")
+			hasReadAccess = read
+			hasWriteAccess = write
+		}
+
+		if needsAuth {
+			if currentUser == nil {
+				w.Header().Set("WWW-Authenticate", `Basic realm="Gitman Repository"`)
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+
+			if isPushing && !hasWriteAccess {
+				http.Error(w, "Forbidden: You don't have push access", http.StatusForbidden)
+				return
+			}
+
+			if !isPushing && repo.IsPrivate && !hasReadAccess {
+				http.Error(w, "Forbidden: You don't have read access to this private repository", http.StatusForbidden)
+				return
+			}
 		}
 
 		ctx := context.WithValue(r.Context(), repoContextKey, repo)
