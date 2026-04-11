@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"io"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -526,4 +527,47 @@ func GetBlobSize(ctx context.Context, repoPath, ref, path string) (int64, error)
 	}
 
 	return size, nil
+}
+
+// StreamArchive writes the repository archive for the given ref and format to the provided writer.
+func StreamArchive(ctx context.Context, repoPath, ref, format string, w io.Writer) error {
+	if err := ensureNotEmpty(ctx, repoPath); err != nil {
+		return err
+	}
+
+	resolvedRef, err := ResolveRef(ctx, repoPath, ref)
+	if err != nil {
+		return err
+	}
+
+	// Git natively supports 'zip', 'tar', and 'tgz' (which outputs tar.gz)
+	gitFormat := format
+	if format == "tar.gz" {
+		gitFormat = "tgz"
+	}
+
+	args := []string{"archive", fmt.Sprintf("--format=%s", gitFormat), resolvedRef}
+
+	slog.Debug("git archive start", "repo", repoPath, "args", args)
+
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", repoPath}, args...)...)
+
+	// Stream directly to the provided writer (the HTTP ResponseWriter)
+	cmd.Stdout = w
+
+	stderr := new(bytes.Buffer)
+	cmd.Stderr = stderr
+
+	if err := cmd.Run(); err != nil {
+		slog.Error("git archive failed",
+			"repo", repoPath,
+			"ref", resolvedRef,
+			"format", gitFormat,
+			"error", err,
+			"stderr", stderr.String(),
+		)
+		return fmt.Errorf("git archive failed: %w", err)
+	}
+
+	return nil
 }

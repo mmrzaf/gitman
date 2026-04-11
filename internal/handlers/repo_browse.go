@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -304,4 +305,61 @@ func (app *App) HandleRepoCommitsGET(w http.ResponseWriter, r *http.Request) {
 		User:  GetUser(r),
 		Data:  data,
 	})
+}
+
+// HandleRepoArchiveGET streams a zip or tar.gz archive of the repository.
+func (app *App) HandleRepoArchiveGET(w http.ResponseWriter, r *http.Request) {
+	repo := GetRepo(r)
+	repoPath := GetRepoPath(r)
+	ctx := r.Context()
+
+	if git.IsEmpty(ctx, repoPath) {
+		app.renderError(w, PageData{User: GetUser(r)}, "Repository is empty", http.StatusNotFound)
+		return
+	}
+
+	refParam := chi.URLParam(r, "ref")
+	format := chi.URLParam(r, "format")
+
+	if format != "zip" && format != "tar.gz" && format != "tar" {
+		app.renderError(w, PageData{User: GetUser(r)}, "Unsupported archive format", http.StatusBadRequest)
+		return
+	}
+
+	ref, err := git.ResolveRef(ctx, repoPath, refParam)
+	if err != nil {
+		if errors.Is(err, git.ErrRepoEmpty) {
+			app.renderError(w, PageData{User: GetUser(r)}, "Repository is empty", http.StatusNotFound)
+			return
+		}
+		slog.Error("Failed to resolve ref for archive", "error", err)
+		app.renderError(w, PageData{User: GetUser(r)}, "Invalid reference", http.StatusBadRequest)
+		return
+	}
+
+	contentType := "application/zip"
+	ext := ".zip"
+	if format == "tar.gz" {
+		contentType = "application/gzip"
+		ext = ".tar.gz"
+	} else if format == "tar" {
+		contentType = "application/x-tar"
+		ext = ".tar"
+	}
+
+	filename := fmt.Sprintf("%s-%s%s", repo.Name, ref, ext)
+
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+
+	// If streaming fails midway, we can't send an HTTP error page anymore because headers
+	// and partial content are already sent, so we log it.
+	if err := git.StreamArchive(ctx, repoPath, ref, format, w); err != nil {
+		slog.Error("Failed to stream archive",
+			"repo", repo.Name,
+			"ref", ref,
+			"format", format,
+			"error", err,
+		)
+	}
 }
