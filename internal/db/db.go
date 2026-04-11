@@ -76,7 +76,14 @@ func (db *DB) migrate() error {
 		UNIQUE(owner_id, name)
 	);
 
-	PRAGMA foreign_keys = ON;
+	CREATE TABLE IF NOT EXISTS access_tokens (
+		id TEXT PRIMARY KEY,
+		user_id TEXT NOT NULL,
+		name TEXT NOT NULL,
+		token_hash TEXT NOT NULL UNIQUE,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+	);	PRAGMA foreign_keys = ON;
 	`
 
 	_, err := db.ExecContext(context.Background(), schema)

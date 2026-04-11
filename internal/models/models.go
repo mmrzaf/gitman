@@ -31,3 +31,12 @@ type Repository struct {
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
+
+// AccessToken represents a personal access token for Git HTTP auth.
+type AccessToken struct {
+	ID        string    `json:"id"`
+	UserID    string    `json:"user_id"`
+	Name      string    `json:"name"`
+	TokenHash string    `json:"-"`
+	CreatedAt time.Time `json:"created_at"`
+}
