@@ -47,16 +47,6 @@ func (db *DB) migrate() error {
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
-	CREATE TABLE IF NOT EXISTS ssh_keys (
-		id TEXT PRIMARY KEY,
-		user_id TEXT NOT NULL,
-		name TEXT NOT NULL,
-		public_key TEXT NOT NULL,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-	);
-
 	CREATE TABLE IF NOT EXISTS sessions (
 		token TEXT PRIMARY KEY,
 		user_id TEXT NOT NULL,
@@ -76,6 +66,16 @@ func (db *DB) migrate() error {
 		UNIQUE(owner_id, name)
 	);
 
+	CREATE TABLE IF NOT EXISTS repo_collaborators (
+		repo_id TEXT NOT NULL,
+		user_id TEXT NOT NULL,
+		access_level TEXT NOT NULL, -- 'read' or 'write'
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (repo_id, user_id),
+		FOREIGN KEY(repo_id) REFERENCES repositories(id) ON DELETE CASCADE,
+		FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+	);
+
 	CREATE TABLE IF NOT EXISTS access_tokens (
 		id TEXT PRIMARY KEY,
 		user_id TEXT NOT NULL,
@@ -83,7 +83,20 @@ func (db *DB) migrate() error {
 		token_hash TEXT NOT NULL UNIQUE,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-	);	PRAGMA foreign_keys = ON;
+	);
+
+	CREATE TABLE IF NOT EXISTS ssh_keys (
+		id TEXT PRIMARY KEY,
+		user_id TEXT NOT NULL,
+		name TEXT NOT NULL,
+		public_key TEXT NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+	);
+
+
+	PRAGMA foreign_keys = ON;
 	`
 
 	_, err := db.ExecContext(context.Background(), schema)

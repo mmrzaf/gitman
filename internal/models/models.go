@@ -11,16 +11,6 @@ type User struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
-// SSHKey represents an SSH public key attached to a user.
-type SSHKey struct {
-	ID        string    `json:"id"`
-	UserID    string    `json:"user_id"`
-	Name      string    `json:"name"`
-	PublicKey string    `json:"public_key"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-}
-
 // Repository represents a git repository.
 type Repository struct {
 	ID          string    `json:"id"`
@@ -32,6 +22,13 @@ type Repository struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+// Collaborator representsa user with access level on a repository
+type Collaborator struct {
+	User        User      `json:"user"`
+	AccessLevel string    `json:"access_level"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
 // AccessToken represents a personal access token for Git HTTP auth.
 type AccessToken struct {
 	ID        string    `json:"id"`
@@ -39,4 +36,14 @@ type AccessToken struct {
 	Name      string    `json:"name"`
 	TokenHash string    `json:"-"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+// SSHKey represents an SSH public key attached to a user.
+type SSHKey struct {
+	ID        string    `json:"id"`
+	UserID    string    `json:"user_id"`
+	Name      string    `json:"name"`
+	PublicKey string    `json:"public_key"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
