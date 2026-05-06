@@ -6,7 +6,6 @@ require (
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/google/uuid v1.6.0
 	golang.org/x/crypto v0.24.0
-	golang.org/x/tools v0.19.0
 	modernc.org/sqlite v1.34.0
 )
 
