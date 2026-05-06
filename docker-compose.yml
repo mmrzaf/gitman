@@ -1,0 +1,53 @@
+services:
+  web:
+    build: .
+    image: gitman:latest
+    container_name: gitman-web
+    command: ["gitman", "web"]
+    ports:
+      - "${GITMAN_PORT:-8080}:8080"
+    volumes:
+      - ./data:/data
+    environment:
+      - GITMAN_PORT=8080
+      - GITMAN_DB=/data/db/gitman.sqlite
+      - GITMAN_REPOS=/data/repos
+      - GITMAN_ARTIFACTS=/data/artifacts
+      - GITMAN_AUTH_KEYS=/data/authorized_keys
+      - GITMAN_SECRET_KEY=${GITMAN_SECRET_KEY:?err}
+      - GITMAN_INTERNAL_URL=http://web:8080
+      - GITMAN_SERVER_HOST=localhost
+      - GITMAN_LOG_LEVEL=${GITMAN_LOG_LEVEL:-info}
+      - GITMAN_BINARY_PATH=${GITMAN_BINARY_PATH:-/usr/local/bin/gitman-wrap}
+    networks:
+      - gitman-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    build: .
+    image: gitman:latest
+    container_name: gitman-worker
+    command: ["gitman", "worker"]
+    depends_on:
+      - web
+    volumes:
+      - ./data:/data
+    environment:
+      - GITMAN_DB=/data/db/gitman.sqlite
+      - GITMAN_REPOS=/data/repos
+      - GITMAN_ARTIFACTS=/data/artifacts
+      - GITMAN_SECRET_KEY=${GITMAN_SECRET_KEY:?err}
+      - GITMAN_LOG_LEVEL=${GITMAN_LOG_LEVEL:-info}
+      - GITMAN_WORKER_CONCURRENCY=${GITMAN_WORKER_CONCURRENCY:-1}
+      - GITMAN_BINARY_PATH=${GITMAN_BINARY_PATH:-/usr/local/bin/gitman-wrap}
+    networks:
+      - gitman-net
+    restart: unless-stopped
+
+networks:
+  gitman-net:
+    driver: bridge
