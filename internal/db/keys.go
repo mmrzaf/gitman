@@ -40,8 +40,8 @@ func (db *DB) GetUserSSHKeys(ctx context.Context, userID string) ([]models.SSHKe
 		return nil, err
 	}
 	defer func() {
-		if err := rows.Close(); err != nil {
-			slog.Info("rows close error: %v", err)
+		if closeErr := rows.Close(); closeErr != nil {
+			slog.Warn("rows close error", "error", closeErr)
 		}
 	}()
 
@@ -65,8 +65,8 @@ func (db *DB) GetAllSSHKeys(ctx context.Context) ([]models.SSHKey, error) {
 		return nil, err
 	}
 	defer func() {
-		if err := rows.Close(); err != nil {
-			slog.Info("rows close error: %v", err)
+		if closeErr := rows.Close(); closeErr != nil {
+			slog.Warn("rows close error", "error", closeErr)
 		}
 	}()
 

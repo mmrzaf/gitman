@@ -26,8 +26,8 @@ func (db *DB) GetUserAccessTokens(ctx context.Context, userID string) ([]models.
 		return nil, err
 	}
 	defer func() {
-		if err := rows.Close(); err != nil {
-			slog.Info("rows close error: %v", err)
+		if closeErr := rows.Close(); closeErr != nil {
+			slog.Warn("rows close error", "error", closeErr)
 		}
 	}()
 

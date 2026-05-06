@@ -29,8 +29,8 @@ func (db *DB) GetUserRepositories(ctx context.Context, ownerID string) ([]models
 		return nil, err
 	}
 	defer func() {
-		if err := rows.Close(); err != nil {
-			slog.Info("rows close error: %v", err)
+		if closeErr := rows.Close(); closeErr != nil {
+			slog.Warn("rows close error", "error", closeErr)
 		}
 	}()
 
@@ -129,7 +129,11 @@ func (db *DB) GetCollaborators(ctx context.Context, repoID string) ([]models.Col
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			slog.Warn("rows close error", "error", closeErr)
+		}
+	}()
 
 	var collaborators []models.Collaborator
 	for rows.Next() {
@@ -156,11 +160,12 @@ func (db *DB) HasRepoAccess(ctx context.Context, repoID, userID, requiredLevel s
 		return false, err
 	}
 
-	if requiredLevel == "read" {
+	switch requiredLevel {
+	case "read":
 		return level == "read" || level == "write", nil
-	} else if requiredLevel == "write" {
+	case "write":
 		return level == "write", nil
+	default:
+		return false, nil
 	}
-
-	return false, nil
 }
