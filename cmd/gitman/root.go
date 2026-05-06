@@ -32,7 +32,11 @@ func Execute(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer database.Close()
+	defer func() {
+		if closeErr := database.Close(); closeErr != nil {
+			slog.Warn("failed to close database", "error", closeErr)
+		}
+	}()
 
 	cmd, ok := commands[args[1]]
 	if !ok {
