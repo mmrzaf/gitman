@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mmrzaf/gitman/internal/admin"
 	"github.com/mmrzaf/gitman/internal/db"
 )
 
@@ -106,7 +107,13 @@ func (app *App) HandleRegisterPOST(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-
+	if err := admin.IsPasswordStrong(password); err != nil {
+		app.renderPage(w, "register.html", PageData{
+			Title: "Register",
+			Error: err.Error(),
+		})
+		return
+	}
 	_, err := app.DB.CreateUser(r.Context(), username, password)
 	if err != nil {
 		app.renderPage(w, "register.html", PageData{
@@ -123,7 +130,7 @@ func (app *App) HandleLogout(w http.ResponseWriter, r *http.Request) {
 	cookie, err := r.Cookie("session_token")
 	if err == nil {
 		if err = app.DB.DeleteSession(r.Context(), cookie.Value); err != nil {
-			slog.Info("Delete session failed during logout: %v", err)
+			slog.Warn("delete session failed during logout", "error", err)
 		}
 	}
 
