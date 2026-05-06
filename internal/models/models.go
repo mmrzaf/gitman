@@ -22,7 +22,7 @@ type Repository struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
-// Collaborator representsa user with access level on a repository
+// Collaborator represents a user with access level on a repository.
 type Collaborator struct {
 	User        User      `json:"user"`
 	AccessLevel string    `json:"access_level"`
@@ -46,4 +46,28 @@ type SSHKey struct {
 	PublicKey string    `json:"public_key"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// CIRun represents a single CI/CD pipeline execution.
+// Status values: pending | running | success | failed | skipped
+type CIRun struct {
+	ID          string     `json:"id"`
+	RepoID      string     `json:"repo_id"`
+	CommitHash  string     `json:"commit_hash"`
+	Branch      string     `json:"branch"`
+	Tag         string     `json:"tag"`
+	Event       string     `json:"event"`
+	Status      string     `json:"status"`
+	LogFile     string     `json:"log_file"`
+	CreatedAt   time.Time  `json:"created_at"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
+}
+
+// RepoSecret represents an encrypted key/value pair for CI environment injection.
+type RepoSecret struct {
+	ID             string    `json:"id"`
+	RepoID         string    `json:"repo_id"`
+	Key            string    `json:"key"`
+	EncryptedValue string    `json:"-"`
+	CreatedAt      time.Time `json:"created_at"`
 }
