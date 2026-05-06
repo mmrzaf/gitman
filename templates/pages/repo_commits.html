@@ -37,6 +37,12 @@
     >
     |
     <strong>Commits</strong>
+        |
+    <a
+        href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci"
+        style="text-decoration: none"
+        >CI</a
+    >
     {{if and $.User (eq $.User.ID .Data.Owner.ID)}} |
     <a
         href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/collaborators"

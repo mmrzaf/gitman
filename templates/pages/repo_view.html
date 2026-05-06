@@ -30,7 +30,7 @@
         font-size: 1.05em;
     "
 >
-    <strong>Files</strong> |
+    <strong>Files</strong> | <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci" style="text-decoration:none">CI</a> |
     <a
         href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/commits/{{if .Data.CurrentRef}}{{.Data.CurrentRef}}{{else}}main{{end}}"
         style="text-decoration: none"
