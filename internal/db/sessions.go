@@ -53,3 +53,9 @@ func (db *DB) DeleteSession(ctx context.Context, token string) error {
 	_, err := db.ExecContext(ctx, "DELETE FROM sessions WHERE token = ?", token)
 	return err
 }
+
+func (db *DB) ExtendSession(ctx context.Context, token string, duration time.Duration) error {
+	newExpires := time.Now().Add(duration).Unix()
+	_, err := db.ExecContext(ctx, "UPDATE sessions SET expires_at = ? WHERE token = ?", newExpires, token)
+	return err
+}
