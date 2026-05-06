@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -95,7 +96,7 @@ func (app *App) HandleReposPOST(w http.ResponseWriter, r *http.Request) {
 
 func (app *App) HandleRepoDeletePOST(w http.ResponseWriter, r *http.Request) {
 	user := GetUser(r)
-	repoID := chi.URLParam(r, "id") // UUID string
+	repoID := chi.URLParam(r, "id")
 
 	if repoID == "" {
 		app.renderPartial(w, "repos.html", "repos_panel", PageData{
@@ -116,15 +117,31 @@ func (app *App) HandleRepoDeletePOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = app.DB.DeleteRepository(r.Context(), repoID, user.ID)
-	if err == nil {
-		if repoPath, pathErr := git.SecureRepoPath(app.Config.ReposPath, user.Username, repo.Name); pathErr == nil {
-			_ = git.DeleteRepo(repoPath)
-		}
-	} else {
+	repoPath, pathErr := git.SecureRepoPath(app.Config.ReposPath, user.Username, repo.Name)
+	if pathErr != nil {
 		app.renderPartial(w, "repos.html", "repos_panel", PageData{
 			User:  user,
-			Error: "Failed to delete repository from database.",
+			Error: "Invalid repository path.",
+			Data:  ReposPageData{Repos: app.getReposForUser(r, user.ID)},
+		})
+		return
+	}
+
+	if err := git.DeleteRepo(repoPath); err != nil {
+		slog.Error("failed to delete repo from disk", "path", repoPath, "error", err)
+		app.renderPartial(w, "repos.html", "repos_panel", PageData{
+			User:  user,
+			Error: "Failed to delete repository files from disk. Please contact administrator.",
+			Data:  ReposPageData{Repos: app.getReposForUser(r, user.ID)},
+		})
+		return
+	}
+
+	if err := app.DB.DeleteRepository(r.Context(), repoID, user.ID); err != nil {
+		slog.Error("failed to delete repository from DB", "repoID", repoID, "error", err)
+		app.renderPartial(w, "repos.html", "repos_panel", PageData{
+			User:  user,
+			Error: "Repository files were deleted, but database record removal failed. Please contact administrator.",
 			Data:  ReposPageData{Repos: app.getReposForUser(r, user.ID)},
 		})
 		return
