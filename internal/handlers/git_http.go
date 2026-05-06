@@ -18,7 +18,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// GitHTTPAuthMiddleware handles standard HTTP Basic Authentication
+// GitHTTPAuthMiddleware handles standard HTTP Basic Authentication for Git smart HTTP.
 func (app *App) GitHTTPAuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		username := chi.URLParam(r, "username")
@@ -41,7 +41,6 @@ func (app *App) GitHTTPAuthMiddleware(next http.Handler) http.Handler {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
-		fmt.Println("Resolved Repo Path:", repoPath)
 
 		var currentUser *models.User
 		authUser, authPass, hasAuth := r.BasicAuth()
@@ -116,9 +115,9 @@ func (app *App) GitHTTPAuthMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// HandleGitHTTP processes the Smart HTTP Git requests.
+// HandleGitHTTP processes Smart HTTP Git requests via git-http-backend (CGI).
 func (app *App) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
-	repoPath := GetRepoPath(r) // Fetched safely from context
+	repoPath := GetRepoPath(r)
 
 	gitBin, err := exec.LookPath("git")
 	if err != nil {
@@ -146,7 +145,7 @@ func (app *App) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
 		Env: []string{
 			"GIT_PROJECT_ROOT=" + absProjectRoot,
 			"GIT_HTTP_EXPORT_ALL=true",
-			"PATH_INFO=" + r.URL.Path,
+			fmt.Sprintf("PATH_INFO=%s", r.URL.Path),
 			"REMOTE_USER=" + remoteUser,
 		},
 	}
