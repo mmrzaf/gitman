@@ -1,49 +1,48 @@
 package admin
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/mmrzaf/gitman/internal/db"
 )
 
 func CreateUser(database *db.DB, username, password string) error {
-	if err := validateUser(username, password); err != nil {
+	if err := ValidateUsername(username); err != nil {
+		return err
+	}
+	if err := IsPasswordStrong(password); err != nil {
 		return err
 	}
 
-	user, err := database.CreateUser(context.Background(), username, password)
+	ctx := contextBackground()
+	_, err := database.CreateUser(ctx, username, password)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create user: %w", err)
 	}
 
-	fmt.Printf("created user %s (id=%s)\n", user.Username, user.ID)
-
+	fmt.Printf("User %q created successfully.\n", username)
 	return nil
 }
 
 func ResetPassword(database *db.DB, username, password string) error {
-	if len(password) < 8 {
-		return fmt.Errorf("password must be at least 8 characters")
-	}
-
-	err := database.UpdateUserPassword(context.Background(), username, password)
-	if err != nil {
+	if err := IsPasswordStrong(password); err != nil {
 		return err
 	}
+	ctx := contextBackground()
+	if err := database.UpdateUserPassword(ctx, username, password); err != nil {
+		return fmt.Errorf("failed to reset password: %w", err)
+	}
 
-	fmt.Println("password updated")
-
+	fmt.Printf("Password for %q reset successfully.\n", username)
 	return nil
 }
 
 func DeleteUser(database *db.DB, username string) error {
-	err := database.DeleteUserByUsername(context.Background(), username)
-	if err != nil {
-		return err
+	ctx := contextBackground()
+	if err := database.DeleteUserByUsername(ctx, username); err != nil {
+		return fmt.Errorf("failed to delete user: %w", err)
 	}
 
-	fmt.Println("user deleted")
-
+	fmt.Printf("User %q deleted.\n", username)
 	return nil
 }
