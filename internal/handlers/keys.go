@@ -74,7 +74,7 @@ func (app *App) HandleKeysPOST(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := ssh.SyncAuthorizedKeys(r.Context(), app.DB, app.Config); err != nil {
-		slog.Info("failed to sync authorized_keys: %v", err)
+		slog.Warn("failed to sync authorized_keys", "error", err)
 	}
 
 	app.renderPartial(w, "keys.html", "keys_panel", PageData{
@@ -108,7 +108,7 @@ func (app *App) HandleKeyDeletePOST(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := ssh.SyncAuthorizedKeys(r.Context(), app.DB, app.Config); err != nil {
-		slog.Info("failed to sync authorized_keys: %v", err)
+		slog.Warn("failed to sync authorized_keys", "error", err)
 	}
 
 	app.renderPartial(w, "keys.html", "keys_panel", PageData{

@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -16,10 +17,12 @@ type TokensPageData struct {
 	NewToken string
 }
 
-func generateSecureToken() string {
+func generateSecureToken() (string, error) {
 	b := make([]byte, 32)
-	rand.Read(b)
-	return "gm_" + hex.EncodeToString(b)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return "gm_" + hex.EncodeToString(b), nil
 }
 
 func (app *App) getTokensForUser(r *http.Request, userID string) []models.AccessToken {
@@ -57,12 +60,23 @@ func (app *App) HandleTokensPOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	plainToken := generateSecureToken()
+	plainToken, err := generateSecureToken()
+	if err != nil {
+		slog.Error("failed to generate token", "user_id", user.ID, "error", err)
+		app.renderPartial(w, "tokens.html", "tokens_panel", PageData{
+			User:  user,
+			Error: "Failed to create token.",
+			Data: TokensPageData{
+				Tokens: app.getTokensForUser(r, user.ID),
+			},
+		})
+		return
+	}
 
 	hash := sha256.Sum256([]byte(plainToken))
 	tokenHash := hex.EncodeToString(hash[:])
 
-	err := app.DB.CreateAccessToken(r.Context(), user.ID, name, tokenHash)
+	err = app.DB.CreateAccessToken(r.Context(), user.ID, name, tokenHash)
 	if err != nil {
 		app.renderPartial(w, "tokens.html", "tokens_panel", PageData{
 			User:  user,
