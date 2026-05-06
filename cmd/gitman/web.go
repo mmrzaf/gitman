@@ -63,7 +63,7 @@ func runWeb(cfg *config.Config, database *db.DB, args []string) error {
 		Addr:         ":" + finalPort,
 		Handler:      router,
 		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
+		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  120 * time.Second,
 	}
 
