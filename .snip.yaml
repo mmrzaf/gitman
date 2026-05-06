@@ -46,6 +46,7 @@ ignore:
     - .snip/**
     - bin/**
     - data/**
+    - static/**
   binary_extensions:
     - .png
     - .jpg
@@ -78,6 +79,7 @@ slices:
       - internal/handlers/**
       - internal/middleware/**
       - internal/config/**
+      - internal/admin/**
     priority: 100
 
   cli:
@@ -101,12 +103,14 @@ slices:
     include:
       - internal/git/**
       - internal/ssh/**
+      - internal/worker/**
     priority: 65
 
   schema:
     include:
       - go.mod
       - internal/models/**
+      - embed.go
     priority: 40
 
   docs:
