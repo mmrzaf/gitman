@@ -12,8 +12,9 @@ Usage:
   gitman <command>
 
 Commands:
-  web             Start web interface
-  serve <keyID>   SSH git handler
+  web             Start web interface and Git smart HTTP server
+  serve <keyID>   SSH git handler (invoked as forced command by OpenSSH)
+  worker          Start the CI/CD background worker
   admin           Administration commands`)
 	return err
 }
