@@ -77,6 +77,11 @@ func runAdminRepos(cfg *config.Config, database *db.DB, args []string) error {
 		}
 
 		return admin.BackupRepos(cfg.ReposPath, args[1])
+	case "backup-all":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: gitman admin backup-all <destination>")
+		}
+		return admin.BackupAll(cfg, args[1])
 	}
 
 	return fmt.Errorf("unknown repos action: %s", args[0])
