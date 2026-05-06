@@ -2,10 +2,16 @@ package handlers
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"html/template"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/mmrzaf/gitman"
 	"github.com/mmrzaf/gitman/internal/config"
@@ -108,25 +114,45 @@ func (app *App) renderError(w http.ResponseWriter, data PageData, msg string, co
 	app.renderPage(w, "error.html", errData)
 }
 
+// AuthMiddleware resolves the current user from either a session cookie OR a
+// Bearer token in the Authorization header.  Both paths are tried in order;
+// the first successful one wins and the user is stored in the request context.
+// Unauthenticated requests pass through — protected routes use RequireAuth.
 func (app *App) AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cookie, err := r.Cookie("session_token")
-		if err != nil {
-			next.ServeHTTP(w, r)
-			return
+		if cookie, err := r.Cookie("session_token"); err == nil {
+			user, err := app.DB.GetUserBySession(r.Context(), cookie.Value)
+			if err == nil && user != nil {
+				if extendErr := app.DB.ExtendSession(r.Context(), cookie.Value, 24*time.Hour); extendErr != nil {
+					slog.Warn("failed to extend session", "error", extendErr)
+				}
+				ctx := context.WithValue(r.Context(), userContextKey, user)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+			if err != nil {
+				slog.Warn("GetUserBySession failed in AuthMiddleware", "error", err)
+			}
 		}
 
-		user, err := app.DB.GetUserBySession(r.Context(), cookie.Value)
-		if err == nil && user != nil {
-			ctx := context.WithValue(r.Context(), userContextKey, user)
-			next.ServeHTTP(w, r.WithContext(ctx))
-			return
+		if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+			token := strings.TrimPrefix(auth, "Bearer ")
+			hash := sha256.Sum256([]byte(token))
+			tokenHash := hex.EncodeToString(hash[:])
+			user, err := app.DB.GetUserByTokenHash(r.Context(), tokenHash)
+			if err == nil && user != nil {
+				ctx := context.WithValue(r.Context(), userContextKey, user)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+			if err != nil {
+				slog.Warn("GetUserByTokenHash failed in AuthMiddleware", "error", err)
+			}
 		}
 
 		next.ServeHTTP(w, r)
 	})
 }
-
 func (app *App) RequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Context().Value(userContextKey) == nil {
@@ -181,4 +207,15 @@ func GetRepoOwner(r *http.Request) *models.User {
 		return owner
 	}
 	return nil
+}
+func (app *App) HandleHealth(w http.ResponseWriter, r *http.Request) {
+	if err := app.DB.PingContext(r.Context()); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
