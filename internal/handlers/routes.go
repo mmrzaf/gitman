@@ -10,14 +10,12 @@ import (
 func SetupRouter(app *App) *chi.Mux {
 	r := chi.NewRouter()
 
-	// Global middleware
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RedirectSlashes)
 	r.Use(app.AuthMiddleware)
 	r.Use(securityHeaders)
 
-	// Static files
 	r.Handle("/static/*", http.StripPrefix("/static/",
 		http.FileServer(app.StaticFS),
 	))
@@ -30,13 +28,15 @@ func SetupRouter(app *App) *chi.Mux {
 		})
 	})
 
+	r.Get("/health", app.HandleHealth)
+
 	r.Get("/login", app.HandleLoginGET)
 	r.Post("/login", app.HandleLoginPOST)
 	r.Get("/register", app.HandleRegisterGET)
 	r.Post("/register", app.HandleRegisterPOST)
 	r.Get("/logout", app.HandleLogout)
 
-	// Authenticated user routes (keys, tokens, repos list)
+	// ── Authenticated user routes (keys, tokens, repos list) ────────────────
 	r.Group(func(r chi.Router) {
 		r.Use(app.RequireAuth)
 
@@ -53,8 +53,7 @@ func SetupRouter(app *App) *chi.Mux {
 		r.Post("/repos/{id}/delete", app.HandleRepoDeletePOST)
 	})
 
-	// Git (smart HTTP) routes
-	// Must remain ABOVE repo UI routes
+	// ── Git Smart HTTP routes (must be above web UI routes) ─────────────────
 	r.Route("/{username}/{repo_name}.git", func(r chi.Router) {
 		r.Use(app.GitHTTPAuthMiddleware)
 
@@ -63,7 +62,20 @@ func SetupRouter(app *App) *chi.Mux {
 		r.Post("/git-receive-pack", app.HandleGitHTTP)
 	})
 
-	// Web interface for repositories
+	// ── Artifact download API (Bearer-token auth via global AuthMiddleware) ──
+	r.Route("/api/repos/{username}/{repo_name}", func(r chi.Router) {
+		r.Use(app.RequireAuth)
+		r.Use(app.RepoAccessMiddleware)
+
+		r.Get("/artifacts/latest/branch/{branch_name}/{filename}",
+			app.HandleArtifactByBranch)
+		r.Get("/artifacts/tag/{tag_name}/{filename}",
+			app.HandleArtifactByTag)
+		r.Get("/artifacts/commit/{commit_hash}/{filename}",
+			app.HandleArtifactByCommit)
+	})
+
+	// ── Web interface for repositories ──────────────────────────────────────
 	r.Route("/{username}/{repo_name}", func(r chi.Router) {
 		r.Use(app.RepoAccessMiddleware)
 
@@ -82,10 +94,29 @@ func SetupRouter(app *App) *chi.Mux {
 		// Archive download
 		r.Get("/archive/{filename}", app.HandleRepoArchiveGET)
 
-		// Collaborators — fixes 404
+		// Collaborators
 		r.Get("/collaborators", app.HandleRepoCollaboratorsGET)
 		r.Post("/collaborators/add", app.HandleRepoCollaboratorsAddPOST)
 		r.Post("/collaborators/remove", app.HandleRepoCollaboratorsRemovePOST)
+
+		// CI/CD
+		r.Get("/ci", app.HandleCIGET)
+
+		// Trigger: open to any authenticated user with repo access (auth already
+		r.Post("/ci/trigger", app.HandleCITriggerPOST)
+
+		// Individual run + live log polling
+		r.Get("/ci/{run_id}", app.HandleCIRunGET)
+		r.Get("/ci/{run_id}/log", app.HandleCIRunLogGET)
+
+		// Secrets management
+		r.Get("/ci/secrets", app.HandleCISecretsGET)
+		r.Post("/ci/secrets", app.HandleCISecretsAddPOST)
+		r.Post("/ci/secrets/{id}/delete", app.HandleCISecretsDeletePOST)
+
+		// Hook install / uninstall
+		r.Post("/ci/hook/install", app.HandleCIHookInstallPOST)
+		r.Post("/ci/hook/uninstall", app.HandleCIHookUninstallPOST)
 	})
 
 	return r
