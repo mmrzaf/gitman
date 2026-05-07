@@ -1,0 +1,43 @@
+{{define "keys_panel"}}
+<div id="keys-panel">
+    {{template "flash" .}}
+
+    <div class="keys-list">
+        {{if .Data.Keys}} {{range .Data.Keys}}
+        <div class="card">
+            <div
+                class="card-header"
+                style="
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: start;
+                "
+            >
+                <strong>{{.Name}}</strong>
+                <form
+                    hx-post="/keys/{{.ID}}/delete"
+                    hx-target="#keys-panel"
+                    hx-swap="outerHTML"
+                    hx-confirm="Delete SSH key {{.Name}}?"
+                >
+                    <button
+                        type="submit"
+                        class="danger"
+                        style="padding: 2px 8px; background-color: #d9534f"
+                    >
+                        Delete
+                    </button>
+                </form>
+            </div>
+            <p class="muted" style="word-break: break-all">
+                <code>{{slice .PublicKey 0 60}}...</code>
+            </p>
+        </div>
+        {{end}} {{else}}
+        <p class="muted">
+            No SSH keys found. Add one below to push/pull repositories.
+        </p>
+        {{end}}
+    </div>
+</div>
+{{end}}

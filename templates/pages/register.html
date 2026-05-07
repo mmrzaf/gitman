@@ -1,0 +1,33 @@
+{{define "content"}}
+<div class="page-header">
+    <h2>Register</h2>
+    <p class="muted">Create an account to start hosting Git repositories.</p>
+</div>
+
+{{template "flash" .}}
+
+<form action="/register" method="POST">
+    <p>
+        <label for="username">Username</label><br />
+        <input
+            id="username"
+            type="text"
+            name="username"
+            required
+            autocomplete="username"
+        />
+    </p>
+    <p>
+        <label for="password">Password</label><br />
+        <input
+            id="password"
+            type="password"
+            name="password"
+            required
+            autocomplete="new-password"
+        />
+    </p>
+    <button type="submit">Register</button>
+</form>
+<p class="muted">Already have an account? <a href="/login">Login here</a>.</p>
+{{end}}
