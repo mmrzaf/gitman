@@ -28,6 +28,7 @@ const (
 	repoContextKey      contextKey = "repo"
 	repoPathContextKey  contextKey = "repoPath"
 	repoOwnerContextKey contextKey = "repoOwner"
+	csrfTokenKey        contextKey = "csrfToken"
 )
 
 var embeddedFiles = gitman.FS
@@ -84,29 +85,42 @@ func NewStaticFS() (http.FileSystem, error) {
 	return http.FS(sub), nil
 }
 
-func (app *App) renderTemplate(w http.ResponseWriter, tmplMapKey string, executeName string, data PageData) {
+func (app *App) renderTemplate(w http.ResponseWriter, tmplMapKey string, executeName string, data PageData) error {
 	data.Config = app.Config
 
 	t, ok := app.Templates[tmplMapKey]
 	if !ok {
-		app.renderError(w, data, "Template not found", http.StatusInternalServerError)
-		return
+		return fs.ErrNotExist
 	}
 
-	if err := t.ExecuteTemplate(w, executeName, data); err != nil {
-		app.renderError(w, data, "Failed to render template", http.StatusInternalServerError)
+	return t.ExecuteTemplate(w, executeName, data)
+}
+
+func (app *App) renderPage(w http.ResponseWriter, r *http.Request, page string, data PageData) {
+	if data.CSRFToken == "" {
+		if token, ok := r.Context().Value(csrfTokenKey).(string); ok {
+			data.CSRFToken = token
+		}
+	}
+	if err := app.renderTemplate(w, page, "base.html", data); err != nil {
+		slog.Error("failed to render page", "page", page, "error", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 	}
 }
 
-func (app *App) renderPage(w http.ResponseWriter, page string, data PageData) {
-	app.renderTemplate(w, page, "base.html", data)
+func (app *App) renderPartial(w http.ResponseWriter, r *http.Request, tmplMapKey string, partialName string, data PageData) {
+	if data.CSRFToken == "" {
+		if token, ok := r.Context().Value(csrfTokenKey).(string); ok {
+			data.CSRFToken = token
+		}
+	}
+	if err := app.renderTemplate(w, tmplMapKey, partialName, data); err != nil {
+		slog.Error("failed to render partial", "template", tmplMapKey, "partial", partialName, "error", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+	}
 }
 
-func (app *App) renderPartial(w http.ResponseWriter, tmplMapKey string, partialName string, data PageData) {
-	app.renderTemplate(w, tmplMapKey, partialName, data)
-}
-
-func (app *App) renderError(w http.ResponseWriter, data PageData, msg string, code int) {
+func (app *App) renderError(w http.ResponseWriter, r *http.Request, data PageData, msg string, code int) {
 	w.WriteHeader(code)
 
 	errData := data
@@ -114,7 +128,10 @@ func (app *App) renderError(w http.ResponseWriter, data PageData, msg string, co
 	errData.User = nil
 	errData.Error = msg
 
-	app.renderPage(w, "error.html", errData)
+	if err := app.renderTemplate(w, "error.html", "base.html", errData); err != nil {
+		slog.Error("failed to render error page", "error", err, "status", code)
+		http.Error(w, msg, code)
+	}
 }
 
 // AuthMiddleware resolves the current user from either a session cookie OR a
@@ -252,10 +269,11 @@ func generateCSRFToken() (string, error) {
 
 func (app *App) CSRFMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == "GET" {
+		if r.Method == http.MethodGet || r.Method == http.MethodHead {
 			cookie, err := r.Cookie("csrf_token")
+			var token string
 			if err != nil || cookie.Value == "" {
-				token, err := generateCSRFToken()
+				token, err = generateCSRFToken()
 				if err != nil {
 					http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 					return
@@ -268,24 +286,34 @@ func (app *App) CSRFMiddleware(next http.Handler) http.Handler {
 					SameSite: http.SameSiteStrictMode,
 					Path:     "/",
 				})
+			} else {
+				token = cookie.Value
 			}
+			ctx := context.WithValue(r.Context(), csrfTokenKey, token)
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
+
+		if r.Method == http.MethodOptions {
 			next.ServeHTTP(w, r)
 			return
 		}
 
 		cookie, err := r.Cookie("csrf_token")
-		if err != nil {
+		if err != nil || cookie.Value == "" {
 			http.Error(w, "CSRF token missing", http.StatusForbidden)
 			return
 		}
+
 		formToken := r.FormValue("csrf_token")
 		if formToken == "" {
 			formToken = r.Header.Get("X-CSRF-Token")
 		}
-		if cookie.Value == "" || formToken == "" || cookie.Value != formToken {
+		if formToken == "" || cookie.Value != formToken {
 			http.Error(w, "CSRF validation failed", http.StatusForbidden)
 			return
 		}
+
 		next.ServeHTTP(w, r)
 	})
 }

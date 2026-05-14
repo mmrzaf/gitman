@@ -36,13 +36,13 @@ func (app *App) RepoAccessMiddleware(next http.Handler) http.Handler {
 
 		owner, err := app.DB.GetUserByUsername(r.Context(), username)
 		if err != nil || owner == nil {
-			app.renderError(w, PageData{User: GetUser(r)}, "Repository not found", http.StatusNotFound)
+			app.renderError(w, r, PageData{User: GetUser(r)}, "Repository not found", http.StatusNotFound)
 			return
 		}
 
 		repo, err := app.DB.GetRepositoryByOwnerAndName(r.Context(), owner.ID, repoName)
 		if err != nil || repo == nil {
-			app.renderError(w, PageData{User: GetUser(r)}, "Repository not found", http.StatusNotFound)
+			app.renderError(w, r, PageData{User: GetUser(r)}, "Repository not found", http.StatusNotFound)
 			return
 		}
 
@@ -55,14 +55,14 @@ func (app *App) RepoAccessMiddleware(next http.Handler) http.Handler {
 			}
 
 			if !hasAccess {
-				app.renderError(w, PageData{User: currentUser}, "Repository not found", http.StatusNotFound)
+				app.renderError(w, r, PageData{User: currentUser}, "Repository not found", http.StatusNotFound)
 				return
 			}
 		}
 
 		repoPath, err := git.SecureRepoPath(app.Config.ReposPath, username, repoName)
 		if err != nil {
-			app.renderError(w, PageData{User: currentUser}, "Invalid repository path", http.StatusInternalServerError)
+			app.renderError(w, r, PageData{User: currentUser}, "Invalid repository path", http.StatusInternalServerError)
 			return
 		}
 
@@ -89,7 +89,7 @@ func (app *App) HandleRepoTreeGET(w http.ResponseWriter, r *http.Request) {
 	// 1. Handle empty repository case.
 	if git.IsEmpty(ctx, repoPath) {
 		data.IsEmpty = true
-		app.renderPage(w, "repo_view.html", PageData{
+		app.renderPage(w, r, "repo_view.html", PageData{
 			Title: repo.Name,
 			User:  GetUser(r),
 			Data:  data,
@@ -102,7 +102,7 @@ func (app *App) HandleRepoTreeGET(w http.ResponseWriter, r *http.Request) {
 	ref, err := git.ResolveRef(ctx, repoPath, refParam)
 	if err != nil {
 		slog.Error("Failed to resolve ref for tree", "repoPath", repoPath, "refParam", refParam, "error", err)
-		app.renderError(w, PageData{User: GetUser(r)}, "Failed to determine branch", http.StatusInternalServerError)
+		app.renderError(w, r, PageData{User: GetUser(r)}, "Failed to determine branch", http.StatusInternalServerError)
 		return
 	}
 
@@ -117,19 +117,19 @@ func (app *App) HandleRepoTreeGET(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, git.ErrRepoEmpty) {
 			data.IsEmpty = true
-			app.renderPage(w, "repo_view.html", PageData{
+			app.renderPage(w, r, "repo_view.html", PageData{
 				Title: repo.Name,
 				User:  GetUser(r),
 				Data:  data,
 			})
 			return
 		}
-		app.renderError(w, PageData{User: GetUser(r)}, "Failed to read repository tree", http.StatusInternalServerError)
+		app.renderError(w, r, PageData{User: GetUser(r)}, "Failed to read repository tree", http.StatusInternalServerError)
 		return
 	}
 	data.Tree = tree
 
-	app.renderPage(w, "repo_view.html", PageData{
+	app.renderPage(w, r, "repo_view.html", PageData{
 		Title: repo.Name,
 		User:  GetUser(r),
 		Data:  data,
@@ -153,14 +153,14 @@ func (app *App) HandleRepoBlobGET(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if git.IsEmpty(ctx, repoPath) {
-		app.renderError(w, PageData{User: GetUser(r)}, "Repository is empty", http.StatusNotFound)
+		app.renderError(w, r, PageData{User: GetUser(r)}, "Repository is empty", http.StatusNotFound)
 		return
 	}
 
 	ref, err := git.ResolveRef(ctx, repoPath, refParam)
 	if err != nil {
 		if errors.Is(err, git.ErrRepoEmpty) {
-			app.renderError(w, PageData{User: GetUser(r)}, "Repository is empty", http.StatusNotFound)
+			app.renderError(w, r, PageData{User: GetUser(r)}, "Repository is empty", http.StatusNotFound)
 			return
 		}
 
@@ -169,7 +169,7 @@ func (app *App) HandleRepoBlobGET(w http.ResponseWriter, r *http.Request) {
 			"refParam", refParam,
 			"error", err,
 		)
-		app.renderError(w, PageData{User: GetUser(r)}, "Invalid reference", http.StatusBadRequest)
+		app.renderError(w, r, PageData{User: GetUser(r)}, "Invalid reference", http.StatusBadRequest)
 		return
 	}
 	data.CurrentRef = ref
@@ -185,7 +185,7 @@ func (app *App) HandleRepoBlobGET(w http.ResponseWriter, r *http.Request) {
 			"path", path,
 			"error", err,
 		)
-		app.renderError(w, PageData{User: GetUser(r)}, "File not found", http.StatusNotFound)
+		app.renderError(w, r, PageData{User: GetUser(r)}, "File not found", http.StatusNotFound)
 		return
 	}
 	data.BlobSize = size
@@ -196,7 +196,7 @@ func (app *App) HandleRepoBlobGET(w http.ResponseWriter, r *http.Request) {
 		content, err := git.GetBlob(ctx, repoPath, ref, path)
 		if err != nil {
 			if errors.Is(err, git.ErrRepoEmpty) {
-				app.renderError(w, PageData{User: GetUser(r)}, "Repository is empty", http.StatusNotFound)
+				app.renderError(w, r, PageData{User: GetUser(r)}, "Repository is empty", http.StatusNotFound)
 				return
 			}
 
@@ -206,13 +206,13 @@ func (app *App) HandleRepoBlobGET(w http.ResponseWriter, r *http.Request) {
 				"path", path,
 				"error", err,
 			)
-			app.renderError(w, PageData{User: GetUser(r)}, "Failed to read file", http.StatusInternalServerError)
+			app.renderError(w, r, PageData{User: GetUser(r)}, "Failed to read file", http.StatusInternalServerError)
 			return
 		}
 		data.BlobContent = string(content)
 	}
 
-	app.renderPage(w, "repo_blob.html", PageData{
+	app.renderPage(w, r, "repo_blob.html", PageData{
 		Title: repo.Name + " - " + path,
 		User:  GetUser(r),
 		Data:  data,
@@ -234,7 +234,7 @@ func (app *App) HandleRepoCommitsGET(w http.ResponseWriter, r *http.Request) {
 	if git.IsEmpty(ctx, repoPath) {
 		data.IsEmpty = true
 		data.Branches, _ = git.GetBranches(ctx, repoPath)
-		app.renderPage(w, "repo_commits.html", PageData{
+		app.renderPage(w, r, "repo_commits.html", PageData{
 			Title: repo.Name + " Commits",
 			User:  GetUser(r),
 			Data:  data,
@@ -247,7 +247,7 @@ func (app *App) HandleRepoCommitsGET(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, git.ErrRepoEmpty) {
 			data.IsEmpty = true
-			app.renderPage(w, "repo_commits.html", PageData{
+			app.renderPage(w, r, "repo_commits.html", PageData{
 				Title: repo.Name + " Commits",
 				User:  GetUser(r),
 				Data:  data,
@@ -260,7 +260,7 @@ func (app *App) HandleRepoCommitsGET(w http.ResponseWriter, r *http.Request) {
 			"refParam", refParam,
 			"error", err,
 		)
-		app.renderError(w, PageData{User: GetUser(r)}, "Failed to determine branch", http.StatusInternalServerError)
+		app.renderError(w, r, PageData{User: GetUser(r)}, "Failed to determine branch", http.StatusInternalServerError)
 		return
 	}
 	data.CurrentRef = ref
@@ -278,14 +278,14 @@ func (app *App) HandleRepoCommitsGET(w http.ResponseWriter, r *http.Request) {
 				"ref", ref,
 				"error", err,
 			)
-			app.renderError(w, PageData{User: GetUser(r)}, "Failed to fetch commits", http.StatusInternalServerError)
+			app.renderError(w, r, PageData{User: GetUser(r)}, "Failed to fetch commits", http.StatusInternalServerError)
 			return
 		}
 	} else {
 		data.Commits = commits
 	}
 
-	app.renderPage(w, "repo_commits.html", PageData{
+	app.renderPage(w, r, "repo_commits.html", PageData{
 		Title: repo.Name + " Commits",
 		User:  GetUser(r),
 		Data:  data,
@@ -299,7 +299,7 @@ func (app *App) HandleRepoArchiveGET(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	if git.IsEmpty(ctx, repoPath) {
-		app.renderError(w, PageData{User: GetUser(r)}, "Repository is empty", http.StatusNotFound)
+		app.renderError(w, r, PageData{User: GetUser(r)}, "Repository is empty", http.StatusNotFound)
 		return
 	}
 
@@ -320,7 +320,7 @@ func (app *App) HandleRepoArchiveGET(w http.ResponseWriter, r *http.Request) {
 		format = "zip"
 		contentType = "application/zip"
 	default:
-		app.renderError(w, PageData{User: GetUser(r)}, "Unsupported archive format", http.StatusBadRequest)
+		app.renderError(w, r, PageData{User: GetUser(r)}, "Unsupported archive format", http.StatusBadRequest)
 		return
 	}
 
@@ -328,7 +328,7 @@ func (app *App) HandleRepoArchiveGET(w http.ResponseWriter, r *http.Request) {
 	base := strings.TrimSuffix(filename, "."+format)
 	parts := strings.SplitN(base, "-", 2)
 	if len(parts) != 2 {
-		app.renderError(w, PageData{User: GetUser(r)}, "Invalid archive name", http.StatusBadRequest)
+		app.renderError(w, r, PageData{User: GetUser(r)}, "Invalid archive name", http.StatusBadRequest)
 		return
 	}
 
@@ -337,7 +337,7 @@ func (app *App) HandleRepoArchiveGET(w http.ResponseWriter, r *http.Request) {
 	ref, err := git.ResolveRef(ctx, repoPath, refParam)
 	if err != nil {
 		slog.Error("Failed to resolve ref for archive", "error", err)
-		app.renderError(w, PageData{User: GetUser(r)}, "Invalid reference", http.StatusBadRequest)
+		app.renderError(w, r, PageData{User: GetUser(r)}, "Invalid reference", http.StatusBadRequest)
 		return
 	}
 

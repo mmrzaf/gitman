@@ -56,7 +56,7 @@ func (app *App) HandleCIGET(w http.ResponseWriter, r *http.Request) {
 
 	hookExists := hookIsInstalled(app.Config.ReposPath, owner.Username, repo.Name)
 
-	app.renderPage(w, "repo_ci.html", PageData{
+	app.renderPage(w, r, "repo_ci.html", PageData{
 		Title: repo.Name + " - CI",
 		User:  GetUser(r),
 		Data: CIPageData{
@@ -232,7 +232,7 @@ func (app *App) HandleCIRunGET(w http.ResponseWriter, r *http.Request) {
 
 	run, err := app.DB.GetCIRunByID(ctx, runID)
 	if err != nil || run == nil || run.RepoID != repo.ID {
-		app.renderError(w, PageData{User: GetUser(r)}, "CI run not found", http.StatusNotFound)
+		app.renderError(w, r, PageData{User: GetUser(r)}, "CI run not found", http.StatusNotFound)
 		return
 	}
 
@@ -244,7 +244,7 @@ func (app *App) HandleCIRunGET(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	app.renderPage(w, "repo_ci_run.html", PageData{
+	app.renderPage(w, r, "repo_ci_run.html", PageData{
 		Title: fmt.Sprintf("Run %s — CI", run.ID[:8]),
 		User:  GetUser(r),
 		Data: CIRunPageData{
@@ -298,7 +298,7 @@ func (app *App) HandleCISecretsGET(w http.ResponseWriter, r *http.Request) {
 	currentUser := GetUser(r)
 
 	if currentUser == nil || currentUser.ID != repo.OwnerID {
-		app.renderError(w, PageData{User: currentUser}, "Forbidden", http.StatusForbidden)
+		app.renderError(w, r, PageData{User: currentUser}, "Forbidden", http.StatusForbidden)
 		return
 	}
 
@@ -307,7 +307,7 @@ func (app *App) HandleCISecretsGET(w http.ResponseWriter, r *http.Request) {
 		secrets = []models.RepoSecret{}
 	}
 
-	app.renderPage(w, "repo_ci_secrets.html", PageData{
+	app.renderPage(w, r, "repo_ci_secrets.html", PageData{
 		Title: repo.Name + " - CI Secrets",
 		User:  currentUser,
 		Data: CISecretsPageData{
@@ -326,7 +326,7 @@ func (app *App) HandleCISecretsAddPOST(w http.ResponseWriter, r *http.Request) {
 
 	renderPanel := func(errStr, successStr string) {
 		secrets, _ := app.DB.GetRepoSecrets(r.Context(), repo.ID)
-		app.renderPartial(w, "repo_ci_secrets.html", "ci_secrets_panel", PageData{
+		app.renderPartial(w, r, "repo_ci_secrets.html", "ci_secrets_panel", PageData{
 			User:    currentUser,
 			Error:   errStr,
 			Success: successStr,
@@ -388,7 +388,7 @@ func (app *App) HandleCISecretsDeletePOST(w http.ResponseWriter, r *http.Request
 
 	renderPanel := func(errStr, successStr string) {
 		secrets, _ := app.DB.GetRepoSecrets(r.Context(), repo.ID)
-		app.renderPartial(w, "repo_ci_secrets.html", "ci_secrets_panel", PageData{
+		app.renderPartial(w, r, "repo_ci_secrets.html", "ci_secrets_panel", PageData{
 			User:    currentUser,
 			Error:   errStr,
 			Success: successStr,
@@ -437,41 +437,41 @@ func (app *App) HandleCIHookInstallPOST(w http.ResponseWriter, r *http.Request) 
 	currentUser := GetUser(r)
 
 	if currentUser == nil || currentUser.ID != repo.OwnerID {
-		app.renderError(w, PageData{User: currentUser}, "Forbidden", http.StatusForbidden)
+		app.renderError(w, r, PageData{User: currentUser}, "Forbidden", http.StatusForbidden)
 		return
 	}
 
 	if err := r.ParseForm(); err != nil {
-		app.renderError(w, PageData{User: currentUser}, "Invalid form data", http.StatusBadRequest)
+		app.renderError(w, r, PageData{User: currentUser}, "Invalid form data", http.StatusBadRequest)
 		return
 	}
 
 	secretBytes := make([]byte, 32)
 	if _, err := rand.Read(secretBytes); err != nil {
-		app.renderError(w, PageData{User: currentUser}, "Failed to generate webhook secret", http.StatusInternalServerError)
+		app.renderError(w, r, PageData{User: currentUser}, "Failed to generate webhook secret", http.StatusInternalServerError)
 		return
 	}
 	secret := hex.EncodeToString(secretBytes)
 
 	if err := app.DB.SetWebhookSecret(r.Context(), repo.ID, secret); err != nil {
-		app.renderError(w, PageData{User: currentUser}, "Failed to save webhook secret", http.StatusInternalServerError)
+		app.renderError(w, r, PageData{User: currentUser}, "Failed to save webhook secret", http.StatusInternalServerError)
 		return
 	}
 
 	hp, err := hookPath(app.Config.ReposPath, owner.Username, repo.Name)
 	if err != nil {
-		app.renderError(w, PageData{User: currentUser}, "Invalid repository path", http.StatusInternalServerError)
+		app.renderError(w, r, PageData{User: currentUser}, "Invalid repository path", http.StatusInternalServerError)
 		return
 	}
 
 	if err := os.MkdirAll(filepath.Dir(hp), 0o700); err != nil {
-		app.renderError(w, PageData{User: currentUser}, "Failed to create hooks directory", http.StatusInternalServerError)
+		app.renderError(w, r, PageData{User: currentUser}, "Failed to create hooks directory", http.StatusInternalServerError)
 		return
 	}
 	script := buildHookScript(app.Config.InternalURL, owner.Username, repo.Name, secret)
 
 	if err := os.WriteFile(hp, []byte(script), 0o700); err != nil {
-		app.renderError(w, PageData{User: currentUser}, "Failed to write hook script", http.StatusInternalServerError)
+		app.renderError(w, r, PageData{User: currentUser}, "Failed to write hook script", http.StatusInternalServerError)
 		return
 	}
 
@@ -486,18 +486,18 @@ func (app *App) HandleCIHookUninstallPOST(w http.ResponseWriter, r *http.Request
 	currentUser := GetUser(r)
 
 	if currentUser == nil || currentUser.ID != repo.OwnerID {
-		app.renderError(w, PageData{User: currentUser}, "Forbidden", http.StatusForbidden)
+		app.renderError(w, r, PageData{User: currentUser}, "Forbidden", http.StatusForbidden)
 		return
 	}
 
 	hp, err := hookPath(app.Config.ReposPath, owner.Username, repo.Name)
 	if err != nil {
-		app.renderError(w, PageData{User: currentUser}, "Invalid repository path", http.StatusInternalServerError)
+		app.renderError(w, r, PageData{User: currentUser}, "Invalid repository path", http.StatusInternalServerError)
 		return
 	}
 
 	if err := os.Remove(hp); err != nil && !os.IsNotExist(err) {
-		app.renderError(w, PageData{User: currentUser}, "Failed to remove hook", http.StatusInternalServerError)
+		app.renderError(w, r, PageData{User: currentUser}, "Failed to remove hook", http.StatusInternalServerError)
 		return
 	}
 

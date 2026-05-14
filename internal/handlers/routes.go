@@ -23,7 +23,7 @@ func SetupRouter(app *App) *chi.Mux {
 
 	// Public pages
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-		app.renderPage(w, "home.html", PageData{
+		app.renderPage(w, r, "home.html", PageData{
 			User: GetUser(r),
 			Data: struct{ Page string }{Page: "home"},
 		})

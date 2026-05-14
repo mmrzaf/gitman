@@ -26,7 +26,7 @@ func (app *App) HandleKeysGET(w http.ResponseWriter, r *http.Request) {
 	user := GetUser(r)
 	keys := app.getKeysForUser(r, user.ID)
 
-	app.renderPage(w, "keys.html", PageData{
+	app.renderPage(w, r, "keys.html", PageData{
 		Title: "SSH Keys",
 		User:  user,
 		Data:  KeysPageData{Keys: keys},
@@ -39,7 +39,7 @@ func (app *App) HandleKeysPOST(w http.ResponseWriter, r *http.Request) {
 	pubKey := strings.TrimSpace(r.FormValue("public_key"))
 
 	if name == "" || pubKey == "" {
-		app.renderPartial(w, "keys.html", "keys_panel", PageData{
+		app.renderPartial(w, r, "keys.html", "keys_panel", PageData{
 			User:  user,
 			Error: "Name and Public Key are required.",
 			Data:  KeysPageData{Keys: app.getKeysForUser(r, user.ID)},
@@ -48,7 +48,7 @@ func (app *App) HandleKeysPOST(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !strings.HasPrefix(pubKey, "ssh-") && !strings.HasPrefix(pubKey, "ecdsa-") {
-		app.renderPartial(w, "keys.html", "keys_panel", PageData{
+		app.renderPartial(w, r, "keys.html", "keys_panel", PageData{
 			User:  user,
 			Error: "Invalid SSH key format.",
 			Data:  KeysPageData{Keys: app.getKeysForUser(r, user.ID)},
@@ -56,7 +56,7 @@ func (app *App) HandleKeysPOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(pubKey) < 80 {
-		app.renderPartial(w, "keys.html", "keys_panel", PageData{
+		app.renderPartial(w, r, "keys.html", "keys_panel", PageData{
 			User:  user,
 			Error: "SSH key is too short.",
 			Data:  KeysPageData{Keys: app.getKeysForUser(r, user.ID)},
@@ -65,7 +65,7 @@ func (app *App) HandleKeysPOST(w http.ResponseWriter, r *http.Request) {
 	}
 	err := app.DB.AddSSHKey(r.Context(), user.ID, name, pubKey)
 	if err != nil {
-		app.renderPartial(w, "keys.html", "keys_panel", PageData{
+		app.renderPartial(w, r, "keys.html", "keys_panel", PageData{
 			User:  user,
 			Error: "Failed to add SSH key. It might already exist.",
 			Data:  KeysPageData{Keys: app.getKeysForUser(r, user.ID)},
@@ -77,7 +77,7 @@ func (app *App) HandleKeysPOST(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("failed to sync authorized_keys", "error", err)
 	}
 
-	app.renderPartial(w, "keys.html", "keys_panel", PageData{
+	app.renderPartial(w, r, "keys.html", "keys_panel", PageData{
 		User:    user,
 		Success: "SSH key added successfully.",
 		Data:    KeysPageData{Keys: app.getKeysForUser(r, user.ID)},
@@ -89,7 +89,7 @@ func (app *App) HandleKeyDeletePOST(w http.ResponseWriter, r *http.Request) {
 	keyID := chi.URLParam(r, "id") // UUID string
 
 	if keyID == "" {
-		app.renderPartial(w, "keys.html", "keys_panel", PageData{
+		app.renderPartial(w, r, "keys.html", "keys_panel", PageData{
 			User:  user,
 			Error: "Invalid key id.",
 			Data:  KeysPageData{Keys: app.getKeysForUser(r, user.ID)},
@@ -99,7 +99,7 @@ func (app *App) HandleKeyDeletePOST(w http.ResponseWriter, r *http.Request) {
 
 	err := app.DB.DeleteSSHKey(r.Context(), keyID, user.ID)
 	if err != nil {
-		app.renderPartial(w, "keys.html", "keys_panel", PageData{
+		app.renderPartial(w, r, "keys.html", "keys_panel", PageData{
 			User:  user,
 			Error: "Failed to delete key.",
 			Data:  KeysPageData{Keys: app.getKeysForUser(r, user.ID)},
@@ -111,7 +111,7 @@ func (app *App) HandleKeyDeletePOST(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("failed to sync authorized_keys", "error", err)
 	}
 
-	app.renderPartial(w, "keys.html", "keys_panel", PageData{
+	app.renderPartial(w, r, "keys.html", "keys_panel", PageData{
 		User:    user,
 		Success: "SSH Key deleted.",
 		Data:    KeysPageData{Keys: app.getKeysForUser(r, user.ID)},

@@ -17,18 +17,18 @@ func (app *App) HandleRepoCollaboratorsGET(w http.ResponseWriter, r *http.Reques
 
 	currentUser := GetUser(r)
 	if currentUser == nil || currentUser.ID != repo.OwnerID {
-		app.renderError(w, PageData{User: currentUser}, "Forbidden", http.StatusForbidden)
+		app.renderError(w, r, PageData{User: currentUser}, "Forbidden", http.StatusForbidden)
 		return
 	}
 
 	collaborators, err := app.DB.GetCollaborators(ctx, repo.ID)
 	if err != nil {
-		app.renderError(w, PageData{User: currentUser}, "Failed to fetch collaborators", http.StatusInternalServerError)
+		app.renderError(w, r, PageData{User: currentUser}, "Failed to fetch collaborators", http.StatusInternalServerError)
 		return
 	}
 	data.Collaborators = collaborators
 
-	app.renderPage(w, "repo_collaborators.html", PageData{
+	app.renderPage(w, r, "repo_collaborators.html", PageData{
 		Title: repo.Name + " - Collaborators",
 		User:  currentUser,
 		Data:  data,
@@ -50,7 +50,7 @@ func (app *App) HandleRepoCollaboratorsAddPOST(w http.ResponseWriter, r *http.Re
 	renderPanel := func(errStr, successStr string) {
 		cols, _ := app.DB.GetCollaborators(r.Context(), repo.ID)
 		data.Collaborators = cols
-		app.renderPartial(w, "repo_collaborators.html", "collaborators_panel", PageData{
+		app.renderPartial(w, r, "repo_collaborators.html", "collaborators_panel", PageData{
 			User:    currentUser,
 			Error:   errStr,
 			Success: successStr,
@@ -115,7 +115,7 @@ func (app *App) HandleRepoCollaboratorsRemovePOST(w http.ResponseWriter, r *http
 	renderPanel := func(errStr, successStr string) {
 		cols, _ := app.DB.GetCollaborators(r.Context(), repo.ID)
 		data.Collaborators = cols
-		app.renderPartial(w, "repo_collaborators.html", "collaborators_panel", PageData{
+		app.renderPartial(w, r, "repo_collaborators.html", "collaborators_panel", PageData{
 			User:    currentUser,
 			Error:   errStr,
 			Success: successStr,
