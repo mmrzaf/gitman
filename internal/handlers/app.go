@@ -263,7 +263,7 @@ func (app *App) CSRFMiddleware(next http.Handler) http.Handler {
 				http.SetCookie(w, &http.Cookie{
 					Name:     "csrf_token",
 					Value:    token,
-					HttpOnly: false,
+					HttpOnly: true,
 					Secure:   r.TLS != nil,
 					SameSite: http.SameSiteStrictMode,
 					Path:     "/",

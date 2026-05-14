@@ -77,7 +77,6 @@ slices:
     include:
       - cmd/gitman/**
       - internal/handlers/**
-      - internal/middleware/**
       - internal/config/**
       - internal/admin/**
     priority: 100
@@ -111,11 +110,13 @@ slices:
       - go.mod
       - internal/models/**
       - embed.go
+      - migrations/**
     priority: 40
 
   docs:
     include:
       - README*
+      - DOCKER_SETUP.md
     priority: 30
 
   web:
@@ -193,3 +194,4 @@ profiles:
       max_chars: 120000
     render:
       tree_depth: 4
+

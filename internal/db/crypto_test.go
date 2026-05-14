@@ -1,6 +1,7 @@
 package db
 
 import (
+	"encoding/base64"
 	"testing"
 )
 
@@ -49,8 +50,13 @@ func TestDecryptSecretInvalidBase64(t *testing.T) {
 
 func TestDecryptSecretCorrupted(t *testing.T) {
 	enc, _ := EncryptSecret("key", "value")
-	enc = "A" + enc[1:] // corrupt first byte
-	_, err := DecryptSecret("key", enc)
+	data, err := base64.StdEncoding.DecodeString(enc)
+	if err != nil {
+		t.Fatalf("DecodeString failed: %v", err)
+	}
+	data[len(data)-1] ^= 0xFF
+	enc = base64.StdEncoding.EncodeToString(data)
+	_, err = DecryptSecret("key", enc)
 	if err == nil {
 		t.Error("expected error for corrupted ciphertext")
 	}

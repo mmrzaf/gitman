@@ -105,7 +105,7 @@ func SetupRouter(app *App) *chi.Mux {
 
 		// Trigger: open to any authenticated user with repo access (auth already
 		r.Post("/ci/trigger", app.HandleCITriggerPOST)
-		r.Post("/ci/webhook", app.WebhookAuthMiddleware(http.HandlerFunc(app.HandleCITriggerWebhook)))
+		r.Post("/ci/webhook", app.WebhookAuthMiddleware(http.HandlerFunc(app.HandleCITriggerWebhook)).ServeHTTP)
 		// Individual run + live log polling
 		r.Get("/ci/{run_id}", app.HandleCIRunGET)
 		r.Get("/ci/{run_id}/log", app.HandleCIRunLogGET)
