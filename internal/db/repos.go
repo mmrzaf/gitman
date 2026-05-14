@@ -169,3 +169,30 @@ func (db *DB) HasRepoAccess(ctx context.Context, repoID, userID, requiredLevel s
 		return false, nil
 	}
 }
+
+func (db *DB) SetWebhookSecret(ctx context.Context, repoID, secret string) error {
+	_, err := db.ExecContext(ctx, "UPDATE repositories SET webhook_secret = ? WHERE id = ?", secret, repoID)
+	return err
+}
+
+// GetRepositoryByWebhookSecret fetches a single repo by its webhook secret
+func (db *DB) GetRepositoryByWebhookSecret(ctx context.Context, secret string) (*models.Repository, error) {
+	query := `SELECT id, owner_id, name, description, is_private, created_at, updated_at
+			  FROM repositories WHERE webhook_secret = ?`
+	row := db.QueryRowContext(ctx, query, secret)
+
+	var r models.Repository
+	err := row.Scan(
+		&r.ID,
+		&r.OwnerID,
+		&r.Name,
+		&r.Description,
+		&r.IsPrivate,
+		&r.CreatedAt,
+		&r.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}

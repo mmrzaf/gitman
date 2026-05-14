@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -73,8 +75,6 @@ type triggerRequest struct {
 	Event      string `json:"event"`
 }
 
-// HandleCITriggerPOST creates a new pending CI run.
-// Accepts both JSON (from the post-receive hook / API) and HTML form data (from the UI).
 func (app *App) HandleCITriggerPOST(w http.ResponseWriter, r *http.Request) {
 	repo := GetRepo(r)
 	owner := GetRepoOwner(r)
@@ -96,6 +96,75 @@ func (app *App) HandleCITriggerPOST(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req triggerRequest
+
+	ct := r.Header.Get("Content-Type")
+	if strings.Contains(ct, "application/json") {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+	} else {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "Invalid form data", http.StatusBadRequest)
+			return
+		}
+		req.Branch = strings.TrimSpace(r.FormValue("branch"))
+		req.Tag = strings.TrimSpace(r.FormValue("tag"))
+		req.Event = strings.TrimSpace(r.FormValue("event"))
+	}
+
+	if req.Event == "" {
+		req.Event = "manual"
+	}
+
+	if req.CommitHash == "" {
+		repoPath, err := git.SecureRepoPath(app.Config.ReposPath, owner.Username, repo.Name)
+		if err == nil && !git.IsEmpty(ctx, repoPath) {
+			if req.Branch == "" {
+				req.Branch, _ = git.GetDefaultBranch(ctx, repoPath)
+			}
+			commits, err := git.GetCommits(ctx, repoPath, req.Branch, 0, 1)
+			if err == nil && len(commits) > 0 {
+				req.CommitHash = commits[0].Hash
+			}
+		}
+	}
+
+	runID, err := app.DB.CreateCIRun(ctx, repo.ID, req.CommitHash, req.Branch, req.Tag, req.Event)
+	if err != nil {
+		slog.Error("failed to create CI run", "repo", repo.ID, "error", err)
+		if isHTMX(r) {
+			http.Error(w, "Failed to create CI run", http.StatusInternalServerError)
+		} else {
+			http.Error(w, "Failed to create CI run", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	slog.Info("CI run created", "run_id", runID, "repo", repo.ID, "event", req.Event)
+
+	if strings.Contains(ct, "application/json") {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		if err := json.NewEncoder(w).Encode(map[string]string{"run_id": runID}); err != nil {
+			slog.Warn("failed to encode CI trigger response", "run_id", runID, "error", err)
+		}
+		return
+	}
+
+	http.Redirect(w, r, fmt.Sprintf("/%s/%s/ci", owner.Username, repo.Name), http.StatusSeeOther)
+}
+
+func (app *App) HandleCITriggerWebhook(w http.ResponseWriter, r *http.Request) {
+	repo := GetRepo(r)
+	ctx := r.Context()
+
+	var req triggerRequest
+	owner, err := app.DB.GetUserByID(ctx, repo.OwnerID)
+	if err != nil || owner == nil {
+		http.Error(w, "Repository owner not found", http.StatusInternalServerError)
+		return
+	}
 
 	ct := r.Header.Get("Content-Type")
 	if strings.Contains(ct, "application/json") {
@@ -187,8 +256,6 @@ func (app *App) HandleCIRunGET(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// HandleCIRunLogGET serves the raw log content for an HTMX poll.
-// Returns plain text; the client replaces the log <pre> element.
 func (app *App) HandleCIRunLogGET(w http.ResponseWriter, r *http.Request) {
 	repo := GetRepo(r)
 	runID := chi.URLParam(r, "run_id")
@@ -216,7 +283,11 @@ func (app *App) HandleCIRunLogGET(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if _, err := w.Write(data); err != nil {
+
+	re := regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+	sanitized := re.ReplaceAllString(string(data), "")
+
+	if _, err := w.Write([]byte(sanitized)); err != nil {
 		slog.Warn("failed to write CI log data", "run_id", runID, "error", err)
 	}
 }
@@ -360,7 +431,6 @@ func hookIsInstalled(reposPath, ownerUsername, repoName string) bool {
 	return err == nil
 }
 
-// HandleCIHookInstallPOST writes a post-receive hook script to the bare repo.
 func (app *App) HandleCIHookInstallPOST(w http.ResponseWriter, r *http.Request) {
 	repo := GetRepo(r)
 	owner := GetRepoOwner(r)
@@ -375,9 +445,16 @@ func (app *App) HandleCIHookInstallPOST(w http.ResponseWriter, r *http.Request) 
 		app.renderError(w, PageData{User: currentUser}, "Invalid form data", http.StatusBadRequest)
 		return
 	}
-	pat := strings.TrimSpace(r.FormValue("pat"))
-	if pat == "" {
-		http.Redirect(w, r, fmt.Sprintf("/%s/%s/ci?error=pat_required", owner.Username, repo.Name), http.StatusSeeOther)
+
+	secretBytes := make([]byte, 32)
+	if _, err := rand.Read(secretBytes); err != nil {
+		app.renderError(w, PageData{User: currentUser}, "Failed to generate webhook secret", http.StatusInternalServerError)
+		return
+	}
+	secret := hex.EncodeToString(secretBytes)
+
+	if err := app.DB.SetWebhookSecret(r.Context(), repo.ID, secret); err != nil {
+		app.renderError(w, PageData{User: currentUser}, "Failed to save webhook secret", http.StatusInternalServerError)
 		return
 	}
 
@@ -391,7 +468,7 @@ func (app *App) HandleCIHookInstallPOST(w http.ResponseWriter, r *http.Request) 
 		app.renderError(w, PageData{User: currentUser}, "Failed to create hooks directory", http.StatusInternalServerError)
 		return
 	}
-	script := buildHookScript(app.Config.InternalURL, owner.Username, repo.Name, pat)
+	script := buildHookScript(app.Config.InternalURL, owner.Username, repo.Name, secret)
 
 	if err := os.WriteFile(hp, []byte(script), 0o700); err != nil {
 		app.renderError(w, PageData{User: currentUser}, "Failed to write hook script", http.StatusInternalServerError)
@@ -428,13 +505,13 @@ func (app *App) HandleCIHookUninstallPOST(w http.ResponseWriter, r *http.Request
 	http.Redirect(w, r, fmt.Sprintf("/%s/%s/ci", owner.Username, repo.Name), http.StatusSeeOther)
 }
 
-func buildHookScript(serverURL, ownerUsername, repoName, pat string) string {
+func buildHookScript(serverURL, ownerUsername, repoName, secret string) string {
 	return fmt.Sprintf(`#!/bin/bash
 # Managed by Gitman CI/CD. Do not edit manually.
 # Re-install via the repository's CI settings page to update the token.
 
 GITMAN_SERVER="%s"
-GITMAN_TOKEN="%s"
+GITMAN_SECRET="%s"
 GITMAN_OWNER="%s"
 GITMAN_REPO="%s"
 
@@ -459,15 +536,15 @@ while read -r old new ref; do
         "$new" "$branch" "$tag")
 
     curl -s -f -X POST \
-        -H "Authorization: Bearer $GITMAN_TOKEN" \
+        -H "X-Gitman-Webhook-Secret: $GITMAN_SECRET" \
         -H "Content-Type: application/json" \
         -d "$payload" \
-        "$GITMAN_SERVER/repos/$GITMAN_OWNER/$GITMAN_REPO/ci/trigger" \
+        "$GITMAN_SERVER/repos/$GITMAN_OWNER/$GITMAN_REPO/ci/webhook" \
         >/dev/null 2>&1 || true
 done
 
 exit 0
-`, serverURL, pat, ownerUsername, repoName)
+`, serverURL, secret, ownerUsername, repoName)
 }
 
 // HandleArtifactByBranch serves the latest successful artifact for a branch.
@@ -522,22 +599,37 @@ func (app *App) HandleArtifactByCommit(w http.ResponseWriter, r *http.Request) {
 }
 
 func serveArtifact(w http.ResponseWriter, r *http.Request, artifactsPath, owner, repo, runID, filename string) {
-	// Validate filename to prevent path traversal.
-	if strings.ContainsAny(filename, "/\\") || filename == ".." || filename == "." {
+	// Strict filename validation – only alphanumeric, dot, dash, underscore
+	if !regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`).MatchString(filename) {
 		http.Error(w, "Invalid filename", http.StatusBadRequest)
 		return
 	}
 
-	filePath := filepath.Join(artifactsPath, "files", owner, repo, runID, filepath.Clean(filename))
+	baseDir := filepath.Join(artifactsPath, "files", owner, repo, runID)
+	requestedPath := filepath.Join(baseDir, filename)
+	cleaned, err := filepath.Abs(requestedPath)
+	if err != nil {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	baseAbs, err := filepath.Abs(baseDir)
+	if err != nil {
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+	if !strings.HasPrefix(cleaned, baseAbs+string(os.PathSeparator)) && cleaned != baseAbs {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
 
-	f, err := os.Open(filePath)
+	f, err := os.Open(requestedPath)
 	if err != nil {
 		http.Error(w, "Artifact not found", http.StatusNotFound)
 		return
 	}
 	defer func() {
 		if closeErr := f.Close(); closeErr != nil {
-			slog.Warn("failed to close artifact file", "path", filePath, "error", closeErr)
+			slog.Warn("failed to close artifact file", "path", requestedPath, "error", closeErr)
 		}
 	}()
 

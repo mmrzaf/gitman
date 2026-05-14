@@ -65,7 +65,6 @@ func InitDB(dbPath string) (*DB, error) {
 // migrations is an ordered, append-only list of SQL migration steps.
 // The index+1 is the version number. Never remove or reorder entries.
 var migrations = []string{
-
 	// ── Version 1 ── base schema ────────────────────────────────────────────
 	`CREATE TABLE IF NOT EXISTS users (
 		id           TEXT PRIMARY KEY,
@@ -87,6 +86,7 @@ var migrations = []string{
 		owner_id    TEXT NOT NULL,
 		name        TEXT NOT NULL,
 		description TEXT,
+		webhook_secret TEXT NOT NULL DEFAULT '',
 		is_private  BOOLEAN DEFAULT 0,
 		created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -152,7 +152,8 @@ var migrations = []string{
 	CREATE INDEX IF NOT EXISTS idx_ci_runs_branch       ON ci_runs(repo_id, branch);
 	CREATE INDEX IF NOT EXISTS idx_ci_runs_tag          ON ci_runs(repo_id, tag);
 	CREATE INDEX IF NOT EXISTS idx_ci_runs_commit       ON ci_runs(repo_id, commit_hash);
-	CREATE INDEX IF NOT EXISTS idx_ci_runs_created      ON ci_runs(created_at DESC);`,
+	CREATE INDEX IF NOT EXISTS idx_ci_runs_created      ON ci_runs(created_at DESC);,
+	CREATE INDEX IF NOT EXISTS idx_repos_webhook_secret ON repositories(webhook_secret);`,
 }
 
 // migrate creates the schema_migrations tracking table and applies any
