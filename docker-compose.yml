@@ -4,10 +4,10 @@ services:
     image: gitman:latest
     container_name: gitman-web
     command: ["gitman", "web"]
-    ports:
-      - "${GITMAN_PORT:-8080}:8080"
+    expose:
+      - "8080"
     volumes:
-      - ./data:/data
+      - ../../data/gitman:/data
     environment:
       - GITMAN_PORT=8080
       - GITMAN_DB=/data/db/gitman.sqlite
@@ -16,16 +16,37 @@ services:
       - GITMAN_AUTH_KEYS=/data/authorized_keys
       - GITMAN_SECRET_KEY=${GITMAN_SECRET_KEY:?err}
       - GITMAN_INTERNAL_URL=http://web:8080
-      - GITMAN_SERVER_HOST=localhost
+      - GITMAN_SERVER_HOST=${GITMAN_SERVER_HOST:-localhost}
       - GITMAN_LOG_LEVEL=${GITMAN_LOG_LEVEL:-info}
-      - GITMAN_BINARY_PATH=${GITMAN_BINARY_PATH:-/usr/local/bin/gitman-wrap}
+      - GITMAN_BINARY_PATH=/usr/local/bin/gitman
     networks:
       - gitman-net
+      - proxy
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
       timeout: 5s
       retries: 3
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    read_only: false
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.2'
+          memory: 256M
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.gitman.rule=Host(`${GITMAN_DOMAIN:?GITMAN_DOMAIN missing}`)"
+      - "traefik.http.routers.gitman.entrypoints=websecure"
+      - "traefik.http.routers.gitman.tls.certresolver=le"
+      - "traefik.http.services.gitman.loadbalancer.server.port=8080"
+      - "traefik.http.routers.gitman.middlewares=security-headers@file,compression@file,rate-limit@file"
 
   worker:
     build: .
@@ -35,7 +56,7 @@ services:
     depends_on:
       - web
     volumes:
-      - ./data:/data
+      - ../../data/gitman:/data
     environment:
       - GITMAN_DB=/data/db/gitman.sqlite
       - GITMAN_REPOS=/data/repos
@@ -43,11 +64,30 @@ services:
       - GITMAN_SECRET_KEY=${GITMAN_SECRET_KEY:?err}
       - GITMAN_LOG_LEVEL=${GITMAN_LOG_LEVEL:-info}
       - GITMAN_WORKER_CONCURRENCY=${GITMAN_WORKER_CONCURRENCY:-1}
-      - GITMAN_BINARY_PATH=${GITMAN_BINARY_PATH:-/usr/local/bin/gitman-wrap}
+      - GITMAN_BINARY_PATH=/usr/local/bin/gitman
     networks:
       - gitman-net
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "gitman worker"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    read_only: false
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.2'
+          memory: 256M
 
 networks:
   gitman-net:
     driver: bridge
+  proxy:
+    external: true
