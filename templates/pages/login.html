@@ -1,35 +1,36 @@
 {{define "content"}}
 <div class="page-header">
-    <h2>Login</h2>
-    <p class="muted">Sign in to manage your repositories and SSH keys.</p>
+  <h2>Login</h2>
+  <p class="muted">Sign in to manage your repositories and SSH keys.</p>
 </div>
 
 {{template "flash" .}}
 
 <form action="/login" method="POST">
-    <p>
-        <label for="username">Username</label><br />
-        <input
-            id="username"
-            type="text"
-            name="username"
-            required
-            autocomplete="username"
-        />
-    </p>
-    <p>
-        <label for="password">Password</label><br />
-        <input
-            id="password"
-            type="password"
-            name="password"
-            required
-            autocomplete="current-password"
-        />
-    </p>
-    <button type="submit">Login</button>
+  <p>
+    <label for="username">Username</label><br />
+    <input
+      id="username"
+      type="text"
+      name="username"
+      required
+      autocomplete="username"
+    />
+  </p>
+  <p>
+    <label for="password">Password</label><br />
+    <input
+      id="password"
+      type="password"
+      name="password"
+      required
+      autocomplete="current-password"
+    />
+  </p>
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
+  <button type="submit">Login</button>
 </form>
 <p class="muted">
-    Don't have an account? <a href="/register">Register here</a>.
+  Don't have an account? <a href="/register">Register here</a>.
 </p>
 {{end}}

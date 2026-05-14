@@ -1,7 +1,7 @@
 {{define "content"}}
 <div class="page-header">
-    <h2>Repositories</h2>
-    <p class="muted">Manage your Git repositories hosted on this server.</p>
+  <h2>Repositories</h2>
+  <p class="muted">Manage your Git repositories hosted on this server.</p>
 </div>
 
 {{/* Main Panel (HTMX Target) */}} {{template "repos_panel" .}}
@@ -9,33 +9,34 @@
 <hr />
 <h3>Create New Repository</h3>
 <form hx-post="/repos" hx-target="#repos-panel" hx-swap="outerHTML">
-    <p>
-        <label for="repo-name">Repository Name (no spaces)</label><br />
-        <input
-            id="repo-name"
-            type="text"
-            name="name"
-            required
-            style="width: 100%; max-width: 300px"
-            pattern="^[a-zA-Z0-9_-]+$"
-            title="Only letters, numbers, dashes, and underscores."
-        />
-    </p>
-    <p>
-        <label for="repo-description">Description</label><br />
-        <input
-            id="repo-description"
-            type="text"
-            name="description"
-            style="width: 100%; max-width: 500px"
-        />
-    </p>
-    <p>
-        <label
-            ><input type="checkbox" name="is_private" checked /> Private
-            Repository</label
-        >
-    </p>
-    <button type="submit">Create Repository</button>
+  <p>
+    <label for="repo-name">Repository Name (no spaces)</label><br />
+    <input
+      id="repo-name"
+      type="text"
+      name="name"
+      required
+      style="width: 100%; max-width: 300px"
+      pattern="^[a-zA-Z0-9_-]+$"
+      title="Only letters, numbers, dashes, and underscores."
+    />
+  </p>
+  <p>
+    <label for="repo-description">Description</label><br />
+    <input
+      id="repo-description"
+      type="text"
+      name="description"
+      style="width: 100%; max-width: 500px"
+    />
+  </p>
+  <p>
+    <label
+      ><input type="checkbox" name="is_private" checked /> Private
+      Repository</label
+    >
+  </p>
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
+  <button type="submit">Create Repository</button>
 </form>
 {{end}}

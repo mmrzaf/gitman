@@ -1,27 +1,27 @@
 {{define "content"}}
 <div class="page-header">
-    <h2>Dashboard</h2>
-    <p class="muted">Welcome to your Gitman server.</p>
-    {{if .User}}
-    <div class="page-actions">
-        <a href="/repos" class="button">View Repositories</a>
-    </div>
-    {{end}}
+  <h2>Dashboard</h2>
+  <p class="muted">Welcome to your Gitman server.</p>
+  {{if .User}}
+  <div class="page-actions">
+    <a href="/repos" class="button">View Repositories</a>
+  </div>
+  {{end}}
 </div>
 
 {{template "flash" .}} {{if not .User}}
 <p>To get started, create an account or sign in:</p>
 <ul>
-    <li><a href="/register">Register a new account</a></li>
-    <li><a href="/login">Login to an existing account</a></li>
+  <li><a href="/register">Register a new account</a></li>
+  <li><a href="/login">Login to an existing account</a></li>
 </ul>
 {{else}}
 <p>
-    Use SSH and Git to clone, push, and pull from your personal Gitman
-    repositories.
+  Use SSH and Git to clone, push, and pull from your personal Gitman
+  repositories.
 </p>
 <p class="muted">
-    Tip: If this is your first time, add your SSH key on the
-    <a href="/keys">SSH Keys</a> page.
+  Tip: If this is your first time, add your SSH key on the
+  <a href="/keys">SSH Keys</a> page.
 </p>
 {{end}} {{end}}

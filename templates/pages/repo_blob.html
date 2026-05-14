@@ -1,118 +1,116 @@
 {{define "content"}}
 <!-- Unified Header -->
 <div class="page-header" style="margin-bottom: 1.5rem">
-    <h2>
-        <a
-            href="/{{.Data.Owner.Username}}"
-            style="text-decoration: none; color: inherit"
-            >{{.Data.Owner.Username}}</a
-        >
-        /
-        <a
-            href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}"
-            style="text-decoration: none; color: inherit"
-            >{{.Data.Repository.Name}}</a
-        >
-    </h2>
-    <p class="muted" style="margin-top: 5px">
-        {{if
-        .Data.Repository.Description}}{{.Data.Repository.Description}}{{else}}No
-        description provided.{{end}}
-    </p>
+  <h2>
+    <a
+      href="/{{.Data.Owner.Username}}"
+      style="text-decoration: none; color: inherit"
+      >{{.Data.Owner.Username}}</a
+    >
+    /
+    <a
+      href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}"
+      style="text-decoration: none; color: inherit"
+      >{{.Data.Repository.Name}}</a
+    >
+  </h2>
+  <p class="muted" style="margin-top: 5px">
+    {{if
+    .Data.Repository.Description}}{{.Data.Repository.Description}}{{else}}No
+    description provided.{{end}}
+  </p>
 </div>
 
 <!-- Unified Navigation -->
 <div
-    style="
-        margin-bottom: 1.5rem;
-        border-bottom: 1px solid rgba(127, 127, 127, 0.2);
-        padding-bottom: 10px;
-        font-size: 1.05em;
-    "
+  style="
+    margin-bottom: 1.5rem;
+    border-bottom: 1px solid rgba(127, 127, 127, 0.2);
+    padding-bottom: 10px;
+    font-size: 1.05em;
+  "
 >
-    <a
-        href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/tree/{{if .Data.CurrentRef}}{{.Data.CurrentRef}}{{else}}main{{end}}"
-        style="text-decoration: none"
-        >Files</a
-    >
-    |
-    <a
-        href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/commits/{{if .Data.CurrentRef}}{{.Data.CurrentRef}}{{else}}main{{end}}"
-        style="text-decoration: none"
-        >Commits</a
-    >
-        |
-    <a
-        href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci"
-        style="text-decoration: none"
-        >CI</a
-    >
-    {{if and $.User (eq $.User.ID .Data.Owner.ID)}} |
-    <a
-        href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/collaborators"
-        style="text-decoration: none"
-        >Collaborators</a
-    >
-    {{end}}
+  <a
+    href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/tree/{{if .Data.CurrentRef}}{{.Data.CurrentRef}}{{else}}main{{end}}"
+    style="text-decoration: none"
+    >Files</a
+  >
+  |
+  <a
+    href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/commits/{{if .Data.CurrentRef}}{{.Data.CurrentRef}}{{else}}main{{end}}"
+    style="text-decoration: none"
+    >Commits</a
+  >
+  |
+  <a
+    href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci"
+    style="text-decoration: none"
+    >CI</a
+  >
+  {{if and $.User (eq $.User.ID .Data.Owner.ID)}} |
+  <a
+    href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/collaborators"
+    style="text-decoration: none"
+    >Collaborators</a
+  >
+  {{end}}
 </div>
 
 <!-- Unified Address / Action Bar -->
 <div
-    style="
-        display: flex;
-        gap: 10px;
-        align-items: center;
-        margin-bottom: 1rem;
-        flex-wrap: wrap;
-    "
+  style="
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+  "
 >
-    <div
-        style="
-            background: rgba(127, 127, 127, 0.15);
-            padding: 5px 12px;
-            border-radius: 4px;
-            font-family: monospace;
-            font-size: 0.95em;
-        "
-    >
-        <strong>Branch:</strong> {{.Data.CurrentRef}}
-    </div>
-    <div
-        style="
-            background: rgba(127, 127, 127, 0.15);
-            padding: 5px 12px;
-            border-radius: 4px;
-            font-family: monospace;
-            font-size: 0.95em;
-        "
-    >
-        <strong>Path:</strong> /{{.Data.CurrentPath}}
-        <span class="muted" style="margin-left: 5px"
-            >({{.Data.BlobSize}} B)</span
-        >
-    </div>
+  <div
+    style="
+      background: rgba(127, 127, 127, 0.15);
+      padding: 5px 12px;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 0.95em;
+    "
+  >
+    <strong>Branch:</strong> {{.Data.CurrentRef}}
+  </div>
+  <div
+    style="
+      background: rgba(127, 127, 127, 0.15);
+      padding: 5px 12px;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 0.95em;
+    "
+  >
+    <strong>Path:</strong> /{{.Data.CurrentPath}}
+    <span class="muted" style="margin-left: 5px">({{.Data.BlobSize}} B)</span>
+  </div>
 </div>
 
 <div
-    class="card"
-    style="
-        padding: 0;
-        border: 1px solid rgba(127, 127, 127, 0.2);
-        border-radius: 6px;
-        overflow-x: auto;
-    "
+  class="card"
+  style="
+    padding: 0;
+    border: 1px solid rgba(127, 127, 127, 0.2);
+    border-radius: 6px;
+    overflow-x: auto;
+  "
 >
-    {{if .Data.IsTooBig}}
-    <div style="padding: 2rem; text-align: center">
-        <p class="muted">
-            This file is too large to render in the browser ({{.Data.BlobSize}}
-            bytes).
-        </p>
-    </div>
-    {{else}}
-    <pre
-        style="margin: 0; padding: 1.5rem; background-color: transparent"
-    ><code style="background-color: transparent; padding: 0; white-space: inherit;">{{.Data.BlobContent}}</code></pre>
-    {{end}}
+  {{if .Data.IsTooBig}}
+  <div style="padding: 2rem; text-align: center">
+    <p class="muted">
+      This file is too large to render in the browser ({{.Data.BlobSize}}
+      bytes).
+    </p>
+  </div>
+  {{else}}
+  <pre
+    style="margin: 0; padding: 1.5rem; background-color: transparent"
+  ><code style="background-color: transparent; padding: 0; white-space: inherit;">{{.Data.BlobContent}}</code></pre>
+  {{end}}
 </div>
 {{end}}

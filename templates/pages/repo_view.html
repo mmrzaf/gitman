@@ -1,89 +1,95 @@
 {{define "content"}}
 <!-- Unified Header -->
 <div class="page-header" style="margin-bottom: 1.5rem">
-    <h2>
-        <a
-            href="/{{.Data.Owner.Username}}"
-            style="text-decoration: none; color: inherit"
-            >{{.Data.Owner.Username}}</a
-        >
-        /
-        <a
-            href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}"
-            style="text-decoration: none; color: inherit"
-            >{{.Data.Repository.Name}}</a
-        >
-    </h2>
-    <p class="muted" style="margin-top: 5px">
-        {{if
-        .Data.Repository.Description}}{{.Data.Repository.Description}}{{else}}No
-        description provided.{{end}}
-    </p>
+  <h2>
+    <a
+      href="/{{.Data.Owner.Username}}"
+      style="text-decoration: none; color: inherit"
+      >{{.Data.Owner.Username}}</a
+    >
+    /
+    <a
+      href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}"
+      style="text-decoration: none; color: inherit"
+      >{{.Data.Repository.Name}}</a
+    >
+  </h2>
+  <p class="muted" style="margin-top: 5px">
+    {{if
+    .Data.Repository.Description}}{{.Data.Repository.Description}}{{else}}No
+    description provided.{{end}}
+  </p>
 </div>
 
 <!-- Unified Navigation -->
 <div
-    style="
-        margin-bottom: 1.5rem;
-        border-bottom: 1px solid rgba(127, 127, 127, 0.2);
-        padding-bottom: 10px;
-        font-size: 1.05em;
-    "
+  style="
+    margin-bottom: 1.5rem;
+    border-bottom: 1px solid rgba(127, 127, 127, 0.2);
+    padding-bottom: 10px;
+    font-size: 1.05em;
+  "
 >
-    <strong>Files</strong> | <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci" style="text-decoration:none">CI</a> |
-    <a
-        href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/commits/{{if .Data.CurrentRef}}{{.Data.CurrentRef}}{{else}}main{{end}}"
-        style="text-decoration: none"
-        >Commits</a
-    >
-    {{if and $.User (eq $.User.ID .Data.Owner.ID)}} |
-    <a
-        href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/collaborators"
-        style="text-decoration: none"
-        >Collaborators</a
-    >
-    {{end}}
+  <strong>Files</strong> |
+  <a
+    href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci"
+    style="text-decoration: none"
+    >CI</a
+  >
+  |
+  <a
+    href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/commits/{{if .Data.CurrentRef}}{{.Data.CurrentRef}}{{else}}main{{end}}"
+    style="text-decoration: none"
+    >Commits</a
+  >
+  {{if and $.User (eq $.User.ID .Data.Owner.ID)}} |
+  <a
+    href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/collaborators"
+    style="text-decoration: none"
+    >Collaborators</a
+  >
+  {{end}}
 </div>
 
 {{if .Data.IsEmpty}}
 <!-- Unified Empty State -->
 <div
-    class="card"
-    style="
-        padding: 1.5rem;
-        border: 1px solid rgba(127, 127, 127, 0.2);
-        border-radius: 6px;
-    "
+  class="card"
+  style="
+    padding: 1.5rem;
+    border: 1px solid rgba(127, 127, 127, 0.2);
+    border-radius: 6px;
+  "
 >
-    <h3 style="margin-top: 0">Quick Setup</h3>
-    <p class="muted">
-        This repository is empty. To get started, push an existing repository
-        from the command line:
-    </p>
+  <h3 style="margin-top: 0">Quick Setup</h3>
+  <p class="muted">
+    This repository is empty. To get started, push an existing repository from
+    the command line:
+  </p>
 
-    <h4 style="margin-bottom: 5px">Via SSH</h4>
-    <pre
-        style="
-            background: rgba(127, 127, 127, 0.1);
-            padding: 10px;
-            border-radius: 4px;
-            overflow-x: auto;
-            margin-top: 0;
-        "
-    ><code>git remote add origin {{$.Config.SSHUser}}@{{$.Config.ServerHost}}:{{.Data.Owner.Username}}/{{.Data.Repository.Name}}.git
+  <h4 style="margin-bottom: 5px">Via SSH</h4>
+  <pre
+    style="
+      background: rgba(127, 127, 127, 0.1);
+      padding: 10px;
+      border-radius: 4px;
+      overflow-x: auto;
+      margin-top: 0;
+    "
+  ><code>git remote add origin {{$.Config.SSHUser}}@{{$.Config.ServerHost}}:{{.Data.Owner.Username}}/{{.Data.Repository.Name}}.git
 git branch -M main
 git push -u origin main</code></pre>
 
-    <h4 style="margin-bottom: 5px">Via HTTP</h4>
-    <pre
-        style="
-            background: rgba(127, 127, 127, 0.1);
-            padding: 10px;
-            border-radius: 4px;
-            overflow-x: auto;
-            margin: 0;
-        "
-    ><code>git remote add origin http://{{$.Config.ServerHost}}/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}.git
+  <h4 style="margin-bottom: 5px">Via HTTP</h4>
+  <pre
+    style="
+      background: rgba(127, 127, 127, 0.1);
+      padding: 10px;
+      border-radius: 4px;
+      overflow-x: auto;
+      margin: 0;
+    "
+  ><code>git remote add origin http://{{$.Config.ServerHost}}/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}.git
 git branch -M main
 git push -u origin main</code></pre>
 </div>
@@ -91,182 +97,182 @@ git push -u origin main</code></pre>
 
 <!-- Unified Remote URLs -->
 <div
-    style="
-        background: rgba(127, 127, 127, 0.05);
-        border: 1px solid rgba(127, 127, 127, 0.2);
-        padding: 12px;
-        border-radius: 6px;
-        margin-bottom: 1.5rem;
-    "
+  style="
+    background: rgba(127, 127, 127, 0.05);
+    border: 1px solid rgba(127, 127, 127, 0.2);
+    padding: 12px;
+    border-radius: 6px;
+    margin-bottom: 1.5rem;
+  "
 >
-    <div style="margin-bottom: 8px; font-weight: bold; font-size: 0.95em">
-        Clone this repository
+  <div style="margin-bottom: 8px; font-weight: bold; font-size: 0.95em">
+    Clone this repository
+  </div>
+  <div style="display: flex; flex-direction: column; gap: 8px">
+    <div style="display: flex; align-items: center; gap: 10px">
+      <span
+        class="muted"
+        style="width: 40px; font-size: 0.9em; font-weight: bold"
+        >SSH</span
+      >
+      <input
+        type="text"
+        readonly
+        value="git clone {{$.Config.SSHUser}}@{{$.Config.ServerHost}}:{{.Data.Owner.Username}}/{{.Data.Repository.Name}}.git"
+        style="
+          flex: 1;
+          padding: 6px 10px;
+          border: 1px solid rgba(127, 127, 127, 0.3);
+          border-radius: 4px;
+          font-family: monospace;
+          font-size: 0.9em;
+          background: transparent;
+          color: inherit;
+        "
+        onclick="this.select()"
+      />
     </div>
-    <div style="display: flex; flex-direction: column; gap: 8px">
-        <div style="display: flex; align-items: center; gap: 10px">
-            <span
-                class="muted"
-                style="width: 40px; font-size: 0.9em; font-weight: bold"
-                >SSH</span
-            >
-            <input
-                type="text"
-                readonly
-                value="git clone {{$.Config.SSHUser}}@{{$.Config.ServerHost}}:{{.Data.Owner.Username}}/{{.Data.Repository.Name}}.git"
-                style="
-                    flex: 1;
-                    padding: 6px 10px;
-                    border: 1px solid rgba(127, 127, 127, 0.3);
-                    border-radius: 4px;
-                    font-family: monospace;
-                    font-size: 0.9em;
-                    background: transparent;
-                    color: inherit;
-                "
-                onclick="this.select()"
-            />
-        </div>
-        <div style="display: flex; align-items: center; gap: 10px">
-            <span
-                class="muted"
-                style="width: 40px; font-size: 0.9em; font-weight: bold"
-                >HTTP</span
-            >
-            <input
-                type="text"
-                readonly
-                value="git clone http://{{$.Config.ServerHost}}/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}.git"
-                style="
-                    flex: 1;
-                    padding: 6px 10px;
-                    border: 1px solid rgba(127, 127, 127, 0.3);
-                    border-radius: 4px;
-                    font-family: monospace;
-                    font-size: 0.9em;
-                    background: transparent;
-                    color: inherit;
-                "
-                onclick="this.select()"
-            />
-        </div>
+    <div style="display: flex; align-items: center; gap: 10px">
+      <span
+        class="muted"
+        style="width: 40px; font-size: 0.9em; font-weight: bold"
+        >HTTP</span
+      >
+      <input
+        type="text"
+        readonly
+        value="git clone http://{{$.Config.ServerHost}}/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}.git"
+        style="
+          flex: 1;
+          padding: 6px 10px;
+          border: 1px solid rgba(127, 127, 127, 0.3);
+          border-radius: 4px;
+          font-family: monospace;
+          font-size: 0.9em;
+          background: transparent;
+          color: inherit;
+        "
+        onclick="this.select()"
+      />
     </div>
+  </div>
 </div>
 
 <!-- Unified Address / Action Bar -->
 <div
-    style="
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 1rem;
-        flex-wrap: wrap;
-        gap: 10px;
-    "
+  style="
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+    gap: 10px;
+  "
 >
-    <div style="display: flex; gap: 10px; align-items: center">
-        <div
-            style="
-                background: rgba(127, 127, 127, 0.15);
-                padding: 5px 12px;
-                border-radius: 4px;
-                font-family: monospace;
-                font-size: 0.95em;
-            "
-        >
-            <strong>Branch:</strong> {{.Data.CurrentRef}}
-        </div>
-        {{if .Data.CurrentPath}}
-        <div
-            style="
-                background: rgba(127, 127, 127, 0.15);
-                padding: 5px 12px;
-                border-radius: 4px;
-                font-family: monospace;
-                font-size: 0.95em;
-            "
-        >
-            <strong>Path:</strong> /{{.Data.CurrentPath}}
-        </div>
-        {{end}}
-    </div>
+  <div style="display: flex; gap: 10px; align-items: center">
     <div
-        class="archive-downloads"
-        style="display: flex; gap: 10px; font-size: 0.9em"
+      style="
+        background: rgba(127, 127, 127, 0.15);
+        padding: 5px 12px;
+        border-radius: 4px;
+        font-family: monospace;
+        font-size: 0.95em;
+      "
     >
-        <a
-            hx-boost="false"
-            href="/{{ .Data.Owner.Username }}/{{ .Data.Repository.Name }}/archive/{{ .Data.Repository.Name }}-{{ .Data.CurrentRef }}.zip"
-            download="{{ .Data.Repository.Name }}-{{ .Data.CurrentRef }}.zip"
-            style="
-                text-decoration: none;
-                border: 1px solid rgba(127, 127, 127, 0.3);
-                padding: 5px 10px;
-                border-radius: 4px;
-            "
-        >
-            Download ZIP
-        </a>
-
-        <a
-            hx-boost="false"
-            href="/{{ .Data.Owner.Username }}/{{ .Data.Repository.Name }}/archive/{{ .Data.Repository.Name }}-{{ .Data.CurrentRef }}.tar.gz"
-            download="{{ .Data.Repository.Name }}-{{ .Data.CurrentRef }}.tar.gz"
-            style="
-                text-decoration: none;
-                border: 1px solid rgba(127, 127, 127, 0.3);
-                padding: 5px 10px;
-                border-radius: 4px;
-            "
-        >
-            Download TAR.GZ
-        </a>
+      <strong>Branch:</strong> {{.Data.CurrentRef}}
     </div>
+    {{if .Data.CurrentPath}}
+    <div
+      style="
+        background: rgba(127, 127, 127, 0.15);
+        padding: 5px 12px;
+        border-radius: 4px;
+        font-family: monospace;
+        font-size: 0.95em;
+      "
+    >
+      <strong>Path:</strong> /{{.Data.CurrentPath}}
+    </div>
+    {{end}}
+  </div>
+  <div
+    class="archive-downloads"
+    style="display: flex; gap: 10px; font-size: 0.9em"
+  >
+    <a
+      hx-boost="false"
+      href="/{{ .Data.Owner.Username }}/{{ .Data.Repository.Name }}/archive/{{ .Data.Repository.Name }}-{{ .Data.CurrentRef }}.zip"
+      download="{{ .Data.Repository.Name }}-{{ .Data.CurrentRef }}.zip"
+      style="
+        text-decoration: none;
+        border: 1px solid rgba(127, 127, 127, 0.3);
+        padding: 5px 10px;
+        border-radius: 4px;
+      "
+    >
+      Download ZIP
+    </a>
+
+    <a
+      hx-boost="false"
+      href="/{{ .Data.Owner.Username }}/{{ .Data.Repository.Name }}/archive/{{ .Data.Repository.Name }}-{{ .Data.CurrentRef }}.tar.gz"
+      download="{{ .Data.Repository.Name }}-{{ .Data.CurrentRef }}.tar.gz"
+      style="
+        text-decoration: none;
+        border: 1px solid rgba(127, 127, 127, 0.3);
+        padding: 5px 10px;
+        border-radius: 4px;
+      "
+    >
+      Download TAR.GZ
+    </a>
+  </div>
 </div>
 
 <div
-    class="card"
-    style="
-        padding: 0;
-        border: 1px solid rgba(127, 127, 127, 0.2);
-        border-radius: 6px;
-        overflow: hidden;
-    "
+  class="card"
+  style="
+    padding: 0;
+    border: 1px solid rgba(127, 127, 127, 0.2);
+    border-radius: 6px;
+    overflow: hidden;
+  "
 >
-    <table style="width: 100%; border-collapse: collapse; margin: 0">
-        <tbody>
-            {{range .Data.Tree}}
-            <tr style="border-bottom: 1px solid rgba(127, 127, 127, 0.1)">
-                <td style="padding: 12px 15px">
-                    {{if eq .Type "tree"}} 📁
-                    <a
-                        href="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/tree/{{$.Data.CurrentRef}}/{{if $.Data.CurrentPath}}{{$.Data.CurrentPath}}/{{end}}{{.Name}}"
-                        style="text-decoration: none; color: inherit"
-                    >
-                        <strong>{{.Name}}</strong>/
-                    </a>
-                    {{else}} 📄
-                    <a
-                        href="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/blob/{{$.Data.CurrentRef}}/{{if $.Data.CurrentPath}}{{$.Data.CurrentPath}}/{{end}}{{.Name}}"
-                        style="text-decoration: none; color: inherit"
-                    >
-                        {{.Name}}
-                    </a>
-                    {{end}}
-                </td>
-                <td
-                    class="muted"
-                    style="
-                        padding: 12px 15px;
-                        text-align: right;
-                        font-size: 0.9em;
-                        font-family: monospace;
-                    "
-                >
-                    {{if eq .Type "blob"}}{{.Size}} B{{else}}-{{end}}
-                </td>
-            </tr>
-            {{end}}
-        </tbody>
-    </table>
+  <table style="width: 100%; border-collapse: collapse; margin: 0">
+    <tbody>
+      {{range .Data.Tree}}
+      <tr style="border-bottom: 1px solid rgba(127, 127, 127, 0.1)">
+        <td style="padding: 12px 15px">
+          {{if eq .Type "tree"}} 📁
+          <a
+            href="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/tree/{{$.Data.CurrentRef}}/{{if $.Data.CurrentPath}}{{$.Data.CurrentPath}}/{{end}}{{.Name}}"
+            style="text-decoration: none; color: inherit"
+          >
+            <strong>{{.Name}}</strong>/
+          </a>
+          {{else}} 📄
+          <a
+            href="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/blob/{{$.Data.CurrentRef}}/{{if $.Data.CurrentPath}}{{$.Data.CurrentPath}}/{{end}}{{.Name}}"
+            style="text-decoration: none; color: inherit"
+          >
+            {{.Name}}
+          </a>
+          {{end}}
+        </td>
+        <td
+          class="muted"
+          style="
+            padding: 12px 15px;
+            text-align: right;
+            font-size: 0.9em;
+            font-family: monospace;
+          "
+        >
+          {{if eq .Type "blob"}}{{.Size}} B{{else}}-{{end}}
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
 </div>
 {{end}} {{end}}

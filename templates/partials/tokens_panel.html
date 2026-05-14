@@ -33,6 +33,7 @@
           hx-swap="outerHTML"
           hx-confirm="Revoke token {{.Name}}?"
         >
+          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
           <button
             type="submit"
             class="danger"
