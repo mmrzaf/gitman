@@ -11,12 +11,6 @@ linters:
     - staticcheck
     - ineffassign
     - unused
-    - revive
-
-  settings:
-    revive:
-      rules:
-        - name: exported
 
   exclusions:
     warn-unused: true

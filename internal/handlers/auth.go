@@ -19,7 +19,7 @@ func (app *App) HandleLoginGET(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	app.renderPage(w, "login.html", PageData{
+	app.renderPage(w, r, "login.html", PageData{
 		Title: "Login",
 	})
 }
@@ -35,7 +35,7 @@ func (app *App) HandleLoginPOST(w http.ResponseWriter, r *http.Request) {
 
 	user, err := app.DB.GetUserByUsername(r.Context(), username)
 	if err != nil || user == nil || !db.VerifyPassword(user.PasswordHash, password) {
-		app.renderPage(w, "login.html", PageData{
+		app.renderPage(w, r, "login.html", PageData{
 			Title: "Login",
 			Error: "Invalid username or password",
 		})
@@ -44,7 +44,7 @@ func (app *App) HandleLoginPOST(w http.ResponseWriter, r *http.Request) {
 
 	token, err := app.DB.CreateSession(r.Context(), user.ID)
 	if err != nil {
-		app.renderPage(w, "login.html", PageData{
+		app.renderPage(w, r, "login.html", PageData{
 			Title: "Login",
 			Error: "Internal error, please try again.",
 		})
@@ -65,17 +65,25 @@ func (app *App) HandleLoginPOST(w http.ResponseWriter, r *http.Request) {
 }
 
 func (app *App) HandleRegisterGET(w http.ResponseWriter, r *http.Request) {
+	if app.Config == nil || !app.Config.AllowRegister {
+		http.NotFound(w, r)
+		return
+	}
 	if GetUser(r) != nil {
 		http.Redirect(w, r, "/repos", http.StatusFound)
 		return
 	}
 
-	app.renderPage(w, "register.html", PageData{
+	app.renderPage(w, r, "register.html", PageData{
 		Title: "Register",
 	})
 }
 
 func (app *App) HandleRegisterPOST(w http.ResponseWriter, r *http.Request) {
+	if app.Config == nil || !app.Config.AllowRegister {
+		http.NotFound(w, r)
+		return
+	}
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "Bad request", http.StatusBadRequest)
 		return
@@ -85,7 +93,7 @@ func (app *App) HandleRegisterPOST(w http.ResponseWriter, r *http.Request) {
 	password := r.FormValue("password")
 
 	if len(username) < 3 || len(username) > 32 {
-		app.renderPage(w, "register.html", PageData{
+		app.renderPage(w, r, "register.html", PageData{
 			Title: "Register",
 			Error: "Username must be between 3 and 32 characters.",
 		})
@@ -93,7 +101,7 @@ func (app *App) HandleRegisterPOST(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !usernameRegex.MatchString(username) {
-		app.renderPage(w, "register.html", PageData{
+		app.renderPage(w, r, "register.html", PageData{
 			Title: "Register",
 			Error: "Username may only contain letters, numbers, dashes and underscores.",
 		})
@@ -101,14 +109,14 @@ func (app *App) HandleRegisterPOST(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(password) < 8 {
-		app.renderPage(w, "register.html", PageData{
+		app.renderPage(w, r, "register.html", PageData{
 			Title: "Register",
 			Error: "Password must be at least 8 characters.",
 		})
 		return
 	}
 	if err := admin.IsPasswordStrong(password); err != nil {
-		app.renderPage(w, "register.html", PageData{
+		app.renderPage(w, r, "register.html", PageData{
 			Title: "Register",
 			Error: err.Error(),
 		})
@@ -116,7 +124,7 @@ func (app *App) HandleRegisterPOST(w http.ResponseWriter, r *http.Request) {
 	}
 	_, err := app.DB.CreateUser(r.Context(), username, password)
 	if err != nil {
-		app.renderPage(w, "register.html", PageData{
+		app.renderPage(w, r, "register.html", PageData{
 			Title: "Register",
 			Error: "Username might already be taken.",
 		})

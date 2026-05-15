@@ -26,8 +26,11 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if cfg.Port != "8080" {
 		t.Errorf("expected default Port=8080, got %s", cfg.Port)
 	}
-	if cfg.LogLevel != "debug" {
-		t.Errorf("expected default LogLevel=debug, got %s", cfg.LogLevel)
+	if cfg.LogLevel != "info" {
+		t.Errorf("expected default LogLevel=info, got %s", cfg.LogLevel)
+	}
+	if cfg.AllowRegister {
+		t.Error("expected default AllowRegister=false")
 	}
 	if cfg.WorkerConcurrency != 1 {
 		t.Errorf("expected default WorkerConcurrency=1, got %d", cfg.WorkerConcurrency)
@@ -40,6 +43,7 @@ func TestLoadConfigDefaults(t *testing.T) {
 func TestLoadConfigOverrides(t *testing.T) {
 	t.Setenv("GITMAN_PORT", "9090")
 	t.Setenv("GITMAN_LOG_LEVEL", "warn")
+	t.Setenv("GITMAN_ALLOW_REGISTER", "true")
 	t.Setenv("GITMAN_WORKER_CONCURRENCY", "4")
 	t.Setenv("GITMAN_SECRET_KEY", "testkey")
 	t.Setenv("GITMAN_INTERNAL_URL", "http://example.com")
@@ -49,6 +53,9 @@ func TestLoadConfigOverrides(t *testing.T) {
 	}
 	if cfg.LogLevel != "warn" {
 		t.Errorf("expected LogLevel=warn, got %s", cfg.LogLevel)
+	}
+	if !cfg.AllowRegister {
+		t.Error("expected AllowRegister=true")
 	}
 	if cfg.WorkerConcurrency != 4 {
 		t.Errorf("expected WorkerConcurrency=4, got %d", cfg.WorkerConcurrency)

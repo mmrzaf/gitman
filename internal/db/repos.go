@@ -37,17 +37,20 @@ func (db *DB) GetUserRepositories(ctx context.Context, ownerID string) ([]models
 	var repos []models.Repository
 	for rows.Next() {
 		var r models.Repository
+		var createdAt, updatedAt int64
 		if err := rows.Scan(
 			&r.ID,
 			&r.OwnerID,
 			&r.Name,
 			&r.Description,
 			&r.IsPrivate,
-			&r.CreatedAt,
-			&r.UpdatedAt,
+			&createdAt,
+			&updatedAt,
 		); err != nil {
 			return nil, err
 		}
+		r.CreatedAt = unixToTime(createdAt)
+		r.UpdatedAt = unixToTime(updatedAt)
 		repos = append(repos, r)
 	}
 	return repos, nil
@@ -60,11 +63,13 @@ func (db *DB) GetRepositoryByOwnerAndName(ctx context.Context, ownerID string, n
               WHERE owner_id = ? AND name = ? LIMIT 1`
 
 	var r models.Repository
+	var createdAt int64
 	err := db.QueryRowContext(ctx, query, ownerID, name).
-		Scan(&r.ID, &r.OwnerID, &r.Name, &r.Description, &r.IsPrivate, &r.CreatedAt)
+		Scan(&r.ID, &r.OwnerID, &r.Name, &r.Description, &r.IsPrivate, &createdAt)
 	if err != nil {
 		return nil, err
 	}
+	r.CreatedAt = unixToTime(createdAt)
 	return &r, nil
 }
 
@@ -75,18 +80,21 @@ func (db *DB) GetRepositoryByID(ctx context.Context, id string) (*models.Reposit
 	row := db.QueryRowContext(ctx, query, id)
 
 	var r models.Repository
+	var createdAt, updatedAt int64
 	err := row.Scan(
 		&r.ID,
 		&r.OwnerID,
 		&r.Name,
 		&r.Description,
 		&r.IsPrivate,
-		&r.CreatedAt,
-		&r.UpdatedAt,
+		&createdAt,
+		&updatedAt,
 	)
 	if err != nil {
 		return nil, err
 	}
+	r.CreatedAt = unixToTime(createdAt)
+	r.UpdatedAt = unixToTime(updatedAt)
 	return &r, nil
 }
 
@@ -139,9 +147,11 @@ func (db *DB) GetCollaborators(ctx context.Context, repoID string) ([]models.Col
 	for rows.Next() {
 		var c models.Collaborator
 		var u models.User
-		if err := rows.Scan(&u.ID, &u.Username, &c.AccessLevel, &c.CreatedAt); err != nil {
+		var createdAt int64
+		if err := rows.Scan(&u.ID, &u.Username, &c.AccessLevel, &createdAt); err != nil {
 			return nil, err
 		}
+		c.CreatedAt = unixToTime(createdAt)
 		c.User = u
 		collaborators = append(collaborators, c)
 	}
@@ -168,4 +178,34 @@ func (db *DB) HasRepoAccess(ctx context.Context, repoID, userID, requiredLevel s
 	default:
 		return false, nil
 	}
+}
+
+func (db *DB) SetWebhookSecret(ctx context.Context, repoID, secret string) error {
+	_, err := db.ExecContext(ctx, "UPDATE repositories SET webhook_secret = ? WHERE id = ?", secret, repoID)
+	return err
+}
+
+// GetRepositoryByWebhookSecret fetches a single repo by its webhook secret
+func (db *DB) GetRepositoryByWebhookSecret(ctx context.Context, secret string) (*models.Repository, error) {
+	query := `SELECT id, owner_id, name, description, is_private, created_at, updated_at
+			  FROM repositories WHERE webhook_secret = ?`
+	row := db.QueryRowContext(ctx, query, secret)
+
+	var r models.Repository
+	var createdAt, updatedAt int64
+	err := row.Scan(
+		&r.ID,
+		&r.OwnerID,
+		&r.Name,
+		&r.Description,
+		&r.IsPrivate,
+		&createdAt,
+		&updatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	r.CreatedAt = unixToTime(createdAt)
+	r.UpdatedAt = unixToTime(updatedAt)
+	return &r, nil
 }

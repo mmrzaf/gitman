@@ -15,13 +15,15 @@ FROM alpine:3
 
 RUN apk add --no-cache git
 
-RUN adduser -D -h /data git
+RUN adduser -D -h /data -u 1000 git
 
 COPY --from=builder /gitman /usr/local/bin/gitman
 
-WORKDIR /data
-RUN mkdir -p /data && chown gitn:git /data
+RUN mkdir -p /data && chown git:git /data
+
+RUN apk add --no-cache curl
 
 USER git
+WORKDIR /data
 
 CMD ["gitman", "web"]

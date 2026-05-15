@@ -34,9 +34,11 @@ func (db *DB) GetUserAccessTokens(ctx context.Context, userID string) ([]models.
 	var tokens []models.AccessToken
 	for rows.Next() {
 		var t models.AccessToken
-		if err := rows.Scan(&t.ID, &t.UserID, &t.Name, &t.CreatedAt); err != nil {
+		var createdAt int64
+		if err := rows.Scan(&t.ID, &t.UserID, &t.Name, &createdAt); err != nil {
 			return nil, err
 		}
+		t.CreatedAt = unixToTime(createdAt)
 		tokens = append(tokens, t)
 	}
 	return tokens, nil
@@ -53,14 +55,17 @@ func (db *DB) DeleteAccessToken(ctx context.Context, id, userID string) error {
 // GetUserByTokenHash looks up the user associated with a SHA256 hashed token
 func (db *DB) GetUserByTokenHash(ctx context.Context, tokenHash string) (*models.User, error) {
 	var user models.User
+	var createdAt, updatedAt int64
 	err := db.QueryRowContext(ctx, `
 		SELECT u.id, u.username, u.password_hash, u.created_at, u.updated_at
 		FROM users u
 		INNER JOIN access_tokens t ON u.id = t.user_id
 		WHERE t.token_hash = ?
-	`, tokenHash).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.CreatedAt, &user.UpdatedAt)
+	`, tokenHash).Scan(&user.ID, &user.Username, &user.PasswordHash, &createdAt, &updatedAt)
 	if err != nil {
 		return nil, err
 	}
+	user.CreatedAt = unixToTime(createdAt)
+	user.UpdatedAt = unixToTime(updatedAt)
 	return &user, nil
 }

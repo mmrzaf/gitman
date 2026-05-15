@@ -1,146 +1,171 @@
 {{define "base.html"}}
 <!doctype html>
 <html lang="en" data-theme="auto">
-    <head>
-        <meta charset="UTF-8" />
-        <title>{{if .Title}}{{.Title}} - {{end}}Gitman</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <head>
+    <meta charset="UTF-8" />
+    <title>{{if .Title}}{{.Title}} - {{end}}Gitman</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="theme-color"
+      content="#005bbb"
+      media="(prefers-color-scheme: light)"
+    />
+    <meta
+      name="theme-color"
+      content="#1d1f23"
+      media="(prefers-color-scheme: dark)"
+    />
 
-        <link rel="stylesheet" href="/static/css/water.min.css" />
-        <script src="/static/js/htmx.min.js" defer></script>
+    <link rel="stylesheet" href="/static/css/water.min.css" />
+    <script src="/static/js/htmx.min.js" defer></script>
 
-        <style>
-            :root {
-                --bg: #f7f7f8;
-                --text: #222;
-                --muted: #666;
-                --card-bg: #ffffff;
-                --border: #ccc;
-                --input-bg: #ffffff;
-                --input-border: #bbb;
-                --code-bg: #f0f0f0;
-                --link: #005bbb;
-                --button-bg: #005bbb;
-                --button-text: #fff;
-            }
-            @media (prefers-color-scheme: dark) {
-                :root {
-                    --bg: #1d1f23;
-                    --text: #e6e6e6;
-                    --muted: #a3a3a3;
-                    --card-bg: #2a2c30;
-                    --border: #4a4d52;
-                    --input-bg: #2f3136;
-                    --input-border: #555;
-                    --code-bg: #2a2c30;
-                    --link: #66aaff;
-                    --button-bg: #3578e5;
-                }
-            }
-            body {
-                max-width: 900px;
-                margin: 0 auto;
-                padding: 1.5rem;
-                background: var(--bg);
-                color: var(--text);
-            }
-            a {
-                color: var(--link);
-            }
-            .muted {
-                color: var(--muted);
-            }
-            input,
-            textarea,
-            select {
-                background: var(--input-bg);
-                color: var(--text);
-                border: 1px solid var(--input-border);
-                border-radius: 6px;
-                padding: 0.5rem;
-            }
-            button,
-            .button {
-                background: var(--button-bg);
-                color: var(--button-text) !important;
-                border: none;
-                padding: 0.45rem 0.9rem;
-                border-radius: 6px;
-                cursor: pointer;
-            }
-            code,
-            pre {
-                background: var(--code-bg) !important;
-                color: var(--text);
-            }
-            .card {
-                background: var(--card-bg);
-                border: 1px solid var(--border);
-                border-radius: 8px;
-                padding: 1rem 1.25rem;
-                margin-bottom: 1rem;
-            }
+    <style>
+      :root {
+        --bg: #f7f7f8;
+        --text: #222;
+        --muted: #666;
+        --card-bg: #ffffff;
+        --border: #ccc;
+        --input-bg: #ffffff;
+        --input-border: #bbb;
+        --code-bg: #f0f0f0;
+        --link: #005bbb;
+        --button-bg: #005bbb;
+        --button-text: #fff;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #1d1f23;
+          --text: #e6e6e6;
+          --muted: #a3a3a3;
+          --card-bg: #2a2c30;
+          --border: #4a4d52;
+          --input-bg: #2f3136;
+          --input-border: #555;
+          --code-bg: #2a2c30;
+          --link: #66aaff;
+          --button-bg: #3578e5;
+        }
+      }
+      body {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 1.5rem;
+        background: var(--bg);
+        color: var(--text);
+      }
+      a {
+        color: var(--link);
+      }
+      .muted {
+        color: var(--muted);
+      }
+      input,
+      textarea,
+      select {
+        background: var(--input-bg);
+        color: var(--text);
+        border: 1px solid var(--input-border);
+        border-radius: 6px;
+        padding: 0.5rem;
+      }
+      button,
+      .button {
+        background: var(--button-bg);
+        color: var(--button-text) !important;
+        border: none;
+        padding: 0.45rem 0.9rem;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      code,
+      pre {
+        background: var(--code-bg) !important;
+        color: var(--text);
+      }
+      .card {
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 1rem 1.25rem;
+        margin-bottom: 1rem;
+      }
 
-            .flash-error {
-                background: #fbeaea;
-                border-left: 4px solid #d9534f;
-                padding: 0.75rem 1rem;
-                border-radius: 6px;
-                margin-bottom: 1rem;
-                color: #222;
-            }
-            .flash-success {
-                background: #eafbe8;
-                border-left: 4px solid #5cb85c;
-                padding: 0.75rem 1rem;
-                border-radius: 6px;
-                margin-bottom: 1rem;
-                color: #222;
-            }
-            @media (prefers-color-scheme: dark) {
-                .flash-error {
-                    background: #3a1f1f;
-                    border-left-color: #e57373;
-                    color: #ffb3b3;
-                }
-                .flash-success {
-                    background: #1f3a22;
-                    border-left-color: #81c784;
-                    color: #b3ffb6;
-                }
-            }
-            header {
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                margin-bottom: 2rem;
-            }
-            nav a {
-                margin-left: 1rem;
-            }
-        </style>
-    </head>
-    <body hx-boost="true">
-        <header>
-            <h1>
-                <a href="/" style="text-decoration: none; color: inherit"
-                    >Gitman</a
-                >
-            </h1>
-            <nav>
-                {{if .User}}
-                <span class="muted">Signed in as {{.User.Username}}</span>
-                <a href="/repos">Repos</a>
-                <a href="/tokens">Access Tokens</a>
-                <a href="/keys">SSH Keys</a>
-                <a href="/logout">Logout</a>
-                {{else}}
-                <a href="/login">Login</a>
-                <a href="/register">Register</a>
-                {{end}}
-            </nav>
-        </header>
-        <main id="content">{{block "content" .}}{{end}}</main>
-    </body>
+      .flash-error {
+        background: #fbeaea;
+        border-left: 4px solid #d9534f;
+        padding: 0.75rem 1rem;
+        border-radius: 6px;
+        margin-bottom: 1rem;
+        color: #222;
+      }
+      .flash-success {
+        background: #eafbe8;
+        border-left: 4px solid #5cb85c;
+        padding: 0.75rem 1rem;
+        border-radius: 6px;
+        margin-bottom: 1rem;
+        color: #222;
+      }
+      @media (prefers-color-scheme: dark) {
+        .flash-error {
+          background: #3a1f1f;
+          border-left-color: #e57373;
+          color: #ffb3b3;
+        }
+        .flash-success {
+          background: #1f3a22;
+          border-left-color: #81c784;
+          color: #b3ffb6;
+        }
+      }
+      header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 2rem;
+      }
+      nav a {
+        margin-left: 1rem;
+      }
+      /* Consistent repo navigation style */
+      .repo-nav {
+        margin-bottom: 1.5rem;
+        border-bottom: 1px solid rgba(127, 127, 127, 0.2);
+        padding-bottom: 10px;
+        font-size: 1.05em;
+      }
+      .repo-nav a,
+      .repo-nav strong {
+        margin-right: 0.5rem;
+        text-decoration: none;
+      }
+      .repo-nav a:hover {
+        text-decoration: underline;
+      }
+    </style>
+  </head>
+  <body hx-boost="true">
+    <header>
+      <h1>
+        <a href="/" style="text-decoration: none; color: inherit">Gitman</a>
+      </h1>
+      <nav>
+        {{if .User}}
+        <span class="muted">Signed in as {{.User.Username}}</span>
+        <a href="/repos">Repos</a>
+        <a href="/tokens">Access Tokens</a>
+        <a href="/keys">SSH Keys</a>
+        <a href="/logout">Logout</a>
+        {{else}} {{if .Config.AllowRegister}}
+
+        <a href="/register">Register</a>
+        {{end}}
+        <a href="/login">Login</a>
+        {{end}}
+      </nav>
+    </header>
+    <main id="content">{{block "content" .}}{{end}}</main>
+  </body>
 </html>
 {{end}}

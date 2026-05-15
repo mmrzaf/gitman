@@ -1,166 +1,48 @@
 {{define "collaborators_panel"}}
-<div
-    id="collaborators-panel"
-    class="card"
-    style="
-        margin-bottom: 2rem;
-        padding: 1.5rem;
-        border: 1px solid rgba(127, 127, 127, 0.2);
-        border-radius: 6px;
-    "
->
-    <!-- Inline flash messages injected here on HTMX swap -->
-    {{template "flash" .}}
+<div id="collaborators-panel" class="card" style="margin-bottom: 2rem; padding: 1.5rem; border: 1px solid rgba(127, 127, 127, 0.2); border-radius: 6px;">
+  {{template "flash" .}}
 
-    <h3 style="margin-top: 0">Manage Collaborators</h3>
+  <h3 style="margin-top: 0">Manage Collaborators</h3>
 
-    <div
-        style="
-            margin-bottom: 20px;
-            padding-bottom: 15px;
-            border-bottom: 1px solid rgba(127, 127, 127, 0.2);
-        "
-    >
-        <!-- HTMX Form: Add -->
-        <form
-            hx-post="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/collaborators/add"
-            hx-target="#collaborators-panel"
-            hx-swap="outerHTML"
-            style="display: flex; gap: 10px; align-items: center"
-        >
-            <input
-                type="text"
-                name="username"
-                placeholder="Search by Username..."
-                required
-                style="
-                    padding: 8px 12px;
-                    flex: 1;
-                    border: 1px solid rgba(127, 127, 127, 0.4);
-                    border-radius: 4px;
-                    background: transparent;
-                    color: inherit;
-                "
-            />
+  <div style="margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid rgba(127, 127, 127, 0.2);">
+    <form method="POST" action="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/collaborators/add" hx-post="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/collaborators/add" hx-target="#collaborators-panel" hx-swap="outerHTML" style="display: flex; gap: 10px; align-items: center;">
+      <input type="text" name="username" placeholder="Search by Username..." required style="padding: 8px 12px; flex: 1; border: 1px solid rgba(127, 127, 127, 0.4); border-radius: 4px; background: transparent; color: inherit;" />
+      <select name="access_level" style="padding: 8px 12px; border: 1px solid rgba(127, 127, 127, 0.4); border-radius: 4px; background: transparent; color: inherit;">
+        <option value="read" style="background: inherit; color: inherit;">Read (Clone/Pull)</option>
+        <option value="write" style="background: inherit; color: inherit;">Write (Push)</option>
+      </select>
+      <button type="submit" style="padding: 8px 15px; border: 1px solid rgba(127, 127, 127, 0.5); background: rgba(127, 127, 127, 0.15); color: inherit; border-radius: 4px; cursor: pointer; font-weight: bold;">Add Collaborator</button>
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
+    </form>
+  </div>
 
-            <select
-                name="access_level"
-                style="
-                    padding: 8px 12px;
-                    border: 1px solid rgba(127, 127, 127, 0.4);
-                    border-radius: 4px;
-                    background: transparent;
-                    color: inherit;
-                "
-            >
-                <option
-                    value="read"
-                    style="background: inherit; color: inherit"
-                >
-                    Read (Clone/Pull)
-                </option>
-                <option
-                    value="write"
-                    style="background: inherit; color: inherit"
-                >
-                    Write (Push)
-                </option>
-            </select>
-
-            <button
-                type="submit"
-                style="
-                    padding: 8px 15px;
-                    border: 1px solid rgba(127, 127, 127, 0.5);
-                    background: rgba(127, 127, 127, 0.15);
-                    color: inherit;
-                    border-radius: 4px;
-                    cursor: pointer;
-                    font-weight: bold;
-                "
-            >
-                Add Collaborator
-            </button>
-        </form>
-    </div>
-
-    <h4>Current Collaborators</h4>
-    {{ if .Data.Collaborators }}
-    <table
-        style="
-            width: 100%;
-            border-collapse: collapse;
-            text-align: left;
-            margin-top: 10px;
-        "
-    >
-        <thead>
-            <tr
-                style="
-                    border-bottom: 2px solid rgba(127, 127, 127, 0.3);
-                    background: rgba(127, 127, 127, 0.05);
-                "
-            >
-                <th style="padding: 10px 15px">Username</th>
-                <th style="padding: 10px 15px">Access Level</th>
-                <th style="padding: 10px 15px; width: 100px; text-align: right">
-                    Actions
-                </th>
-            </tr>
-        </thead>
-        <tbody>
-            {{ range .Data.Collaborators }}
-            <tr style="border-bottom: 1px solid rgba(127, 127, 127, 0.1)">
-                <td style="padding: 12px 15px; font-weight: bold">
-                    {{ .User.Username }}
-                </td>
-                <td style="padding: 12px 15px">
-                    <span
-                        class="muted"
-                        style="
-                            background: rgba(127, 127, 127, 0.15);
-                            padding: 4px 10px;
-                            border-radius: 12px;
-                            font-size: 0.85em;
-                            font-weight: bold;
-                        "
-                    >
-                        {{ .AccessLevel }}
-                    </span>
-                </td>
-                <td style="padding: 12px 15px; text-align: right">
-                    <!-- HTMX Form: Remove -->
-                    <form
-                        hx-post="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/collaborators/remove?user_id={{.User.ID}}"
-                        hx-target="#collaborators-panel"
-                        hx-swap="outerHTML"
-                        hx-confirm="Are you sure you want to remove this collaborator?"
-                        style="margin: 0"
-                    >
-                        <button
-                            type="submit"
-                            style="
-                                color: #ff6b6b;
-                                border: 1px solid rgba(255, 107, 107, 0.3);
-                                background: transparent;
-                                cursor: pointer;
-                                padding: 5px 12px;
-                                border-radius: 4px;
-                                font-weight: bold;
-                            "
-                        >
-                            Remove
-                        </button>
-                    </form>
-                </td>
-            </tr>
-            {{ end }}
-        </tbody>
-    </table>
-    {{ else }}
-    <p class="muted" style="margin-top: 10px; padding: 10px 0">
-        No collaborators added yet.
-    </p>
-    {{ end }}
+  <h4>Current Collaborators</h4>
+  {{if .Data.Collaborators}}
+  <table style="width: 100%; border-collapse: collapse; text-align: left; margin-top: 10px;">
+    <thead>
+      <tr style="border-bottom: 2px solid rgba(127, 127, 127, 0.3); background: rgba(127, 127, 127, 0.05);">
+        <th style="padding: 10px 15px">Username</th>
+        <th style="padding: 10px 15px">Access Level</th>
+        <th style="padding: 10px 15px; width: 100px; text-align: right">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Data.Collaborators}}
+      <tr style="border-bottom: 1px solid rgba(127, 127, 127, 0.1)">
+        <td style="padding: 12px 15px; font-weight: bold">{{.User.Username}}</td>
+        <td style="padding: 12px 15px"><span class="muted" style="background: rgba(127, 127, 127, 0.15); padding: 4px 10px; border-radius: 12px; font-size: 0.85em; font-weight: bold;">{{.AccessLevel}}</span></td>
+        <td style="padding: 12px 15px; text-align: right">
+          <form method="POST" action="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/collaborators/remove?user_id={{.User.ID}}" hx-post="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/collaborators/remove?user_id={{.User.ID}}" hx-target="#collaborators-panel" hx-swap="outerHTML" hx-confirm="Are you sure you want to remove this collaborator?" style="margin: 0;">
+            <button type="submit" style="color: #ff6b6b; border: 1px solid rgba(255, 107, 107, 0.3); background: transparent; cursor: pointer; padding: 5px 12px; border-radius: 4px; font-weight: bold;">Remove</button>
+            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}" />
+          </form>
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="muted" style="margin-top: 10px; padding: 10px 0;">No collaborators added yet.</p>
+  {{end}}
 </div>
 {{end}}

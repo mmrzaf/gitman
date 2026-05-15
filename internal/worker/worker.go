@@ -234,7 +234,7 @@ func (j *job) clone(ctx context.Context) error {
 	cloneCmd := exec.CommandContext(ctx,
 		"git", "clone", "--no-local", "--depth", "1",
 		"--branch", selectRef(j.run.Branch, j.run.Tag),
-		"file://"+bareRepo, j.checkout,
+		bareRepo, j.checkout,
 	)
 	cloneCmd.Stdout = j.logFile
 	cloneCmd.Stderr = j.logFile

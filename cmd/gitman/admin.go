@@ -21,10 +21,8 @@ func runAdmin(cfg *config.Config, database *db.DB, args []string) error {
 	}
 
 	switch args[0] {
-
 	case "users":
 		return runAdminUsers(database, args[1:])
-
 	case "repos":
 		return runAdminRepos(cfg, database, args[1:])
 	}
@@ -66,20 +64,18 @@ func runAdminUsers(database *db.DB, args []string) error {
 
 func runAdminRepos(cfg *config.Config, database *db.DB, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: gitman admin repos <backup>")
+		return fmt.Errorf("usage: gitman admin repos <backup|backup-all>")
 	}
 
 	switch args[0] {
-
 	case "backup":
 		if len(args) != 2 {
 			return fmt.Errorf("usage: gitman admin repos backup <destination>")
 		}
-
 		return admin.BackupRepos(cfg.ReposPath, args[1])
 	case "backup-all":
-		if len(args) < 2 {
-			return fmt.Errorf("usage: gitman admin backup-all <destination>")
+		if len(args) != 2 {
+			return fmt.Errorf("usage: gitman admin repos backup-all <destination>")
 		}
 		return admin.BackupAll(cfg, args[1])
 	}

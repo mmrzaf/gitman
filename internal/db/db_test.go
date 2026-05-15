@@ -4,6 +4,8 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+
+	"github.com/mmrzaf/gitman"
 )
 
 func TestInitDBNew(t *testing.T) {
@@ -29,8 +31,13 @@ func TestInitDBNew(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if count < 2 {
-		t.Errorf("expected at least 2 migrations, got %d", count)
+
+	migrations, err := loadMigrationFiles(gitman.FS, "migrations")
+	if err != nil {
+		t.Fatalf("loadMigrationFiles failed: %v", err)
+	}
+	if count != len(migrations) {
+		t.Errorf("expected %d applied migrations, got %d", len(migrations), count)
 	}
 }
 
@@ -41,7 +48,9 @@ func TestInitDBReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	db1.Close()
+	if err := db1.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
 
 	db2, err := InitDB(dbPath)
 	if err != nil {
@@ -62,6 +71,28 @@ func TestPing(t *testing.T) {
 	defer db.Close()
 	if err := db.Ping(); err != nil {
 		t.Errorf("ping failed: %v", err)
+	}
+}
+
+func TestRollbackTo(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	db, err := InitDB(dbPath)
+	if err != nil {
+		t.Fatalf("InitDB failed: %v", err)
+	}
+	defer db.Close()
+
+	if err := db.rollbackTo(context.Background(), gitman.FS, "migrations", 0); err != nil {
+		t.Fatalf("rollbackTo failed: %v", err)
+	}
+
+	var count int
+	if err := db.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM schema_migrations").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("expected 0 applied migrations after rollback, got %d", count)
 	}
 }
 

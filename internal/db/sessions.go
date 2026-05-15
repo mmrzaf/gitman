@@ -33,6 +33,7 @@ func (db *DB) CreateSession(ctx context.Context, userID string) (string, error) 
 
 func (db *DB) GetUserBySession(ctx context.Context, token string) (*models.User, error) {
 	var user models.User
+	var createdAt, updatedAt int64
 
 	query := `
 		SELECT u.id, u.username, u.created_at, u.updated_at
@@ -42,9 +43,11 @@ func (db *DB) GetUserBySession(ctx context.Context, token string) (*models.User,
 	`
 
 	if err := db.QueryRowContext(ctx, query, token, time.Now().Unix()).
-		Scan(&user.ID, &user.Username, &user.CreatedAt, &user.UpdatedAt); err != nil {
+		Scan(&user.ID, &user.Username, &createdAt, &updatedAt); err != nil {
 		return nil, err
 	}
+	user.CreatedAt = unixToTime(createdAt)
+	user.UpdatedAt = unixToTime(updatedAt)
 
 	return &user, nil
 }

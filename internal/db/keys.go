@@ -20,13 +20,16 @@ func (db *DB) AddSSHKey(ctx context.Context, userID, name, publicKey string) err
 
 func (db *DB) GetSSHKeyByID(ctx context.Context, id string) (*models.SSHKey, error) {
 	var k models.SSHKey
+	var createdAt, updatedAt int64
 	err := db.QueryRowContext(ctx,
 		"SELECT id, user_id, name, public_key, created_at, updated_at FROM ssh_keys WHERE id = ?",
 		id,
-	).Scan(&k.ID, &k.UserID, &k.Name, &k.PublicKey, &k.CreatedAt, &k.UpdatedAt)
+	).Scan(&k.ID, &k.UserID, &k.Name, &k.PublicKey, &createdAt, &updatedAt)
 	if err != nil {
 		return nil, err
 	}
+	k.CreatedAt = unixToTime(createdAt)
+	k.UpdatedAt = unixToTime(updatedAt)
 	return &k, nil
 }
 
@@ -48,9 +51,12 @@ func (db *DB) GetUserSSHKeys(ctx context.Context, userID string) ([]models.SSHKe
 	var keys []models.SSHKey
 	for rows.Next() {
 		var k models.SSHKey
-		if err := rows.Scan(&k.ID, &k.UserID, &k.Name, &k.PublicKey, &k.CreatedAt, &k.UpdatedAt); err != nil {
+		var createdAt, updatedAt int64
+		if err := rows.Scan(&k.ID, &k.UserID, &k.Name, &k.PublicKey, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
+		k.CreatedAt = unixToTime(createdAt)
+		k.UpdatedAt = unixToTime(updatedAt)
 		keys = append(keys, k)
 	}
 	return keys, nil
@@ -73,9 +79,12 @@ func (db *DB) GetAllSSHKeys(ctx context.Context) ([]models.SSHKey, error) {
 	var keys []models.SSHKey
 	for rows.Next() {
 		var k models.SSHKey
-		if err := rows.Scan(&k.ID, &k.UserID, &k.Name, &k.PublicKey, &k.CreatedAt, &k.UpdatedAt); err != nil {
+		var createdAt, updatedAt int64
+		if err := rows.Scan(&k.ID, &k.UserID, &k.Name, &k.PublicKey, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
+		k.CreatedAt = unixToTime(createdAt)
+		k.UpdatedAt = unixToTime(updatedAt)
 		keys = append(keys, k)
 	}
 	return keys, nil
