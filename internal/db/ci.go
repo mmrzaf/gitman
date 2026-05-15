@@ -36,6 +36,7 @@ func (db *DB) ClaimNextPendingRun(ctx context.Context) (*models.CIRun, error) {
 	}()
 
 	var run models.CIRun
+	var createdAt int64
 	err = tx.QueryRowContext(ctx, `
 		SELECT id, repo_id, commit_hash, branch, tag, event, status, log_file, created_at
 		FROM ci_runs
@@ -43,7 +44,7 @@ func (db *DB) ClaimNextPendingRun(ctx context.Context) (*models.CIRun, error) {
 		ORDER BY created_at ASC
 		LIMIT 1
 	`).Scan(&run.ID, &run.RepoID, &run.CommitHash, &run.Branch, &run.Tag,
-		&run.Event, &run.Status, &run.LogFile, &run.CreatedAt)
+		&run.Event, &run.Status, &run.LogFile, &createdAt)
 
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -62,6 +63,7 @@ func (db *DB) ClaimNextPendingRun(ctx context.Context) (*models.CIRun, error) {
 		return nil, err
 	}
 
+	run.CreatedAt = unixToTime(createdAt)
 	run.Status = "running"
 	return &run, nil
 }
@@ -78,7 +80,7 @@ func (db *DB) UpdateCIRunLogFile(ctx context.Context, runID, logFile string) err
 func (db *DB) CompleteCIRun(ctx context.Context, runID, status string) error {
 	_, err := db.ExecContext(ctx, `
 		UPDATE ci_runs SET status = ?, completed_at = ? WHERE id = ?
-	`, status, time.Now(), runID)
+	`, status, time.Now().Unix(), runID)
 	return err
 }
 
@@ -104,14 +106,16 @@ func (db *DB) GetCIRunsByRepo(ctx context.Context, repoID string, limit int) ([]
 	var runs []models.CIRun
 	for rows.Next() {
 		var r models.CIRun
-		var completedAt sql.NullTime
-		if err := rows.Scan(&r.ID, &r.RepoID, &r.CommitHash, &r.Branch, &r.Tag,
-			&r.Event, &r.Status, &r.LogFile, &r.CreatedAt, &completedAt); err != nil {
+		var createdAt int64
+		var completedAt sql.NullInt64
+		if err := rows.Scan(
+			&r.ID, &r.RepoID, &r.CommitHash, &r.Branch, &r.Tag,
+			&r.Event, &r.Status, &r.LogFile, &createdAt, &completedAt,
+		); err != nil {
 			return nil, err
 		}
-		if completedAt.Valid {
-			r.CompletedAt = &completedAt.Time
-		}
+		r.CreatedAt = unixToTime(createdAt)
+		r.CompletedAt = nullUnixToTime(completedAt)
 		runs = append(runs, r)
 	}
 	return runs, nil
@@ -120,13 +124,16 @@ func (db *DB) GetCIRunsByRepo(ctx context.Context, repoID string, limit int) ([]
 // GetCIRunByID fetches a single run by its UUID.
 func (db *DB) GetCIRunByID(ctx context.Context, id string) (*models.CIRun, error) {
 	var r models.CIRun
-	var completedAt sql.NullTime
+	var createdAt int64
+	var completedAt sql.NullInt64
 	err := db.QueryRowContext(ctx, `
 		SELECT id, repo_id, commit_hash, branch, tag, event, status, log_file,
 		       created_at, completed_at
 		FROM ci_runs WHERE id = ?
-	`, id).Scan(&r.ID, &r.RepoID, &r.CommitHash, &r.Branch, &r.Tag,
-		&r.Event, &r.Status, &r.LogFile, &r.CreatedAt, &completedAt)
+	`, id).Scan(
+		&r.ID, &r.RepoID, &r.CommitHash, &r.Branch, &r.Tag,
+		&r.Event, &r.Status, &r.LogFile, &createdAt, &completedAt,
+	)
 
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -134,10 +141,40 @@ func (db *DB) GetCIRunByID(ctx context.Context, id string) (*models.CIRun, error
 	if err != nil {
 		return nil, err
 	}
-	if completedAt.Valid {
-		r.CompletedAt = &completedAt.Time
-	}
+	r.CreatedAt = unixToTime(createdAt)
+	r.CompletedAt = nullUnixToTime(completedAt)
 	return &r, nil
+}
+
+// GetSuccessfulCIRunsByRepo returns successful CI runs for a repository, newest first.
+func (db *DB) GetSuccessfulCIRunsByRepo(ctx context.Context, repoID string, limit int) ([]models.CIRun, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, repo_id, commit_hash, branch, tag, event, status, log_file,
+		       created_at, completed_at
+		FROM ci_runs
+		WHERE repo_id = ? AND status = 'success'
+		ORDER BY created_at DESC
+		LIMIT ?
+	`, repoID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var runs []models.CIRun
+	for rows.Next() {
+		var r models.CIRun
+		var createdAt int64
+		var completedAt sql.NullInt64
+		if err := rows.Scan(&r.ID, &r.RepoID, &r.CommitHash, &r.Branch, &r.Tag,
+			&r.Event, &r.Status, &r.LogFile, &createdAt, &completedAt); err != nil {
+			return nil, err
+		}
+		r.CreatedAt = unixToTime(createdAt)
+		r.CompletedAt = nullUnixToTime(completedAt)
+		runs = append(runs, r)
+	}
+	return runs, nil
 }
 
 // GetLatestSuccessfulRunForBranch returns the most recent successful run on a branch.
@@ -175,19 +212,19 @@ func (db *DB) GetSuccessfulRunForCommit(ctx context.Context, repoID, commitHash 
 
 func (db *DB) getSingleRun(ctx context.Context, query string, args ...any) (*models.CIRun, error) {
 	var r models.CIRun
-	var completedAt sql.NullTime
+	var createdAt int64
+	var completedAt sql.NullInt64
 	err := db.QueryRowContext(ctx, query, args...).
 		Scan(&r.ID, &r.RepoID, &r.CommitHash, &r.Branch, &r.Tag,
-			&r.Event, &r.Status, &r.LogFile, &r.CreatedAt, &completedAt)
+			&r.Event, &r.Status, &r.LogFile, &createdAt, &completedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	if completedAt.Valid {
-		r.CompletedAt = &completedAt.Time
-	}
+	r.CreatedAt = unixToTime(createdAt)
+	r.CompletedAt = nullUnixToTime(completedAt)
 	return &r, nil
 }
 
@@ -222,9 +259,11 @@ func (db *DB) GetRepoSecrets(ctx context.Context, repoID string) ([]models.RepoS
 	var secrets []models.RepoSecret
 	for rows.Next() {
 		var s models.RepoSecret
-		if err := rows.Scan(&s.ID, &s.RepoID, &s.Key, &s.EncryptedValue, &s.CreatedAt); err != nil {
+		var createdAt int64
+		if err := rows.Scan(&s.ID, &s.RepoID, &s.Key, &s.EncryptedValue, &createdAt); err != nil {
 			return nil, err
 		}
+		s.CreatedAt = unixToTime(createdAt)
 		secrets = append(secrets, s)
 	}
 	return secrets, nil
