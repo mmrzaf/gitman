@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/mmrzaf/gitman/internal/models"
@@ -33,28 +34,34 @@ func (db *DB) CreateUser(ctx context.Context, username, password string) (*model
 // GetUserByUsername fetches a user for login
 func (db *DB) GetUserByUsername(ctx context.Context, username string) (*models.User, error) {
 	var user models.User
+	var createdAt, updatedAt int64
 	err := db.QueryRowContext(ctx,
 		"SELECT id, username, password_hash, created_at, updated_at FROM users WHERE username = ?",
 		username,
-	).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.CreatedAt, &user.UpdatedAt)
+	).Scan(&user.ID, &user.Username, &user.PasswordHash, &createdAt, &updatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil // User not found
 		}
 		return nil, err
 	}
+	user.CreatedAt = unixToTime(createdAt)
+	user.UpdatedAt = unixToTime(updatedAt)
 	return &user, nil
 }
 
 func (db *DB) GetUserByID(ctx context.Context, id string) (*models.User, error) {
 	var user models.User
+	var createdAt, updatedAt int64
 	err := db.QueryRowContext(ctx,
 		"SELECT id, username, password_hash, created_at, updated_at FROM users WHERE id = ?",
 		id,
-	).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.CreatedAt, &user.UpdatedAt)
+	).Scan(&user.ID, &user.Username, &user.PasswordHash, &createdAt, &updatedAt)
 	if err != nil {
 		return nil, err
 	}
+	user.CreatedAt = unixToTime(createdAt)
+	user.UpdatedAt = unixToTime(updatedAt)
 	return &user, nil
 }
 
@@ -73,8 +80,8 @@ func (db *DB) UpdateUserPassword(ctx context.Context, username, password string)
 
 	res, err := db.ExecContext(
 		ctx,
-		"UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE username = ?",
-		string(hash), username,
+		"UPDATE users SET password_hash = ?, updated_at = ? WHERE username = ?",
+		string(hash), time.Now().Unix(), username,
 	)
 	if err != nil {
 		return err

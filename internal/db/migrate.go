@@ -90,7 +90,7 @@ func ensureMigrationTable(ctx context.Context, db *sql.DB) error {
 	_, err := db.ExecContext(ctx, `
         CREATE TABLE IF NOT EXISTS schema_migrations (
             version    INTEGER PRIMARY KEY,
-            applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            applied_at INTEGER DEFAULT (strftime('%s', 'now'))
         )
     `)
 	return err

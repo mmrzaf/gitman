@@ -6,8 +6,8 @@ CREATE TABLE users (
     id            TEXT PRIMARY KEY,
     username      TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
-    created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at    INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+    updated_at    INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
 );
 
 -- Sessions (one per browser)
@@ -26,8 +26,8 @@ CREATE TABLE repositories (
     description     TEXT,
     webhook_secret  TEXT NOT NULL DEFAULT '',
     is_private      BOOLEAN NOT NULL DEFAULT 0,
-    created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at      INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+    updated_at      INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
     UNIQUE(owner_id, name),
     FOREIGN KEY(owner_id) REFERENCES users(id) ON DELETE CASCADE
 );
@@ -37,7 +37,7 @@ CREATE TABLE repo_collaborators (
     repo_id      TEXT NOT NULL,
     user_id      TEXT NOT NULL,
     access_level TEXT NOT NULL CHECK(access_level IN ('read', 'write')),
-    created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at   INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
     PRIMARY KEY (repo_id, user_id),
     FOREIGN KEY(repo_id) REFERENCES repositories(id) ON DELETE CASCADE,
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -49,7 +49,7 @@ CREATE TABLE access_tokens (
     user_id    TEXT NOT NULL,
     name       TEXT NOT NULL,
     token_hash TEXT NOT NULL UNIQUE,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
@@ -59,8 +59,8 @@ CREATE TABLE ssh_keys (
     user_id    TEXT NOT NULL,
     name       TEXT NOT NULL,
     public_key TEXT NOT NULL,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+    updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
@@ -74,8 +74,8 @@ CREATE TABLE ci_runs (
     event        TEXT NOT NULL DEFAULT 'push',
     status       TEXT NOT NULL DEFAULT 'pending',
     log_file     TEXT NOT NULL DEFAULT '',
-    created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    completed_at DATETIME,
+    created_at   INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+    completed_at INTEGER,
     FOREIGN KEY(repo_id) REFERENCES repositories(id) ON DELETE CASCADE
 );
 
@@ -85,7 +85,7 @@ CREATE TABLE repo_secrets (
     repo_id         TEXT NOT NULL,
     key             TEXT NOT NULL,
     encrypted_value TEXT NOT NULL,
-    created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at      INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
     UNIQUE(repo_id, key),
     FOREIGN KEY(repo_id) REFERENCES repositories(id) ON DELETE CASCADE
 );
