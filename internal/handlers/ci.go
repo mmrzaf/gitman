@@ -34,6 +34,7 @@ type CIRunPageData struct {
 	Repository *models.Repository
 	Run        *models.CIRun
 	LogContent string
+	Artifacts  []string
 }
 
 type CISecretsPageData struct {
@@ -243,7 +244,15 @@ func (app *App) HandleCIRunGET(w http.ResponseWriter, r *http.Request) {
 			logContent = string(data)
 		}
 	}
-
+	artifactDir := filepath.Join(app.Config.ArtifactsPath, "files", owner.Username, repo.Name, run.ID)
+	var artifacts []string
+	if entries, err := os.ReadDir(artifactDir); err == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				artifacts = append(artifacts, entry.Name())
+			}
+		}
+	}
 	app.renderPage(w, r, "repo_ci_run.html", PageData{
 		Title: fmt.Sprintf("Run %s — CI", run.ID[:8]),
 		User:  GetUser(r),
@@ -252,6 +261,7 @@ func (app *App) HandleCIRunGET(w http.ResponseWriter, r *http.Request) {
 			Repository: repo,
 			Run:        run,
 			LogContent: logContent,
+			Artifacts:  artifacts,
 		},
 	})
 }
@@ -596,6 +606,25 @@ func (app *App) HandleArtifactByCommit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	serveArtifact(w, r, app.Config.ArtifactsPath, owner.Username, repo.Name, run.ID, filename)
+}
+
+// HandleArtifactByRunID serves an artifact file for a specific CI run.
+// Route: GET /api/repos/{username}/{repo_name}/artifacts/run/{run_id}/{filename}
+func (app *App) HandleArtifactByRunID(w http.ResponseWriter, r *http.Request) {
+	repo := GetRepo(r)
+	owner := GetRepoOwner(r)
+	runID := chi.URLParam(r, "run_id")
+	filename := chi.URLParam(r, "filename")
+
+	// Verify run exists and belongs to this repo
+	run, err := app.DB.GetCIRunByID(r.Context(), runID)
+	if err != nil || run == nil || run.RepoID != repo.ID {
+		http.Error(w, "Run not found", http.StatusNotFound)
+		return
+	}
+
+	// Use the same validation and serving logic as other artifact endpoints
+	serveArtifact(w, r, app.Config.ArtifactsPath, owner.Username, repo.Name, runID, filename)
 }
 
 func serveArtifact(w http.ResponseWriter, r *http.Request, artifactsPath, owner, repo, runID, filename string) {
