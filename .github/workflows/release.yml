@@ -104,7 +104,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: docker-tarball
-          path: gitman-docker-image.tar.gz
+          path: gitman-docker-image-${{ github.ref_name }}.tar.gz
           if-no-files-found: error
 
   create-release:
