@@ -33,9 +33,7 @@ jobs:
           - goos: darwin
             goarch: arm64
             ext: ""
-          - goos: windows
-            goarch: amd64
-            ext: ".exe"
+
 
     steps:
       - name: Checkout
