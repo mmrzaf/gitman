@@ -9,19 +9,16 @@
   {{end}}
 </div>
 
-{{template "flash" .}} {{if not .User}}
+{{template "flash" .}}
+
+{{if not .User}}
 <p>To get started, create an account or sign in:</p>
 <ul>
-  <li><a href="/register">Register a new account</a></li>
+  {{if .Config.AllowRegister}}<li><a href="/register">Register a new account</a></li>{{end}}
   <li><a href="/login">Login to an existing account</a></li>
 </ul>
 {{else}}
-<p>
-  Use SSH and Git to clone, push, and pull from your personal Gitman
-  repositories.
-</p>
-<p class="muted">
-  Tip: If this is your first time, add your SSH key on the
-  <a href="/keys">SSH Keys</a> page.
-</p>
-{{end}} {{end}}
+<p>Use SSH and Git to clone, push, and pull from your personal Gitman repositories.</p>
+<p class="muted">Tip: If this is your first time, add your SSH key on the <a href="/keys">SSH Keys</a> page.</p>
+{{end}}
+{{end}}

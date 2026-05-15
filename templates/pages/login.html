@@ -6,31 +6,21 @@
 
 {{template "flash" .}}
 
-<form action="/login" method="POST">
+<form method="POST" action="/login">
   <p>
     <label for="username">Username</label><br />
-    <input
-      id="username"
-      type="text"
-      name="username"
-      required
-      autocomplete="username"
-    />
+    <input id="username" type="text" name="username" required autocomplete="username" />
   </p>
   <p>
     <label for="password">Password</label><br />
-    <input
-      id="password"
-      type="password"
-      name="password"
-      required
-      autocomplete="current-password"
-    />
+    <input id="password" type="password" name="password" required autocomplete="current-password" />
   </p>
   <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
   <button type="submit">Login</button>
 </form>
-<p class="muted">
-  Don't have an account? <a href="/register">Register here</a>.
-</p>
+{{if .Config.AllowRegister}}
+<p class="muted">Don't have an account? <a href="/register">Register here</a>.</p>
+{{else}}
+<p class="muted">Registration is disabled on this server.</p>
+{{end}}
 {{end}}

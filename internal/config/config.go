@@ -13,13 +13,14 @@ type Config struct {
 	DBPath            string
 	ReposPath         string
 	AuthKeysPath      string
-	BinaryPath        string // Auto-detected path to the running executable
-	SSHUser           string // Usually 'git'
-	ServerHost        string // e.g., 'git.example.com' or 'localhost'
-	ArtifactsPath     string // Root directory for CI logs and artifacts
-	SecretKey         string // Passphrase for AES-256-GCM secret encryption (GITMAN_SECRET_KEY)
-	InternalURL       string // Base URL of the web server, used by the post-receive hook
+	BinaryPath        string
+	SSHUser           string
+	ServerHost        string
+	ArtifactsPath     string
+	SecretKey         string
+	InternalURL       string
 	LogLevel          string
+	AllowRegister     bool
 	WorkerConcurrency int
 }
 
@@ -44,7 +45,8 @@ func LoadConfig() *Config {
 		ArtifactsPath:     getEnv("GITMAN_ARTIFACTS", ".data/artifacts"),
 		SecretKey:         getEnv("GITMAN_SECRET_KEY", ""),
 		InternalURL:       getEnv("GITMAN_INTERNAL_URL", "http://localhost:8080"),
-		LogLevel:          getEnv("GITMAN_LOG_LEVEL", "debug"),
+		LogLevel:          getEnv("GITMAN_LOG_LEVEL", "info"),
+		AllowRegister:     getEnvBool("GITMAN_ALLOW_REGISTER", false),
 		WorkerConcurrency: getEnvInt("GITMAN_WORKER_CONCURRENCY", 1),
 	}
 }
@@ -55,6 +57,7 @@ func getEnv(key, fallback string) string {
 	}
 	return fallback
 }
+
 func getEnvInt(key string, fallback int) int {
 	if val, ok := os.LookupEnv(key); ok {
 		if n, err := strconv.Atoi(val); err == nil && n > 0 {
@@ -63,6 +66,16 @@ func getEnvInt(key string, fallback int) int {
 	}
 	return fallback
 }
+
+func getEnvBool(key string, fallback bool) bool {
+	if val, ok := os.LookupEnv(key); ok {
+		if b, err := strconv.ParseBool(val); err == nil {
+			return b
+		}
+	}
+	return fallback
+}
+
 func ParseLogLevel(level string) slog.Level {
 	switch level {
 	case "debug":

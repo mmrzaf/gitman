@@ -119,6 +119,7 @@ func TestHandleLoginPOSTInvalid(t *testing.T) {
 
 func TestHandleRegisterGET(t *testing.T) {
 	app := setupTestApp(t)
+	app.Config.AllowRegister = true
 	req := httptest.NewRequest("GET", "/register", nil)
 	w := httptest.NewRecorder()
 	app.HandleRegisterGET(w, req)
@@ -129,6 +130,7 @@ func TestHandleRegisterGET(t *testing.T) {
 
 func TestHandleRegisterPOSTSuccess(t *testing.T) {
 	app := setupTestApp(t)
+	app.Config.AllowRegister = true
 	form := url.Values{
 		"username": {"newuser"},
 		"password": {"NewPass123"},
@@ -188,5 +190,25 @@ func TestHandleKeysGET(t *testing.T) {
 	app.HandleKeysGET(w, req)
 	if w.Code != 200 {
 		t.Errorf("expected 200")
+	}
+}
+
+func TestHandleRegisterDisabled(t *testing.T) {
+	app := setupTestApp(t)
+	app.Config.AllowRegister = false
+
+	req := httptest.NewRequest(http.MethodGet, "/register", nil)
+	w := httptest.NewRecorder()
+	app.HandleRegisterGET(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+
+	r := SetupRouter(app)
+	req = httptest.NewRequest(http.MethodGet, "/register", nil)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("router should not expose /register when disabled, got %d", w.Code)
 	}
 }

@@ -65,6 +65,10 @@ func (app *App) HandleLoginPOST(w http.ResponseWriter, r *http.Request) {
 }
 
 func (app *App) HandleRegisterGET(w http.ResponseWriter, r *http.Request) {
+	if app.Config == nil || !app.Config.AllowRegister {
+		http.NotFound(w, r)
+		return
+	}
 	if GetUser(r) != nil {
 		http.Redirect(w, r, "/repos", http.StatusFound)
 		return
@@ -76,6 +80,10 @@ func (app *App) HandleRegisterGET(w http.ResponseWriter, r *http.Request) {
 }
 
 func (app *App) HandleRegisterPOST(w http.ResponseWriter, r *http.Request) {
+	if app.Config == nil || !app.Config.AllowRegister {
+		http.NotFound(w, r)
+		return
+	}
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "Bad request", http.StatusBadRequest)
 		return
