@@ -2,49 +2,27 @@
 <!-- Unified Header -->
 <div class="page-header" style="margin-bottom: 1.5rem">
   <h2>
-    <a
-      href="/{{.Data.Owner.Username}}"
-      style="text-decoration: none; color: inherit"
-      >{{.Data.Owner.Username}}</a
-    >
+    <a href="/{{.Data.Owner.Username}}" style="text-decoration: none; color: inherit">{{.Data.Owner.Username}}</a>
     /
-    <a
-      href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}"
-      style="text-decoration: none; color: inherit"
-      >{{.Data.Repository.Name}}</a
-    >
+    <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}" style="text-decoration: none; color: inherit">{{.Data.Repository.Name}}</a>
   </h2>
   <p class="muted" style="margin-top: 5px">
-    {{if
-    .Data.Repository.Description}}{{.Data.Repository.Description}}{{else}}No
-    description provided.{{end}}
+    {{if .Data.Repository.Description}}{{.Data.Repository.Description}}{{else}}No description provided.{{end}}
   </p>
 </div>
 
-<!-- Unified Navigation -->
-<div
-  style="
-    margin-bottom: 1.5rem;
-    border-bottom: 1px solid rgba(127, 127, 127, 0.2);
-    padding-bottom: 10px;
-    font-size: 1.05em;
-  "
->
-  <a
-    href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/tree/{{if .Data.CurrentRef}}{{.Data.CurrentRef}}{{else}}main{{end}}"
-    style="text-decoration: none"
-    >Files</a
-  >
-  |
-  <a
-    href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/commits/{{if .Data.CurrentRef}}{{.Data.CurrentRef}}{{else}}main{{end}}"
-    style="text-decoration: none"
-    >Commits</a
-  >
-  {{if and $.User (eq $.User.ID .Data.Owner.ID)}} |
-  <strong>Collaborators</strong>
+<!-- Repository Navigation -->
+<div class="repo-nav">
+  <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/tree/{{if .Data.CurrentRef}}{{.Data.CurrentRef}}{{else}}main{{end}}" style="text-decoration: none">Files</a> |
+  <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/commits/{{if .Data.CurrentRef}}{{.Data.CurrentRef}}{{else}}main{{end}}" style="text-decoration: none">Commits</a>
+  {{if and $.User (eq $.User.ID .Data.Owner.ID)}}
+  | <strong>Collaborators</strong>
+  {{end}}
+  | <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci" style="text-decoration: none">CI/CD</a>
+  {{if and $.User (eq $.User.ID .Data.Owner.ID)}}
+  | <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/secrets" style="text-decoration: none">Secrets</a>
   {{end}}
 </div>
 
-<!-- Load the HTMX panel -->
-{{template "collaborators_panel" .}} {{end}}
+{{template "collaborators_panel" .}}
+{{end}}

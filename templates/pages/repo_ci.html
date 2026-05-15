@@ -1,104 +1,91 @@
 {{define "content"}}
-<!-- Header -->
+<!-- Unified Header -->
 <div class="page-header" style="margin-bottom: 1.5rem">
-    <h2>
-        <a href="/{{.Data.Owner.Username}}" style="text-decoration:none;color:inherit">{{.Data.Owner.Username}}</a>
-        /
-        <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}" style="text-decoration:none;color:inherit">{{.Data.Repository.Name}}</a>
-    </h2>
-    <p class="muted" style="margin-top:5px">
-        {{if .Data.Repository.Description}}{{.Data.Repository.Description}}{{else}}No description provided.{{end}}
-    </p>
+  <h2>
+    <a href="/{{.Data.Owner.Username}}" style="text-decoration: none; color: inherit">{{.Data.Owner.Username}}</a>
+    /
+    <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}" style="text-decoration: none; color: inherit">{{.Data.Repository.Name}}</a>
+  </h2>
+  <p class="muted" style="margin-top: 5px">
+    {{if .Data.Repository.Description}}{{.Data.Repository.Description}}{{else}}No description provided.{{end}}
+  </p>
 </div>
 
-<!-- Navigation -->
-<div style="margin-bottom:1.5rem;border-bottom:1px solid rgba(127,127,127,0.2);padding-bottom:10px;font-size:1.05em">
-    <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/tree/main" style="text-decoration:none">Files</a> |
-    <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/commits/main" style="text-decoration:none">Commits</a>
-    {{if and $.User (eq $.User.ID .Data.Owner.ID)}} |
-    <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/collaborators" style="text-decoration:none">Collaborators</a> |
-    {{end}}
-    | <strong>CI/CD</strong>
-    {{if and $.User (eq $.User.ID .Data.Owner.ID)}} |
-    <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/secrets" style="text-decoration:none">Secrets</a>
-    {{end}}
+<!-- Repository Navigation -->
+<div class="repo-nav">
+  <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/tree/main" style="text-decoration: none">Files</a> |
+  <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/commits/main" style="text-decoration: none">Commits</a>
+  {{if and $.User (eq $.User.ID .Data.Owner.ID)}}
+  | <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/collaborators" style="text-decoration: none">Collaborators</a>
+  {{end}}
+  | <strong>CI/CD</strong>
+  {{if and $.User (eq $.User.ID .Data.Owner.ID)}}
+  | <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/secrets" style="text-decoration: none">Secrets</a>
+  {{end}}
 </div>
 
 {{template "flash" .}}
 
-<!-- Actions bar -->
 <div style="display:flex;gap:10px;align-items:center;margin-bottom:1.5rem;flex-wrap:wrap">
-    <!-- Manual trigger -->
-    {{if $.User}}
-    <form method="POST" action="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/trigger">
-        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-        <button type="submit" style="background:var(--button-bg);color:var(--button-text);border:none;padding:0.45rem 0.9rem;border-radius:6px;cursor:pointer">
-            ▶ Run CI
-        </button>
-    </form>
-    {{end}}
+  {{if $.User}}
+  <form method="POST" action="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/trigger">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <button type="submit" style="background:var(--button-bg);color:var(--button-text);border:none;padding:0.45rem 0.9rem;border-radius:6px;cursor:pointer">▶ Run CI</button>
+  </form>
+  {{end}}
 
-    <!-- Hook install/uninstall (owner only) -->
-    {{if and $.User (eq $.User.ID .Data.Owner.ID)}}
-    <div style="margin-left:auto;font-size:0.9em">
-        {{if .Data.HookExists}}
-        <span class="muted">Auto-trigger: <strong style="color:#5cb85c">✓ Active</strong></span>
-        <form method="POST" action="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/hook/uninstall" style="display:inline">
-            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
-            <button type="submit" style="background:#d9534f;color:#fff;border:none;padding:0.3rem 0.7rem;border-radius:6px;cursor:pointer;margin-left:8px">Remove hook</button>
+  {{if and $.User (eq $.User.ID .Data.Owner.ID)}}
+  <div style="margin-left:auto;font-size:0.9em">
+    {{if .Data.HookExists}}
+    <span class="muted">Auto-trigger: <strong style="color:#5cb85c">✓ Active</strong></span>
+    <form method="POST" action="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/hook/uninstall" style="display:inline">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
+      <button type="submit" style="background:#d9534f;color:#fff;border:none;padding:0.3rem 0.7rem;border-radius:6px;cursor:pointer;margin-left:8px">Remove hook</button>
+    </form>
+    {{else}}
+    <details style="display:inline-block">
+      <summary style="cursor:pointer;color:var(--link)">Install auto-trigger hook</summary>
+      <div class="card" style="margin-top:0.5rem;padding:1rem">
+        <p class="muted" style="margin-top:0">The hook will POST to the trigger endpoint on every push.</p>
+        <form method="POST" action="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/hook/install">
+          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
+          <button type="submit" style="margin-top:8px">Install hook</button>
         </form>
-        {{else}}
-        <details style="display:inline-block">
-            <summary style="cursor:pointer;color:var(--link)">Install auto-trigger hook</summary>
-            <div class="card" style="margin-top:0.5rem;padding:1rem">
-                <p class="muted" style="margin-top:0">The hook will POST to the trigger endpoint on every push.</p>
-                <form method="POST" action="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/hook/install">
-                    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
-                    <button type="submit" style="margin-top:8px">Install hook</button>
-                </form>
-            </div>
-        </details>
-        {{end}}
-    </div>
+      </div>
+    </details>
     {{end}}
+  </div>
+  {{end}}
 </div>
 
-<!-- Runs list -->
 {{if .Data.Runs}}
 <div>
-    {{range .Data.Runs}}
-    <div class="card" style="margin-bottom:0.75rem;padding:12px 15px;border:1px solid rgba(127,127,127,0.2);border-radius:6px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
-        <!-- Status badge -->
-        <span style="
-            {{if eq .Status "success"}}background:#e8f5e9;color:#2e7d32;border:1px solid #a5d6a7{{end}}
-            {{if eq .Status "failed"}}background:#ffebee;color:#c62828;border:1px solid #ef9a9a{{end}}
-            {{if eq .Status "running"}}background:#e3f2fd;color:#1565c0;border:1px solid #90caf9{{end}}
-            {{if eq .Status "pending"}}background:#fff8e1;color:#f57f17;border:1px solid #ffe082{{end}}
-            {{if eq .Status "skipped"}}background:#f5f5f5;color:#616161;border:1px solid #bdbdbd{{end}}
-            padding:3px 10px;border-radius:12px;font-size:0.82em;font-weight:bold;white-space:nowrap">
-            {{.Status}}
-        </span>
+  {{range .Data.Runs}}
+  <div class="card" style="margin-bottom:0.75rem;padding:12px 15px;border:1px solid rgba(127,127,127,0.2);border-radius:6px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+    <span style="
+      {{if eq .Status "success"}}background:#e8f5e9;color:#2e7d32;border:1px solid #a5d6a7{{end}}
+      {{if eq .Status "failed"}}background:#ffebee;color:#c62828;border:1px solid #ef9a9a{{end}}
+      {{if eq .Status "running"}}background:#e3f2fd;color:#1565c0;border:1px solid #90caf9{{end}}
+      {{if eq .Status "pending"}}background:#fff8e1;color:#f57f17;border:1px solid #ffe082{{end}}
+      {{if eq .Status "skipped"}}background:#f5f5f5;color:#616161;border:1px solid #bdbdbd{{end}}
+      padding:3px 10px;border-radius:12px;font-size:0.82em;font-weight:bold;white-space:nowrap">{{.Status}}</span>
 
-        <!-- Commit + branch info -->
-        <div style="flex:1;min-width:0">
-            <div style="font-family:monospace;font-size:0.9em">
-                {{if .Branch}}<span style="background:rgba(127,127,127,0.15);padding:2px 6px;border-radius:4px">{{.Branch}}</span>{{end}}
-                {{if .Tag}}<span style="background:rgba(127,127,127,0.15);padding:2px 6px;border-radius:4px">tag: {{.Tag}}</span>{{end}}
-                {{if .CommitHash}}<span class="muted"> {{printf "%.7s" .CommitHash}}</span>{{end}}
-            </div>
-            <div class="muted" style="font-size:0.82em;margin-top:2px">
-                {{.Event}} · {{.CreatedAt.Format "Jan 02 15:04:05"}}
-            </div>
-        </div>
-
-        <a href="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/ci/{{.ID}}"
-           style="font-size:0.9em;white-space:nowrap">View log →</a>
+    <div style="flex:1;min-width:0">
+      <div style="font-family:monospace;font-size:0.9em">
+        {{if .Branch}}<span style="background:rgba(127,127,127,0.15);padding:2px 6px;border-radius:4px">{{.Branch}}</span>{{end}}
+        {{if .Tag}}<span style="background:rgba(127,127,127,0.15);padding:2px 6px;border-radius:4px">tag: {{.Tag}}</span>{{end}}
+        {{if .CommitHash}}<span class="muted"> {{printf "%.7s" .CommitHash}}</span>{{end}}
+      </div>
+      <div class="muted" style="font-size:0.82em;margin-top:2px">{{.Event}} · {{.CreatedAt.Format "Jan 02 15:04:05"}}</div>
     </div>
-    {{end}}
+
+    <a href="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/ci/{{.ID}}" style="font-size:0.9em;white-space:nowrap">View log →</a>
+  </div>
+  {{end}}
 </div>
 {{else}}
 <div class="card" style="text-align:center;padding:2rem;border:1px dashed rgba(127,127,127,0.3);border-radius:8px">
-    <p class="muted">No CI runs yet. Click <strong>Run CI</strong> or push a commit with a <code>.gitman-ci.sh</code> file.</p>
+  <p class="muted">No CI runs yet. Click <strong>Run CI</strong> or push a commit with a <code>.gitman-ci.sh</code> file.</p>
 </div>
 {{end}}
 {{end}}

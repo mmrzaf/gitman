@@ -2,150 +2,58 @@
 <!-- Unified Header -->
 <div class="page-header" style="margin-bottom: 1.5rem">
   <h2>
-    <a
-      href="/{{.Data.Owner.Username}}"
-      style="text-decoration: none; color: inherit"
-      >{{.Data.Owner.Username}}</a
-    >
+    <a href="/{{.Data.Owner.Username}}" style="text-decoration: none; color: inherit">{{.Data.Owner.Username}}</a>
     /
-    <a
-      href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}"
-      style="text-decoration: none; color: inherit"
-      >{{.Data.Repository.Name}}</a
-    >
+    <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}" style="text-decoration: none; color: inherit">{{.Data.Repository.Name}}</a>
   </h2>
   <p class="muted" style="margin-top: 5px">
-    {{if
-    .Data.Repository.Description}}{{.Data.Repository.Description}}{{else}}No
-    description provided.{{end}}
+    {{if .Data.Repository.Description}}{{.Data.Repository.Description}}{{else}}No description provided.{{end}}
   </p>
 </div>
 
-<!-- Unified Navigation -->
-<div
-  style="
-    margin-bottom: 1.5rem;
-    border-bottom: 1px solid rgba(127, 127, 127, 0.2);
-    padding-bottom: 10px;
-    font-size: 1.05em;
-  "
->
-  <a
-    href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/tree/{{if .Data.CurrentRef}}{{.Data.CurrentRef}}{{else}}main{{end}}"
-    style="text-decoration: none"
-    >Files</a
-  >
-  |
+<!-- Repository Navigation -->
+<div class="repo-nav">
+  <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/tree/{{if .Data.CurrentRef}}{{.Data.CurrentRef}}{{else}}main{{end}}" style="text-decoration: none">Files</a> |
   <strong>Commits</strong>
-  |
-  <a
-    href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci"
-    style="text-decoration: none"
-    >CI</a
-  >
-  {{if and $.User (eq $.User.ID .Data.Owner.ID)}} |
-  <a
-    href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/collaborators"
-    style="text-decoration: none"
-    >Collaborators</a
-  >
+  {{if and $.User (eq $.User.ID .Data.Owner.ID)}}
+  | <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/collaborators" style="text-decoration: none">Collaborators</a>
+  {{end}}
+  | <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci" style="text-decoration: none">CI/CD</a>
+  {{if and $.User (eq $.User.ID .Data.Owner.ID)}}
+  | <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/secrets" style="text-decoration: none">Secrets</a>
   {{end}}
 </div>
 
 {{if .Data.IsEmpty}}
-<!-- Unified Empty State -->
-<div
-  class="card"
-  style="
-    padding: 1.5rem;
-    border: 1px solid rgba(127, 127, 127, 0.2);
-    border-radius: 6px;
-  "
->
+<div class="card" style="padding: 1.5rem; border: 1px solid rgba(127, 127, 127, 0.2); border-radius: 6px;">
   <h3 style="margin-top: 0">Quick Setup</h3>
-  <p class="muted">
-    This repository is empty. To get started, push an existing repository from
-    the command line:
-  </p>
+  <p class="muted">This repository is empty. To get started, push an existing repository from the command line:</p>
 
   <h4 style="margin-bottom: 5px">Via SSH</h4>
-  <pre
-    style="
-      background: rgba(127, 127, 127, 0.1);
-      padding: 10px;
-      border-radius: 4px;
-      overflow-x: auto;
-      margin-top: 0;
-    "
-  ><code>git remote add origin {{$.Config.SSHUser}}@{{$.Config.ServerHost}}:{{.Data.Owner.Username}}/{{.Data.Repository.Name}}.git
+  <pre style="background: rgba(127, 127, 127, 0.1); padding: 10px; border-radius: 4px; overflow-x: auto; margin-top: 0;"><code>git remote add origin {{$.Config.SSHUser}}@{{$.Config.ServerHost}}:{{.Data.Owner.Username}}/{{.Data.Repository.Name}}.git
 git branch -M main
 git push -u origin main</code></pre>
 
   <h4 style="margin-bottom: 5px">Via HTTP</h4>
-  <pre
-    style="
-      background: rgba(127, 127, 127, 0.1);
-      padding: 10px;
-      border-radius: 4px;
-      overflow-x: auto;
-      margin: 0;
-    "
-  ><code>git remote add origin http://{{$.Config.ServerHost}}/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}.git
+  <pre style="background: rgba(127, 127, 127, 0.1); padding: 10px; border-radius: 4px; overflow-x: auto; margin: 0;"><code>git remote add origin http://{{$.Config.ServerHost}}/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}.git
 git branch -M main
 git push -u origin main</code></pre>
 </div>
-
 {{else}}
-
-<!-- Unified Address / Action Bar -->
 <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 1rem">
-  <div
-    style="
-      background: rgba(127, 127, 127, 0.15);
-      padding: 5px 12px;
-      border-radius: 4px;
-      font-family: monospace;
-      font-size: 0.95em;
-    "
-  >
-    <strong>Branch:</strong> {{.Data.CurrentRef}}
-  </div>
+  <div style="background: rgba(127, 127, 127, 0.15); padding: 5px 12px; border-radius: 4px; font-family: monospace; font-size: 0.95em"><strong>Branch:</strong> {{.Data.CurrentRef}}</div>
 </div>
 
 <div class="commits-list">
   {{range .Data.Commits}}
-  <div
-    class="card"
-    style="
-      margin-bottom: 1rem;
-      padding: 15px;
-      border: 1px solid rgba(127, 127, 127, 0.2);
-      border-radius: 6px;
-    "
-  >
-    <div style="font-size: 1.1em; margin-bottom: 8px">
-      <strong>{{.Message}}</strong>
-    </div>
-    <div
-      class="muted"
-      style="font-size: 0.9em; display: flex; gap: 10px; align-items: center"
-    >
-      <span
-        style="
-          font-family: monospace;
-          background: rgba(127, 127, 127, 0.15);
-          padding: 3px 8px;
-          border-radius: 4px;
-        "
-      >
-        {{printf "%.7s" .Hash}}
-      </span>
-      <span>
-        <strong>{{.Author}}</strong> committed on {{.Date.Format "2006-01-02
-        15:04:05"}}
-      </span>
+  <div class="card" style="margin-bottom: 1rem; padding: 15px; border: 1px solid rgba(127, 127, 127, 0.2); border-radius: 6px;">
+    <div style="font-size: 1.1em; margin-bottom: 8px"><strong>{{.Message}}</strong></div>
+    <div class="muted" style="font-size: 0.9em; display: flex; gap: 10px; align-items: center">
+      <span style="font-family: monospace; background: rgba(127, 127, 127, 0.15); padding: 3px 8px; border-radius: 4px;">{{printf "%.7s" .Hash}}</span>
+      <span><strong>{{.Author}}</strong> committed on {{.Date.Format "2006-01-02 15:04:05"}}</span>
     </div>
   </div>
   {{end}}
 </div>
-{{end}} {{end}}
+{{end}}
+{{end}}

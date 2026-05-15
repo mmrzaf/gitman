@@ -6,26 +6,14 @@
 
 {{template "flash" .}}
 
-<form action="/register" method="POST">
+<form method="POST" action="/register">
   <p>
     <label for="username">Username</label><br />
-    <input
-      id="username"
-      type="text"
-      name="username"
-      required
-      autocomplete="username"
-    />
+    <input id="username" type="text" name="username" required autocomplete="username" />
   </p>
   <p>
     <label for="password">Password</label><br />
-    <input
-      id="password"
-      type="password"
-      name="password"
-      required
-      autocomplete="new-password"
-    />
+    <input id="password" type="password" name="password" required autocomplete="new-password" />
   </p>
   <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
   <button type="submit">Register</button>
