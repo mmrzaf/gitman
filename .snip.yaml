@@ -65,8 +65,8 @@ ignore:
 sensitive:
   exclude_globs:
     - .env*
-    - "**/*secret*"
-    - "**/*secrets*"
+    #- "**/*secret*"
+    #- "**/*secrets*"
     - "**/*.pem"
     - "**/*.key"
     - "**/id_rsa*"
