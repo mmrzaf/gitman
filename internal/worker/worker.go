@@ -19,11 +19,13 @@ import (
 )
 
 const (
-	pollInterval  = 3 * time.Second
-	scriptName    = ".gitman-ci.sh"
-	artifactsDir  = "artifacts"
-	runTimeout    = 30 * time.Minute
-	shutdownGrace = 60 * time.Second
+	pollInterval     = 3 * time.Second
+	scriptName       = ".gitman-ci.sh"
+	artifactsDir     = "artifacts"
+	runTimeout       = 30 * time.Minute
+	shutdownGrace    = 60 * time.Second
+	maxArtifactSize  = 300 * 1024 * 1024 // 300 MB
+	maxArtifactFiles = 10
 )
 
 // Run starts the worker pool and blocks until a shutdown signal is received.
@@ -318,11 +320,26 @@ func (j *job) collectArtifacts() (failed bool) {
 	}
 
 	entries, _ := os.ReadDir(srcDir)
+	if len(entries) > maxArtifactFiles {
+		j.logf("ERROR: too many artifact files (%d > %d)", len(entries), maxArtifactFiles)
+		return true
+	}
+
+	var totalSize int64
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
 		src := filepath.Join(srcDir, entry.Name())
+		info, err := os.Stat(src)
+		if err != nil {
+			continue
+		}
+		totalSize += info.Size()
+		if totalSize > maxArtifactSize {
+			j.logf("ERROR: total artifact size exceeds limit (%d > %d)", totalSize, maxArtifactSize)
+			return true
+		}
 		dst := filepath.Join(dstDir, entry.Name())
 		if err := moveFile(src, dst); err != nil {
 			j.logf("ERROR: failed to save artifact %s: %v", entry.Name(), err)
