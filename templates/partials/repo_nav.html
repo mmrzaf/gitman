@@ -1,0 +1,26 @@
+{{define "repo_nav"}}
+<div class="repo-nav">
+    {{$owner := .Data.Owner.Username}} {{$repo := .Data.Repository.Name}}
+
+    <a href="/{{$owner}}/{{$repo}}/tree/main" style="text-decoration: none"
+        >Files</a
+    >
+    |
+    <a href="/{{$owner}}/{{$repo}}/commits/main" style="text-decoration: none"
+        >Commits</a
+    >
+
+    {{if and $.User (eq $.User.ID .Data.Owner.ID)}} |
+    <a href="/{{$owner}}/{{$repo}}/collaborators" style="text-decoration: none"
+        >Collaborators</a
+    >
+    {{end}} |
+    <a href="/{{$owner}}/{{$repo}}/ci" style="text-decoration: none">CI/CD</a>
+
+    {{if and $.User (eq $.User.ID .Data.Owner.ID)}} |
+    <a href="/{{$owner}}/{{$repo}}/ci/secrets" style="text-decoration: none"
+        >Secrets</a
+    >
+    {{end}}
+</div>
+{{end}}

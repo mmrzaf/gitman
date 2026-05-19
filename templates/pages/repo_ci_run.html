@@ -1,5 +1,4 @@
 {{define "content"}}
-<!-- Unified Header -->
 <div class="page-header" style="margin-bottom: 1.5rem">
   <h2>
     <a href="/{{.Data.Owner.Username}}" style="text-decoration: none; color: inherit">{{.Data.Owner.Username}}</a>
@@ -11,18 +10,7 @@
   </p>
 </div>
 
-<!-- Repository Navigation -->
-<div class="repo-nav">
-  <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/tree/main" style="text-decoration: none">Files</a> |
-  <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/commits/main" style="text-decoration: none">Commits</a>
-  {{if and $.User (eq $.User.ID .Data.Owner.ID)}}
-  | <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/collaborators" style="text-decoration: none">Collaborators</a>
-  {{end}}
-  | <strong>CI/CD</strong>
-  {{if and $.User (eq $.User.ID .Data.Owner.ID)}}
-  | <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/secrets" style="text-decoration: none">Secrets</a>
-  {{end}}
-</div>
+{{template "repo_nav" .}}
 
 <div class="card" style="margin-bottom:1.5rem;border:1px solid rgba(127,127,127,0.2);border-radius:8px;padding:1rem 1.25rem">
   <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:0.75rem">
@@ -40,7 +28,7 @@
     <tr><td style="padding:3px 12px 3px 0;color:var(--muted);white-space:nowrap">Event</td><td>{{.Data.Run.Event}}</td></tr>
     {{if .Data.Run.Branch}}<tr><td style="padding:3px 12px 3px 0;color:var(--muted)">Branch</td><td><code>{{.Data.Run.Branch}}</code></td></tr>{{end}}
     {{if .Data.Run.Tag}}<tr><td style="padding:3px 12px 3px 0;color:var(--muted)">Tag</td><td><code>{{.Data.Run.Tag}}</code></td></tr>{{end}}
-    {{if .Data.Run.CommitHash}}<tr><td style="padding:3px 12px 3px 0;color:var(--muted)">Commit</td><td><code>{{printf "%.12s" .Data.Run.CommitHash}}</code></td></tr>{{end}}
+    {{if .Data.Run.CommitHash}}<tr><td style="padding:3px 12px 3px 0;color:var(--muted)">Commit</td><td><code>{{slice .Data.Run.CommitHash 0 12}}</code></td></tr>{{end}}
     <tr><td style="padding:3px 12px 3px 0;color:var(--muted)">Started</td><td>{{.Data.Run.CreatedAt.Format "2006-01-02 15:04:05"}}</td></tr>
     {{if .Data.Run.CompletedAt}}<tr><td style="padding:3px 12px 3px 0;color:var(--muted)">Completed</td><td>{{.Data.Run.CompletedAt.Format "2006-01-02 15:04:05"}}</td></tr>{{end}}
   </table>

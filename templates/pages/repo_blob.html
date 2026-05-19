@@ -1,5 +1,4 @@
 {{define "content"}}
-<!-- Unified Header -->
 <div class="page-header" style="margin-bottom: 1.5rem">
   <h2>
     <a href="/{{.Data.Owner.Username}}" style="text-decoration: none; color: inherit">{{.Data.Owner.Username}}</a>
@@ -11,22 +10,17 @@
   </p>
 </div>
 
-<!-- Repository Navigation -->
-<div class="repo-nav">
-  <strong>Files</strong> |
-  <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/commits/{{if .Data.CurrentRef}}{{.Data.CurrentRef}}{{else}}main{{end}}" style="text-decoration: none">Commits</a>
-  {{if and $.User (eq $.User.ID .Data.Owner.ID)}}
-  | <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/collaborators" style="text-decoration: none">Collaborators</a>
-  {{end}}
-  | <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci" style="text-decoration: none">CI/CD</a>
-  {{if and $.User (eq $.User.ID .Data.Owner.ID)}}
-  | <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/secrets" style="text-decoration: none">Secrets</a>
-  {{end}}
-</div>
+{{template "repo_nav" .}}
 
 <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 1rem; flex-wrap: wrap;">
-  <div style="background: rgba(127, 127, 127, 0.15); padding: 5px 12px; border-radius: 4px; font-family: monospace; font-size: 0.95em"><strong>Branch:</strong> {{.Data.CurrentRef}}</div>
-  <div style="background: rgba(127, 127, 127, 0.15); padding: 5px 12px; border-radius: 4px; font-family: monospace; font-size: 0.95em"><strong>Path:</strong> /{{.Data.CurrentPath}} <span class="muted" style="margin-left: 5px">({{.Data.BlobSize}} B)</span></div>
+  <div style="background: rgba(127, 127, 127, 0.15); padding: 5px 12px; border-radius: 4px; font-family: monospace; font-size: 0.95em">
+    <strong>Ref:</strong> {{.Data.CurrentRef}}
+  </div>
+  <div style="background: rgba(127, 127, 127, 0.15); padding: 5px 12px; border-radius: 4px; font-family: monospace; font-size: 0.95em">
+    <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/tree/{{.Data.CurrentRef}}" style="text-decoration: none; color: inherit">← tree</a>
+    &nbsp;/&nbsp;<strong>{{.Data.CurrentPath}}</strong>
+    <span class="muted" style="margin-left: 8px">({{.Data.BlobSize}} B)</span>
+  </div>
 </div>
 
 <div class="card" style="padding: 0; border: 1px solid rgba(127, 127, 127, 0.2); border-radius: 6px; overflow-x: auto;">
