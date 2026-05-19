@@ -1,4 +1,5 @@
-set shell := ["bash", "-cu"]
+set shell := ["bash", "-e", "-o", "pipefail", "-c"]
+set dotenv-load := true
 
 
 dev:

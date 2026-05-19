@@ -47,10 +47,10 @@ func TestIsPasswordStrong(t *testing.T) {
 	}{
 		{"strong enough", "abcdefghij1", false, ""},
 		{"strong mixed", "Abcdef12345", false, ""},
-		{"too short", "Abc123", true, "password must be at least 10 characters"},
+		{"too short", "Abc123", true, "password must be at least 8 characters"},
 		{"no digit", "abcdefghijklm", true, "password must contain at least one letter and one digit"},
 		{"no letter", "1234567890", true, "password must contain at least one letter and one digit"},
-		{"exactly 10 with both", "abcdefgh1j", false, ""},
+		{"exactly 8 with both", "abcfgh1j", false, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

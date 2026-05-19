@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strings"
 
+	crypto_ssh "golang.org/x/crypto/ssh"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/mmrzaf/gitman/internal/models"
 	"github.com/mmrzaf/gitman/internal/ssh"
@@ -63,7 +65,17 @@ func (app *App) HandleKeysPOST(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	err := app.DB.AddSSHKey(r.Context(), user.ID, name, pubKey)
+	pubKey = strings.TrimSpace(pubKey)
+	_, _, _, _, err := crypto_ssh.ParseAuthorizedKey([]byte(pubKey))
+	if err != nil {
+		app.renderPartial(w, r, "keys.html", "keys_panel", PageData{
+			User:  user,
+			Error: "Invalid SSH key format. Please provide a valid public key.",
+			Data:  KeysPageData{Keys: app.getKeysForUser(r, user.ID)},
+		})
+		return
+	}
+	err = app.DB.AddSSHKey(r.Context(), user.ID, name, pubKey)
 	if err != nil {
 		app.renderPartial(w, r, "keys.html", "keys_panel", PageData{
 			User:  user,

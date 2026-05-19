@@ -108,11 +108,8 @@ func (app *App) HandleRegisterPOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(password) < 8 {
-		app.renderPage(w, r, "register.html", PageData{
-			Title: "Register",
-			Error: "Password must be at least 8 characters.",
-		})
+	if err := admin.IsPasswordStrong(password); err != nil {
+		app.renderPage(w, r, "register.html", PageData{Title: "Register", Error: err.Error()})
 		return
 	}
 	if err := admin.IsPasswordStrong(password); err != nil {

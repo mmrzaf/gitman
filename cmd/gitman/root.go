@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 
 	"github.com/mmrzaf/gitman/internal/config"
 	"github.com/mmrzaf/gitman/internal/db"
@@ -27,7 +28,9 @@ func Execute(args []string) error {
 	if len(args) < 2 {
 		return help(os.Stdout)
 	}
-
+	if _, err := exec.LookPath("git"); err != nil {
+		return fmt.Errorf("git executable not found in PATH: %w", err)
+	}
 	database, err := db.InitDB(cfg.DBPath)
 	if err != nil {
 		return err

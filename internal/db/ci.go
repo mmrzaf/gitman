@@ -35,27 +35,35 @@ func (db *DB) ClaimNextPendingRun(ctx context.Context) (*models.CIRun, error) {
 		}
 	}()
 
-	var run models.CIRun
-	var createdAt int64
-	err = tx.QueryRowContext(ctx, `
-		SELECT id, repo_id, commit_hash, branch, tag, event, status, log_file, created_at
-		FROM ci_runs
-		WHERE status = 'pending'
-		ORDER BY created_at ASC
-		LIMIT 1
-	`).Scan(&run.ID, &run.RepoID, &run.CommitHash, &run.Branch, &run.Tag,
-		&run.Event, &run.Status, &run.LogFile, &createdAt)
-
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
+	res, err := tx.ExecContext(ctx, `
+        UPDATE ci_runs
+        SET status = 'running'
+        WHERE id = (
+            SELECT id FROM ci_runs
+            WHERE status = 'pending'
+            ORDER BY created_at ASC
+            LIMIT 1
+        )
+    `)
 	if err != nil {
 		return nil, err
 	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return nil, nil
+	}
 
-	if _, err = tx.ExecContext(ctx,
-		"UPDATE ci_runs SET status = 'running' WHERE id = ?", run.ID,
-	); err != nil {
+	var run models.CIRun
+	var createdAt int64
+	err = tx.QueryRowContext(ctx, `
+        SELECT id, repo_id, commit_hash, branch, tag, event, status, log_file, created_at
+        FROM ci_runs
+        WHERE status = 'running'
+        ORDER BY created_at DESC
+        LIMIT 1
+    `).Scan(&run.ID, &run.RepoID, &run.CommitHash, &run.Branch, &run.Tag,
+		&run.Event, &run.Status, &run.LogFile, &createdAt)
+	if err != nil {
 		return nil, err
 	}
 

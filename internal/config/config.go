@@ -72,7 +72,9 @@ func getEnvBool(key string, fallback bool) bool {
 		if b, err := strconv.ParseBool(val); err == nil {
 			return b
 		}
+
 	}
+
 	return fallback
 }
 

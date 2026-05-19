@@ -1,5 +1,4 @@
 {{define "content"}}
-<!-- Unified Header -->
 <div class="page-header" style="margin-bottom: 1.5rem">
   <h2>
     <a href="/{{.Data.Owner.Username}}" style="text-decoration: none; color: inherit">{{.Data.Owner.Username}}</a>
@@ -11,18 +10,7 @@
   </p>
 </div>
 
-<!-- Repository Navigation -->
-<div class="repo-nav">
-  <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/tree/main" style="text-decoration: none">Files</a> |
-  <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/commits/main" style="text-decoration: none">Commits</a>
-  {{if and $.User (eq $.User.ID .Data.Owner.ID)}}
-  | <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/collaborators" style="text-decoration: none">Collaborators</a>
-  {{end}}
-  | <strong>CI/CD</strong>
-  {{if and $.User (eq $.User.ID .Data.Owner.ID)}}
-  | <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/secrets" style="text-decoration: none">Secrets</a>
-  {{end}}
-</div>
+{{template "repo_nav" .}}
 
 {{template "flash" .}}
 
@@ -74,7 +62,7 @@
       <div style="font-family:monospace;font-size:0.9em">
         {{if .Branch}}<span style="background:rgba(127,127,127,0.15);padding:2px 6px;border-radius:4px">{{.Branch}}</span>{{end}}
         {{if .Tag}}<span style="background:rgba(127,127,127,0.15);padding:2px 6px;border-radius:4px">tag: {{.Tag}}</span>{{end}}
-        {{if .CommitHash}}<span class="muted"> {{printf "%.7s" .CommitHash}}</span>{{end}}
+        {{if .CommitHash}}<span class="muted"> {{slice .CommitHash 0 7}}</span>{{end}}
       </div>
       <div class="muted" style="font-size:0.82em;margin-top:2px">{{.Event}} · {{.CreatedAt.Format "Jan 02 15:04:05"}}</div>
     </div>

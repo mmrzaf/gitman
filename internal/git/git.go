@@ -40,6 +40,24 @@ type TreeEntry struct {
 	Name string
 }
 
+var safeRefRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9/_.-]*$`)
+
+func ValidateRefName(ref string) error {
+	if ref == "" {
+		return nil
+	}
+	if len(ref) > 255 {
+		return fmt.Errorf("ref name too long")
+	}
+	if !safeRefRegex.MatchString(ref) {
+		return fmt.Errorf("invalid ref name: contains illegal characters")
+	}
+	if strings.Contains(ref, "..") || strings.Contains(ref, "//") {
+		return fmt.Errorf("invalid ref name: contains '..' or '//'")
+	}
+	return nil
+}
+
 var SafeNameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 // SecureRepoPath guarantees the resulting path is safely inside the base directory
@@ -124,8 +142,6 @@ func InitBareRepo(ctx context.Context, fullPath string) error {
 		return fmt.Errorf("failed to create repo directory: %w", err)
 	}
 
-	// Note: using "git -C fullPath init --bare fullPath" is okay but redundant;
-	// "git -C fullPath init --bare ." would also work. We'll stick to your existing style.
 	if _, err := run(ctx, fullPath, "init", "--bare", "."); err != nil {
 		slog.Error("failed to initialize bare repo, cleaning up",
 			"repo", fullPath,
@@ -180,30 +196,42 @@ func ensureNotEmpty(ctx context.Context, repoPath string) error {
 	return nil
 }
 
-// GetDefaultBranch attempts to resolve HEAD to a short branch name.
-// Returns "" if HEAD is not a valid symbolic ref yet.
+// GetDefaultBranch reads the HEAD file directly from the bare repository.
+// This avoids the `git symbolic-ref` failure on repos where HEAD points
+// to a branch that has not yet been pushed (common in fresh bare repos).
+//
+// Returns "" if HEAD is detached (points to a commit hash) or unreadable.
 func GetDefaultBranch(ctx context.Context, repoPath string) (string, error) {
-	out, err := run(ctx, repoPath, "symbolic-ref", "--quiet", "--short", "HEAD")
+	headPath := filepath.Join(repoPath, "HEAD")
+	data, err := os.ReadFile(headPath)
 	if err != nil {
-		// In a bare, empty repo, this will usually fail until the first push.
-		slog.Warn("unable to determine default branch",
+		slog.Warn("unable to read HEAD file",
 			"repo", repoPath,
 			"error", err,
 		)
 		return "", nil
 	}
 
-	branch := string(bytes.TrimSpace(out))
+	line := strings.TrimSpace(string(data))
+	const prefix = "ref: refs/heads/"
+	if !strings.HasPrefix(line, prefix) {
+		// Detached HEAD – contains a raw commit hash.
+		slog.Debug("HEAD is detached, no default branch",
+			"repo", repoPath,
+			"head", line,
+		)
+		return "", nil
+	}
 
-	slog.Debug("resolved default branch",
+	branch := strings.TrimPrefix(line, prefix)
+	slog.Debug("resolved default branch from HEAD file",
 		"repo", repoPath,
 		"branch", branch,
 	)
-
 	return branch, nil
 }
 
-// GetBranches lists local branches in the repo (bare or non‑bare).
+// GetBranches lists local branches in the repo (bare or non-bare).
 func GetBranches(ctx context.Context, repoPath string) ([]string, error) {
 	out, err := run(ctx, repoPath,
 		"for-each-ref",
@@ -240,49 +268,147 @@ func GetBranches(ctx context.Context, repoPath string) ([]string, error) {
 	return branches, nil
 }
 
-// ResolveRef returns a safe ref to use for logs/tree/blob.
+// GetTags lists all tags in the repo, sorted by version/refname.
+func GetTags(ctx context.Context, repoPath string) ([]string, error) {
+	out, err := run(ctx, repoPath,
+		"for-each-ref",
+		"--format=%(refname:short)",
+		"--sort=version:refname",
+		"refs/tags/",
+	)
+	if err != nil {
+		// Tags may simply be absent; don't treat this as a hard error.
+		slog.Debug("no tags or failed to list tags",
+			"repo", repoPath,
+			"error", err,
+		)
+		return []string{}, nil
+	}
+
+	out = bytes.TrimSpace(out)
+	if len(out) == 0 {
+		return []string{}, nil
+	}
+
+	var tags []string
+	for _, line := range bytes.Split(out, []byte{'\n'}) {
+		if len(line) > 0 {
+			tags = append(tags, string(line))
+		}
+	}
+
+	slog.Debug("tags loaded",
+		"repo", repoPath,
+		"count", len(tags),
+	)
+
+	return tags, nil
+}
+
+// refExists checks whether a fully-qualified git ref (e.g. refs/heads/main,
+// refs/tags/v1.0) exists in the repository.
+func refExists(ctx context.Context, repoPath, fullRef string) bool {
+	_, err := run(ctx, repoPath, "show-ref", "--verify", "--quiet", fullRef)
+	return err == nil
+}
+
+// isCommitHash returns true when s looks like a full or abbreviated commit SHA
+// that git can resolve.
+func isCommitHash(ctx context.Context, repoPath, s string) bool {
+	// git rev-parse --verify <sha>^{commit} succeeds only for valid commits.
+	_, err := run(ctx, repoPath, "rev-parse", "--verify", s+"^{commit}")
+	return err == nil
+}
+
+// ResolveRef returns a concrete git ref to use for logs/tree/blob operations.
 //
-// Priority:
-//  1. If requestedRef is non‑empty and exists as a local branch, return it.
-//  2. Else if default branch exists and is a local branch, return it.
-//  3. Else if any branch exists, return the first one.
-//  4. Else fall back to "HEAD" (only useful if repo is not empty).
+// Resolution order:
+//  1. Empty requestedRef → use default branch (from HEAD file) or first branch.
+//  2. Exact branch match (refs/heads/<ref>).
+//  3. Exact tag match (refs/tags/<ref>).
+//  4. Valid commit hash / abbreviation.
+//  5. Fallback to first branch or "HEAD".
 //
-// If the repo is empty, ErrRepoEmpty is returned.
+// Returns ErrRepoEmpty if the repository has no commits.
 func ResolveRef(ctx context.Context, repoPath, requestedRef string) (string, error) {
 	if err := ensureNotEmpty(ctx, repoPath); err != nil {
 		return "", err
 	}
-
-	branches, _ := GetBranches(ctx, repoPath)
-
-	branchExists := func(name string) bool {
-		for _, b := range branches {
-			if b == name {
-				return true
+	if err := ValidateRefName(requestedRef); err != nil {
+		return "", err
+	}
+	// Step 1: no ref requested – use default or first branch.
+	if requestedRef == "" {
+		if def, _ := GetDefaultBranch(ctx, repoPath); def != "" {
+			if refExists(ctx, repoPath, "refs/heads/"+def) {
+				slog.Debug("resolved ref to default branch",
+					"repo", repoPath,
+					"branch", def,
+				)
+				return def, nil
 			}
 		}
-		return false
+		if branches, _ := GetBranches(ctx, repoPath); len(branches) > 0 {
+			slog.Debug("resolved ref to first branch (no default)",
+				"repo", repoPath,
+				"branch", branches[0],
+			)
+			return branches[0], nil
+		}
+		return "HEAD", nil
 	}
 
-	// 1. directly requested branch exists?
-	if requestedRef != "" && branchExists(requestedRef) {
+	// Step 2: branch?
+	if refExists(ctx, repoPath, "refs/heads/"+requestedRef) {
+		slog.Debug("resolved ref as branch",
+			"repo", repoPath,
+			"ref", requestedRef,
+		)
 		return requestedRef, nil
 	}
 
-	// 2. default branch
-	if def, _ := GetDefaultBranch(ctx, repoPath); def != "" && branchExists(def) {
-		return def, nil
+	// Step 3: tag?
+	if refExists(ctx, repoPath, "refs/tags/"+requestedRef) {
+		slog.Debug("resolved ref as tag",
+			"repo", repoPath,
+			"ref", requestedRef,
+		)
+		return requestedRef, nil
 	}
 
-	// 3. any branch
-	if len(branches) > 0 {
+	// Step 4: commit hash / abbreviation?
+	if isCommitHash(ctx, repoPath, requestedRef) {
+		slog.Debug("resolved ref as commit hash",
+			"repo", repoPath,
+			"ref", requestedRef,
+		)
+		return requestedRef, nil
+	}
+
+	// Step 5: fallback.
+	slog.Debug("ref not found, falling back",
+		"repo", repoPath,
+		"requestedRef", requestedRef,
+	)
+	if branches, _ := GetBranches(ctx, repoPath); len(branches) > 0 {
 		return branches[0], nil
 	}
-
-	// 4. fallback
-	// At this point we know ensureNotEmpty passed, so HEAD *should* be valid.
 	return "HEAD", nil
+}
+
+// SanitizeRefForFilename converts a ref name to a safe filename component.
+// Slashes are replaced with underscores; any character that is not
+// alphanumeric, a hyphen, underscore, or period is dropped.
+func SanitizeRefForFilename(ref string) string {
+	ref = strings.ReplaceAll(ref, "/", "_")
+	var sb strings.Builder
+	for _, c := range ref {
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+			(c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' {
+			sb.WriteRune(c)
+		}
+	}
+	return sb.String()
 }
 
 // GetCommits returns commits for the given ref (branch name or HEAD), with pagination.
@@ -315,7 +441,7 @@ func GetCommits(ctx context.Context, repoPath, ref string, skip, limit int) ([]C
 			"ref", resolvedRef,
 			"error", err,
 		)
-		return nil, err
+		return nil, fmt.Errorf("failed to read commits for ref %q: %w", resolvedRef, err)
 	}
 
 	out = bytes.TrimSpace(out)

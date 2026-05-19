@@ -40,8 +40,27 @@ git branch -M main
 git push -u origin main</code></pre>
 </div>
 {{else}}
+<!-- Branch / Tag selector -->
 <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 1rem">
-  <div style="background: rgba(127, 127, 127, 0.15); padding: 5px 12px; border-radius: 4px; font-family: monospace; font-size: 0.95em"><strong>Branch:</strong> {{.Data.CurrentRef}}</div>
+  <select
+    onchange="window.location.href='/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/tree/' + this.value + {{if .Data.CurrentPath}}'/' + '{{.Data.CurrentPath}}'{{else}}''{{end}}"
+    style="padding: 5px 10px; border: 1px solid rgba(127, 127, 127, 0.3); border-radius: 4px; font-family: monospace; font-size: 0.95em; background: transparent; color: inherit; cursor: pointer;"
+  >
+    {{if .Data.Branches}}
+    <optgroup label="Branches">
+      {{range .Data.Branches}}
+      <option value="{{.}}" {{if eq . $.Data.CurrentRef}}selected{{end}}>{{.}}</option>
+      {{end}}
+    </optgroup>
+    {{end}}
+    {{if .Data.Tags}}
+    <optgroup label="Tags">
+      {{range .Data.Tags}}
+      <option value="{{.}}" {{if eq . $.Data.CurrentRef}}selected{{end}}>{{.}}</option>
+      {{end}}
+    </optgroup>
+    {{end}}
+  </select>
 </div>
 
 <div class="commits-list">

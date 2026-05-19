@@ -19,6 +19,7 @@ type RepoPageData struct {
 	CurrentRef    string
 	CurrentPath   string
 	Branches      []string
+	Tags          []string
 	IsEmpty       bool
 	Tree          []git.TreeEntry
 	Commits       []git.Commit
@@ -74,6 +75,12 @@ func (app *App) RepoAccessMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// loadRefsIntoData populates Branches and Tags on an existing RepoPageData.
+func loadRefsIntoData(ctx context.Context, repoPath string, data *RepoPageData) {
+	data.Branches, _ = git.GetBranches(ctx, repoPath)
+	data.Tags, _ = git.GetTags(ctx, repoPath)
+}
+
 // HandleRepoTreeGET renders the repository's file tree view.
 func (app *App) HandleRepoTreeGET(w http.ResponseWriter, r *http.Request) {
 	repo := GetRepo(r)
@@ -97,7 +104,7 @@ func (app *App) HandleRepoTreeGET(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. Resolve the reference (branch or fallback).
+	// 2. Resolve the reference (branch, tag, commit hash, or fallback).
 	refParam := chi.URLParam(r, "ref")
 	ref, err := git.ResolveRef(ctx, repoPath, refParam)
 	if err != nil {
@@ -109,8 +116,7 @@ func (app *App) HandleRepoTreeGET(w http.ResponseWriter, r *http.Request) {
 	// 3. Collect basic data.
 	data.CurrentRef = ref
 	data.CurrentPath = chi.URLParam(r, "*")
-	branches, _ := git.GetBranches(ctx, repoPath)
-	data.Branches = branches
+	loadRefsIntoData(ctx, repoPath, &data)
 
 	// 4. Fetch tree.
 	tree, err := git.GetTree(ctx, repoPath, ref, data.CurrentPath)
@@ -174,8 +180,7 @@ func (app *App) HandleRepoBlobGET(w http.ResponseWriter, r *http.Request) {
 	}
 	data.CurrentRef = ref
 
-	branches, _ := git.GetBranches(ctx, repoPath)
-	data.Branches = branches
+	loadRefsIntoData(ctx, repoPath, &data)
 
 	size, err := git.GetBlobSize(ctx, repoPath, ref, path)
 	if err != nil {
@@ -233,7 +238,7 @@ func (app *App) HandleRepoCommitsGET(w http.ResponseWriter, r *http.Request) {
 
 	if git.IsEmpty(ctx, repoPath) {
 		data.IsEmpty = true
-		data.Branches, _ = git.GetBranches(ctx, repoPath)
+		loadRefsIntoData(ctx, repoPath, &data)
 		app.renderPage(w, r, "repo_commits.html", PageData{
 			Title: repo.Name + " Commits",
 			User:  GetUser(r),
@@ -265,8 +270,7 @@ func (app *App) HandleRepoCommitsGET(w http.ResponseWriter, r *http.Request) {
 	}
 	data.CurrentRef = ref
 
-	branches, _ := git.GetBranches(ctx, repoPath)
-	data.Branches = branches
+	loadRefsIntoData(ctx, repoPath, &data)
 
 	commits, err := git.GetCommits(ctx, repoPath, ref, 0, 50)
 	if err != nil {
@@ -293,6 +297,9 @@ func (app *App) HandleRepoCommitsGET(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleRepoArchiveGET streams a zip or tar.gz archive of the repository.
+//
+// Route: /archive/* — the wildcard captures "<ref>.<format>" including refs
+// that contain slashes (e.g. "feature/foo.zip" → ref=feature/foo, format=zip).
 func (app *App) HandleRepoArchiveGET(w http.ResponseWriter, r *http.Request) {
 	repo := GetRepo(r)
 	repoPath := GetRepoPath(r)
@@ -303,48 +310,58 @@ func (app *App) HandleRepoArchiveGET(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filename := chi.URLParam(r, "filename")
+	// The wildcard captures everything after /archive/.
+	// We split on the last dot to separate the ref from the format extension.
+	archivePath := chi.URLParam(r, "*")
+	if archivePath == "" {
+		app.renderError(w, r, PageData{User: GetUser(r)}, "Missing archive name", http.StatusBadRequest)
+		return
+	}
 
-	// Detect format
-	var format string
-	var contentType string
-
+	// Detect format suffix: support ".tar.gz", ".tar", ".zip"
+	var refPart, format, contentType string
 	switch {
-	case strings.HasSuffix(filename, ".tar.gz"):
+	case strings.HasSuffix(archivePath, ".tar.gz"):
 		format = "tar.gz"
 		contentType = "application/gzip"
-	case strings.HasSuffix(filename, ".tar"):
+		refPart = strings.TrimSuffix(archivePath, ".tar.gz")
+	case strings.HasSuffix(archivePath, ".tar"):
 		format = "tar"
 		contentType = "application/x-tar"
-	case strings.HasSuffix(filename, ".zip"):
+		refPart = strings.TrimSuffix(archivePath, ".tar")
+	case strings.HasSuffix(archivePath, ".zip"):
 		format = "zip"
 		contentType = "application/zip"
+		refPart = strings.TrimSuffix(archivePath, ".zip")
 	default:
 		app.renderError(w, r, PageData{User: GetUser(r)}, "Unsupported archive format", http.StatusBadRequest)
 		return
 	}
 
-	// Extract ref from: repoName-ref.format
-	base := strings.TrimSuffix(filename, "."+format)
-	parts := strings.SplitN(base, "-", 2)
-	if len(parts) != 2 {
-		app.renderError(w, r, PageData{User: GetUser(r)}, "Invalid archive name", http.StatusBadRequest)
+	if refPart == "" {
+		app.renderError(w, r, PageData{User: GetUser(r)}, "Missing ref in archive name", http.StatusBadRequest)
 		return
 	}
 
-	refParam := parts[1]
-
-	ref, err := git.ResolveRef(ctx, repoPath, refParam)
+	ref, err := git.ResolveRef(ctx, repoPath, refPart)
 	if err != nil {
-		slog.Error("Failed to resolve ref for archive", "error", err)
+		slog.Error("Failed to resolve ref for archive",
+			"repoPath", repoPath,
+			"refPart", refPart,
+			"error", err,
+		)
 		app.renderError(w, r, PageData{User: GetUser(r)}, "Invalid reference", http.StatusBadRequest)
 		return
 	}
 
+	safeRef := git.SanitizeRefForFilename(ref)
+	downloadName := fmt.Sprintf("%s-%s.%s", repo.Name, safeRef, format)
+
 	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, downloadName))
 
 	if err := git.StreamArchive(ctx, repoPath, ref, format, w); err != nil {
+		// Headers are already sent at this point; log and bail.
 		slog.Error("Failed to stream archive",
 			"repo", repo.Name,
 			"ref", ref,
