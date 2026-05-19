@@ -25,8 +25,6 @@ func SetupRouter(app *App) *chi.Mux {
 	})
 
 	// ── Artifact download API (requires auth, no CSRF) ──────────────
-	// Artifact endpoints are GET only, but we keep them outside the CSRF group
-	// to avoid any future POST problems.
 	r.Route("/api/repos/{username}/{repo_name}", func(r chi.Router) {
 		r.Use(app.AuthMiddleware)
 		r.Use(app.RequireAuth)
@@ -79,14 +77,17 @@ func SetupRouter(app *App) *chi.Mux {
 
 		// Web interface for repositories (all require auth + CSRF)
 		r.Route("/{username}/{repo_name}", func(r chi.Router) {
-			r.Use(app.RepoAccessMiddleware) // also uses GetUser from context
+			r.Use(app.RepoAccessMiddleware)
 
 			r.Get("/", app.HandleRepoTreeGET)
 			r.Get("/tree/{ref}", app.HandleRepoTreeGET)
 			r.Get("/tree/{ref}/*", app.HandleRepoTreeGET)
 			r.Get("/blob/{ref}/*", app.HandleRepoBlobGET)
 			r.Get("/commits/{ref}", app.HandleRepoCommitsGET)
-			r.Get("/archive/{filename}", app.HandleRepoArchiveGET)
+
+			// Archive: wildcard captures "<ref>.<format>" including refs with
+			// slashes (e.g. /archive/feature/my-branch.zip).
+			r.Get("/archive/*", app.HandleRepoArchiveGET)
 
 			// Collaborators
 			r.Get("/collaborators", app.HandleRepoCollaboratorsGET)
