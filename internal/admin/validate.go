@@ -25,10 +25,9 @@ func contextBackground() context.Context {
 }
 
 func IsPasswordStrong(password string) error {
-	if len(password) < 10 {
-		return fmt.Errorf("password must be at least 10 characters")
+	if len(password) < 8 {
+		return fmt.Errorf("password must be at least 8 characters")
 	}
-
 	hasLetter := false
 	hasDigit := false
 	for _, r := range password {
