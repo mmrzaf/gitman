@@ -127,22 +127,22 @@ func (app *App) HandleRepoDeletePOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := git.DeleteRepo(repoPath); err != nil {
-		slog.Error("failed to delete repo from disk", "path", repoPath, "error", err)
+	if err := app.DB.DeleteRepository(r.Context(), repoID, user.ID); err != nil {
+		slog.Error("failed to delete repository from DB", "repoID", repoID, "error", err)
 		app.renderPartial(w, r, "repos.html", "repos_panel", PageData{
 			User:  user,
-			Error: "Failed to delete repository files from disk. Please contact administrator.",
+			Error: "Failed to delete repository record. Please contact administrator.",
 			Data:  ReposPageData{Repos: app.getReposForUser(r, user.ID)},
 		})
 		return
 	}
 
-	if err := app.DB.DeleteRepository(r.Context(), repoID, user.ID); err != nil {
-		slog.Error("failed to delete repository from DB", "repoID", repoID, "error", err)
+	if err := git.DeleteRepo(repoPath); err != nil {
+		slog.Error("failed to delete repo from disk", "path", repoPath, "error", err)
 		app.renderPartial(w, r, "repos.html", "repos_panel", PageData{
-			User:  user,
-			Error: "Repository files were deleted, but database record removal failed. Please contact administrator.",
-			Data:  ReposPageData{Repos: app.getReposForUser(r, user.ID)},
+			User:    user,
+			Success: "Repository record deleted, but some files may remain on disk. Please contact administrator.",
+			Data:    ReposPageData{Repos: app.getReposForUser(r, user.ID)},
 		})
 		return
 	}
@@ -152,4 +152,5 @@ func (app *App) HandleRepoDeletePOST(w http.ResponseWriter, r *http.Request) {
 		Success: "Repository deleted.",
 		Data:    ReposPageData{Repos: app.getReposForUser(r, user.ID)},
 	})
+
 }
