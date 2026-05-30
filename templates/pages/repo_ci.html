@@ -62,7 +62,7 @@
       <div style="font-family:monospace;font-size:0.9em">
         {{if .Branch}}<span style="background:rgba(127,127,127,0.15);padding:2px 6px;border-radius:4px">{{.Branch}}</span>{{end}}
         {{if .Tag}}<span style="background:rgba(127,127,127,0.15);padding:2px 6px;border-radius:4px">tag: {{.Tag}}</span>{{end}}
-        {{if .CommitHash}}<span class="muted"> {{slice .CommitHash 0 7}}</span>{{end}}
+        {{if .CommitHash}}<span class="muted"> {{short .CommitHash 7}}</span>{{end}}
       </div>
       <div class="muted" style="font-size:0.82em;margin-top:2px">{{.Event}} · {{.CreatedAt.Format "Jan 02 15:04:05"}}</div>
     </div>
@@ -73,7 +73,7 @@
 </div>
 {{else}}
 <div class="card" style="text-align:center;padding:2rem;border:1px dashed rgba(127,127,127,0.3);border-radius:8px">
-  <p class="muted">No CI runs yet. Click <strong>Run CI</strong> or push a commit with a <code>.gitman-ci.sh</code> file.</p>
+  <p class="muted">No CI runs yet. Click <strong>Run CI</strong> or push a commit with a <code>.gitman-ci.yml</code> file.</p>
 </div>
 {{end}}
 {{end}}
