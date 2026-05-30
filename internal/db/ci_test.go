@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 func TestCreateAndClaimCIRun(t *testing.T) {
@@ -38,6 +39,9 @@ func TestCreateAndClaimCIRun(t *testing.T) {
 	if run.Status != "running" {
 		t.Errorf("expected status running, got %s", run.Status)
 	}
+	if run.AttemptID == "" {
+		t.Fatal("claimed run is missing attempt ID")
+	}
 
 	// Check run in DB
 	r, err := db.GetCIRunByID(ctx, runID)
@@ -53,7 +57,7 @@ func TestCreateAndClaimCIRun(t *testing.T) {
 
 	// Update log file
 	logFile := "/tmp/test-ci.log"
-	err = db.UpdateCIRunLogFile(ctx, runID, logFile)
+	err = db.UpdateCIRunLogFile(ctx, runID, run.AttemptID, logFile)
 	if err != nil {
 		t.Fatalf("UpdateCIRunLogFile failed: %v", err)
 	}
@@ -66,7 +70,7 @@ func TestCreateAndClaimCIRun(t *testing.T) {
 	}
 
 	// Complete the run
-	err = db.CompleteCIRun(ctx, runID, "success")
+	err = db.CompleteCIRun(ctx, runID, run.AttemptID, "success")
 	if err != nil {
 		t.Fatalf("CompleteCIRun failed: %v", err)
 	}
@@ -166,5 +170,59 @@ func TestSecrets(t *testing.T) {
 	secrets, _ = db.GetRepoSecrets(ctx, repoID)
 	if len(secrets) != 0 {
 		t.Error("secret not deleted")
+	}
+}
+
+func TestRequeueStaleCIRuns(t *testing.T) {
+	database := setupTestDB(t)
+	defer database.Close()
+	ctx := context.Background()
+
+	user, err := database.CreateUser(ctx, "staleowner", "CiPass1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoID, err := database.CreateRepository(ctx, user.ID, "stale-repo", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID, err := database.CreateCIRun(ctx, repoID, "abc1234", "main", "", "push")
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := database.ClaimNextPendingRun(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldAttempt := claimed.AttemptID
+	if _, err := database.ExecContext(ctx, "UPDATE ci_runs SET heartbeat_at = ? WHERE id = ?", time.Now().Add(-10*time.Minute).Unix(), runID); err != nil {
+		t.Fatal(err)
+	}
+	count, err := database.RequeueStaleCIRuns(ctx, time.Now().Add(-2*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("expected one requeued run, got %d", count)
+	}
+	run, err := database.GetCIRunByID(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != "pending" || run.AttemptID != "" || run.StartedAt != nil || run.HeartbeatAt != nil {
+		t.Fatalf("stale run was not reset: %+v", run)
+	}
+	replacement, err := database.ClaimNextPendingRun(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replacement.AttemptID == "" || replacement.AttemptID == oldAttempt {
+		t.Fatalf("replacement claim did not receive a fresh attempt ID: %+v", replacement)
+	}
+	if err := database.HeartbeatCIRun(ctx, runID, oldAttempt); err == nil {
+		t.Fatal("stale attempt renewed replacement lease")
+	}
+	if err := database.CompleteCIRun(ctx, runID, oldAttempt, "success"); err == nil {
+		t.Fatal("stale attempt completed replacement lease")
 	}
 }

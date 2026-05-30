@@ -59,7 +59,10 @@ type CIRun struct {
 	Event       string     `json:"event"`
 	Status      string     `json:"status"`
 	LogFile     string     `json:"log_file"`
+	AttemptID   string     `json:"attempt_id,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
+	StartedAt   *time.Time `json:"started_at,omitempty"`
+	HeartbeatAt *time.Time `json:"heartbeat_at,omitempty"`
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
 }
 
