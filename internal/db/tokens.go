@@ -41,7 +41,7 @@ func (db *DB) GetUserAccessTokens(ctx context.Context, userID string) ([]models.
 		t.CreatedAt = unixToTime(createdAt)
 		tokens = append(tokens, t)
 	}
-	return tokens, nil
+	return tokens, rows.Err()
 }
 
 func (db *DB) DeleteAccessToken(ctx context.Context, id, userID string) error {

@@ -59,7 +59,7 @@ func (db *DB) GetUserSSHKeys(ctx context.Context, userID string) ([]models.SSHKe
 		k.UpdatedAt = unixToTime(updatedAt)
 		keys = append(keys, k)
 	}
-	return keys, nil
+	return keys, rows.Err()
 }
 
 // GetAllSSHKeys returns all keys in the system (useful for writing the authorized_keys file)
@@ -87,7 +87,7 @@ func (db *DB) GetAllSSHKeys(ctx context.Context) ([]models.SSHKey, error) {
 		k.UpdatedAt = unixToTime(updatedAt)
 		keys = append(keys, k)
 	}
-	return keys, nil
+	return keys, rows.Err()
 }
 
 func (db *DB) DeleteSSHKey(ctx context.Context, id, userID string) error {
