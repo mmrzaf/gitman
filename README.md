@@ -1,354 +1,147 @@
 # Gitman
 
-Gitman is a lightweight, self-hosted Git hosting service written in Go, designed for simplicity, control, and zero operational overhead.
+Gitman is a lightweight self-hosted Git server written in Go. It stores metadata in SQLite, stores bare repositories on disk, and uses the system Git executable for Git transport operations.
 
-It runs as a single binary, uses SQLite for metadata, and relies entirely on the system Git and SSH stack. No containers, no external services, no orchestration required.
-
----
-
-## Core Principles
-
-* **Single Binary** – everything runs inside one compiled executable
-* **Zero External Services** – no Redis, no queues, no orchestration layers
-* **System-Native** – uses system `git`, `ssh`, and filesystem directly
-* **Self-Host First** – optimized for small teams and private infrastructure
-* **Automation Ready** – built-in CI/CD without complex pipeline DSLs
-
----
+Gitman is aimed at small teams and private infrastructure. It is not a multi-tenant SaaS platform and it does not attempt to replace a dedicated CI runner fleet.
 
 ## Features
 
-### Repository Hosting
+- Browser UI for repositories, branches, tags, commits, files, collaborators, SSH keys, and personal access tokens.
+- Git smart HTTP with password or personal access token authentication.
+- Optional SSH Git transport through the host OpenSSH server and generated `authorized_keys` forced commands.
+- Private and public repositories with read and write collaborators.
+- Built-in CI jobs defined in `.gitman-ci.yml`.
+- CI secrets encrypted at rest when `GITMAN_SECRET_KEY` is configured.
+- CI logs, nested artifacts, repository archives, backups, and an admin CLI.
 
-* Create and manage Git repositories
-* SSH and HTTP(S) Git support
-* Private and collaborative repos
-* Branch, commit, and file browsing
-* Archive downloads (ZIP / tar)
+## Requirements
 
-### User & Access Management
+- Go `1.24.6` to build from source.
+- `git` available in `PATH` at runtime.
+- Docker only when the built-in CI worker is enabled.
+- OpenSSH only when SSH Git transport is enabled.
 
-* User registration and login
-* Session-based authentication
-* Personal access tokens (PAT)
-* Repository-level permissions
-* SSH key management via UI
+The repository must include the vendored `static/` directory used by the embedded web UI.
 
-### Web Interface
-
-* Server-rendered HTML with HTMX
-* Minimal, fast, dependency-light UI
-* Repository explorer (tree, blob, commits)
-
-### Built-in CI/CD (Gitman CI)
-
-* Script-based pipelines via `.gitman-ci.sh`
-* Automatic execution on `git push`
-* Isolated worker process
-* Artifact storage and retrieval via API
-* No YAML, no runners, no external agents
-
----
-
-## Architecture
-
-```
-                  +----------------------+
-                  |       Browser        |
-                  |     (HTMX + HTML)   |
-                  +----------+-----------+
-                             |
-                             | HTTP
-                             v
-                  +----------------------+
-                  |     gitman web       |
-                  |  (API + UI + Git)   |
-                  +----------+-----------+
-                             |
-         +-------------------+-------------------+
-         |                                       |
-         v                                       v
-+----------------------+           +--------------------------+
-|     SQLite DB        |           |   Bare Git Repositories  |
-| (users/repos/CI/etc) |           |      (filesystem)        |
-+----------------------+           +--------------------------+
-         |
-         v
-+----------------------+
-|    gitman worker     |
-|   (CI execution)     |
-+----------------------+
-```
-
-### SSH Flow
-
-```
-Developer → SSH → system sshd → git user
-        → forced command → gitman serve
-        → Gitman validates + routes → repo access
-```
-
----
-
-## Technology Stack
-
-* **Language:** Go
-* **Router:** Chi
-* **Templates:** `html/template`
-* **Frontend:** HTMX
-* **Database:** SQLite (`modernc.org/sqlite`)
-* **Git Integration:** system `git` CLI
-* **SSH Integration:** system OpenSSH + forced command
-
----
-
-## System Components
-
-### `gitman web`
-
-* Web UI and HTTP API
-* Git Smart HTTP server
-* Auth, repos, tokens, browsing
-
-### `gitman serve`
-
-* SSH entrypoint (forced command)
-* Validates key and enforces repo access
-
-### `gitman worker`
-
-* CI/CD executor
-* Polls database for jobs
-* Runs `.gitman-ci.sh`
-* Stores logs and artifacts
-
----
-
-## CI/CD Overview
-
-Gitman includes a built-in CI/CD system designed to stay minimal and predictable.
-
-### How It Works
-
-1. Developer pushes code
-2. `post-receive` hook triggers CI
-3. Job is recorded in SQLite
-4. `gitman worker` picks up the job
-5. Repository is cloned into a temp workspace
-6. `.gitman-ci.sh` is executed
-7. Logs and artifacts are stored
-8. Results become available via API/UI
-
-### Example CI Script
+## Build and run from source
 
 ```bash
-#!/usr/bin/env bash
-set -e
-
-echo "Running tests..."
 go test ./...
-
-echo "Building binary..."
-go build -o app
-
-mkdir -p artifacts
-cp app artifacts/
+go build -o bin/gitman ./cmd/gitman
+mkdir -p .data
+read -rsp 'Admin password: ' ADMIN_PASSWORD; printf '\n'
+printf '%s\n' "$ADMIN_PASSWORD" | ./bin/gitman admin users create admin
+unset ADMIN_PASSWORD
+./bin/gitman web
 ```
 
-### Environment Variables
+The UI is available at `http://localhost:8080` by default.
 
-Available inside CI:
+Start the CI worker separately when CI is needed. Pull approved job images on the runner first: Gitman starts CI containers with `--pull never` so repository-controlled jobs cannot grow Docker storage by pulling arbitrary images.
 
-```
-GITMAN_REPO
-GITMAN_COMMIT
-GITMAN_BRANCH
-GITMAN_TAG
-GITMAN_EVENT
+```bash
+docker pull golang:1.24-alpine
+./bin/gitman worker
 ```
 
-### Artifacts
+## Docker
 
-Stored internally:
+For the local HTTP setup:
 
-```
-.data/artifacts/<owner>/<repo>/<run_id>/
-```
-
-Accessible via API:
-
-```
-GET /api/repos/{owner}/{repo}/artifacts/latest/branch/{branch}/{file}
-GET /api/repos/{owner}/{repo}/artifacts/tag/{tag}/{file}
-GET /api/repos/{owner}/{repo}/artifacts/commit/{sha}/{file}
+```bash
+export GIT_UID=$(id -u)
+export DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)
+export GITMAN_DATA_DIR="$(pwd)/data"
+mkdir -p "$GITMAN_DATA_DIR" && chmod 700 "$GITMAN_DATA_DIR"
+docker compose up -d --build
 ```
 
----
+Open `http://localhost:8080`. See [DOCKER_SETUP.md](DOCKER_SETUP.md) before exposing the service publicly or enabling SSH.
 
-## Repository Model
+## CI configuration
 
-Repositories are stored as bare Git repos:
+Add `.gitman-ci.yml` at the repository root:
 
-```
-.data/repos/<owner>/<repo>.git
-```
-
-All operations (log, tree, blob, archive) are executed via `git` CLI.
-
----
-
-## API Overview
-
-### Authentication & Users
-
-| Method | Path        | Description    |
-| ------ | ----------- | -------------- |
-| GET    | `/login`    | Login page     |
-| POST   | `/login`    | Authenticate   |
-| GET    | `/register` | Register page  |
-| POST   | `/register` | Create account |
-| GET    | `/logout`   | Logout         |
-
-### SSH Keys
-
-| Method | Path                | Description |
-| ------ | ------------------- | ----------- |
-| GET    | `/keys`             | List keys   |
-| POST   | `/keys`             | Add key     |
-| POST   | `/keys/{id}/delete` | Delete key  |
-
-### Repositories
-
-| Method | Path                 | Description |
-| ------ | -------------------- | ----------- |
-| GET    | `/repos`             | List repos  |
-| POST   | `/repos`             | Create repo |
-| POST   | `/repos/{id}/delete` | Delete repo |
-
-### Git (Smart HTTP)
-
-```
-/{owner}/{repo}.git/*
+```yaml
+image: golang:1.24-alpine
+env:
+  APP_ENV: test
+  DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+steps:
+  - name: Test
+    run: go test ./...
+  - name: Save report
+    run: cp coverage.out /gitman/artifacts/coverage.out
 ```
 
-### CI/CD
+CI jobs run in Docker containers with network access disabled by default, a read-only root filesystem, dropped Linux capabilities, PID limits, CPU and memory limits, Docker log persistence disabled, bounded Gitman logs, bounded artifact staging, bounded workspace usage, and serialized per-repository cache writes. Job images must already exist on the runner because CI uses `--pull never`.
 
-| Method | Path                                 | Description      |
-| ------ | ------------------------------------ | ---------------- |
-| POST   | `/repos/{owner}/{repo}/ci/trigger`   | Trigger pipeline |
-| GET    | `/repos/{owner}/{repo}/ci/runs`      | List runs        |
-| GET    | `/repos/{owner}/{repo}/ci/runs/{id}` | Run details      |
+The worker mounts the Docker socket. Treat the worker as privileged host infrastructure. Application-level disk checks limit damage but are not hard quotas. Run the worker on a dedicated runner host or inside a VM with kernel-enforced filesystem quotas before accepting untrusted repository writers.
 
-### Artifacts
+## Admin CLI
 
-| Method | Path                                      |
-| ------ | ----------------------------------------- |
-| GET    | `/api/repos/{owner}/{repo}/artifacts/...` |
+Passwords are read from standard input so they do not appear in shell history or process listings.
 
----
+```bash
+read -rsp 'Password: ' USER_PASSWORD; printf '\n'
+printf '%s\n' "$USER_PASSWORD" | gitman admin users create alice
+unset USER_PASSWORD
 
-## File System Layout
+read -rsp 'New password: ' USER_PASSWORD; printf '\n'
+printf '%s\n' "$USER_PASSWORD" | gitman admin users reset-password alice
+unset USER_PASSWORD
+gitman admin users delete alice
 
-```
-.data/
-├── db/
-│   └── gitman.sqlite
-├── repos/
-│   └── <owner>/<repo>.git
-├── artifacts/
-│   └── <owner>/<repo>/<run_id>/
-└── authorized_keys
+gitman admin repos backup /srv/backups/repos-$(date +%F)
+gitman admin repos backup-all /srv/backups/gitman-$(date +%F)
 ```
 
----
+Backup destinations must be absent or empty, and must not be inside the repository or artifact trees. Repository and artifact files are copied live. Use a maintenance window or filesystem snapshots when strict point-in-time consistency is required.
 
-## Deployment
+## Configuration
 
-### Requirements
+Core environment variables:
 
-* Linux server
-* `git`
-* `openssh-server`
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `GITMAN_PORT` | `8080` | HTTP listen port. |
+| `GITMAN_DB` | `.data/db/gitman.sqlite` | SQLite database path. |
+| `GITMAN_REPOS` | `.data/repos` | Bare repository root. |
+| `GITMAN_ARTIFACTS` | `.data/artifacts` | CI log and artifact root. |
+| `GITMAN_CACHE_ROOT` | `.data/ci/cache` | Persistent CI cache root. |
+| `GITMAN_PUBLIC_URL` | `http://localhost:8080` | Browser-facing base URL used for clone links. |
+| `GITMAN_INTERNAL_URL` | `http://localhost:8080` | URL used by generated Git hooks. |
+| `GITMAN_SECRET_KEY` | empty | CI-secret encryption key. Empty disables CI-secret storage. |
+| `GITMAN_ALLOW_REGISTER` | `false` | Enable public account registration. |
+| `GITMAN_FORCE_SECURE_COOKIES` | `false` | Always mark browser cookies as secure. Enable behind HTTPS. |
+| `GITMAN_TRUST_PROXY_HEADERS` | `false` | Trust proxy HTTPS headers. Enable only behind a trusted reverse proxy. |
 
-### Setup
+CI limits:
 
-1. Create `git` user:
+| Variable | Default |
+| --- | --- |
+| `GITMAN_WORKER_CONCURRENCY` | `1` |
+| `GITMAN_MEMORY_LIMIT` | `512m` |
+| `GITMAN_CPU_LIMIT` | `1` |
+| `GITMAN_CI_TIMEOUT` | `30m` |
+| `GITMAN_CI_LEASE_TIMEOUT` | `2m` |
+| `GITMAN_CI_HEARTBEAT_INTERVAL` | `15s` |
+| `GITMAN_CI_NETWORK` | `none` |
+| `GITMAN_CI_ARTIFACT_MAX_BYTES` | `104857600` |
+| `GITMAN_CI_ARTIFACT_MAX_FILES` | `1000` |
+| `GITMAN_CI_LOG_MAX_BYTES` | `10485760` |
+| `GITMAN_CI_WORKSPACE_ROOT` | `.data/ci/workspaces` |
+| `GITMAN_CI_WORKSPACE_MAX_BYTES` | `1073741824` |
+| `GITMAN_CI_CACHE_MAX_BYTES` | `1073741824` |
+| `GITMAN_CI_CONTAINER_USER` | worker process numeric non-root UID:GID |
+| `GITMAN_CI_WORKER_PATH_PREFIX` | empty |
+| `GITMAN_CI_HOST_PATH_PREFIX` | empty |
 
-   ```
-   useradd -m -s /usr/bin/git-shell git
-   ```
+## Security model
 
-2. Build Gitman:
-
-   ```
-   go build -o gitman ./cmd/gitman
-   ```
-
-3. Run services:
-
-   ```
-   ./gitman web
-   ./gitman worker
-   ```
-
-4. Ensure permissions:
-
-   * `.data/repos` writable by `git`
-   * `.data` accessible by Gitman
-   * SSH configured to use `authorized_keys`
-
----
-
-## Security Model
-
-* SSH access restricted via forced command
-* No sandboxing for CI (trusted environment assumption)
-* Secrets encrypted at rest
-* Secure cookies (`HttpOnly`, `SameSite`)
-* CSP, HSTS, and security headers enabled
-* All Git operations executed with controlled inputs
-
----
-
-## Design Trade-offs
-
-Gitman intentionally avoids:
-
-* YAML pipeline systems
-* Distributed runners
-* Kubernetes integrations
-* External queues or brokers
-* Built-in container orchestration
-
-This keeps the system:
-
-* predictable
-* debuggable
-* easy to operate
-
----
-
-## Roadmap
-
-* CI run UI improvements (logs, history)
-* Repo-level CI settings
-* Artifact browsing UI
-* Backup/restore tooling
-* Webhook integrations
-* Performance optimizations for large repos
-
----
-
-## Summary
-
-Gitman is not trying to compete with GitHub or GitLab.
-
-It is designed for engineers who want:
-
-* full control
-* minimal infrastructure
-* predictable behavior
-* built-in automation without complexity
-
-If you can run `git` and `ssh`, you can run Gitman.
-
+- Repository writers can run repository-controlled CI code. Any CI secret exposed to a job must be treated as accessible to writers.
+- CI logs and artifacts require owner or collaborator membership even when repository source code is public.
+- CI logs mask exact configured secret values, but masking is defense in depth. Do not print secrets.
+- CI containers are restricted, but a Docker socket is still privileged infrastructure. Pre-pull only approved images. CI jobs must run as a numeric non-root UID:GID.
+- When the worker itself runs in Docker, configure the worker and host path prefixes so sibling containers mount host-visible paths. The included Compose file does this automatically.
+- Set `GITMAN_PUBLIC_URL`, force secure cookies, and trust proxy headers only when the reverse proxy is controlled and correctly configured.

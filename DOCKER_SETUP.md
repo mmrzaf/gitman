@@ -1,225 +1,166 @@
-## Gitman Docker Setup Guide
+# Gitman Docker setup
 
-This guide explains how to run Gitman in Docker using HTTP-only or with optional host‑SSH integration. The stack consists of two services: `web` (HTTP server + UI) and `worker` (CI/CD executor), sharing the same data directory.
+The Compose stack runs two containers:
 
----
+- `web`: browser UI and Git smart HTTP server.
+- `worker`: optional built-in CI executor. It launches restricted job containers through the host Docker socket.
 
-### Prerequisites
+Both containers share `./data` by default.
 
-- Docker ≥ 20.10
-- Docker Compose ≥ 2.0
-- (SSH) An existing OpenSSH server on the host (optional)
+## Local HTTP setup
 
----
+Requirements:
 
-### Quick Start (HTTP Only)
+- Docker Engine with the Compose plugin.
+- Access to `/var/run/docker.sock` when CI is enabled.
 
-1. Clone the Gitman repository and enter the directory.
+Start the stack:
 
-2. Create a `.env` file from the template (see below) and set at least `GITMAN_SECRET_KEY`.
+```bash
+export GIT_UID=$(id -u)
+export DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)
+export GITMAN_DATA_DIR="$(pwd)/data"
+mkdir -p "$GITMAN_DATA_DIR"
+chmod 700 "$GITMAN_DATA_DIR"
+docker compose up -d --build
+```
 
-3. Start the services:
+Create the first user:
+
+```bash
+read -rsp 'Admin password: ' ADMIN_PASSWORD; printf '\n'
+printf '%s\n' "$ADMIN_PASSWORD" | docker compose exec -T web gitman admin users create admin
+unset ADMIN_PASSWORD
+```
+
+Open `http://localhost:8080`.
+
+The default bind address is `127.0.0.1`. Change it only when the service is intentionally exposed:
+
+```bash
+GITMAN_BIND_ADDRESS=0.0.0.0 docker compose up -d
+```
+
+## CI runner images
+
+Gitman starts CI containers with `--pull never`. Pre-pull approved images on the Docker host before triggering jobs:
+
+```bash
+docker pull golang:1.24-alpine
+```
+
+This prevents repository-controlled CI configuration from pulling arbitrary images into Docker storage. Set `GITMAN_CI_CONTAINER_USER` only when a numeric non-root UID:GID override is required; otherwise the worker uses its own numeric non-root UID:GID. Running the CI worker as root is rejected.
+
+## CI secrets
+
+Set an encryption key before storing CI secrets:
+
+```bash
+export GITMAN_SECRET_KEY=$(openssl rand -hex 32)
+docker compose up -d
+```
+
+Persist that value in your deployment secret manager. Losing it makes stored CI secrets unreadable. Leaving it empty disables CI-secret storage.
+
+## HTTPS reverse proxy
+
+Terminate TLS at a reverse proxy and forward traffic to `127.0.0.1:8080`. Configure:
+
+```bash
+export GITMAN_PUBLIC_URL=https://git.example.com
+export GITMAN_FORCE_SECURE_COOKIES=true
+export GITMAN_TRUST_PROXY_HEADERS=true
+docker compose up -d
+```
+
+The proxy must set `X-Forwarded-Proto: https` or the equivalent standardized `Forwarded` header. Do not enable `GITMAN_TRUST_PROXY_HEADERS` when requests can bypass the trusted proxy.
+
+## SSH Git transport
+
+HTTP Git works without host changes. SSH Git transport uses the host OpenSSH server, a host-installed Gitman binary, and Gitman's generated `authorized_keys` file. The host Git user UID must match the container `GIT_UID` so OpenSSH accepts the generated file ownership.
+
+1. Create or identify a dedicated host account and align the container UID:
 
    ```bash
-   docker compose up -d
+   sudo useradd --create-home --shell /usr/sbin/nologin git 2>/dev/null || true
+   export GIT_UID=$(id -u git)
+   sudo install -d -m 700 -o git -g git /home/git/.ssh
+   sudo install -d -m 700 -o git -g git "$(pwd)/data"
+   docker compose up -d --build
    ```
 
-4. Access the web UI at `http://localhost:8080`.
+2. Install the same Gitman binary on the host:
 
-All Git operations work via HTTP(S) using username + password or personal access tokens.
+   ```bash
+   docker compose cp web:/usr/local/bin/gitman /tmp/gitman
+   sudo install -m 755 /tmp/gitman /usr/local/bin/gitman
+   ```
 
----
+3. Point the host account at Gitman's generated key file:
 
-### Directory Structure
+   ```bash
+   sudo ln -sfn "$(pwd)/data/authorized_keys" /home/git/.ssh/authorized_keys
+   sudo chown -h git:git /home/git/.ssh/authorized_keys
+   ```
 
-```
-.
-├── Dockerfile
-├── docker-compose.yml
-├── .env
-├── .env.example
-├── data/                  # persisted data (bind‑mounted)
-│   ├── db/gitman.sqlite
-│   ├── repos/
-│   ├── artifacts/
-│   └── authorized_keys
-└── ... (other source files)
-```
+4. Install a host wrapper. Replace `/srv/gitman` with the absolute directory containing `data/`:
 
----
+   ```bash
+   sudo tee /usr/local/bin/gitman-wrap >/dev/null <<'SCRIPT'
+   #!/bin/sh
+   export GITMAN_DB=/srv/gitman/data/db/gitman.sqlite
+   export GITMAN_REPOS=/srv/gitman/data/repos
+   export GITMAN_ARTIFACTS=/srv/gitman/data/artifacts
+   export GITMAN_AUTH_KEYS=/srv/gitman/data/authorized_keys
+   exec /usr/local/bin/gitman "$@"
+   SCRIPT
+   sudo chmod 755 /usr/local/bin/gitman-wrap
+   ```
 
-### Environment Variables
+5. Keep the Compose default:
 
-| Variable                    | Default                      | Description                                              |
-| --------------------------- | ---------------------------- | -------------------------------------------------------- |
-| `GITMAN_PORT`               | `8080`                       | Web server listening port (inside container)             |
-| `GITMAN_DB`                 | `/data/db/gitman.sqlite`     | Path to SQLite database file                             |
-| `GITMAN_REPOS`              | `/data/repos`                | Directory for bare Git repositories                      |
-| `GITMAN_ARTIFACTS`          | `/data/artifacts`            | CI artifacts and logs                                    |
-| `GITMAN_AUTH_KEYS`          | `/data/authorized_keys`      | SSH authorized keys file (managed by web)                |
-| `GITMAN_SECRET_KEY`         | **required**                 | Passphrase for encrypting CI secrets                     |
-| `GITMAN_INTERNAL_URL`       | `http://web:8080`            | Internal web URL used by worker and hooks                |
-| `GITMAN_SERVER_HOST`        | `localhost`                  | Public hostname for clone URLs (UX only)                 |
-| `GITMAN_LOG_LEVEL`          | `info`                       | Log level (`debug`, `info`, `warn`, `error`)             |
-| `GITMAN_WORKER_CONCURRENCY` | `1`                          | Number of concurrent CI jobs                             |
-| `GITMAN_BINARY_PATH`        | `/usr/local/bin/gitman-wrap` | Path written into authorized_keys for SSH forced command |
+   ```bash
+   GITMAN_BINARY_PATH=/usr/local/bin/gitman-wrap
+   ```
 
----
+When users add SSH keys in the UI, Gitman atomically regenerates `data/authorized_keys` with forced commands that call the host wrapper. The wrapper does not need Docker socket access.
 
-### Volumes
+## Worker privilege boundary
 
-All persistent data is stored in the bind‑mounted host directory `./data`.  
-This directory is shared between the `web` and `worker` containers.  
-**Make sure this directory is owned by the user with UID 1000 (the `gitman` user inside the container) or adjust the Dockerfile accordingly.**
+The worker mounts `/var/run/docker.sock`. Access to that socket is effectively host-level privilege. CI containers use Docker labels for crash reconciliation, `--pull never`, `--log-driver none`, an explicit numeric UID:GID, and serialized per-repository cache writes. The included limits reduce accidental and repository-driven resource exhaustion, but they are not a substitute for kernel-enforced filesystem quotas or a dedicated runner host.
 
----
+For stronger isolation:
 
-### Accessing the Application
+- Run `worker` on a dedicated machine or VM.
+- Put Docker storage and Gitman data on filesystems with quotas.
+- Keep `GITMAN_CI_NETWORK=none` unless outbound access is explicitly required.
+- Keep worker concurrency low.
+- Pre-pull only approved CI images.
+- Treat CI logs and artifacts as member-only build data; public repository source does not make them public.
 
-- **Web UI**: `http://localhost:8080`
-- **Git clone (HTTP)**: `http://localhost:8080/<owner>/<repo>.git`
-- **Health check**: `http://localhost:8080/health`
+## Backups
 
----
-
-### Admin Commands
-
-To run administrative tasks, execute commands inside the `web` container:
+Create a full backup from the web container:
 
 ```bash
-docker compose exec web gitman admin users create <username> <password>
-docker compose exec web gitman admin backup-all /tmp/backup
+docker compose exec -T web gitman admin repos backup-all /data/backups/gitman-$(date +%F)
 ```
 
----
+The destination must be absent or empty and must not be inside `/data/repos` or `/data/artifacts`. The SQLite database is copied coherently with `VACUUM INTO`. Repositories and artifacts are copied live, so use a maintenance window or filesystem snapshot when strict point-in-time consistency is required.
 
-### Enabling SSH Access (Host Integration)
-
-If you already have an SSH server running on the host, you can let Gitman manage the `authorized_keys` file for the `git` user, while keeping everything else inside Docker.
-
-**Overview:**
-
-- Gitman writes `/data/authorized_keys` with forced commands pointing to `/usr/local/bin/gitman-wrap`.
-- The host’s SSH daemon uses that file for the `git` user.
-- `gitman-wrap` is a script that calls `docker exec ... gitman serve` inside the running `gitman-web` container.
-
-**Step 1 – Bind mount already in use**  
-The `docker-compose.yml` above uses `./data:/data` – this is required so the host can access `authorized_keys`.
-
-**Step 2 – Create the `git` user and wrapper script on the host**
+## Common operations
 
 ```bash
-sudo useradd -m -s /bin/bash git
-sudo mkdir -p /home/git/.ssh
-sudo chmod 700 /home/git/.ssh
-```
-
-Create `/usr/local/bin/gitman-wrap`:
-
-```bash
-#!/bin/bash
-exec docker exec -i gitman-web gitman "$@"
-```
-
-Make it executable:
-
-```bash
-sudo chmod +x /usr/local/bin/gitman-wrap
-```
-
-**Step 3 – Link the authorized_keys file**
-
-Symlink the shared authorized_keys into the `git` user’s `.ssh` directory:
-
-```bash
-sudo ln -s $(pwd)/data/authorized_keys /home/git/.ssh/authorized_keys
-sudo chown -h git:git /home/git/.ssh/authorized_keys
-sudo chown git:git /home/git/.ssh
-```
-
-**Step 4 – Configure host SSH daemon**
-
-Edit `/etc/ssh/sshd_config` and add a match block for the `git` user:
-
-```
-Match User git
-    AuthorizedKeysFile /home/git/.ssh/authorized_keys
-    PasswordAuthentication no
-    PermitEmptyPasswords no
-```
-
-Restart SSH:
-
-```bash
-sudo systemctl restart sshd
-```
-
-**Step 5 – Set `GITMAN_BINARY_PATH`**  
-In your `.env`, set `GITMAN_BINARY_PATH=/usr/local/bin/gitman-wrap`.  
-The web container will now write authorized_keys lines like:
-
-```
-command="/usr/local/bin/gitman-wrap serve <keyID>",no-port-forwarding,... ssh-rsa ...
-```
-
-**Step 6 – Sync keys**  
-When you add an SSH key via the web UI, Gitman regenerates `authorized_keys` and the new key becomes immediately active.  
-Test:
-
-```bash
-ssh -T git@your-host
-```
-
----
-
-### Backup and Restore
-
-Inside the running `gitman-web` container, run:
-
-```bash
-docker compose exec web gitman admin backup-all /tmp/backup
-```
-
-The backup directory can be copied out with `docker cp`.  
-To restore, bring up a fresh stack, drop the old `data` directory, and copy the backup contents back into `./data`.
-
----
-
-### Health and Monitoring
-
-- **Web health check**: `GET /health` returns `{"status":"ok"}` when the database is reachable.
-- The `docker-compose.yml` includes a health check for the `web` service. Use `docker ps` to monitor status.
-
-Logs can be viewed with:
-
-```bash
+docker compose ps
 docker compose logs -f web
 docker compose logs -f worker
+docker compose restart web worker
+docker compose down
 ```
 
-For production, consider integrating with a log aggregator.
+Upgrade by backing up first, then rebuilding:
 
----
-
-### Security Notes
-
-- Replace `GITMAN_SECRET_KEY` with a strong, random passphrase.
-- The `data` directory contains sensitive information (database, repositories). Restrict host access accordingly.
-- The `GITMAN_INTERNAL_URL` is only reachable inside the Docker network; the web service is not directly exposed to the internet unless you map the port to a public interface (use a reverse proxy in production).
-- The SSH setup uses a wrapper script that calls `docker exec`. Only add keys to trusted users.
-- For HTTP access, always use a reverse proxy (nginx, Caddy) with TLS termination.
-
----
-
-### Troubleshooting
-
-| Symptom                                        | Likely cause                           | Solution                                                            |
-| ---------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------- |
-| Web UI not loading                             | Container not running                  | `docker compose ps` to check status                                 |
-| `authorized_keys` not updated after adding key | `GITMAN_BINARY_PATH` not correctly set | Verify the environment variable in the container                    |
-| SSH clone hangs                                | `docker exec` cannot reach container   | Ensure `gitman-web` is running and the wrapper script is executable |
-| Permission errors on data directory            | UID mismatch                           | `sudo chown -R 1000:1000 ./data`                                    |
-
----
-
-This setup gives you a self‑contained, production‑ready Gitman deployment with optional SSH support, fully manageable through Docker Compose.
+```bash
+docker compose exec -T web gitman admin repos backup-all /data/backups/pre-upgrade-$(date +%F-%H%M%S)
+docker compose up -d --build
+```
