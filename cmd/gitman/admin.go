@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/mmrzaf/gitman/internal/admin"
@@ -77,7 +78,7 @@ func runAdminRepos(cfg *config.Config, database *db.DB, args []string) error {
 		if len(args) != 2 {
 			return fmt.Errorf("usage: gitman admin repos backup-all <destination>")
 		}
-		return admin.BackupAll(cfg, args[1])
+		return admin.BackupAll(context.Background(), database, cfg, args[1])
 	}
 
 	return fmt.Errorf("unknown repos action: %s", args[0])

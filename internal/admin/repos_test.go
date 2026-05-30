@@ -1,11 +1,13 @@
 package admin
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/mmrzaf/gitman/internal/config"
+	"github.com/mmrzaf/gitman/internal/db"
 )
 
 func TestBackupRepos(t *testing.T) {
@@ -45,8 +47,6 @@ func TestBackupAll(t *testing.T) {
 	baseDir := t.TempDir()
 	dbPath := filepath.Join(baseDir, "db", "gitman.sqlite")
 	os.MkdirAll(filepath.Dir(dbPath), 0755)
-	os.WriteFile(dbPath, []byte("dbdata"), 0644)
-
 	reposPath := filepath.Join(baseDir, "repos")
 	os.MkdirAll(filepath.Join(reposPath, "owner", "repo.git"), 0755)
 	os.WriteFile(filepath.Join(reposPath, "owner", "repo.git", "HEAD"), []byte("ref: refs/heads/main"), 0644)
@@ -65,8 +65,14 @@ func TestBackupAll(t *testing.T) {
 		AuthKeysPath:  authKeysPath,
 	}
 
+	database, err := db.InitDB(dbPath)
+	if err != nil {
+		t.Fatalf("InitDB failed: %v", err)
+	}
+	defer database.Close()
+
 	destDir := t.TempDir()
-	err := BackupAll(cfg, destDir)
+	err = BackupAll(context.Background(), database, cfg, destDir)
 	if err != nil {
 		t.Fatalf("BackupAll failed: %v", err)
 	}
@@ -76,8 +82,8 @@ func TestBackupAll(t *testing.T) {
 	data, err := os.ReadFile(dbCopy)
 	if err != nil {
 		t.Error("db not copied")
-	} else if string(data) != "dbdata" {
-		t.Error("db content mismatch")
+	} else if len(data) == 0 {
+		t.Error("db backup is empty")
 	}
 
 	// Repos copy

@@ -1,12 +1,15 @@
 package admin
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/mmrzaf/gitman/internal/config"
+	"github.com/mmrzaf/gitman/internal/db"
 )
 
 // BackupRepos copies the entire repos directory to a destination path.
@@ -14,7 +17,6 @@ func BackupRepos(reposPath, destination string) error {
 	if err := os.MkdirAll(destination, 0o755); err != nil {
 		return fmt.Errorf("failed to create destination directory: %w", err)
 	}
-
 	return copyDir(reposPath, destination)
 }
 
@@ -28,14 +30,22 @@ func copyDir(src, dst string) error {
 		srcPath := filepath.Join(src, entry.Name())
 		dstPath := filepath.Join(dst, entry.Name())
 
+		info, err := os.Lstat(srcPath)
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+
 		if entry.IsDir() {
-			if err := os.MkdirAll(dstPath, 0o755); err != nil {
+			if err := os.MkdirAll(dstPath, info.Mode().Perm()); err != nil {
 				return err
 			}
 			if err := copyDir(srcPath, dstPath); err != nil {
 				return err
 			}
-		} else {
+		} else if info.Mode().IsRegular() {
 			if err := copyFile(srcPath, dstPath); err != nil {
 				return err
 			}
@@ -46,6 +56,17 @@ func copyDir(src, dst string) error {
 }
 
 func copyFile(src, dst string) (err error) {
+	info, err := os.Lstat(src)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing to copy symlink: %s", src)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("refusing to copy non-regular file: %s", src)
+	}
+
 	in, err := os.Open(src)
 	if err != nil {
 		return err
@@ -56,7 +77,7 @@ func copyFile(src, dst string) (err error) {
 		}
 	}()
 
-	out, err := os.Create(dst)
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, info.Mode().Perm())
 	if err != nil {
 		return err
 	}
@@ -69,25 +90,19 @@ func copyFile(src, dst string) (err error) {
 	if _, err := io.Copy(out, in); err != nil {
 		return err
 	}
-
-	info, err := os.Stat(src)
-	if err != nil {
-		return err
-	}
-
-	return os.Chmod(dst, info.Mode())
+	return out.Sync()
 }
 
-func BackupAll(cfg *config.Config, destination string) error {
+func BackupAll(ctx context.Context, database *db.DB, cfg *config.Config, destination string) error {
 	if err := os.MkdirAll(destination, 0o755); err != nil {
 		return fmt.Errorf("create dest: %w", err)
 	}
-	dbSrc := cfg.DBPath
+
 	dbDst := filepath.Join(destination, "db", filepath.Base(cfg.DBPath))
 	if err := os.MkdirAll(filepath.Dir(dbDst), 0o755); err != nil {
 		return err
 	}
-	if err := copyFile(dbSrc, dbDst); err != nil {
+	if err := vacuumDatabase(ctx, database, dbDst); err != nil {
 		return fmt.Errorf("backup db: %w", err)
 	}
 
@@ -111,4 +126,18 @@ func BackupAll(cfg *config.Config, destination string) error {
 	}
 
 	return nil
+}
+
+func vacuumDatabase(ctx context.Context, database *db.DB, destination string) error {
+	if _, err := os.Stat(destination); err == nil {
+		return fmt.Errorf("destination database already exists: %s", destination)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	_, err := database.ExecContext(ctx, "VACUUM INTO "+sqliteStringLiteral(destination))
+	return err
+}
+
+func sqliteStringLiteral(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
