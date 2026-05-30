@@ -75,10 +75,48 @@ func (app *App) RepoAccessMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// RequireRepoMember restricts sensitive repository surfaces such as CI logs
+// and artifacts to the owner or an explicit collaborator. Public source code
+// remains browseable without exposing CI output.
+func (app *App) RequireRepoMember(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		repo := GetRepo(r)
+		user := GetUser(r)
+		if repo == nil || user == nil {
+			http.NotFound(w, r)
+			return
+		}
+		if user.ID == repo.OwnerID {
+			next.ServeHTTP(w, r)
+			return
+		}
+		hasAccess, err := app.DB.HasRepoAccess(r.Context(), repo.ID, user.ID, "read")
+		if err != nil || !hasAccess {
+			http.NotFound(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // loadRefsIntoData populates Branches and Tags on an existing RepoPageData.
 func loadRefsIntoData(ctx context.Context, repoPath string, data *RepoPageData) {
 	data.Branches, _ = git.GetBranches(ctx, repoPath)
 	data.Tags, _ = git.GetTags(ctx, repoPath)
+}
+
+func requestRef(r *http.Request) string {
+	if ref := strings.TrimSpace(r.URL.Query().Get("ref")); ref != "" {
+		return ref
+	}
+	return chi.URLParam(r, "ref")
+}
+
+func requestRepoPath(r *http.Request) string {
+	if path := strings.TrimPrefix(r.URL.Query().Get("path"), "/"); path != "" {
+		return path
+	}
+	return strings.TrimPrefix(chi.URLParam(r, "*"), "/")
 }
 
 // HandleRepoTreeGET renders the repository's file tree view.
@@ -105,17 +143,17 @@ func (app *App) HandleRepoTreeGET(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 2. Resolve the reference (branch, tag, commit hash, or fallback).
-	refParam := chi.URLParam(r, "ref")
+	refParam := requestRef(r)
 	ref, err := git.ResolveRef(ctx, repoPath, refParam)
 	if err != nil {
 		slog.Error("Failed to resolve ref for tree", "repoPath", repoPath, "refParam", refParam, "error", err)
-		app.renderError(w, r, PageData{User: GetUser(r)}, "Failed to determine branch", http.StatusInternalServerError)
+		app.renderError(w, r, PageData{User: GetUser(r)}, "Invalid reference", http.StatusBadRequest)
 		return
 	}
 
 	// 3. Collect basic data.
 	data.CurrentRef = ref
-	data.CurrentPath = chi.URLParam(r, "*")
+	data.CurrentPath = requestRepoPath(r)
 	loadRefsIntoData(ctx, repoPath, &data)
 
 	// 4. Fetch tree.
@@ -149,8 +187,8 @@ func (app *App) HandleRepoBlobGET(w http.ResponseWriter, r *http.Request) {
 	owner := GetRepoOwner(r)
 	ctx := r.Context()
 
-	refParam := chi.URLParam(r, "ref")
-	path := chi.URLParam(r, "*")
+	refParam := requestRef(r)
+	path := requestRepoPath(r)
 
 	data := RepoPageData{
 		Owner:       owner,
@@ -247,7 +285,7 @@ func (app *App) HandleRepoCommitsGET(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	refParam := chi.URLParam(r, "ref")
+	refParam := requestRef(r)
 	ref, err := git.ResolveRef(ctx, repoPath, refParam)
 	if err != nil {
 		if errors.Is(err, git.ErrRepoEmpty) {
@@ -265,7 +303,7 @@ func (app *App) HandleRepoCommitsGET(w http.ResponseWriter, r *http.Request) {
 			"refParam", refParam,
 			"error", err,
 		)
-		app.renderError(w, r, PageData{User: GetUser(r)}, "Failed to determine branch", http.StatusInternalServerError)
+		app.renderError(w, r, PageData{User: GetUser(r)}, "Invalid reference", http.StatusBadRequest)
 		return
 	}
 	data.CurrentRef = ref
@@ -301,6 +339,7 @@ func (app *App) HandleRepoCommitsGET(w http.ResponseWriter, r *http.Request) {
 // Route: /archive/* — the wildcard captures "<ref>.<format>" including refs
 // that contain slashes (e.g. "feature/foo.zip" → ref=feature/foo, format=zip).
 func (app *App) HandleRepoArchiveGET(w http.ResponseWriter, r *http.Request) {
+	noStore(w)
 	repo := GetRepo(r)
 	repoPath := GetRepoPath(r)
 	ctx := r.Context()
@@ -310,32 +349,37 @@ func (app *App) HandleRepoArchiveGET(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The wildcard captures everything after /archive/.
-	// We split on the last dot to separate the ref from the format extension.
-	archivePath := chi.URLParam(r, "*")
-	if archivePath == "" {
-		app.renderError(w, r, PageData{User: GetUser(r)}, "Missing archive name", http.StatusBadRequest)
-		return
-	}
-
-	// Detect format suffix: support ".tar.gz", ".tar", ".zip"
 	var refPart, format, contentType string
-	switch {
-	case strings.HasSuffix(archivePath, ".tar.gz"):
-		format = "tar.gz"
-		contentType = "application/gzip"
-		refPart = strings.TrimSuffix(archivePath, ".tar.gz")
-	case strings.HasSuffix(archivePath, ".tar"):
-		format = "tar"
-		contentType = "application/x-tar"
-		refPart = strings.TrimSuffix(archivePath, ".tar")
-	case strings.HasSuffix(archivePath, ".zip"):
-		format = "zip"
-		contentType = "application/zip"
-		refPart = strings.TrimSuffix(archivePath, ".zip")
-	default:
-		app.renderError(w, r, PageData{User: GetUser(r)}, "Unsupported archive format", http.StatusBadRequest)
-		return
+	format = chi.URLParam(r, "format")
+	refPart = strings.TrimSpace(r.URL.Query().Get("ref"))
+	if format != "" {
+		switch format {
+		case "tar.gz":
+			contentType = "application/gzip"
+		case "tar":
+			contentType = "application/x-tar"
+		case "zip":
+			contentType = "application/zip"
+		default:
+			app.renderError(w, r, PageData{User: GetUser(r)}, "Unsupported archive format", http.StatusBadRequest)
+			return
+		}
+	} else {
+		archivePath := chi.URLParam(r, "*")
+		switch {
+		case strings.HasSuffix(archivePath, ".tar.gz"):
+			format, contentType = "tar.gz", "application/gzip"
+			refPart = strings.TrimSuffix(archivePath, ".tar.gz")
+		case strings.HasSuffix(archivePath, ".tar"):
+			format, contentType = "tar", "application/x-tar"
+			refPart = strings.TrimSuffix(archivePath, ".tar")
+		case strings.HasSuffix(archivePath, ".zip"):
+			format, contentType = "zip", "application/zip"
+			refPart = strings.TrimSuffix(archivePath, ".zip")
+		default:
+			app.renderError(w, r, PageData{User: GetUser(r)}, "Unsupported archive format", http.StatusBadRequest)
+			return
+		}
 	}
 
 	if refPart == "" {

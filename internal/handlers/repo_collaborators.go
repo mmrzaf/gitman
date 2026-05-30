@@ -1,6 +1,9 @@
 package handlers
 
-import "net/http"
+import (
+	"net/http"
+	"strings"
+)
 
 // HandleRepoCollaboratorsGET renders the repository's collaborators view.
 func (app *App) HandleRepoCollaboratorsGET(w http.ResponseWriter, r *http.Request) {
@@ -60,7 +63,7 @@ func (app *App) HandleRepoCollaboratorsAddPOST(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	targetUsername := r.FormValue("username")
+	targetUsername := strings.TrimSpace(r.FormValue("username"))
 	accessLevel := r.FormValue("access_level")
 	if accessLevel != "read" && accessLevel != "write" {
 		renderPanel("Invalid access level.", "")

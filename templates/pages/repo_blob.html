@@ -17,7 +17,7 @@
     <strong>Ref:</strong> {{.Data.CurrentRef}}
   </div>
   <div style="background: rgba(127, 127, 127, 0.15); padding: 5px 12px; border-radius: 4px; font-family: monospace; font-size: 0.95em">
-    <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/tree/{{.Data.CurrentRef}}" style="text-decoration: none; color: inherit">← tree</a>
+    <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/tree?ref={{.Data.CurrentRef}}" style="text-decoration: none; color: inherit">← tree</a>
     &nbsp;/&nbsp;<strong>{{.Data.CurrentPath}}</strong>
     <span class="muted" style="margin-left: 8px">({{.Data.BlobSize}} B)</span>
   </div>
