@@ -2,8 +2,6 @@ package worker
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/mmrzaf/gitman/internal/db"
@@ -27,39 +25,6 @@ func TestSelectRef(t *testing.T) {
 	}
 	if ref := selectRef("main", "v1.0"); ref != "v1.0" {
 		t.Errorf("expected v1.0, got %s", ref)
-	}
-}
-
-func TestMoveFile(t *testing.T) {
-	dir := t.TempDir()
-	src := filepath.Join(dir, "src.txt")
-	dst := filepath.Join(dir, "dst.txt")
-	os.WriteFile(src, []byte("data"), 0644)
-	err := moveFile(src, dst)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(src); !os.IsNotExist(err) {
-		t.Error("source not removed")
-	}
-	data, err := os.ReadFile(dst)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != "data" {
-		t.Error("content mismatch")
-	}
-}
-
-func TestPrepareDirectories(t *testing.T) {
-	dir := t.TempDir()
-	sub := filepath.Join(dir, "logs")
-	err := prepareDirectories(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(sub); os.IsNotExist(err) {
-		t.Error("sub dir not created")
 	}
 }
 

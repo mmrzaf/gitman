@@ -18,7 +18,10 @@ services:
       - GITMAN_INTERNAL_URL=http://web:8080
       - GITMAN_SERVER_HOST=${GITMAN_SERVER_HOST:-localhost}
       - GITMAN_LOG_LEVEL=${GITMAN_LOG_LEVEL:-info}
-      - GITMAN_BINARY_PATH=/usr/local/bin/gitman
+      - GITMAN_BINARY_PATH=${GITMAN_BINARY_PATH:-/usr/local/bin/gitman-wrap}
+      - GITMAN_ALLOW_REGISTER=${GITMAN_ALLOW_REGISTER:-false}
+      - GITMAN_FORCE_SECURE_COOKIES=${GITMAN_FORCE_SECURE_COOKIES:-true}
+      - GITMAN_TRUST_PROXY_HEADERS=${GITMAN_TRUST_PROXY_HEADERS:-true}
     networks:
       - gitman-net
       - proxy
@@ -35,10 +38,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.5'
+          cpus: "0.5"
           memory: 512M
         reservations:
-          cpus: '0.2'
+          cpus: "0.2"
           memory: 256M
     labels:
       - "traefik.enable=true"
@@ -54,9 +57,11 @@ services:
     container_name: gitman-worker
     command: ["gitman", "worker"]
     depends_on:
-      - web
+      web:
+        condition: service_healthy
     volumes:
       - ../../data/gitman:/data
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - GITMAN_DB=/data/db/gitman.sqlite
       - GITMAN_REPOS=/data/repos
@@ -64,7 +69,15 @@ services:
       - GITMAN_SECRET_KEY=${GITMAN_SECRET_KEY:?err}
       - GITMAN_LOG_LEVEL=${GITMAN_LOG_LEVEL:-info}
       - GITMAN_WORKER_CONCURRENCY=${GITMAN_WORKER_CONCURRENCY:-1}
-      - GITMAN_BINARY_PATH=/usr/local/bin/gitman
+      - GITMAN_BINARY_PATH=${GITMAN_BINARY_PATH:-/usr/local/bin/gitman-wrap}
+      - GITMAN_CACHE_ROOT=/data/ci/cache
+      - GITMAN_MEMORY_LIMIT=${GITMAN_CI_MEMORY_LIMIT:-512m}
+      - GITMAN_CPU_LIMIT=${GITMAN_CI_CPU_LIMIT:-1}
+      - GITMAN_CI_TIMEOUT=${GITMAN_CI_TIMEOUT:-30m}
+      - GITMAN_CI_NETWORK=${GITMAN_CI_NETWORK:-none}
+      - GITMAN_CI_ARTIFACT_MAX_BYTES=${GITMAN_CI_ARTIFACT_MAX_BYTES:-104857600}
+      - GITMAN_CI_ARTIFACT_MAX_FILES=${GITMAN_CI_ARTIFACT_MAX_FILES:-1000}
+      - GITMAN_CI_LOG_MAX_BYTES=${GITMAN_CI_LOG_MAX_BYTES:-10485760}
     networks:
       - gitman-net
     healthcheck:
@@ -80,10 +93,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1.0'
+          cpus: "1.0"
           memory: 1G
         reservations:
-          cpus: '0.2'
+          cpus: "0.2"
           memory: 256M
 
 networks:
@@ -91,3 +104,4 @@ networks:
     driver: bridge
   proxy:
     external: true
+

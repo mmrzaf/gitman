@@ -21,11 +21,10 @@ func (db *DB) CreateCIRun(ctx context.Context, repoID, commitHash, branch, tag, 
 	return id, err
 }
 
-// ClaimNextPendingRun atomically claims the oldest pending run for the worker
-// by wrapping the SELECT + UPDATE in a transaction.
+// ClaimNextPendingRun atomically claims exactly one pending run and returns that same row.
 // Returns nil, nil when there are no pending runs.
 func (db *DB) ClaimNextPendingRun(ctx context.Context) (*models.CIRun, error) {
-	tx, err := db.BeginTx(ctx, nil)
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -35,34 +34,24 @@ func (db *DB) ClaimNextPendingRun(ctx context.Context) (*models.CIRun, error) {
 		}
 	}()
 
-	res, err := tx.ExecContext(ctx, `
-        UPDATE ci_runs
-        SET status = 'running'
-        WHERE id = (
-            SELECT id FROM ci_runs
-            WHERE status = 'pending'
-            ORDER BY created_at ASC
-            LIMIT 1
-        )
-    `)
-	if err != nil {
-		return nil, err
-	}
-	rows, _ := res.RowsAffected()
-	if rows == 0 {
-		return nil, nil
-	}
-
 	var run models.CIRun
 	var createdAt int64
 	err = tx.QueryRowContext(ctx, `
-        SELECT id, repo_id, commit_hash, branch, tag, event, status, log_file, created_at
-        FROM ci_runs
-        WHERE status = 'running'
-        ORDER BY created_at DESC
-        LIMIT 1
-    `).Scan(&run.ID, &run.RepoID, &run.CommitHash, &run.Branch, &run.Tag,
+		UPDATE ci_runs
+		SET status = 'running'
+		WHERE id = (
+			SELECT id
+			FROM ci_runs
+			WHERE status = 'pending'
+			ORDER BY created_at ASC
+			LIMIT 1
+		)
+		RETURNING id, repo_id, commit_hash, branch, tag, event, status, log_file, created_at
+	`).Scan(&run.ID, &run.RepoID, &run.CommitHash, &run.Branch, &run.Tag,
 		&run.Event, &run.Status, &run.LogFile, &createdAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -72,7 +61,6 @@ func (db *DB) ClaimNextPendingRun(ctx context.Context) (*models.CIRun, error) {
 	}
 
 	run.CreatedAt = unixToTime(createdAt)
-	run.Status = "running"
 	return &run, nil
 }
 
@@ -125,6 +113,9 @@ func (db *DB) GetCIRunsByRepo(ctx context.Context, repoID string, limit int) ([]
 		r.CreatedAt = unixToTime(createdAt)
 		r.CompletedAt = nullUnixToTime(completedAt)
 		runs = append(runs, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return runs, nil
 }
@@ -181,6 +172,9 @@ func (db *DB) GetSuccessfulCIRunsByRepo(ctx context.Context, repoID string, limi
 		r.CreatedAt = unixToTime(createdAt)
 		r.CompletedAt = nullUnixToTime(completedAt)
 		runs = append(runs, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return runs, nil
 }
@@ -273,6 +267,9 @@ func (db *DB) GetRepoSecrets(ctx context.Context, repoID string) ([]models.RepoS
 		}
 		s.CreatedAt = unixToTime(createdAt)
 		secrets = append(secrets, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return secrets, nil
 }
