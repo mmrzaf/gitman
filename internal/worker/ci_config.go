@@ -1,7 +1,9 @@
 package worker
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"sort"
@@ -56,6 +58,13 @@ type rawConfig struct {
 // parseCIConfig reads and validates a .gitman-ci.yml file.
 // It returns a structured CIConfig ready for execution.
 func parseCIConfig(path string) (*CIConfig, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, fmt.Errorf("inspect config: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("CI config must be a regular file, not a symlink")
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
@@ -65,7 +74,15 @@ func parseCIConfig(path string) (*CIConfig, error) {
 	}
 
 	var raw rawConfig
-	if err := yaml.Unmarshal(data, &raw); err != nil {
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&raw); err != nil {
+		return nil, fmt.Errorf("parse YAML: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return nil, fmt.Errorf("parse YAML: multiple documents are not supported")
+		}
 		return nil, fmt.Errorf("parse YAML: %w", err)
 	}
 
