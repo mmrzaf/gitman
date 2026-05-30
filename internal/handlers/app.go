@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -12,10 +13,12 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/mmrzaf/gitman"
 	"github.com/mmrzaf/gitman/internal/config"
 	"github.com/mmrzaf/gitman/internal/db"
@@ -41,6 +44,14 @@ type App struct {
 	StaticFS  http.FileSystem
 }
 
+type RepoNavData struct {
+	Owner      *models.User
+	Repository *models.Repository
+	CurrentRef string
+	IsOwner    bool
+	CanViewCI  bool
+}
+
 type PageData struct {
 	Title     string
 	User      *models.User
@@ -49,6 +60,7 @@ type PageData struct {
 	Success   string
 	Data      any
 	CSRFToken string
+	RepoNav   *RepoNavData
 }
 
 func (app *App) requestIsHTTPS(r *http.Request) bool {
@@ -84,6 +96,22 @@ func (app *App) clearSessionCookie(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func shortString(s string, limit int) string {
+	if limit < 0 || len(s) <= limit {
+		return s
+	}
+	return s[:limit]
+}
+
+func escapePath(s string) string {
+	return strings.ReplaceAll(url.PathEscape(s), "%2F", "/")
+}
+
+var templateFuncs = template.FuncMap{
+	"short":      shortString,
+	"pathEscape": escapePath,
+}
+
 func LoadTemplates() (map[string]*template.Template, error) {
 	templates := make(map[string]*template.Template)
 
@@ -95,7 +123,7 @@ func LoadTemplates() (map[string]*template.Template, error) {
 	for _, page := range pages {
 		name := filepath.Base(page)
 
-		t, err := template.ParseFS(
+		t, err := template.New("base.html").Funcs(templateFuncs).ParseFS(
 			embeddedFiles,
 			"templates/base.html",
 			"templates/partials/*.html",
@@ -119,6 +147,70 @@ func NewStaticFS() (http.FileSystem, error) {
 	return http.FS(sub), nil
 }
 
+func noStore(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
+}
+
+const maxUIRequestBodyBytes int64 = 1 << 20
+
+func limitRequestBody(maxBytes int64) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method {
+			case http.MethodGet, http.MethodHead, http.MethodOptions:
+				next.ServeHTTP(w, r)
+				return
+			}
+			if r.ContentLength > maxBytes {
+				http.Error(w, "Request body too large", http.StatusRequestEntityTooLarge)
+				return
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func (app *App) repoNavData(r *http.Request, currentRef string) *RepoNavData {
+	repo := GetRepo(r)
+	owner := GetRepoOwner(r)
+	if repo == nil || owner == nil {
+		return nil
+	}
+	if currentRef == "" {
+		currentRef = requestRef(r)
+	}
+	nav := &RepoNavData{
+		Owner:      owner,
+		Repository: repo,
+		CurrentRef: currentRef,
+	}
+	user := GetUser(r)
+	if user == nil {
+		return nav
+	}
+	if user.ID == repo.OwnerID {
+		nav.IsOwner = true
+		nav.CanViewCI = true
+		return nav
+	}
+	if app != nil && app.DB != nil {
+		nav.CanViewCI, _ = app.DB.HasRepoAccess(r.Context(), repo.ID, user.ID, "read")
+	}
+	return nav
+}
+
+func (app *App) preparePageData(r *http.Request, data *PageData) {
+	if data.CSRFToken == "" {
+		if token, ok := r.Context().Value(csrfTokenKey).(string); ok {
+			data.CSRFToken = token
+		}
+	}
+	if data.RepoNav == nil {
+		data.RepoNav = app.repoNavData(r, "")
+	}
+}
+
 func (app *App) renderTemplate(w http.ResponseWriter, tmplMapKey string, executeName string, data PageData) error {
 	data.Config = app.Config
 
@@ -127,15 +219,17 @@ func (app *App) renderTemplate(w http.ResponseWriter, tmplMapKey string, execute
 		return fs.ErrNotExist
 	}
 
-	return t.ExecuteTemplate(w, executeName, data)
+	noStore(w)
+	var buf bytes.Buffer
+	if err := t.ExecuteTemplate(&buf, executeName, data); err != nil {
+		return err
+	}
+	_, err := w.Write(buf.Bytes())
+	return err
 }
 
 func (app *App) renderPage(w http.ResponseWriter, r *http.Request, page string, data PageData) {
-	if data.CSRFToken == "" {
-		if token, ok := r.Context().Value(csrfTokenKey).(string); ok {
-			data.CSRFToken = token
-		}
-	}
+	app.preparePageData(r, &data)
 	if err := app.renderTemplate(w, page, "base.html", data); err != nil {
 		slog.Error("failed to render page", "page", page, "error", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -143,11 +237,7 @@ func (app *App) renderPage(w http.ResponseWriter, r *http.Request, page string, 
 }
 
 func (app *App) renderPartial(w http.ResponseWriter, r *http.Request, tmplMapKey string, partialName string, data PageData) {
-	if data.CSRFToken == "" {
-		if token, ok := r.Context().Value(csrfTokenKey).(string); ok {
-			data.CSRFToken = token
-		}
-	}
+	app.preparePageData(r, &data)
 	if err := app.renderTemplate(w, tmplMapKey, partialName, data); err != nil {
 		slog.Error("failed to render partial", "template", tmplMapKey, "partial", partialName, "error", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -239,11 +329,17 @@ func (app *App) WebhookAuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		repo, err := app.DB.GetRepositoryByWebhookSecret(r.Context(), secret)
-		if err != nil || repo == nil {
+		if err != nil || repo == nil || repo.Name != chi.URLParam(r, "repo_name") {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		owner, err := app.DB.GetUserByUsername(r.Context(), chi.URLParam(r, "username"))
+		if err != nil || owner == nil || owner.ID != repo.OwnerID {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
 		ctx := context.WithValue(r.Context(), repoContextKey, repo)
+		ctx = context.WithValue(ctx, repoOwnerContextKey, owner)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -284,6 +380,7 @@ func GetRepoOwner(r *http.Request) *models.User {
 }
 
 func (app *App) HandleHealth(w http.ResponseWriter, r *http.Request) {
+	noStore(w)
 	if err := app.DB.PingContext(r.Context()); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
