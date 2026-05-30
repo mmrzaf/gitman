@@ -121,3 +121,53 @@ func TestCopyDirError(t *testing.T) {
 		t.Error("expected error")
 	}
 }
+
+func TestBackupRejectsNestedDestination(t *testing.T) {
+	repos := t.TempDir()
+	err := BackupRepos(repos, filepath.Join(repos, "backup"))
+	if err == nil {
+		t.Fatal("expected nested backup destination rejection")
+	}
+}
+
+func TestBackupRejectsNonEmptyDestination(t *testing.T) {
+	repos := t.TempDir()
+	destination := t.TempDir()
+	if err := os.WriteFile(filepath.Join(destination, "existing"), []byte("data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := BackupRepos(repos, destination); err == nil {
+		t.Fatal("expected non-empty backup destination rejection")
+	}
+}
+
+func TestBackupRejectsSymlinkedNestedDestination(t *testing.T) {
+	base := t.TempDir()
+	repos := filepath.Join(base, "repos")
+	if err := os.MkdirAll(repos, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "repos-link")
+	if err := os.Symlink(repos, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := BackupRepos(repos, filepath.Join(link, "backup")); err == nil {
+		t.Fatal("expected symlinked nested backup destination rejection")
+	}
+}
+
+func TestBackupAllRejectsSymlinkedArtifactsDestination(t *testing.T) {
+	base := t.TempDir()
+	artifacts := filepath.Join(base, "artifacts")
+	if err := os.MkdirAll(artifacts, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "artifacts-link")
+	if err := os.Symlink(artifacts, link); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{ReposPath: filepath.Join(base, "repos"), ArtifactsPath: artifacts}
+	if err := rejectNestedDestination(filepath.Join(link, "backup"), cfg.ReposPath, cfg.ArtifactsPath); err == nil {
+		t.Fatal("expected symlinked artifacts destination rejection")
+	}
+}
