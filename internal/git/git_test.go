@@ -3,6 +3,7 @@ package git
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -36,6 +37,7 @@ func prepareRepoWithCommit(t *testing.T, repoPath string) {
 	cmds := [][]string{
 		{"config", "user.email", "test@example.com"},
 		{"config", "user.name", "Test User"},
+		{"checkout", "-b", "main"},
 		{"add", "."},
 		{"commit", "-m", "initial commit"},
 		{"push", "origin", "main"},
@@ -106,9 +108,14 @@ func TestResolveRef(t *testing.T) {
 	if err != nil || ref != "main" {
 		t.Errorf("expected main, got %v err=%v", ref, err)
 	}
-	ref, err = ResolveRef(ctx, repoPath, "nonexistent")
+	ref, err = ResolveRef(ctx, repoPath, "")
 	if err != nil || ref != "main" {
-		t.Errorf("expected fallback main, got %v err=%v", ref, err)
+		t.Errorf("expected empty ref to resolve to main, got %v err=%v", ref, err)
+	}
+
+	_, err = ResolveRef(ctx, repoPath, "nonexistent")
+	if !errors.Is(err, ErrRefNotFound) {
+		t.Errorf("expected ErrRefNotFound, got %v", err)
 	}
 }
 

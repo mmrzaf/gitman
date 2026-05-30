@@ -40,7 +40,10 @@ type TreeEntry struct {
 	Name string
 }
 
-var safeRefRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9/_.-]*$`)
+var (
+	safeRefRegex    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9/_.-]*$`)
+	commitHashRegex = regexp.MustCompile(`^[A-Fa-f0-9]{7,40}$`)
+)
 
 func ValidateRefName(ref string) error {
 	if ref == "" {
@@ -52,8 +55,19 @@ func ValidateRefName(ref string) error {
 	if !safeRefRegex.MatchString(ref) {
 		return fmt.Errorf("invalid ref name: contains illegal characters")
 	}
-	if strings.Contains(ref, "..") || strings.Contains(ref, "//") {
-		return fmt.Errorf("invalid ref name: contains '..' or '//'")
+	if strings.HasSuffix(ref, "/") || strings.HasSuffix(ref, ".") {
+		return fmt.Errorf("invalid ref name: cannot end with slash or dot")
+	}
+	if strings.Contains(ref, "..") || strings.Contains(ref, "//") || strings.Contains(ref, "@{") || strings.Contains(ref, "\\") {
+		return fmt.Errorf("invalid ref name")
+	}
+	if strings.ContainsAny(ref, " ~^:?*[") {
+		return fmt.Errorf("invalid ref name: contains reserved git characters")
+	}
+	for _, part := range strings.Split(ref, "/") {
+		if part == "" || strings.HasPrefix(part, ".") || strings.HasSuffix(part, ".lock") {
+			return fmt.Errorf("invalid ref name component")
+		}
 	}
 	return nil
 }
@@ -142,7 +156,7 @@ func InitBareRepo(ctx context.Context, fullPath string) error {
 		return fmt.Errorf("failed to create repo directory: %w", err)
 	}
 
-	if _, err := run(ctx, fullPath, "init", "--bare", "."); err != nil {
+	if _, err := run(ctx, fullPath, "init", "--bare", "--initial-branch=main", "."); err != nil {
 		slog.Error("failed to initialize bare repo, cleaning up",
 			"repo", fullPath,
 			"error", err,
@@ -177,7 +191,7 @@ func DeleteRepo(fullPath string) error {
 // IsEmpty returns true if the repo has no commits yet.
 // Works correctly for bare repositories.
 func IsEmpty(ctx context.Context, repoPath string) bool {
-	_, err := run(ctx, repoPath, "rev-parse", "--verify", "HEAD")
+	out, err := run(ctx, repoPath, "rev-list", "--all", "--max-count=1")
 	if err != nil {
 		slog.Debug("repository has no commits",
 			"repo", repoPath,
@@ -185,7 +199,7 @@ func IsEmpty(ctx context.Context, repoPath string) bool {
 		)
 		return true
 	}
-	return false
+	return len(bytes.TrimSpace(out)) == 0
 }
 
 // ensureNotEmpty returns ErrRepoEmpty if the repo has no commits.
@@ -315,6 +329,9 @@ func refExists(ctx context.Context, repoPath, fullRef string) bool {
 // isCommitHash returns true when s looks like a full or abbreviated commit SHA
 // that git can resolve.
 func isCommitHash(ctx context.Context, repoPath, s string) bool {
+	if !commitHashRegex.MatchString(s) {
+		return false
+	}
 	// git rev-parse --verify <sha>^{commit} succeeds only for valid commits.
 	_, err := run(ctx, repoPath, "rev-parse", "--verify", s+"^{commit}")
 	return err == nil
@@ -323,13 +340,13 @@ func isCommitHash(ctx context.Context, repoPath, s string) bool {
 // ResolveRef returns a concrete git ref to use for logs/tree/blob operations.
 //
 // Resolution order:
-//  1. Empty requestedRef → use default branch (from HEAD file) or first branch.
+//  1. Empty requestedRef → use default branch (from HEAD file), first branch, or HEAD.
 //  2. Exact branch match (refs/heads/<ref>).
 //  3. Exact tag match (refs/tags/<ref>).
 //  4. Valid commit hash / abbreviation.
-//  5. Fallback to first branch or "HEAD".
 //
-// Returns ErrRepoEmpty if the repository has no commits.
+// An explicit but missing ref returns ErrRefNotFound. It must never silently
+// fall back to another branch.
 func ResolveRef(ctx context.Context, repoPath, requestedRef string) (string, error) {
 	if err := ensureNotEmpty(ctx, repoPath); err != nil {
 		return "", err
@@ -337,63 +354,34 @@ func ResolveRef(ctx context.Context, repoPath, requestedRef string) (string, err
 	if err := ValidateRefName(requestedRef); err != nil {
 		return "", err
 	}
-	// Step 1: no ref requested – use default or first branch.
 	if requestedRef == "" {
 		if def, _ := GetDefaultBranch(ctx, repoPath); def != "" {
 			if refExists(ctx, repoPath, "refs/heads/"+def) {
-				slog.Debug("resolved ref to default branch",
-					"repo", repoPath,
-					"branch", def,
-				)
+				slog.Debug("resolved ref to default branch", "repo", repoPath, "branch", def)
 				return def, nil
 			}
 		}
 		if branches, _ := GetBranches(ctx, repoPath); len(branches) > 0 {
-			slog.Debug("resolved ref to first branch (no default)",
-				"repo", repoPath,
-				"branch", branches[0],
-			)
+			slog.Debug("resolved ref to first branch (no default)", "repo", repoPath, "branch", branches[0])
 			return branches[0], nil
 		}
 		return "HEAD", nil
 	}
 
-	// Step 2: branch?
 	if refExists(ctx, repoPath, "refs/heads/"+requestedRef) {
-		slog.Debug("resolved ref as branch",
-			"repo", repoPath,
-			"ref", requestedRef,
-		)
+		slog.Debug("resolved ref as branch", "repo", repoPath, "ref", requestedRef)
 		return requestedRef, nil
 	}
-
-	// Step 3: tag?
 	if refExists(ctx, repoPath, "refs/tags/"+requestedRef) {
-		slog.Debug("resolved ref as tag",
-			"repo", repoPath,
-			"ref", requestedRef,
-		)
+		slog.Debug("resolved ref as tag", "repo", repoPath, "ref", requestedRef)
 		return requestedRef, nil
 	}
-
-	// Step 4: commit hash / abbreviation?
 	if isCommitHash(ctx, repoPath, requestedRef) {
-		slog.Debug("resolved ref as commit hash",
-			"repo", repoPath,
-			"ref", requestedRef,
-		)
+		slog.Debug("resolved ref as commit hash", "repo", repoPath, "ref", requestedRef)
 		return requestedRef, nil
 	}
 
-	// Step 5: fallback.
-	slog.Debug("ref not found, falling back",
-		"repo", repoPath,
-		"requestedRef", requestedRef,
-	)
-	if branches, _ := GetBranches(ctx, repoPath); len(branches) > 0 {
-		return branches[0], nil
-	}
-	return "HEAD", nil
+	return "", ErrRefNotFound
 }
 
 // SanitizeRefForFilename converts a ref name to a safe filename component.
