@@ -14,7 +14,7 @@ func SetupRouter(app *App) *chi.Mux {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RedirectSlashes)
-	r.Use(securityHeaders) // safe for all requests
+	r.Use(app.securityHeaders) // safe for all requests
 
 	// ── Git Smart HTTP routes (NO CSRF) ─────────────────────────────
 	r.Route("/{username}/{repo_name}.git", func(r chi.Router) {
@@ -57,7 +57,7 @@ func SetupRouter(app *App) *chi.Mux {
 			r.Get("/register", app.HandleRegisterGET)
 			r.Post("/register", app.HandleRegisterPOST)
 		}
-		r.Get("/logout", app.HandleLogout)
+		r.Post("/logout", app.HandleLogout)
 
 		// Authenticated user routes (keys, tokens, repos list)
 		r.Group(func(r chi.Router) {

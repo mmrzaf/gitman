@@ -125,8 +125,21 @@
         align-items: center;
         margin-bottom: 2rem;
       }
-      nav a {
+      nav a,
+      nav form {
         margin-left: 1rem;
+      }
+      nav form {
+        display: inline;
+      }
+      .link-button {
+        background: none;
+        border: 0;
+        color: var(--link) !important;
+        padding: 0;
+        font: inherit;
+        text-decoration: underline;
+        cursor: pointer;
       }
       /* Consistent repo navigation style */
       .repo-nav {
@@ -156,7 +169,10 @@
         <a href="/repos">Repos</a>
         <a href="/tokens">Access Tokens</a>
         <a href="/keys">SSH Keys</a>
-        <a href="/logout">Logout</a>
+        <form method="post" action="/logout" hx-boost="false">
+          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
+          <button class="link-button" type="submit">Logout</button>
+        </form>
         {{else}} {{if .Config.AllowRegister}}
 
         <a href="/register">Register</a>

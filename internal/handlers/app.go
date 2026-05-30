@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -48,6 +49,39 @@ type PageData struct {
 	Success   string
 	Data      any
 	CSRFToken string
+}
+
+func (app *App) requestIsHTTPS(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	if app == nil || app.Config == nil || !app.Config.TrustProxyHeaders {
+		return false
+	}
+	if strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		return true
+	}
+	forwarded := strings.ToLower(r.Header.Get("Forwarded"))
+	return strings.Contains(forwarded, "proto=https")
+}
+
+func (app *App) secureCookie(r *http.Request) bool {
+	if app != nil && app.Config != nil && app.Config.ForceSecureCookies {
+		return true
+	}
+	return app.requestIsHTTPS(r)
+}
+
+func (app *App) clearSessionCookie(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     "session_token",
+		Value:    "",
+		MaxAge:   -1,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   app.secureCookie(r),
+		SameSite: http.SameSiteStrictMode,
+	})
 }
 
 func LoadTemplates() (map[string]*template.Template, error) {
@@ -165,15 +199,7 @@ func (app *App) AuthMiddleware(next http.Handler) http.Handler {
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
-			http.SetCookie(w, &http.Cookie{
-				Name:     "session_token",
-				Value:    "",
-				MaxAge:   -1,
-				Path:     "/",
-				HttpOnly: true,
-				Secure:   r.TLS != nil,
-				SameSite: http.SameSiteStrictMode,
-			})
+			app.clearSessionCookie(w, r)
 			if err != nil {
 				slog.Warn("GetUserByTokenHash failed in AuthMiddleware", "error", err)
 			}
@@ -222,13 +248,14 @@ func (app *App) WebhookAuthMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func securityHeaders(next http.Handler) http.Handler {
+func (app *App) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
-		if r.TLS != nil {
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		if app.requestIsHTTPS(r) || (app.Config != nil && app.Config.ForceSecureCookies) {
 			w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload")
 		}
 		next.ServeHTTP(w, r)
@@ -291,7 +318,7 @@ func (app *App) CSRFMiddleware(next http.Handler) http.Handler {
 					Name:     "csrf_token",
 					Value:    token,
 					HttpOnly: true,
-					Secure:   r.TLS != nil,
+					Secure:   app.secureCookie(r),
 					SameSite: http.SameSiteStrictMode,
 					Path:     "/",
 				})
@@ -318,7 +345,7 @@ func (app *App) CSRFMiddleware(next http.Handler) http.Handler {
 		if formToken == "" {
 			formToken = r.Header.Get("X-CSRF-Token")
 		}
-		if formToken == "" || cookie.Value != formToken {
+		if formToken == "" || subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(formToken)) != 1 {
 			http.Error(w, "CSRF validation failed", http.StatusForbidden)
 			return
 		}
