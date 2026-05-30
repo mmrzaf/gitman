@@ -97,3 +97,13 @@ func TestParseLogLevel(t *testing.T) {
 		}
 	}
 }
+
+func TestPublicURLDefaultsToConfiguredPort(t *testing.T) {
+	t.Setenv("GITMAN_PORT", "9090")
+	t.Setenv("GITMAN_SERVER_HOST", "git.internal")
+	os.Unsetenv("GITMAN_PUBLIC_URL")
+	cfg := LoadConfig()
+	if cfg.PublicURL != "http://git.internal:9090" {
+		t.Fatalf("unexpected public URL: %s", cfg.PublicURL)
+	}
+}
