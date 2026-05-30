@@ -20,6 +20,9 @@ var (
 	// ErrRepoEmpty is returned when an operation needs commits but the repo has none.
 	ErrRepoEmpty = errors.New("repository is empty")
 
+	// ErrRepoPathExists prevents orphaned repository contents from being adopted.
+	ErrRepoPathExists = errors.New("repository path already exists")
+
 	// ErrRefNotFound is returned when a requested ref cannot be resolved.
 	ErrRefNotFound = errors.New("ref not found")
 )
@@ -40,7 +43,10 @@ type TreeEntry struct {
 	Name string
 }
 
-var safeRefRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9/_.-]*$`)
+var (
+	safeRefRegex    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9/_.-]*$`)
+	commitHashRegex = regexp.MustCompile(`^[A-Fa-f0-9]{7,40}$`)
+)
 
 func ValidateRefName(ref string) error {
 	if ref == "" {
@@ -52,8 +58,19 @@ func ValidateRefName(ref string) error {
 	if !safeRefRegex.MatchString(ref) {
 		return fmt.Errorf("invalid ref name: contains illegal characters")
 	}
-	if strings.Contains(ref, "..") || strings.Contains(ref, "//") {
-		return fmt.Errorf("invalid ref name: contains '..' or '//'")
+	if strings.HasSuffix(ref, "/") || strings.HasSuffix(ref, ".") {
+		return fmt.Errorf("invalid ref name: cannot end with slash or dot")
+	}
+	if strings.Contains(ref, "..") || strings.Contains(ref, "//") || strings.Contains(ref, "@{") || strings.Contains(ref, "\\") {
+		return fmt.Errorf("invalid ref name")
+	}
+	if strings.ContainsAny(ref, " ~^:?*[") {
+		return fmt.Errorf("invalid ref name: contains reserved git characters")
+	}
+	for _, part := range strings.Split(ref, "/") {
+		if part == "" || strings.HasPrefix(part, ".") || strings.HasSuffix(part, ".lock") {
+			return fmt.Errorf("invalid ref name component")
+		}
 	}
 	return nil
 }
@@ -71,11 +88,13 @@ func SecureRepoPath(basePath, username, repoName string) (string, error) {
 
 	fullPath := filepath.Join(basePath, username, fmt.Sprintf("%s.git", repoName))
 
-	// Double-check against path traversal
+	// Double-check containment with filepath.Rel rather than a string prefix.
+	// Prefix comparisons reject valid roots such as "." after cleaning and are
+	// easy to get wrong for similarly named sibling directories.
 	cleanBase := filepath.Clean(basePath)
 	cleanPath := filepath.Clean(fullPath)
-
-	if !strings.HasPrefix(cleanPath, cleanBase+string(filepath.Separator)) {
+	rel, err := filepath.Rel(cleanBase, cleanPath)
+	if err != nil || rel == "." || rel == ".." || filepath.IsAbs(rel) || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("path traversal attempt detected")
 	}
 
@@ -132,43 +151,69 @@ func run(ctx context.Context, repoPath string, args ...string) ([]byte, error) {
 	return out, nil
 }
 
-// InitBareRepo initializes a new bare repository at fullPath.
+// InitBareRepo initializes a new bare repository at fullPath. Existing paths
+// are rejected so orphaned repository contents can never be adopted by a new
+// database record.
 func InitBareRepo(ctx context.Context, fullPath string) error {
-	if err := os.MkdirAll(fullPath, 0o700); err != nil {
-		slog.Error("failed to create repo directory",
-			"repo", fullPath,
-			"error", err,
-		)
-		return fmt.Errorf("failed to create repo directory: %w", err)
+	if _, err := os.Lstat(fullPath); err == nil {
+		return ErrRepoPathExists
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect repo path: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o700); err != nil {
+		return fmt.Errorf("create repo parent directory: %w", err)
+	}
+	if err := os.Mkdir(fullPath, 0o700); err != nil {
+		return fmt.Errorf("create repo directory: %w", err)
 	}
 
-	if _, err := run(ctx, fullPath, "init", "--bare", "."); err != nil {
-		slog.Error("failed to initialize bare repo, cleaning up",
-			"repo", fullPath,
-			"error", err,
-		)
-
+	if _, err := run(ctx, fullPath, "init", "--bare", "--initial-branch=main", "."); err != nil {
 		if rmErr := os.RemoveAll(fullPath); rmErr != nil {
-			slog.Error("failed to clean up partial repo",
-				"repo", fullPath,
-				"error", rmErr,
-			)
-			return fmt.Errorf("cleanup failed after init error: %v (cleanup error: %v)", err, rmErr)
+			return fmt.Errorf("git init --bare failed: %v (cleanup error: %v)", err, rmErr)
 		}
-
 		return fmt.Errorf("git init --bare failed: %w", err)
 	}
 
-	slog.Info("bare repository created successfully",
-		"repo", fullPath,
-	)
-
+	slog.Info("bare repository created successfully", "repo", fullPath)
 	return nil
 }
 
-// DeleteRepo deletes the repository directory at fullPath.
+// QuarantineRepo atomically moves a repository out of its active namespace.
+// The returned path can be restored when the following database mutation fails.
+func QuarantineRepo(fullPath string) (string, error) {
+	if _, err := os.Lstat(fullPath); os.IsNotExist(err) {
+		return "", nil
+	} else if err != nil {
+		return "", err
+	}
+
+	base := filepath.Dir(filepath.Dir(fullPath))
+	trashRoot := filepath.Join(base, ".trash", "repos")
+	if err := os.MkdirAll(trashRoot, 0o700); err != nil {
+		return "", err
+	}
+	placeholder, err := os.MkdirTemp(trashRoot, filepath.Base(fullPath)+"-")
+	if err != nil {
+		return "", err
+	}
+	if err := os.Remove(placeholder); err != nil {
+		return "", err
+	}
+	if err := os.Rename(fullPath, placeholder); err != nil {
+		return "", err
+	}
+	return placeholder, nil
+}
+
+func RestoreQuarantinedRepo(quarantinePath, fullPath string) error {
+	if quarantinePath == "" {
+		return nil
+	}
+	return os.Rename(quarantinePath, fullPath)
+}
+
 func DeleteRepo(fullPath string) error {
-	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+	if fullPath == "" {
 		return nil
 	}
 	return os.RemoveAll(fullPath)
@@ -177,7 +222,7 @@ func DeleteRepo(fullPath string) error {
 // IsEmpty returns true if the repo has no commits yet.
 // Works correctly for bare repositories.
 func IsEmpty(ctx context.Context, repoPath string) bool {
-	_, err := run(ctx, repoPath, "rev-parse", "--verify", "HEAD")
+	out, err := run(ctx, repoPath, "rev-list", "--all", "--max-count=1")
 	if err != nil {
 		slog.Debug("repository has no commits",
 			"repo", repoPath,
@@ -185,7 +230,7 @@ func IsEmpty(ctx context.Context, repoPath string) bool {
 		)
 		return true
 	}
-	return false
+	return len(bytes.TrimSpace(out)) == 0
 }
 
 // ensureNotEmpty returns ErrRepoEmpty if the repo has no commits.
@@ -308,13 +353,18 @@ func GetTags(ctx context.Context, repoPath string) ([]string, error) {
 // refExists checks whether a fully-qualified git ref (e.g. refs/heads/main,
 // refs/tags/v1.0) exists in the repository.
 func refExists(ctx context.Context, repoPath, fullRef string) bool {
-	_, err := run(ctx, repoPath, "show-ref", "--verify", "--quiet", fullRef)
-	return err == nil
+	// Missing refs are an expected part of fallback resolution. Avoid routing
+	// this probe through run(), which logs normal misses as ERROR events.
+	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "show-ref", "--verify", "--quiet", fullRef)
+	return cmd.Run() == nil
 }
 
 // isCommitHash returns true when s looks like a full or abbreviated commit SHA
 // that git can resolve.
 func isCommitHash(ctx context.Context, repoPath, s string) bool {
+	if !commitHashRegex.MatchString(s) {
+		return false
+	}
 	// git rev-parse --verify <sha>^{commit} succeeds only for valid commits.
 	_, err := run(ctx, repoPath, "rev-parse", "--verify", s+"^{commit}")
 	return err == nil
@@ -323,13 +373,13 @@ func isCommitHash(ctx context.Context, repoPath, s string) bool {
 // ResolveRef returns a concrete git ref to use for logs/tree/blob operations.
 //
 // Resolution order:
-//  1. Empty requestedRef → use default branch (from HEAD file) or first branch.
+//  1. Empty requestedRef → use default branch (from HEAD file), first branch, or HEAD.
 //  2. Exact branch match (refs/heads/<ref>).
 //  3. Exact tag match (refs/tags/<ref>).
 //  4. Valid commit hash / abbreviation.
-//  5. Fallback to first branch or "HEAD".
 //
-// Returns ErrRepoEmpty if the repository has no commits.
+// An explicit but missing ref returns ErrRefNotFound. It must never silently
+// fall back to another branch.
 func ResolveRef(ctx context.Context, repoPath, requestedRef string) (string, error) {
 	if err := ensureNotEmpty(ctx, repoPath); err != nil {
 		return "", err
@@ -337,63 +387,101 @@ func ResolveRef(ctx context.Context, repoPath, requestedRef string) (string, err
 	if err := ValidateRefName(requestedRef); err != nil {
 		return "", err
 	}
-	// Step 1: no ref requested – use default or first branch.
 	if requestedRef == "" {
 		if def, _ := GetDefaultBranch(ctx, repoPath); def != "" {
 			if refExists(ctx, repoPath, "refs/heads/"+def) {
-				slog.Debug("resolved ref to default branch",
-					"repo", repoPath,
-					"branch", def,
-				)
+				slog.Debug("resolved ref to default branch", "repo", repoPath, "branch", def)
 				return def, nil
 			}
 		}
 		if branches, _ := GetBranches(ctx, repoPath); len(branches) > 0 {
-			slog.Debug("resolved ref to first branch (no default)",
-				"repo", repoPath,
-				"branch", branches[0],
-			)
+			slog.Debug("resolved ref to first branch (no default)", "repo", repoPath, "branch", branches[0])
 			return branches[0], nil
 		}
 		return "HEAD", nil
 	}
 
-	// Step 2: branch?
 	if refExists(ctx, repoPath, "refs/heads/"+requestedRef) {
-		slog.Debug("resolved ref as branch",
-			"repo", repoPath,
-			"ref", requestedRef,
-		)
+		slog.Debug("resolved ref as branch", "repo", repoPath, "ref", requestedRef)
 		return requestedRef, nil
 	}
-
-	// Step 3: tag?
 	if refExists(ctx, repoPath, "refs/tags/"+requestedRef) {
-		slog.Debug("resolved ref as tag",
-			"repo", repoPath,
-			"ref", requestedRef,
-		)
+		slog.Debug("resolved ref as tag", "repo", repoPath, "ref", requestedRef)
 		return requestedRef, nil
 	}
-
-	// Step 4: commit hash / abbreviation?
 	if isCommitHash(ctx, repoPath, requestedRef) {
-		slog.Debug("resolved ref as commit hash",
-			"repo", repoPath,
-			"ref", requestedRef,
-		)
+		slog.Debug("resolved ref as commit hash", "repo", repoPath, "ref", requestedRef)
 		return requestedRef, nil
 	}
 
-	// Step 5: fallback.
-	slog.Debug("ref not found, falling back",
-		"repo", repoPath,
-		"requestedRef", requestedRef,
-	)
-	if branches, _ := GetBranches(ctx, repoPath); len(branches) > 0 {
-		return branches[0], nil
+	return "", ErrRefNotFound
+}
+
+// ResolveCommitHash verifies that a full or abbreviated hash resolves to a
+// commit inside repoPath and returns the canonical full hash.
+func ResolveCommitHash(ctx context.Context, repoPath, hash string) (string, error) {
+	if !commitHashRegex.MatchString(hash) {
+		return "", fmt.Errorf("invalid commit hash")
 	}
-	return "HEAD", nil
+	out, err := run(ctx, repoPath, "rev-parse", "--verify", hash+"^{commit}")
+	if err != nil {
+		return "", ErrRefNotFound
+	}
+	resolved := strings.TrimSpace(string(out))
+	if !regexp.MustCompile(`^[A-Fa-f0-9]{40}$`).MatchString(resolved) {
+		return "", fmt.Errorf("unexpected resolved commit hash")
+	}
+	return resolved, nil
+}
+
+// ResolveBranchCommitHash returns the canonical commit currently at a branch.
+func ResolveBranchCommitHash(ctx context.Context, repoPath, branch string) (string, error) {
+	if err := ValidateRefName(branch); err != nil || branch == "" {
+		return "", fmt.Errorf("invalid branch")
+	}
+	return resolveFullRefCommitHash(ctx, repoPath, "refs/heads/"+branch)
+}
+
+// ResolveTagCommitHash returns the canonical commit currently referenced by a tag.
+func ResolveTagCommitHash(ctx context.Context, repoPath, tag string) (string, error) {
+	if err := ValidateRefName(tag); err != nil || tag == "" {
+		return "", fmt.Errorf("invalid tag")
+	}
+	return resolveFullRefCommitHash(ctx, repoPath, "refs/tags/"+tag)
+}
+
+func resolveFullRefCommitHash(ctx context.Context, repoPath, fullRef string) (string, error) {
+	out, err := run(ctx, repoPath, "rev-parse", "--verify", fullRef+"^{commit}")
+	if err != nil {
+		return "", ErrRefNotFound
+	}
+	resolved := strings.TrimSpace(string(out))
+	if !regexp.MustCompile(`^[A-Fa-f0-9]{40}$`).MatchString(resolved) {
+		return "", fmt.Errorf("unexpected resolved commit hash")
+	}
+	return resolved, nil
+}
+
+// IsCommitReachableFromBranch reports whether commitHash is an ancestor of the
+// current branch tip. Manual historical runs may target reachable commits;
+// push-triggered runs require the exact tip in the HTTP handler.
+func IsCommitReachableFromBranch(ctx context.Context, repoPath, commitHash, branch string) (bool, error) {
+	if _, err := ResolveCommitHash(ctx, repoPath, commitHash); err != nil {
+		return false, err
+	}
+	if err := ValidateRefName(branch); err != nil || branch == "" {
+		return false, fmt.Errorf("invalid branch")
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "merge-base", "--is-ancestor", commitHash, "refs/heads/"+branch)
+	err := cmd.Run()
+	if err == nil {
+		return true, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, fmt.Errorf("check branch reachability: %w", err)
 }
 
 // SanitizeRefForFilename converts a ref name to a safe filename component.

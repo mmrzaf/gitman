@@ -6,9 +6,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/mmrzaf/gitman/internal/config"
 	"github.com/mmrzaf/gitman/internal/db"
 )
@@ -210,5 +213,239 @@ func TestHandleRegisterDisabled(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("router should not expose /register when disabled, got %d", w.Code)
+	}
+}
+
+func TestWriteCILogFragmentEscapesHTML(t *testing.T) {
+	w := httptest.NewRecorder()
+	writeCILogFragment(w, `<img src=x onerror="alert(1)">`)
+	body := w.Body.String()
+	if strings.Contains(body, "<img") {
+		t.Fatalf("CI log fragment contains executable HTML: %s", body)
+	}
+	if !strings.Contains(body, "&lt;img") {
+		t.Fatalf("CI log fragment was not escaped: %s", body)
+	}
+	if got := w.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("expected no-store, got %q", got)
+	}
+}
+
+func TestListArtifactsIncludesNestedFilesAndSkipsSymlinks(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "reports"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "reports", "coverage.txt"), []byte("ok"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Symlink(filepath.Join(root, "reports", "coverage.txt"), filepath.Join(root, "link.txt"))
+	artifacts := listArtifacts(root)
+	if len(artifacts) != 1 || artifacts[0] != "reports/coverage.txt" {
+		t.Fatalf("unexpected artifacts: %v", artifacts)
+	}
+}
+
+func TestBuildHookScriptUsesFormEncoding(t *testing.T) {
+	script := buildHookScript("http://web:8080", "owner", "repo", "secret")
+	for _, expected := range []string{
+		`--data-urlencode "commit_hash=$new"`,
+		`--data-urlencode "branch=$branch"`,
+		`--data-urlencode "tag=$tag"`,
+		`--data-urlencode "event=push"`,
+	} {
+		if !strings.Contains(script, expected) {
+			t.Fatalf("hook script missing %q:\n%s", expected, script)
+		}
+	}
+	for _, expected := range []string{"--connect-timeout 2", "--max-time 5"} {
+		if !strings.Contains(script, expected) {
+			t.Fatalf("hook script missing %q:\n%s", expected, script)
+		}
+	}
+	if strings.Contains(script, `Content-Type: application/json`) {
+		t.Fatalf("hook should not hand-roll JSON:\n%s", script)
+	}
+}
+
+func TestServeArtifactNestedAndRejectsTraversal(t *testing.T) {
+	root := t.TempDir()
+	artifactDir := filepath.Join(root, "files", "owner", "repo", "run", "attempt", "reports")
+	if err := os.MkdirAll(artifactDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(artifactDir, "coverage.txt"), []byte("ok"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/artifact", nil)
+	serveArtifact(w, r, root, "owner", "repo", "run", "attempt", "reports/coverage.txt")
+	if w.Code != http.StatusOK || w.Body.String() != "ok" {
+		t.Fatalf("nested artifact response: status=%d body=%q", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("expected no-store, got %q", got)
+	}
+
+	w = httptest.NewRecorder()
+	serveArtifact(w, r, root, "owner", "repo", "run", "attempt", "../outside")
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected traversal rejection, got %d", w.Code)
+	}
+}
+func TestRenderPageBuffersTemplateErrors(t *testing.T) {
+	bad := template.Must(template.New("base.html").Parse(`{{define "base.html"}}prefix{{.Data.Missing}}{{end}}`))
+	app := &App{Config: &config.Config{}, Templates: map[string]*template.Template{"bad.html": bad}}
+	req := httptest.NewRequest(http.MethodGet, "/bad", nil)
+	w := httptest.NewRecorder()
+	app.renderPage(w, req, "bad.html", PageData{Data: struct{}{}})
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
+	}
+	if body := w.Body.String(); body != "Internal Server Error\n" {
+		t.Fatalf("template output leaked before error response: %q", body)
+	}
+	if got := w.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("expected no-store, got %q", got)
+	}
+}
+
+func TestRepoNavRendersCIPageWithoutCurrentRefField(t *testing.T) {
+	app := setupTestApp(t)
+	owner, err := app.DB.GetUserByUsername(context.Background(), "testuser")
+	if err != nil || owner == nil {
+		t.Fatal("owner not found")
+	}
+	repoID, err := app.DB.CreateRepository(context.Background(), owner.ID, "repo", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := app.DB.GetRepositoryByID(context.Background(), repoID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	partial, err := os.ReadFile(filepath.Join("..", "..", "templates", "partials", "repo_nav.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := template.Must(template.New("base.html").Funcs(templateFuncs).Parse(`{{define "base.html"}}{{template "repo_nav" .}}{{end}}` + string(partial)))
+	app.Templates["repo_ci.html"] = tmpl
+
+	req := httptest.NewRequest(http.MethodGet, "/testuser/repo/ci?ref=feature/a", nil)
+	ctx := context.WithValue(req.Context(), userContextKey, owner)
+	ctx = context.WithValue(ctx, repoContextKey, repo)
+	ctx = context.WithValue(ctx, repoOwnerContextKey, owner)
+	req = req.WithContext(ctx)
+	w := httptest.NewRecorder()
+	app.renderPage(w, req, "repo_ci.html", PageData{User: owner, Data: CIPageData{Owner: owner, Repository: repo}})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	for _, want := range []string{"/testuser/repo/tree?ref=feature%2fa", "/testuser/repo/commits?ref=feature%2fa", "CI/CD", "Secrets"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("navigation missing %q: %s", want, body)
+		}
+	}
+	if strings.Contains(body, "%252f") {
+		t.Fatalf("navigation ref was double escaped: %s", body)
+	}
+}
+
+func TestRepoNavHidesCIFromNonMember(t *testing.T) {
+	app := setupTestApp(t)
+	owner, _ := app.DB.GetUserByUsername(context.Background(), "testuser")
+	viewer, err := app.DB.CreateUser(context.Background(), "viewer", "ViewerPass1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoID, err := app.DB.CreateRepository(context.Background(), owner.ID, "public", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, _ := app.DB.GetRepositoryByID(context.Background(), repoID)
+	req := httptest.NewRequest(http.MethodGet, "/testuser/public/tree", nil)
+	ctx := context.WithValue(req.Context(), userContextKey, viewer)
+	ctx = context.WithValue(ctx, repoContextKey, repo)
+	ctx = context.WithValue(ctx, repoOwnerContextKey, owner)
+	nav := app.repoNavData(req.WithContext(ctx), "main")
+	if nav == nil || nav.CanViewCI || nav.IsOwner {
+		t.Fatalf("non-member unexpectedly received CI navigation: %+v", nav)
+	}
+}
+
+func TestWebhookAuthRejectsMismatchedRoute(t *testing.T) {
+	app := setupTestApp(t)
+	owner, _ := app.DB.GetUserByUsername(context.Background(), "testuser")
+	repoID, err := app.DB.CreateRepository(context.Background(), owner.ID, "repo", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.DB.SetWebhookSecret(context.Background(), repoID, "hook-secret"); err != nil {
+		t.Fatal(err)
+	}
+	router := chi.NewRouter()
+	router.Post("/repos/{username}/{repo_name}/ci/webhook", app.WebhookAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})).ServeHTTP)
+
+	for _, tc := range []struct {
+		path string
+		want int
+	}{
+		{path: "/repos/testuser/repo/ci/webhook", want: http.StatusNoContent},
+		{path: "/repos/testuser/other/ci/webhook", want: http.StatusUnauthorized},
+		{path: "/repos/other/repo/ci/webhook", want: http.StatusUnauthorized},
+	} {
+		req := httptest.NewRequest(http.MethodPost, tc.path, nil)
+		req.Header.Set("X-Gitman-Webhook-Secret", "hook-secret")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != tc.want {
+			t.Fatalf("%s: expected %d, got %d", tc.path, tc.want, w.Code)
+		}
+	}
+}
+
+func TestCISecretPreservesWhitespace(t *testing.T) {
+	app := setupTestApp(t)
+	owner, _ := app.DB.GetUserByUsername(context.Background(), "testuser")
+	repoID, err := app.DB.CreateRepository(context.Background(), owner.ID, "repo", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, _ := app.DB.GetRepositoryByID(context.Background(), repoID)
+	app.Templates["repo_ci_secrets.html"] = template.Must(template.New("ci_secrets_panel").Parse(`{{define "ci_secrets_panel"}}ok{{end}}`))
+	form := url.Values{"key": {"TOKEN"}, "value": {"  keep spaces  "}}
+	req := httptest.NewRequest(http.MethodPost, "/testuser/repo/ci/secrets", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	ctx := context.WithValue(req.Context(), userContextKey, owner)
+	ctx = context.WithValue(ctx, repoContextKey, repo)
+	ctx = context.WithValue(ctx, repoOwnerContextKey, owner)
+	w := httptest.NewRecorder()
+	app.HandleCISecretsAddPOST(w, req.WithContext(ctx))
+	secrets, err := app.DB.GetRepoSecrets(context.Background(), repoID)
+	if err != nil || len(secrets) != 1 {
+		t.Fatalf("secret was not stored: %v %v", secrets, err)
+	}
+	value, err := db.DecryptSecret(app.Config.SecretKey, secrets[0].EncryptedValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value != "  keep spaces  " {
+		t.Fatalf("secret whitespace changed: %q", value)
+	}
+}
+
+func TestLimitRequestBodyRejectsOversizedUIRequest(t *testing.T) {
+	handler := limitRequestBody(4)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("12345"))
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413, got %d", w.Code)
 	}
 }

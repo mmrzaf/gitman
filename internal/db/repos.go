@@ -22,7 +22,7 @@ func (db *DB) CreateRepository(ctx context.Context, ownerID, name, description s
 
 // GetUserRepositories returns all repos belonging to a specific user
 func (db *DB) GetUserRepositories(ctx context.Context, ownerID string) ([]models.Repository, error) {
-	query := `SELECT id, owner_id, name, description, is_private, created_at, updated_at
+	query := `SELECT id, owner_id, name, COALESCE(description, ''), is_private, created_at, updated_at
 			  FROM repositories WHERE owner_id = ? ORDER BY created_at DESC`
 	rows, err := db.QueryContext(ctx, query, ownerID)
 	if err != nil {
@@ -53,12 +53,12 @@ func (db *DB) GetUserRepositories(ctx context.Context, ownerID string) ([]models
 		r.UpdatedAt = unixToTime(updatedAt)
 		repos = append(repos, r)
 	}
-	return repos, nil
+	return repos, rows.Err()
 }
 
 // GetRepositoryByOwnerAndName fetches a repository by its name, with given owner
 func (db *DB) GetRepositoryByOwnerAndName(ctx context.Context, ownerID string, name string) (*models.Repository, error) {
-	query := `SELECT id, owner_id, name, description, is_private, created_at
+	query := `SELECT id, owner_id, name, COALESCE(description, ''), is_private, created_at
               FROM repositories
               WHERE owner_id = ? AND name = ? LIMIT 1`
 
@@ -75,7 +75,7 @@ func (db *DB) GetRepositoryByOwnerAndName(ctx context.Context, ownerID string, n
 
 // GetRepositoryByID fetches a single repo by its ID
 func (db *DB) GetRepositoryByID(ctx context.Context, id string) (*models.Repository, error) {
-	query := `SELECT id, owner_id, name, description, is_private, created_at, updated_at
+	query := `SELECT id, owner_id, name, COALESCE(description, ''), is_private, created_at, updated_at
 			  FROM repositories WHERE id = ?`
 	row := db.QueryRowContext(ctx, query, id)
 
@@ -155,7 +155,7 @@ func (db *DB) GetCollaborators(ctx context.Context, repoID string) ([]models.Col
 		c.User = u
 		collaborators = append(collaborators, c)
 	}
-	return collaborators, nil
+	return collaborators, rows.Err()
 }
 
 // HasRepoAccess checks if a user has the required access level for a repository.
@@ -187,7 +187,7 @@ func (db *DB) SetWebhookSecret(ctx context.Context, repoID, secret string) error
 
 // GetRepositoryByWebhookSecret fetches a single repo by its webhook secret
 func (db *DB) GetRepositoryByWebhookSecret(ctx context.Context, secret string) (*models.Repository, error) {
-	query := `SELECT id, owner_id, name, description, is_private, created_at, updated_at
+	query := `SELECT id, owner_id, name, COALESCE(description, ''), is_private, created_at, updated_at
 			  FROM repositories WHERE webhook_secret = ?`
 	row := db.QueryRowContext(ctx, query, secret)
 
@@ -208,4 +208,12 @@ func (db *DB) GetRepositoryByWebhookSecret(ctx context.Context, secret string) (
 	r.CreatedAt = unixToTime(createdAt)
 	r.UpdatedAt = unixToTime(updatedAt)
 	return &r, nil
+}
+
+// GetWebhookSecret returns the current hook token so a failed reinstall can
+// restore the previously working configuration.
+func (db *DB) GetWebhookSecret(ctx context.Context, repoID string) (string, error) {
+	var secret string
+	err := db.QueryRowContext(ctx, "SELECT webhook_secret FROM repositories WHERE id = ?", repoID).Scan(&secret)
+	return secret, err
 }

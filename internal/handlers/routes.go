@@ -14,7 +14,7 @@ func SetupRouter(app *App) *chi.Mux {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RedirectSlashes)
-	r.Use(securityHeaders) // safe for all requests
+	r.Use(app.securityHeaders) // safe for all requests
 
 	// ── Git Smart HTTP routes (NO CSRF) ─────────────────────────────
 	r.Route("/{username}/{repo_name}.git", func(r chi.Router) {
@@ -29,15 +29,17 @@ func SetupRouter(app *App) *chi.Mux {
 		r.Use(app.AuthMiddleware)
 		r.Use(app.RequireAuth)
 		r.Use(app.RepoAccessMiddleware)
-		r.Get("/artifacts/latest/branch/{branch_name}/{filename}", app.HandleArtifactByBranch)
-		r.Get("/artifacts/tag/{tag_name}/{filename}", app.HandleArtifactByTag)
-		r.Get("/artifacts/commit/{commit_hash}/{filename}", app.HandleArtifactByCommit)
-		r.Get("/artifacts/run/{run_id}/{filename}", app.HandleArtifactByRunID)
+		r.Use(app.RequireRepoMember)
+		r.Get("/artifacts/latest/branch/*", app.HandleArtifactByBranch)
+		r.Get("/artifacts/tag/*", app.HandleArtifactByTag)
+		r.Get("/artifacts/commit/{commit_hash}/*", app.HandleArtifactByCommit)
+		r.Get("/artifacts/run/{run_id}/*", app.HandleArtifactByRunID)
 	})
 
 	// ── Web UI and internal API (with Auth + CSRF) ──────────────────
 	r.Group(func(r chi.Router) {
 		r.Use(app.AuthMiddleware)
+		r.Use(limitRequestBody(maxUIRequestBodyBytes))
 		r.Use(app.CSRFMiddleware)
 
 		// Static files
@@ -57,7 +59,7 @@ func SetupRouter(app *App) *chi.Mux {
 			r.Get("/register", app.HandleRegisterGET)
 			r.Post("/register", app.HandleRegisterPOST)
 		}
-		r.Get("/logout", app.HandleLogout)
+		r.Post("/logout", app.HandleLogout)
 
 		// Authenticated user routes (keys, tokens, repos list)
 		r.Group(func(r chi.Router) {
@@ -80,13 +82,16 @@ func SetupRouter(app *App) *chi.Mux {
 			r.Use(app.RepoAccessMiddleware)
 
 			r.Get("/", app.HandleRepoTreeGET)
+			r.Get("/tree", app.HandleRepoTreeGET)
+			r.Get("/blob", app.HandleRepoBlobGET)
+			r.Get("/commits", app.HandleRepoCommitsGET)
+			r.Get("/archive/{format}", app.HandleRepoArchiveGET)
+
+			// Legacy path-based routes remain during the beta transition.
 			r.Get("/tree/{ref}", app.HandleRepoTreeGET)
 			r.Get("/tree/{ref}/*", app.HandleRepoTreeGET)
 			r.Get("/blob/{ref}/*", app.HandleRepoBlobGET)
 			r.Get("/commits/{ref}", app.HandleRepoCommitsGET)
-
-			// Archive: wildcard captures "<ref>.<format>" including refs with
-			// slashes (e.g. /archive/feature/my-branch.zip).
 			r.Get("/archive/*", app.HandleRepoArchiveGET)
 
 			// Collaborators
@@ -94,20 +99,24 @@ func SetupRouter(app *App) *chi.Mux {
 			r.Post("/collaborators/add", app.HandleRepoCollaboratorsAddPOST)
 			r.Post("/collaborators/remove", app.HandleRepoCollaboratorsRemovePOST)
 
-			// CI/CD (most endpoints require POST with CSRF)
-			r.Get("/ci", app.HandleCIGET)
-			r.Post("/ci/trigger", app.HandleCITriggerPOST)
-			r.Get("/ci/{run_id}", app.HandleCIRunGET)
-			r.Get("/ci/{run_id}/log", app.HandleCIRunLogGET)
+			// CI output and artifacts may contain sensitive build data. Public source
+			// browsing does not imply public CI visibility.
+			r.Group(func(r chi.Router) {
+				r.Use(app.RequireRepoMember)
+				r.Get("/ci", app.HandleCIGET)
+				r.Post("/ci/trigger", app.HandleCITriggerPOST)
+				r.Get("/ci/{run_id}", app.HandleCIRunGET)
+				r.Get("/ci/{run_id}/log", app.HandleCIRunLogGET)
 
-			// Secrets
-			r.Get("/ci/secrets", app.HandleCISecretsGET)
-			r.Post("/ci/secrets", app.HandleCISecretsAddPOST)
-			r.Post("/ci/secrets/{id}/delete", app.HandleCISecretsDeletePOST)
+				// Secrets
+				r.Get("/ci/secrets", app.HandleCISecretsGET)
+				r.Post("/ci/secrets", app.HandleCISecretsAddPOST)
+				r.Post("/ci/secrets/{id}/delete", app.HandleCISecretsDeletePOST)
 
-			// Hook install / uninstall
-			r.Post("/ci/hook/install", app.HandleCIHookInstallPOST)
-			r.Post("/ci/hook/uninstall", app.HandleCIHookUninstallPOST)
+				// Hook install / uninstall
+				r.Post("/ci/hook/install", app.HandleCIHookInstallPOST)
+				r.Post("/ci/hook/uninstall", app.HandleCIHookUninstallPOST)
+			})
 		})
 	})
 

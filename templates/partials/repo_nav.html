@@ -1,26 +1,19 @@
 {{define "repo_nav"}}
+{{if .RepoNav}}
 <div class="repo-nav">
-    {{$owner := .Data.Owner.Username}} {{$repo := .Data.Repository.Name}}
-
-    <a href="/{{$owner}}/{{$repo}}/tree/main" style="text-decoration: none"
-        >Files</a
-    >
+    {{$owner := .RepoNav.Owner.Username}} {{$repo := .RepoNav.Repository.Name}}
+    <a href="/{{$owner}}/{{$repo}}/tree{{if .RepoNav.CurrentRef}}?ref={{.RepoNav.CurrentRef}}{{end}}" style="text-decoration: none">Files</a>
     |
-    <a href="/{{$owner}}/{{$repo}}/commits/main" style="text-decoration: none"
-        >Commits</a
-    >
-
-    {{if and $.User (eq $.User.ID .Data.Owner.ID)}} |
-    <a href="/{{$owner}}/{{$repo}}/collaborators" style="text-decoration: none"
-        >Collaborators</a
-    >
-    {{end}} |
+    <a href="/{{$owner}}/{{$repo}}/commits{{if .RepoNav.CurrentRef}}?ref={{.RepoNav.CurrentRef}}{{end}}" style="text-decoration: none">Commits</a>
+    {{if .RepoNav.IsOwner}} |
+    <a href="/{{$owner}}/{{$repo}}/collaborators" style="text-decoration: none">Collaborators</a>
+    {{end}}
+    {{if .RepoNav.CanViewCI}} |
     <a href="/{{$owner}}/{{$repo}}/ci" style="text-decoration: none">CI/CD</a>
-
-    {{if and $.User (eq $.User.ID .Data.Owner.ID)}} |
-    <a href="/{{$owner}}/{{$repo}}/ci/secrets" style="text-decoration: none"
-        >Secrets</a
-    >
+    {{end}}
+    {{if .RepoNav.IsOwner}} |
+    <a href="/{{$owner}}/{{$repo}}/ci/secrets" style="text-decoration: none">Secrets</a>
     {{end}}
 </div>
+{{end}}
 {{end}}

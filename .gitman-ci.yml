@@ -1,0 +1,29 @@
+image: golang:1.24-alpine
+
+env:
+  CGO_ENABLED: "0"
+  GOFLAGS: "-mod=mod"
+  # DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+
+steps:
+  - name: restore cache
+    run: |
+      if [ -f /gitman/cache/deps.tar ]; then
+        echo "Restoring module cache..."
+        tar xf /gitman/cache/deps.tar -C /
+      else
+        echo "No cache found, cold start"
+      fi
+
+  - name: test
+    run: go test ./...
+
+  - name: build
+    run: |
+      go build -ldflags="-s -w" -o /gitman/artifacts/app ./cmd/app
+      echo "Binary size: $(du -sh /gitman/artifacts/app | cut -f1)"
+
+  - name: save cache
+    run: |
+      mkdir -p /gitman/cache
+      tar cf /gitman/cache/deps.tar /go/pkg/mod 2>/dev/null || true

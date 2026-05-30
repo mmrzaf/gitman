@@ -3,6 +3,7 @@ package git
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -36,6 +37,7 @@ func prepareRepoWithCommit(t *testing.T, repoPath string) {
 	cmds := [][]string{
 		{"config", "user.email", "test@example.com"},
 		{"config", "user.name", "Test User"},
+		{"checkout", "-b", "main"},
 		{"add", "."},
 		{"commit", "-m", "initial commit"},
 		{"push", "origin", "main"},
@@ -106,9 +108,14 @@ func TestResolveRef(t *testing.T) {
 	if err != nil || ref != "main" {
 		t.Errorf("expected main, got %v err=%v", ref, err)
 	}
-	ref, err = ResolveRef(ctx, repoPath, "nonexistent")
+	ref, err = ResolveRef(ctx, repoPath, "")
 	if err != nil || ref != "main" {
-		t.Errorf("expected fallback main, got %v err=%v", ref, err)
+		t.Errorf("expected empty ref to resolve to main, got %v err=%v", ref, err)
+	}
+
+	_, err = ResolveRef(ctx, repoPath, "nonexistent")
+	if !errors.Is(err, ErrRefNotFound) {
+		t.Errorf("expected ErrRefNotFound, got %v", err)
 	}
 }
 
@@ -215,5 +222,59 @@ func TestDeleteRepo(t *testing.T) {
 	}
 	if _, err := os.Stat(repoPath); !os.IsNotExist(err) {
 		t.Error("repo still exists")
+	}
+}
+
+func TestInitBareRepoRejectsExistingPath(t *testing.T) {
+	repoPath := setupTestRepo(t)
+	err := InitBareRepo(context.Background(), repoPath)
+	if !errors.Is(err, ErrRepoPathExists) {
+		t.Fatalf("expected ErrRepoPathExists, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repoPath, "HEAD")); err != nil {
+		t.Fatalf("existing repository was damaged: %v", err)
+	}
+}
+
+func TestResolveCommitHash(t *testing.T) {
+	repoPath := setupTestRepo(t)
+	prepareRepoWithCommit(t, repoPath)
+	commits, err := GetCommits(context.Background(), repoPath, "main", 0, 1)
+	if err != nil || len(commits) != 1 {
+		t.Fatalf("get commits: %v", err)
+	}
+	resolved, err := ResolveCommitHash(context.Background(), repoPath, commits[0].Hash[:8])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved != commits[0].Hash {
+		t.Fatalf("expected %s, got %s", commits[0].Hash, resolved)
+	}
+}
+
+func TestResolveBranchCommitHashAndReachability(t *testing.T) {
+	repoPath := setupTestRepo(t)
+	prepareRepoWithCommit(t, repoPath)
+	commit, err := ResolveBranchCommitHash(context.Background(), repoPath, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reachable, err := IsCommitReachableFromBranch(context.Background(), repoPath, commit, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reachable {
+		t.Fatal("branch tip should be reachable from branch")
+	}
+}
+
+func TestSecureRepoPathAllowsCurrentDirectoryRoot(t *testing.T) {
+	got, err := SecureRepoPath(".", "owner", "repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join("owner", "repo.git")
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
 	}
 }

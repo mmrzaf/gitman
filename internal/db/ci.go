@@ -4,12 +4,38 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/mmrzaf/gitman/internal/models"
 )
+
+const ciRunColumns = `id, repo_id, commit_hash, branch, tag, event, status, log_file,
+	attempt_id, created_at, started_at, heartbeat_at, completed_at`
+
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanCIRun(scanner rowScanner) (*models.CIRun, error) {
+	var r models.CIRun
+	var createdAt int64
+	var startedAt, heartbeatAt, completedAt sql.NullInt64
+	if err := scanner.Scan(
+		&r.ID, &r.RepoID, &r.CommitHash, &r.Branch, &r.Tag,
+		&r.Event, &r.Status, &r.LogFile, &r.AttemptID, &createdAt,
+		&startedAt, &heartbeatAt, &completedAt,
+	); err != nil {
+		return nil, err
+	}
+	r.CreatedAt = unixToTime(createdAt)
+	r.StartedAt = nullUnixToTime(startedAt)
+	r.HeartbeatAt = nullUnixToTime(heartbeatAt)
+	r.CompletedAt = nullUnixToTime(completedAt)
+	return &r, nil
+}
 
 // CreateCIRun inserts a new pending run and returns its UUID.
 func (db *DB) CreateCIRun(ctx context.Context, repoID, commitHash, branch, tag, event string) (string, error) {
@@ -21,11 +47,10 @@ func (db *DB) CreateCIRun(ctx context.Context, repoID, commitHash, branch, tag, 
 	return id, err
 }
 
-// ClaimNextPendingRun atomically claims the oldest pending run for the worker
-// by wrapping the SELECT + UPDATE in a transaction.
-// Returns nil, nil when there are no pending runs.
+// ClaimNextPendingRun atomically leases one pending run. A fresh attempt ID is
+// generated for every claim so a stale worker cannot mutate a replacement run.
 func (db *DB) ClaimNextPendingRun(ctx context.Context) (*models.CIRun, error) {
-	tx, err := db.BeginTx(ctx, nil)
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -35,209 +60,202 @@ func (db *DB) ClaimNextPendingRun(ctx context.Context) (*models.CIRun, error) {
 		}
 	}()
 
-	res, err := tx.ExecContext(ctx, `
-        UPDATE ci_runs
-        SET status = 'running'
-        WHERE id = (
-            SELECT id FROM ci_runs
-            WHERE status = 'pending'
-            ORDER BY created_at ASC
-            LIMIT 1
-        )
-    `)
-	if err != nil {
-		return nil, err
-	}
-	rows, _ := res.RowsAffected()
-	if rows == 0 {
+	now := time.Now().Unix()
+	attemptID := uuid.New().String()
+	run, err := scanCIRun(tx.QueryRowContext(ctx, `
+		UPDATE ci_runs
+		SET status = 'running', attempt_id = ?, log_file = '', started_at = ?, heartbeat_at = ?, completed_at = NULL
+		WHERE id = (
+			SELECT id FROM ci_runs
+			WHERE status = 'pending'
+			ORDER BY created_at ASC
+			LIMIT 1
+		)
+		RETURNING `+ciRunColumns, attemptID, now, now))
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
-
-	var run models.CIRun
-	var createdAt int64
-	err = tx.QueryRowContext(ctx, `
-        SELECT id, repo_id, commit_hash, branch, tag, event, status, log_file, created_at
-        FROM ci_runs
-        WHERE status = 'running'
-        ORDER BY created_at DESC
-        LIMIT 1
-    `).Scan(&run.ID, &run.RepoID, &run.CommitHash, &run.Branch, &run.Tag,
-		&run.Event, &run.Status, &run.LogFile, &createdAt)
 	if err != nil {
 		return nil, err
 	}
-
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
-
-	run.CreatedAt = unixToTime(createdAt)
-	run.Status = "running"
-	return &run, nil
+	return run, nil
 }
 
-// UpdateCIRunLogFile records the absolute path of the run's log file.
-func (db *DB) UpdateCIRunLogFile(ctx context.Context, runID, logFile string) error {
-	_, err := db.ExecContext(ctx,
-		"UPDATE ci_runs SET log_file = ? WHERE id = ?", logFile, runID)
-	return err
+// HeartbeatCIRun refreshes the lease for one exact execution attempt.
+func (db *DB) HeartbeatCIRun(ctx context.Context, runID, attemptID string) error {
+	res, err := db.ExecContext(ctx,
+		"UPDATE ci_runs SET heartbeat_at = ? WHERE id = ? AND attempt_id = ? AND status = 'running'",
+		time.Now().Unix(), runID, attemptID,
+	)
+	if err != nil {
+		return err
+	}
+	return requireAffectedRow(res, "CI run lease is no longer active")
 }
 
-// CompleteCIRun sets status and completed_at for a finished run.
-// status should be one of "success", "failed", or "skipped".
-func (db *DB) CompleteCIRun(ctx context.Context, runID, status string) error {
-	_, err := db.ExecContext(ctx, `
-		UPDATE ci_runs SET status = ?, completed_at = ? WHERE id = ?
-	`, status, time.Now().Unix(), runID)
-	return err
+// IsCIRunAttemptActive reports whether an attempt still owns a running lease.
+func (db *DB) IsCIRunAttemptActive(ctx context.Context, runID, attemptID string) (bool, error) {
+	var one int
+	err := db.QueryRowContext(ctx, `
+		SELECT 1 FROM ci_runs
+		WHERE id = ? AND attempt_id = ? AND status = 'running'
+	`, runID, attemptID).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// IsCIRunAttemptFresh reports whether an attempt owns a lease with a recent
+// heartbeat. It is used when reconciling containers after worker crashes.
+func (db *DB) IsCIRunAttemptFresh(ctx context.Context, runID, attemptID string, staleBefore time.Time) (bool, error) {
+	var one int
+	err := db.QueryRowContext(ctx, `
+		SELECT 1 FROM ci_runs
+		WHERE id = ? AND attempt_id = ? AND status = 'running'
+		  AND heartbeat_at IS NOT NULL AND heartbeat_at >= ?
+	`, runID, attemptID, staleBefore.Unix()).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// RequeueStaleCIRuns releases runs whose worker disappeared. The old attempt
+// ID is cleared so stale workers lose authority immediately.
+func (db *DB) RequeueStaleCIRuns(ctx context.Context, staleBefore time.Time) (int64, error) {
+	res, err := db.ExecContext(ctx, `
+		UPDATE ci_runs
+		SET status = 'pending', attempt_id = '', log_file = '', started_at = NULL, heartbeat_at = NULL
+		WHERE status = 'running' AND (heartbeat_at IS NULL OR heartbeat_at < ?)
+	`, staleBefore.Unix())
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// UpdateCIRunLogFile records the absolute log path for one active attempt.
+func (db *DB) UpdateCIRunLogFile(ctx context.Context, runID, attemptID, logFile string) error {
+	res, err := db.ExecContext(ctx, `
+		UPDATE ci_runs SET log_file = ?
+		WHERE id = ? AND attempt_id = ? AND status = 'running'
+	`, logFile, runID, attemptID)
+	if err != nil {
+		return err
+	}
+	return requireAffectedRow(res, "CI run lease is no longer active")
+}
+
+// CompleteCIRun sets status and completed_at for one exact execution attempt.
+func (db *DB) CompleteCIRun(ctx context.Context, runID, attemptID, status string) error {
+	switch status {
+	case "success", "failed", "skipped":
+	default:
+		return fmt.Errorf("invalid CI run status %q", status)
+	}
+	res, err := db.ExecContext(ctx, `
+		UPDATE ci_runs SET status = ?, completed_at = ?, heartbeat_at = NULL
+		WHERE id = ? AND attempt_id = ? AND status = 'running'
+	`, status, time.Now().Unix(), runID, attemptID)
+	if err != nil {
+		return err
+	}
+	return requireAffectedRow(res, "CI run lease is no longer active")
+}
+
+func requireAffectedRow(res sql.Result, message string) error {
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return errors.New(message)
+	}
+	return nil
 }
 
 // GetCIRunsByRepo returns the most recent CI runs for a repository.
 func (db *DB) GetCIRunsByRepo(ctx context.Context, repoID string, limit int) ([]models.CIRun, error) {
-	rows, err := db.QueryContext(ctx, `
-		SELECT id, repo_id, commit_hash, branch, tag, event, status, log_file,
-		       created_at, completed_at
-		FROM ci_runs
-		WHERE repo_id = ?
-		ORDER BY created_at DESC
-		LIMIT ?
-	`, repoID, limit)
+	rows, err := db.QueryContext(ctx, `SELECT `+ciRunColumns+`
+		FROM ci_runs WHERE repo_id = ? ORDER BY created_at DESC LIMIT ?`, repoID, limit)
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		if closeErr := rows.Close(); closeErr != nil {
-			slog.Warn("failed to close rows", "error", closeErr)
-		}
-	}()
+	defer rows.Close()
 
 	var runs []models.CIRun
 	for rows.Next() {
-		var r models.CIRun
-		var createdAt int64
-		var completedAt sql.NullInt64
-		if err := rows.Scan(
-			&r.ID, &r.RepoID, &r.CommitHash, &r.Branch, &r.Tag,
-			&r.Event, &r.Status, &r.LogFile, &createdAt, &completedAt,
-		); err != nil {
+		r, err := scanCIRun(rows)
+		if err != nil {
 			return nil, err
 		}
-		r.CreatedAt = unixToTime(createdAt)
-		r.CompletedAt = nullUnixToTime(completedAt)
-		runs = append(runs, r)
+		runs = append(runs, *r)
 	}
-	return runs, nil
+	return runs, rows.Err()
 }
 
 // GetCIRunByID fetches a single run by its UUID.
 func (db *DB) GetCIRunByID(ctx context.Context, id string) (*models.CIRun, error) {
-	var r models.CIRun
-	var createdAt int64
-	var completedAt sql.NullInt64
-	err := db.QueryRowContext(ctx, `
-		SELECT id, repo_id, commit_hash, branch, tag, event, status, log_file,
-		       created_at, completed_at
-		FROM ci_runs WHERE id = ?
-	`, id).Scan(
-		&r.ID, &r.RepoID, &r.CommitHash, &r.Branch, &r.Tag,
-		&r.Event, &r.Status, &r.LogFile, &createdAt, &completedAt,
-	)
-
-	if err == sql.ErrNoRows {
+	r, err := scanCIRun(db.QueryRowContext(ctx,
+		`SELECT `+ciRunColumns+` FROM ci_runs WHERE id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
-	if err != nil {
-		return nil, err
-	}
-	r.CreatedAt = unixToTime(createdAt)
-	r.CompletedAt = nullUnixToTime(completedAt)
-	return &r, nil
+	return r, err
 }
 
 // GetSuccessfulCIRunsByRepo returns successful CI runs for a repository, newest first.
 func (db *DB) GetSuccessfulCIRunsByRepo(ctx context.Context, repoID string, limit int) ([]models.CIRun, error) {
-	rows, err := db.QueryContext(ctx, `
-		SELECT id, repo_id, commit_hash, branch, tag, event, status, log_file,
-		       created_at, completed_at
-		FROM ci_runs
-		WHERE repo_id = ? AND status = 'success'
-		ORDER BY created_at DESC
-		LIMIT ?
-	`, repoID, limit)
+	rows, err := db.QueryContext(ctx, `SELECT `+ciRunColumns+`
+		FROM ci_runs WHERE repo_id = ? AND status = 'success'
+		ORDER BY created_at DESC LIMIT ?`, repoID, limit)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
+	defer rows.Close()
 
 	var runs []models.CIRun
 	for rows.Next() {
-		var r models.CIRun
-		var createdAt int64
-		var completedAt sql.NullInt64
-		if err := rows.Scan(&r.ID, &r.RepoID, &r.CommitHash, &r.Branch, &r.Tag,
-			&r.Event, &r.Status, &r.LogFile, &createdAt, &completedAt); err != nil {
+		r, err := scanCIRun(rows)
+		if err != nil {
 			return nil, err
 		}
-		r.CreatedAt = unixToTime(createdAt)
-		r.CompletedAt = nullUnixToTime(completedAt)
-		runs = append(runs, r)
+		runs = append(runs, *r)
 	}
-	return runs, nil
+	return runs, rows.Err()
 }
 
-// GetLatestSuccessfulRunForBranch returns the most recent successful run on a branch.
 func (db *DB) GetLatestSuccessfulRunForBranch(ctx context.Context, repoID, branch string) (*models.CIRun, error) {
-	return db.getSingleRun(ctx, `
-		SELECT id, repo_id, commit_hash, branch, tag, event, status, log_file,
-		       created_at, completed_at
-		FROM ci_runs
-		WHERE repo_id = ? AND branch = ? AND status = 'success'
-		ORDER BY created_at DESC LIMIT 1
-	`, repoID, branch)
+	return db.getSingleRun(ctx, `SELECT `+ciRunColumns+`
+		FROM ci_runs WHERE repo_id = ? AND branch = ? AND status = 'success'
+		ORDER BY created_at DESC LIMIT 1`, repoID, branch)
 }
 
-// GetSuccessfulRunForTag returns the successful run associated with a git tag.
 func (db *DB) GetSuccessfulRunForTag(ctx context.Context, repoID, tag string) (*models.CIRun, error) {
-	return db.getSingleRun(ctx, `
-		SELECT id, repo_id, commit_hash, branch, tag, event, status, log_file,
-		       created_at, completed_at
-		FROM ci_runs
-		WHERE repo_id = ? AND tag = ? AND status = 'success'
-		ORDER BY created_at DESC LIMIT 1
-	`, repoID, tag)
+	return db.getSingleRun(ctx, `SELECT `+ciRunColumns+`
+		FROM ci_runs WHERE repo_id = ? AND tag = ? AND status = 'success'
+		ORDER BY created_at DESC LIMIT 1`, repoID, tag)
 }
 
-// GetSuccessfulRunForCommit returns the successful run for a specific commit hash.
 func (db *DB) GetSuccessfulRunForCommit(ctx context.Context, repoID, commitHash string) (*models.CIRun, error) {
-	return db.getSingleRun(ctx, `
-		SELECT id, repo_id, commit_hash, branch, tag, event, status, log_file,
-		       created_at, completed_at
-		FROM ci_runs
-		WHERE repo_id = ? AND commit_hash = ? AND status = 'success'
-		ORDER BY created_at DESC LIMIT 1
-	`, repoID, commitHash)
+	return db.getSingleRun(ctx, `SELECT `+ciRunColumns+`
+		FROM ci_runs WHERE repo_id = ? AND commit_hash = ? AND status = 'success'
+		ORDER BY created_at DESC LIMIT 1`, repoID, commitHash)
 }
 
 func (db *DB) getSingleRun(ctx context.Context, query string, args ...any) (*models.CIRun, error) {
-	var r models.CIRun
-	var createdAt int64
-	var completedAt sql.NullInt64
-	err := db.QueryRowContext(ctx, query, args...).
-		Scan(&r.ID, &r.RepoID, &r.CommitHash, &r.Branch, &r.Tag,
-			&r.Event, &r.Status, &r.LogFile, &createdAt, &completedAt)
-	if err == sql.ErrNoRows {
+	r, err := scanCIRun(db.QueryRowContext(ctx, query, args...))
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
-	if err != nil {
-		return nil, err
-	}
-	r.CreatedAt = unixToTime(createdAt)
-	r.CompletedAt = nullUnixToTime(completedAt)
-	return &r, nil
+	return r, err
 }
 
 // AddRepoSecret inserts or replaces an encrypted secret for a repository.
-// The caller is responsible for encrypting the value before calling this.
 func (db *DB) AddRepoSecret(ctx context.Context, repoID, key, encryptedValue string) error {
 	id := uuid.New().String()
 	_, err := db.ExecContext(ctx, `
@@ -249,7 +267,6 @@ func (db *DB) AddRepoSecret(ctx context.Context, repoID, key, encryptedValue str
 	return err
 }
 
-// GetRepoSecrets returns all secrets for a repository (encrypted values).
 func (db *DB) GetRepoSecrets(ctx context.Context, repoID string) ([]models.RepoSecret, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, repo_id, key, encrypted_value, created_at
@@ -258,11 +275,7 @@ func (db *DB) GetRepoSecrets(ctx context.Context, repoID string) ([]models.RepoS
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		if closeErr := rows.Close(); closeErr != nil {
-			slog.Warn("failed to close rows", "error", closeErr)
-		}
-	}()
+	defer rows.Close()
 
 	var secrets []models.RepoSecret
 	for rows.Next() {
@@ -274,10 +287,9 @@ func (db *DB) GetRepoSecrets(ctx context.Context, repoID string) ([]models.RepoS
 		s.CreatedAt = unixToTime(createdAt)
 		secrets = append(secrets, s)
 	}
-	return secrets, nil
+	return secrets, rows.Err()
 }
 
-// DeleteRepoSecret removes a secret by ID, scoped to the given repo for safety.
 func (db *DB) DeleteRepoSecret(ctx context.Context, id, repoID string) error {
 	_, err := db.ExecContext(ctx,
 		"DELETE FROM repo_secrets WHERE id = ? AND repo_id = ?", id, repoID)

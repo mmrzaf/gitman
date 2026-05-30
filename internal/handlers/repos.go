@@ -3,6 +3,8 @@ package handlers
 import (
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -55,19 +57,8 @@ func (app *App) HandleReposPOST(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	repoID, err := app.DB.CreateRepository(r.Context(), user.ID, name, description, isPrivate)
-	if err != nil {
-		app.renderPartial(w, r, "repos.html", "repos_panel", PageData{
-			User:  user,
-			Error: "Repository name already exists or database error occurred.",
-			Data:  ReposPageData{Repos: app.getReposForUser(r, user.ID)},
-		})
-		return
-	}
-
 	repoPath, err := git.SecureRepoPath(app.Config.ReposPath, user.Username, name)
 	if err != nil {
-		_ = app.DB.DeleteRepository(r.Context(), repoID, user.ID)
 		app.renderPartial(w, r, "repos.html", "repos_panel", PageData{
 			User:  user,
 			Error: "Invalid path generated for repository.",
@@ -76,12 +67,23 @@ func (app *App) HandleReposPOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = git.InitBareRepo(r.Context(), repoPath)
-	if err != nil {
-		_ = app.DB.DeleteRepository(r.Context(), repoID, user.ID)
+	if err := git.InitBareRepo(r.Context(), repoPath); err != nil {
 		app.renderPartial(w, r, "repos.html", "repos_panel", PageData{
 			User:  user,
-			Error: "Failed to initialize git repository on disk.",
+			Error: "Failed to initialize git repository on disk. Check for orphaned repository files.",
+			Data:  ReposPageData{Repos: app.getReposForUser(r, user.ID)},
+		})
+		return
+	}
+
+	_, err = app.DB.CreateRepository(r.Context(), user.ID, name, description, isPrivate)
+	if err != nil {
+		if cleanupErr := git.DeleteRepo(repoPath); cleanupErr != nil {
+			slog.Error("failed to remove unregistered repository", "path", repoPath, "error", cleanupErr)
+		}
+		app.renderPartial(w, r, "repos.html", "repos_panel", PageData{
+			User:  user,
+			Error: "Repository name already exists or database error occurred.",
 			Data:  ReposPageData{Repos: app.getReposForUser(r, user.ID)},
 		})
 		return
@@ -108,7 +110,7 @@ func (app *App) HandleRepoDeletePOST(w http.ResponseWriter, r *http.Request) {
 	}
 
 	repo, err := app.DB.GetRepositoryByID(r.Context(), repoID)
-	if err != nil || repo.OwnerID != user.ID {
+	if err != nil || repo == nil || repo.OwnerID != user.ID {
 		app.renderPartial(w, r, "repos.html", "repos_panel", PageData{
 			User:  user,
 			Error: "Repository not found or not accessible.",
@@ -127,24 +129,50 @@ func (app *App) HandleRepoDeletePOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := app.DB.DeleteRepository(r.Context(), repoID, user.ID); err != nil {
-		slog.Error("failed to delete repository from DB", "repoID", repoID, "error", err)
+	quarantinePath, err := git.QuarantineRepo(repoPath)
+	if err != nil {
+		slog.Error("failed to quarantine repo", "path", repoPath, "error", err)
 		app.renderPartial(w, r, "repos.html", "repos_panel", PageData{
 			User:  user,
-			Error: "Failed to delete repository record. Please contact administrator.",
+			Error: "Failed to quarantine repository files. Repository was not deleted.",
 			Data:  ReposPageData{Repos: app.getReposForUser(r, user.ID)},
 		})
 		return
 	}
 
-	if err := git.DeleteRepo(repoPath); err != nil {
-		slog.Error("failed to delete repo from disk", "path", repoPath, "error", err)
+	if err := app.DB.DeleteRepository(r.Context(), repoID, user.ID); err != nil {
+		restoreErr := git.RestoreQuarantinedRepo(quarantinePath, repoPath)
+		if restoreErr != nil {
+			slog.Error("failed to delete repository record and restore quarantined files", "repoID", repoID, "quarantine", quarantinePath, "delete_error", err, "restore_error", restoreErr)
+			app.renderPartial(w, r, "repos.html", "repos_panel", PageData{
+				User:  user,
+				Error: "Failed to delete repository record and restore repository files. Contact an operator; the repository remains quarantined.",
+				Data:  ReposPageData{Repos: app.getReposForUser(r, user.ID)},
+			})
+			return
+		}
+		slog.Error("failed to delete repository from DB", "repoID", repoID, "error", err)
 		app.renderPartial(w, r, "repos.html", "repos_panel", PageData{
-			User:    user,
-			Success: "Repository record deleted, but some files may remain on disk. Please contact administrator.",
-			Data:    ReposPageData{Repos: app.getReposForUser(r, user.ID)},
+			User:  user,
+			Error: "Failed to delete repository record. Repository files were restored.",
+			Data:  ReposPageData{Repos: app.getReposForUser(r, user.ID)},
 		})
 		return
+	}
+
+	cleanupPaths := []string{
+		quarantinePath,
+		filepath.Join(app.Config.ArtifactsPath, "logs", user.Username, repo.Name),
+		filepath.Join(app.Config.ArtifactsPath, "files", user.Username, repo.Name),
+		filepath.Join(app.Config.CacheRoot, user.Username, repo.Name),
+	}
+	for _, path := range cleanupPaths {
+		if path == "" {
+			continue
+		}
+		if err := os.RemoveAll(path); err != nil {
+			slog.Warn("repository cleanup failed", "path", path, "error", err)
+		}
 	}
 
 	app.renderPartial(w, r, "repos.html", "repos_panel", PageData{

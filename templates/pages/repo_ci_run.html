@@ -28,7 +28,7 @@
     <tr><td style="padding:3px 12px 3px 0;color:var(--muted);white-space:nowrap">Event</td><td>{{.Data.Run.Event}}</td></tr>
     {{if .Data.Run.Branch}}<tr><td style="padding:3px 12px 3px 0;color:var(--muted)">Branch</td><td><code>{{.Data.Run.Branch}}</code></td></tr>{{end}}
     {{if .Data.Run.Tag}}<tr><td style="padding:3px 12px 3px 0;color:var(--muted)">Tag</td><td><code>{{.Data.Run.Tag}}</code></td></tr>{{end}}
-    {{if .Data.Run.CommitHash}}<tr><td style="padding:3px 12px 3px 0;color:var(--muted)">Commit</td><td><code>{{slice .Data.Run.CommitHash 0 12}}</code></td></tr>{{end}}
+    {{if .Data.Run.CommitHash}}<tr><td style="padding:3px 12px 3px 0;color:var(--muted)">Commit</td><td><code>{{short .Data.Run.CommitHash 12}}</code></td></tr>{{end}}
     <tr><td style="padding:3px 12px 3px 0;color:var(--muted)">Started</td><td>{{.Data.Run.CreatedAt.Format "2006-01-02 15:04:05"}}</td></tr>
     {{if .Data.Run.CompletedAt}}<tr><td style="padding:3px 12px 3px 0;color:var(--muted)">Completed</td><td>{{.Data.Run.CompletedAt.Format "2006-01-02 15:04:05"}}</td></tr>{{end}}
   </table>
@@ -38,7 +38,7 @@
 <ul style="list-style: none; padding: 0;">
   {{range .Data.Artifacts}}
   <li style="margin-bottom: 0.5rem;">
-    <a href="/api/repos/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/artifacts/run/{{$.Data.Run.ID}}/{{.}}"
+    <a href="/api/repos/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/artifacts/run/{{$.Data.Run.ID}}/{{pathEscape .}}"
        hx-boost="false" download="{{.}}">
       📎 {{.}}
     </a>
@@ -61,7 +61,7 @@
 
 {{if eq .Data.Run.Status "skipped"}}
 <div class="card" style="background:#f5f5f5;border:1px solid #bdbdbd;margin-top:1rem;border-radius:6px;padding:0.75rem 1rem">
-  <p class="muted" style="margin:0">This run was skipped because no <code>.gitman-ci.sh</code> was found in the repository root.</p>
+  <p class="muted" style="margin:0">This run was skipped because no <code>.gitman-ci.yml</code> was found in the repository root.</p>
 </div>
 {{end}}
 

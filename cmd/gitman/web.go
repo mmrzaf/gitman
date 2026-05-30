@@ -36,7 +36,10 @@ func runWeb(cfg *config.Config, database *db.DB, args []string) error {
 		finalPort = *port
 	}
 
-	if err := os.MkdirAll(cfg.ReposPath, 0o755); err != nil {
+	if err := os.MkdirAll(cfg.ReposPath, 0o700); err != nil {
+		return err
+	}
+	if err := os.Chmod(cfg.ReposPath, 0o700); err != nil {
 		return err
 	}
 
@@ -60,11 +63,11 @@ func runWeb(cfg *config.Config, database *db.DB, args []string) error {
 	router := handlers.SetupRouter(app)
 
 	srv := &http.Server{
-		Addr:         ":" + finalPort,
-		Handler:      router,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  120 * time.Second,
+		Addr:              ":" + finalPort,
+		Handler:           router,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 
 	errChan := make(chan error, 1)

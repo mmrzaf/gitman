@@ -56,7 +56,7 @@ func (app *App) HandleLoginPOST(w http.ResponseWriter, r *http.Request) {
 		Value:    token,
 		Expires:  time.Now().Add(24 * time.Hour),
 		HttpOnly: true,
-		Secure:   r.TLS != nil,
+		Secure:   app.secureCookie(r),
 		SameSite: http.SameSiteStrictMode,
 		Path:     "/",
 	})
@@ -109,10 +109,6 @@ func (app *App) HandleRegisterPOST(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := admin.IsPasswordStrong(password); err != nil {
-		app.renderPage(w, r, "register.html", PageData{Title: "Register", Error: err.Error()})
-		return
-	}
-	if err := admin.IsPasswordStrong(password); err != nil {
 		app.renderPage(w, r, "register.html", PageData{
 			Title: "Register",
 			Error: err.Error(),
@@ -139,15 +135,7 @@ func (app *App) HandleLogout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     "session_token",
-		Value:    "",
-		MaxAge:   -1,
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   r.TLS != nil,
-		SameSite: http.SameSiteStrictMode,
-	})
+	app.clearSessionCookie(w, r)
 
 	http.Redirect(w, r, "/", http.StatusFound)
 }
