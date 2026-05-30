@@ -224,3 +224,57 @@ func TestDeleteRepo(t *testing.T) {
 		t.Error("repo still exists")
 	}
 }
+
+func TestInitBareRepoRejectsExistingPath(t *testing.T) {
+	repoPath := setupTestRepo(t)
+	err := InitBareRepo(context.Background(), repoPath)
+	if !errors.Is(err, ErrRepoPathExists) {
+		t.Fatalf("expected ErrRepoPathExists, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repoPath, "HEAD")); err != nil {
+		t.Fatalf("existing repository was damaged: %v", err)
+	}
+}
+
+func TestResolveCommitHash(t *testing.T) {
+	repoPath := setupTestRepo(t)
+	prepareRepoWithCommit(t, repoPath)
+	commits, err := GetCommits(context.Background(), repoPath, "main", 0, 1)
+	if err != nil || len(commits) != 1 {
+		t.Fatalf("get commits: %v", err)
+	}
+	resolved, err := ResolveCommitHash(context.Background(), repoPath, commits[0].Hash[:8])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved != commits[0].Hash {
+		t.Fatalf("expected %s, got %s", commits[0].Hash, resolved)
+	}
+}
+
+func TestResolveBranchCommitHashAndReachability(t *testing.T) {
+	repoPath := setupTestRepo(t)
+	prepareRepoWithCommit(t, repoPath)
+	commit, err := ResolveBranchCommitHash(context.Background(), repoPath, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reachable, err := IsCommitReachableFromBranch(context.Background(), repoPath, commit, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reachable {
+		t.Fatal("branch tip should be reachable from branch")
+	}
+}
+
+func TestSecureRepoPathAllowsCurrentDirectoryRoot(t *testing.T) {
+	got, err := SecureRepoPath(".", "owner", "repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join("owner", "repo.git")
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
