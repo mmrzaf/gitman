@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -19,18 +20,26 @@ type migrationFile struct {
 	name    string
 }
 
-// runMigrations applies all pending up migrations.
+// runMigrations applies all pending up migrations inside one transaction.
+// The schema change and schema_migrations insert are committed together, so a
+// crash cannot leave an applied-but-unrecorded migration.
 func (db *DB) runMigrations(ctx context.Context, migrationsFS embed.FS, dir string) error {
-	if err := ensureMigrationTable(ctx, db.DB); err != nil {
-		return err
-	}
-
-	current, err := currentVersion(ctx, db.DB)
+	files, err := loadMigrationFiles(migrationsFS, dir)
 	if err != nil {
 		return err
 	}
 
-	files, err := loadMigrationFiles(migrationsFS, dir)
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer rollbackUnlessDone(tx)
+
+	if err := ensureMigrationTableTx(ctx, tx); err != nil {
+		return err
+	}
+
+	current, err := currentVersionTx(ctx, tx)
 	if err != nil {
 		return err
 	}
@@ -40,34 +49,40 @@ func (db *DB) runMigrations(ctx context.Context, migrationsFS embed.FS, dir stri
 			continue
 		}
 		slog.Info("applying migration", "version", m.version, "name", m.name)
-		if err := db.applyUp(ctx, m); err != nil {
+		if _, err := tx.ExecContext(ctx, m.up); err != nil {
 			return fmt.Errorf("migration %d (%s) failed: %w", m.version, m.name, err)
 		}
-		if err := recordMigration(ctx, db.DB, m.version); err != nil {
-			return err
+		if _, err := tx.ExecContext(ctx, "INSERT INTO schema_migrations (version) VALUES (?)", m.version); err != nil {
+			return fmt.Errorf("record migration %d: %w", m.version, err)
 		}
 	}
-	return nil
+
+	return tx.Commit()
 }
 
-// rollbackTo rolls back to a specific version (down migrations).
+// rollbackTo rolls back to a specific version (down migrations) inside one transaction.
 func (db *DB) rollbackTo(ctx context.Context, migrationsFS embed.FS, dir string, targetVersion int) error {
-	if err := ensureMigrationTable(ctx, db.DB); err != nil {
-		return err
-	}
-
-	current, err := currentVersion(ctx, db.DB)
-	if err != nil {
-		return err
-	}
-
-	if current <= targetVersion {
-		return nil
-	}
-
 	files, err := loadMigrationFiles(migrationsFS, dir)
 	if err != nil {
 		return err
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer rollbackUnlessDone(tx)
+
+	if err := ensureMigrationTableTx(ctx, tx); err != nil {
+		return err
+	}
+
+	current, err := currentVersionTx(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if current <= targetVersion {
+		return tx.Commit()
 	}
 
 	for i := len(files) - 1; i >= 0; i-- {
@@ -75,45 +90,43 @@ func (db *DB) rollbackTo(ctx context.Context, migrationsFS embed.FS, dir string,
 		if m.version > current || m.version <= targetVersion {
 			continue
 		}
+		if m.down == "" {
+			return fmt.Errorf("no down migration for version %d", m.version)
+		}
 		slog.Info("rolling back migration", "version", m.version, "name", m.name)
-		if err := db.applyDown(ctx, m); err != nil {
+		if _, err := tx.ExecContext(ctx, m.down); err != nil {
 			return fmt.Errorf("rollback of %d failed: %w", m.version, err)
 		}
-		if err := deleteMigration(ctx, db.DB, m.version); err != nil {
-			return err
+		if _, err := tx.ExecContext(ctx, "DELETE FROM schema_migrations WHERE version = ?", m.version); err != nil {
+			return fmt.Errorf("delete migration record %d: %w", m.version, err)
 		}
 	}
-	return nil
+
+	return tx.Commit()
 }
 
-func ensureMigrationTable(ctx context.Context, db *sql.DB) error {
-	_, err := db.ExecContext(ctx, `
-        CREATE TABLE IF NOT EXISTS schema_migrations (
-            version    INTEGER PRIMARY KEY,
-            applied_at INTEGER DEFAULT (strftime('%s', 'now'))
-        )
-    `)
+func rollbackUnlessDone(tx *sql.Tx) {
+	if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+		slog.Warn("failed to rollback transaction", "error", err)
+	}
+}
+
+func ensureMigrationTableTx(ctx context.Context, tx *sql.Tx) error {
+	_, err := tx.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+			version INTEGER PRIMARY KEY,
+			applied_at INTEGER DEFAULT (strftime('%s', 'now'))
+		)
+	`)
 	return err
 }
 
-func currentVersion(ctx context.Context, db *sql.DB) (int, error) {
+func currentVersionTx(ctx context.Context, tx *sql.Tx) (int, error) {
 	var v int
-	err := db.QueryRowContext(ctx,
+	err := tx.QueryRowContext(ctx,
 		"SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
 	).Scan(&v)
 	return v, err
-}
-
-func recordMigration(ctx context.Context, db *sql.DB, version int) error {
-	_, err := db.ExecContext(ctx,
-		"INSERT INTO schema_migrations (version) VALUES (?)", version)
-	return err
-}
-
-func deleteMigration(ctx context.Context, db *sql.DB, version int) error {
-	_, err := db.ExecContext(ctx,
-		"DELETE FROM schema_migrations WHERE version = ?", version)
-	return err
 }
 
 func loadMigrationFiles(fsys embed.FS, dir string) ([]migrationFile, error) {
@@ -165,11 +178,10 @@ func loadMigrationFiles(fsys embed.FS, dir string) ([]migrationFile, error) {
 
 	var files []migrationFile
 	for v, upSQL := range upMap {
-		downSQL := downMap[v]
 		files = append(files, migrationFile{
 			version: v,
 			up:      upSQL,
-			down:    downSQL,
+			down:    downMap[v],
 			name:    nameMap[v],
 		})
 	}
@@ -177,34 +189,4 @@ func loadMigrationFiles(fsys embed.FS, dir string) ([]migrationFile, error) {
 		return files[i].version < files[j].version
 	})
 	return files, nil
-}
-
-func (db *DB) applyUp(ctx context.Context, m migrationFile) error {
-	return db.execInTransaction(ctx, m.up)
-}
-
-func (db *DB) applyDown(ctx context.Context, m migrationFile) error {
-	if m.down == "" {
-		return fmt.Errorf("no down migration for version %d", m.version)
-	}
-	return db.execInTransaction(ctx, m.down)
-}
-
-func (db *DB) execInTransaction(ctx context.Context, sqlStr string) error {
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if p := recover(); p != nil {
-			_ = tx.Rollback()
-			panic(p)
-		}
-	}()
-
-	if _, err := tx.ExecContext(ctx, sqlStr); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	return tx.Commit()
 }
