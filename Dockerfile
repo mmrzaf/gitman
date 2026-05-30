@@ -11,19 +11,15 @@ RUN CGO_ENABLED=0 GOTOOLCHAIN=local go build -trimpath -ldflags="-s -w" -o /gitm
 
 FROM alpine:3.20
 
-RUN apk add --no-cache git git-daemon curl bash docker-cli ca-certificates
-
-RUN addgroup -g 999 docker 2>/dev/null || true \
-	&& adduser -D -h /data -u 1000 git \
-	&& adduser git docker
+ARG GIT_UID=1000
+RUN apk add --no-cache git git-daemon curl bash docker-cli ca-certificates \
+	&& adduser -D -h /data -u "${GIT_UID}" git \
+	&& mkdir -p /data \
+	&& chown -R git:git /data
 
 COPY --from=builder /gitman /usr/local/bin/gitman
-
-RUN mkdir -p /data \
-	&& chown -R git:git /data
 
 USER git
 WORKDIR /data
 
 CMD ["gitman", "web"]
-

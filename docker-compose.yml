@@ -1,30 +1,33 @@
 services:
   web:
-    build: .
+    build:
+      context: .
+      args:
+        GIT_UID: "${GIT_UID:-1000}"
     image: gitman:latest
     container_name: gitman-web
     command: ["gitman", "web"]
-    expose:
-      - "8080"
+    ports:
+      - "${GITMAN_BIND_ADDRESS:-127.0.0.1}:${GITMAN_PORT:-8080}:8080"
     volumes:
-      - ../../data/gitman:/data
+      - "${GITMAN_DATA_DIR:-${PWD}/data}:/data"
     environment:
-      - GITMAN_PORT=8080
-      - GITMAN_DB=/data/db/gitman.sqlite
-      - GITMAN_REPOS=/data/repos
-      - GITMAN_ARTIFACTS=/data/artifacts
-      - GITMAN_AUTH_KEYS=/data/authorized_keys
-      - GITMAN_SECRET_KEY=${GITMAN_SECRET_KEY:?err}
-      - GITMAN_INTERNAL_URL=http://web:8080
-      - GITMAN_SERVER_HOST=${GITMAN_SERVER_HOST:-localhost}
-      - GITMAN_LOG_LEVEL=${GITMAN_LOG_LEVEL:-info}
-      - GITMAN_BINARY_PATH=${GITMAN_BINARY_PATH:-/usr/local/bin/gitman-wrap}
-      - GITMAN_ALLOW_REGISTER=${GITMAN_ALLOW_REGISTER:-false}
-      - GITMAN_FORCE_SECURE_COOKIES=${GITMAN_FORCE_SECURE_COOKIES:-true}
-      - GITMAN_TRUST_PROXY_HEADERS=${GITMAN_TRUST_PROXY_HEADERS:-true}
+      GITMAN_PORT: "8080"
+      GITMAN_DB: /data/db/gitman.sqlite
+      GITMAN_REPOS: /data/repos
+      GITMAN_ARTIFACTS: /data/artifacts
+      GITMAN_AUTH_KEYS: /data/authorized_keys
+      GITMAN_SECRET_KEY: "${GITMAN_SECRET_KEY:-}"
+      GITMAN_INTERNAL_URL: http://web:8080
+      GITMAN_SERVER_HOST: "${GITMAN_SERVER_HOST:-localhost}"
+      GITMAN_PUBLIC_URL: "${GITMAN_PUBLIC_URL:-http://localhost:8080}"
+      GITMAN_LOG_LEVEL: "${GITMAN_LOG_LEVEL:-info}"
+      GITMAN_BINARY_PATH: "${GITMAN_BINARY_PATH:-/usr/local/bin/gitman-wrap}"
+      GITMAN_ALLOW_REGISTER: "${GITMAN_ALLOW_REGISTER:-false}"
+      GITMAN_FORCE_SECURE_COOKIES: "${GITMAN_FORCE_SECURE_COOKIES:-false}"
+      GITMAN_TRUST_PROXY_HEADERS: "${GITMAN_TRUST_PROXY_HEADERS:-false}"
     networks:
       - gitman-net
-      - proxy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
@@ -33,26 +36,9 @@ services:
       start_period: 10s
     security_opt:
       - no-new-privileges:true
-    read_only: false
     restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: 512M
-        reservations:
-          cpus: "0.2"
-          memory: 256M
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.gitman.rule=Host(`${GITMAN_DOMAIN:?GITMAN_DOMAIN missing}`)"
-      - "traefik.http.routers.gitman.entrypoints=websecure"
-      - "traefik.http.routers.gitman.tls.certresolver=le"
-      - "traefik.http.services.gitman.loadbalancer.server.port=8080"
-      - "traefik.http.routers.gitman.middlewares=security-headers@file,compression@file,rate-limit@file"
 
   worker:
-    build: .
     image: gitman:latest
     container_name: gitman-worker
     command: ["gitman", "worker"]
@@ -60,48 +46,39 @@ services:
       web:
         condition: service_healthy
     volumes:
-      - ../../data/gitman:/data
+      - "${GITMAN_DATA_DIR:-${PWD}/data}:/data"
       - /var/run/docker.sock:/var/run/docker.sock
+    group_add:
+      - "${DOCKER_GID:-999}"
     environment:
-      - GITMAN_DB=/data/db/gitman.sqlite
-      - GITMAN_REPOS=/data/repos
-      - GITMAN_ARTIFACTS=/data/artifacts
-      - GITMAN_SECRET_KEY=${GITMAN_SECRET_KEY:?err}
-      - GITMAN_LOG_LEVEL=${GITMAN_LOG_LEVEL:-info}
-      - GITMAN_WORKER_CONCURRENCY=${GITMAN_WORKER_CONCURRENCY:-1}
-      - GITMAN_BINARY_PATH=${GITMAN_BINARY_PATH:-/usr/local/bin/gitman-wrap}
-      - GITMAN_CACHE_ROOT=/data/ci/cache
-      - GITMAN_MEMORY_LIMIT=${GITMAN_CI_MEMORY_LIMIT:-512m}
-      - GITMAN_CPU_LIMIT=${GITMAN_CI_CPU_LIMIT:-1}
-      - GITMAN_CI_TIMEOUT=${GITMAN_CI_TIMEOUT:-30m}
-      - GITMAN_CI_NETWORK=${GITMAN_CI_NETWORK:-none}
-      - GITMAN_CI_ARTIFACT_MAX_BYTES=${GITMAN_CI_ARTIFACT_MAX_BYTES:-104857600}
-      - GITMAN_CI_ARTIFACT_MAX_FILES=${GITMAN_CI_ARTIFACT_MAX_FILES:-1000}
-      - GITMAN_CI_LOG_MAX_BYTES=${GITMAN_CI_LOG_MAX_BYTES:-10485760}
+      GITMAN_DB: /data/db/gitman.sqlite
+      GITMAN_REPOS: /data/repos
+      GITMAN_ARTIFACTS: /data/artifacts
+      GITMAN_SECRET_KEY: "${GITMAN_SECRET_KEY:-}"
+      GITMAN_LOG_LEVEL: "${GITMAN_LOG_LEVEL:-info}"
+      GITMAN_WORKER_CONCURRENCY: "${GITMAN_WORKER_CONCURRENCY:-1}"
+      GITMAN_CACHE_ROOT: /data/ci/cache
+      GITMAN_CI_WORKSPACE_ROOT: /data/ci/workspaces
+      GITMAN_CI_WORKER_PATH_PREFIX: /data
+      GITMAN_CI_HOST_PATH_PREFIX: "${GITMAN_DATA_DIR:-${PWD}/data}"
+      GITMAN_MEMORY_LIMIT: "${GITMAN_CI_MEMORY_LIMIT:-512m}"
+      GITMAN_CPU_LIMIT: "${GITMAN_CI_CPU_LIMIT:-1}"
+      GITMAN_CI_TIMEOUT: "${GITMAN_CI_TIMEOUT:-30m}"
+      GITMAN_CI_LEASE_TIMEOUT: "${GITMAN_CI_LEASE_TIMEOUT:-2m}"
+      GITMAN_CI_HEARTBEAT_INTERVAL: "${GITMAN_CI_HEARTBEAT_INTERVAL:-15s}"
+      GITMAN_CI_NETWORK: "${GITMAN_CI_NETWORK:-none}"
+      GITMAN_CI_ARTIFACT_MAX_BYTES: "${GITMAN_CI_ARTIFACT_MAX_BYTES:-104857600}"
+      GITMAN_CI_ARTIFACT_MAX_FILES: "${GITMAN_CI_ARTIFACT_MAX_FILES:-1000}"
+      GITMAN_CI_LOG_MAX_BYTES: "${GITMAN_CI_LOG_MAX_BYTES:-10485760}"
+      GITMAN_CI_WORKSPACE_MAX_BYTES: "${GITMAN_CI_WORKSPACE_MAX_BYTES:-1073741824}"
+      GITMAN_CI_CACHE_MAX_BYTES: "${GITMAN_CI_CACHE_MAX_BYTES:-1073741824}"
+      GITMAN_CI_CONTAINER_USER: "${GITMAN_CI_CONTAINER_USER:-}"
     networks:
       - gitman-net
-    healthcheck:
-      test: ["CMD", "pgrep", "-f", "gitman worker"]
-      interval: 60s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
     security_opt:
       - no-new-privileges:true
-    read_only: false
     restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          cpus: "1.0"
-          memory: 1G
-        reservations:
-          cpus: "0.2"
-          memory: 256M
 
 networks:
   gitman-net:
     driver: bridge
-  proxy:
-    external: true
-
