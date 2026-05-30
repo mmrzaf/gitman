@@ -50,3 +50,48 @@ func TestSyncAuthorizedKeys(t *testing.T) {
 		t.Error("forced command not found")
 	}
 }
+
+func TestSyncAuthorizedKeysUsesRestrictivePermissions(t *testing.T) {
+	database := setupTestDB(t)
+	dir := t.TempDir()
+	authFile := filepath.Join(dir, "authorized_keys")
+	cfg := &config.Config{AuthKeysPath: authFile, BinaryPath: "/usr/local/bin/gitman"}
+	if err := SyncAuthorizedKeys(context.Background(), database, cfg); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(authFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("expected 0600 authorized_keys, got %o", info.Mode().Perm())
+	}
+}
+
+func TestSyncAuthorizedKeysBasenameDoesNotChmodWorkingDirectory(t *testing.T) {
+	database := setupTestDB(t)
+	cwd, err := filepath.Abs(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(cwd) }()
+
+	cfg := &config.Config{AuthKeysPath: "authorized_keys", BinaryPath: "/usr/local/bin/gitman"}
+	if err := SyncAuthorizedKeys(context.Background(), database, cfg); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o755 {
+		t.Fatalf("working directory mode changed to %o", got)
+	}
+}
