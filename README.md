@@ -66,15 +66,20 @@ Add `.gitman-ci.yml` at the repository root:
 image: golang:1.24-alpine
 env:
   APP_ENV: test
+  GOMODCACHE: /gitman/cache/go/pkg/mod
   DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
 steps:
+  - name: Dependencies
+    run: |
+      mkdir -p "$GOMODCACHE"
+      go mod download
   - name: Test
     run: go test ./...
   - name: Save report
     run: cp coverage.out /gitman/artifacts/coverage.out
 ```
 
-CI jobs run in Docker containers with network access disabled by default, a read-only root filesystem, dropped Linux capabilities, PID limits, CPU and memory limits, Docker log persistence disabled, bounded Gitman logs, bounded artifact staging, bounded workspace usage, and serialized per-repository cache writes. Job images must already exist on the runner because CI uses `--pull never`.
+CI jobs run in Docker containers with network access disabled by default, a read-only root filesystem, dropped Linux capabilities, PID limits, CPU and memory limits, Docker log persistence disabled, bounded Gitman logs, bounded artifact staging, bounded workspace usage, and serialized per-repository cache writes. Job images must already exist on the runner because CI uses `--pull never`. With `GITMAN_CI_NETWORK=none`, dependencies must come from the image, the repository, or an already-warmed `/gitman/cache` mount.
 
 The worker mounts the Docker socket. Treat the worker as privileged host infrastructure. Application-level disk checks limit damage but are not hard quotas. Run the worker on a dedicated runner host or inside a VM with kernel-enforced filesystem quotas before accepting untrusted repository writers.
 
