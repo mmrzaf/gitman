@@ -32,6 +32,7 @@ func TestCreateAndClaimCIRun(t *testing.T) {
 	}
 	if run == nil {
 		t.Fatal("expected a run to claim")
+		return
 	}
 	if run.ID != runID {
 		t.Errorf("expected claimed run ID %s, got %s", runID, run.ID)
@@ -50,6 +51,7 @@ func TestCreateAndClaimCIRun(t *testing.T) {
 	}
 	if r == nil {
 		t.Fatal("run not found after claim")
+		return
 	}
 	if r.Status != "running" {
 		t.Errorf("expected running in DB, got %s", r.Status)

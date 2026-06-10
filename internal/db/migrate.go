@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -26,7 +27,7 @@ type migrationConn interface {
 
 // runMigrations serializes schema changes with BEGIN IMMEDIATE. This prevents
 // web and worker processes from racing while upgrading the same SQLite file.
-func (db *DB) runMigrations(ctx context.Context, migrationsFS embed.FS, dir string) error {
+func (db *DB) runMigrations(ctx context.Context, migrationsFS embed.FS, dir string) (err error) {
 	files, err := loadMigrationFiles(migrationsFS, dir)
 	if err != nil {
 		return err
@@ -35,7 +36,11 @@ func (db *DB) runMigrations(ctx context.Context, migrationsFS embed.FS, dir stri
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() {
+		if closeErr := conn.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 	if err := beginImmediate(ctx, conn); err != nil {
 		return err
 	}
@@ -126,7 +131,7 @@ func tableColumnExists(ctx context.Context, conn migrationConn, table, column st
 
 // rollbackTo rolls back to a specific version (down migrations) while holding
 // an immediate write lock for the complete operation.
-func (db *DB) rollbackTo(ctx context.Context, migrationsFS embed.FS, dir string, targetVersion int) error {
+func (db *DB) rollbackTo(ctx context.Context, migrationsFS embed.FS, dir string, targetVersion int) (err error) {
 	files, err := loadMigrationFiles(migrationsFS, dir)
 	if err != nil {
 		return err
@@ -135,7 +140,11 @@ func (db *DB) rollbackTo(ctx context.Context, migrationsFS embed.FS, dir string,
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() {
+		if closeErr := conn.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 	if err := beginImmediate(ctx, conn); err != nil {
 		return err
 	}

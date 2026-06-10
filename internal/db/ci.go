@@ -179,15 +179,18 @@ func requireAffectedRow(res sql.Result, message string) error {
 }
 
 // GetCIRunsByRepo returns the most recent CI runs for a repository.
-func (db *DB) GetCIRunsByRepo(ctx context.Context, repoID string, limit int) ([]models.CIRun, error) {
+func (db *DB) GetCIRunsByRepo(ctx context.Context, repoID string, limit int) (runs []models.CIRun, err error) {
 	rows, err := db.QueryContext(ctx, `SELECT `+ciRunColumns+`
 		FROM ci_runs WHERE repo_id = ? ORDER BY created_at DESC LIMIT ?`, repoID, limit)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
-	var runs []models.CIRun
 	for rows.Next() {
 		r, err := scanCIRun(rows)
 		if err != nil {
@@ -209,16 +212,19 @@ func (db *DB) GetCIRunByID(ctx context.Context, id string) (*models.CIRun, error
 }
 
 // GetSuccessfulCIRunsByRepo returns successful CI runs for a repository, newest first.
-func (db *DB) GetSuccessfulCIRunsByRepo(ctx context.Context, repoID string, limit int) ([]models.CIRun, error) {
+func (db *DB) GetSuccessfulCIRunsByRepo(ctx context.Context, repoID string, limit int) (runs []models.CIRun, err error) {
 	rows, err := db.QueryContext(ctx, `SELECT `+ciRunColumns+`
 		FROM ci_runs WHERE repo_id = ? AND status = 'success'
 		ORDER BY created_at DESC LIMIT ?`, repoID, limit)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
-	var runs []models.CIRun
 	for rows.Next() {
 		r, err := scanCIRun(rows)
 		if err != nil {
@@ -267,7 +273,7 @@ func (db *DB) AddRepoSecret(ctx context.Context, repoID, key, encryptedValue str
 	return err
 }
 
-func (db *DB) GetRepoSecrets(ctx context.Context, repoID string) ([]models.RepoSecret, error) {
+func (db *DB) GetRepoSecrets(ctx context.Context, repoID string) (secrets []models.RepoSecret, err error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, repo_id, key, encrypted_value, created_at
 		FROM repo_secrets WHERE repo_id = ? ORDER BY key ASC
@@ -275,9 +281,12 @@ func (db *DB) GetRepoSecrets(ctx context.Context, repoID string) ([]models.RepoS
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
-	var secrets []models.RepoSecret
 	for rows.Next() {
 		var s models.RepoSecret
 		var createdAt int64

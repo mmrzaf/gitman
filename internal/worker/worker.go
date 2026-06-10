@@ -912,7 +912,7 @@ func forceRemoveContainer(name string) error {
 	return nil
 }
 
-func copyRegularFileNoFollow(src, dst string, expectedSize int64) error {
+func copyRegularFileNoFollow(src, dst string, expectedSize int64) (err error) {
 	info, err := os.Lstat(src)
 	if err != nil {
 		return err
@@ -931,7 +931,11 @@ func copyRegularFileNoFollow(src, dst string, expectedSize int64) error {
 	if err != nil {
 		return err
 	}
-	defer in.Close()
+	defer func() {
+		if closeErr := in.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	openedInfo, err := in.Stat()
 	if err != nil {
@@ -945,7 +949,11 @@ func copyRegularFileNoFollow(src, dst string, expectedSize int64) error {
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	defer func() {
+		if closeErr := out.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 
 	if _, err := io.Copy(out, in); err != nil {
 		return err
@@ -1339,9 +1347,9 @@ func reconcileManagedContainers(ctx context.Context, database *db.DB, staleBefor
 		"--filter", "label=gitman.managed=true",
 		"--format", `{{.ID}}|{{.Label "gitman.run_id"}}|{{.Label "gitman.attempt_id"}}`,
 	)
-	out, err := cmd.Output()
+	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("list managed Docker containers: %w", err)
+		return fmt.Errorf("list managed Docker containers: %w%s", err, commandOutputSuffix(out))
 	}
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		if strings.TrimSpace(line) == "" {
@@ -1369,6 +1377,14 @@ func reconcileManagedContainers(ctx context.Context, database *db.DB, staleBefor
 		}
 	}
 	return nil
+}
+
+func commandOutputSuffix(output []byte) string {
+	message := strings.TrimSpace(string(output))
+	if message == "" {
+		return ""
+	}
+	return ": " + message
 }
 
 const attemptMetadataFile = ".gitman-attempt"

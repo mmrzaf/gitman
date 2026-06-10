@@ -3,6 +3,7 @@ package worker
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -268,6 +269,29 @@ func TestParseCIConfigRejectsSymlink(t *testing.T) {
 	}
 	if _, err := parseCIConfig(link); err == nil {
 		t.Fatal("expected symlinked CI config rejection")
+	}
+}
+
+func TestReconcileManagedContainersIncludesDockerOutput(t *testing.T) {
+	database, err := db.InitDB("file::memory:?cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	binDir := t.TempDir()
+	dockerPath := filepath.Join(binDir, "docker")
+	if err := os.WriteFile(dockerPath, []byte("#!/bin/sh\necho 'permission denied on docker socket' >&2\nexit 1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fmt.Sprintf("%s%c%s", binDir, os.PathListSeparator, os.Getenv("PATH")))
+
+	err = reconcileManagedContainers(context.Background(), database, time.Now())
+	if err == nil {
+		t.Fatal("expected docker list failure")
+	}
+	if !strings.Contains(err.Error(), "permission denied on docker socket") {
+		t.Fatalf("expected Docker stderr in error, got %v", err)
 	}
 }
 
