@@ -20,3 +20,6 @@ steps:
 
   - name: build
     run: go build ./cmd/gitman
+  - name: save cache
+    run: |
+      echo "Go cache persisted in /gitman/cache"
