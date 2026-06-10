@@ -49,8 +49,17 @@
 <h3 style="margin-bottom:0.5rem">Build Log</h3>
 
 {{if or (eq .Data.Run.Status "running") (eq .Data.Run.Status "pending")}}
-<div id="log-container" hx-get="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/{{.Data.Run.ID}}/log" hx-trigger="every 3s" hx-target="#log-container" hx-swap="innerHTML">
-  <pre style="background:var(--code-bg);padding:1rem;border-radius:6px;overflow-x:auto;white-space:pre-wrap;font-size:0.85em;max-height:600px;overflow-y:auto">{{if .Data.LogContent}}{{.Data.LogContent}}{{else}}Waiting for worker to start…{{end}}</pre>
+<div id="log-container">
+  <pre
+    id="build-log"
+    hx-get="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/{{.Data.Run.ID}}/log"
+    hx-trigger="every 3s"
+    hx-target="#build-log"
+    hx-swap="innerHTML"
+    hx-on::before-swap="this.dataset.scrollTop = String(this.scrollTop); this.dataset.follow = String(this.scrollHeight - this.scrollTop - this.clientHeight < 24)"
+    hx-on::after-swap="this.scrollTop = this.dataset.follow === 'true' ? this.scrollHeight : Number(this.dataset.scrollTop || 0)"
+    style="background:var(--code-bg);padding:1rem;border-radius:6px;overflow-x:auto;white-space:pre-wrap;font-size:0.85em;max-height:600px;overflow-y:auto"
+  >{{if .Data.LogContent}}{{.Data.LogContent}}{{else}}Waiting for worker to start…{{end}}</pre>
 </div>
 <p class="muted" style="font-size:0.82em;margin-top:4px">⟳ Auto-refreshing every 3 seconds</p>
 {{else}}
