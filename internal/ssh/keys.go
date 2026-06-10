@@ -2,6 +2,7 @@ package ssh
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,7 +19,7 @@ var authorizedKeysMu sync.Mutex
 // SyncAuthorizedKeys atomically regenerates the authorized_keys file from the
 // database. Readers either observe the old complete file or the new complete
 // file; they never observe a truncated intermediate file.
-func SyncAuthorizedKeys(ctx context.Context, database *db.DB, cfg *config.Config) error {
+func SyncAuthorizedKeys(ctx context.Context, database *db.DB, cfg *config.Config) (err error) {
 	authorizedKeysMu.Lock()
 	defer authorizedKeysMu.Unlock()
 
@@ -64,7 +65,7 @@ func SyncAuthorizedKeys(ctx context.Context, database *db.DB, cfg *config.Config
 			`command=%s,no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty`,
 			forcedCommand,
 		)
-		if _, err := tmp.WriteString(fmt.Sprintf("%s %s\n", options, pubKey)); err != nil {
+		if _, err := fmt.Fprintf(tmp, "%s %s\n", options, pubKey); err != nil {
 			_ = tmp.Close()
 			return err
 		}
@@ -85,6 +86,10 @@ func SyncAuthorizedKeys(ctx context.Context, database *db.DB, cfg *config.Config
 	if err != nil {
 		return err
 	}
-	defer dirFile.Close()
+	defer func() {
+		if closeErr := dirFile.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 	return dirFile.Sync()
 }

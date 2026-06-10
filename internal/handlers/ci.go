@@ -801,7 +801,11 @@ func serveArtifact(w http.ResponseWriter, r *http.Request, artifactsPath, owner,
 		http.Error(w, "Artifact not found", http.StatusNotFound)
 		return
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			slog.Warn("failed to close artifact download file", "path", requestedAbs, "error", err)
+		}
+	}()
 	stat, err := f.Stat()
 	if err != nil || !stat.Mode().IsRegular() {
 		http.Error(w, "Artifact not found", http.StatusNotFound)
@@ -810,10 +814,6 @@ func serveArtifact(w http.ResponseWriter, r *http.Request, artifactsPath, owner,
 	disposition := mime.FormatMediaType("attachment", map[string]string{"filename": filepath.Base(artifact)})
 	w.Header().Set("Content-Disposition", disposition)
 	http.ServeContent(w, r, filepath.Base(artifact), stat.ModTime(), f)
-}
-
-func isHTMX(r *http.Request) bool {
-	return r.Header.Get("HX-Request") == "true"
 }
 
 // StatusBadge returns a short display string and CSS class for a CI run status.
