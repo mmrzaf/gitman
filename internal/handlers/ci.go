@@ -353,7 +353,7 @@ var ansiEscapeRegex = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 func writeCILogFragment(w http.ResponseWriter, content string) {
 	noStore(w)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = fmt.Fprintf(w, `<pre style="background:var(--code-bg);padding:1rem;border-radius:6px;overflow-x:auto;white-space:pre-wrap;font-size:0.85em;max-height:600px;overflow-y:auto">%s</pre>`, html.EscapeString(content))
+	_, _ = io.WriteString(w, html.EscapeString(content))
 }
 
 func (app *App) HandleCIRunLogGET(w http.ResponseWriter, r *http.Request) {
