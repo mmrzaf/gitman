@@ -5,6 +5,8 @@ env:
   GOCACHE: /gitman/cache/go/build
   CGO_ENABLED: "0"
   GOFLAGS: "-mod=mod"
+  GOPROXY: https://mirror.abrha.net/repository/go/,direcot
+  GOTMPDIR: /gitman/cache/go/tmp
 
 steps:
   - name: prepare cache
