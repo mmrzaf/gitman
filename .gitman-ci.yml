@@ -12,6 +12,7 @@ steps:
   - name: prepare cache
     run: |
       mkdir -p "$GOMODCACHE" "$GOCACHE"
+      mkdir -p "$GOTMPDIR" "$GOTMPDIR"
       echo "Module cache: $GOMODCACHE"
       echo "Build cache: $GOCACHE"
 
