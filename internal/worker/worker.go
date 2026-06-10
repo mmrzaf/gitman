@@ -586,7 +586,7 @@ func (j *job) runDocker(ctx context.Context, cfg *CIConfig, envFile, runnerPath 
 		"--security-opt", "no-new-privileges",
 		"--read-only",
 		"--user", j.cfg.CIContainerUser,
-		"--tmpfs", "/tmp:rw,nosuid,nodev,size=256m",
+		"--tmpfs", "/tmp:rw,nosuid,nodev,exec,size=256m",
 		"-v", fmt.Sprintf("%s:/workspace", hostCheckout),
 		"-v", fmt.Sprintf("%s:/gitman/artifacts", hostArtifacts),
 		"-v", fmt.Sprintf("%s:/gitman/runner.sh:ro", hostRunner),
