@@ -39,6 +39,7 @@ This Go example assumes required modules are already present in the image or a w
 | Key | Required | Type | Notes |
 | --- | --- | --- | --- |
 | `image` | Yes | String | Docker image reference. Must already exist on the runner. |
+| `docker` | No | Boolean | Request host Docker socket access. Requires operator opt-in. Use only for trusted repositories. |
 | `env` | No | Mapping of strings | Environment keys must match `[A-Z][A-Z0-9_]*`. Keys starting with `GITMAN_` are reserved. |
 | `steps` | Yes | List | At least one step, maximum 200. |
 | `steps[].name` | Yes | String | Non-empty, maximum 120 characters, no CR/LF/NUL. |
@@ -83,6 +84,20 @@ User-defined environment values and stored secret values cannot contain NUL, car
 | Container root filesystem | Read-only | Image contents |
 
 The selected image must contain `/bin/sh`.
+
+## Docker builds
+
+A trusted repository can request access to the runner host Docker daemon:
+
+```yaml
+image: docker:29-cli
+docker: true
+steps:
+  - name: verify Docker access
+    run: docker version
+```
+
+The worker mounts `/var/run/docker.sock`, adds the socket group ID to the job container, and sets `DOCKER_HOST=unix:///var/run/docker.sock`. Operators must explicitly enable this with `GITMAN_CI_ALLOW_DOCKER_SOCKET=true`. Docker-enabled jobs effectively control the runner host Docker daemon. Do not enable this for untrusted repositories or shared multi-tenant runners.
 
 ## Network and images
 

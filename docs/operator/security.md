@@ -2,7 +2,7 @@
 
 ## CI worker privilege boundary
 
-The CI worker mounts `/var/run/docker.sock`. Access to that socket is effectively control of the Docker host. Job containers do not receive the socket, but the worker remains privileged infrastructure and Docker isolation is not a complete hostile multi-tenant boundary.
+The CI worker mounts `/var/run/docker.sock`. Access to that socket is effectively control of the Docker host. Ordinary job containers do not receive the socket. Pipelines with `docker: true` receive it only when the operator enables `GITMAN_CI_ALLOW_DOCKER_SOCKET=true`; those jobs effectively control the Docker host. Docker isolation is not a complete hostile multi-tenant boundary.
 
 Before allowing untrusted repository writers:
 
@@ -12,6 +12,7 @@ Before allowing untrusted repository writers:
 - Keep worker concurrency low.
 - Pre-pull only approved images.
 - Run jobs as a numeric non-root UID:GID.
+- Leave `GITMAN_CI_ALLOW_DOCKER_SOCKET=false` unless Docker builds are restricted to trusted repositories on a dedicated runner.
 - Monitor Docker storage, Gitman data usage, and worker logs.
 
 ## Repository-writer trust

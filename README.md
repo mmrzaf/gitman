@@ -139,6 +139,8 @@ CI limits:
 | `GITMAN_CI_WORKSPACE_MAX_BYTES` | `1073741824` |
 | `GITMAN_CI_CACHE_MAX_BYTES` | `1073741824` |
 | `GITMAN_CI_CONTAINER_USER` | worker process numeric non-root UID:GID |
+| `GITMAN_CI_ALLOW_DOCKER_SOCKET` | `false` |
+| `GITMAN_CI_DOCKER_SOCKET_PATH` | `/var/run/docker.sock` |
 | `GITMAN_CI_WORKER_PATH_PREFIX` | empty |
 | `GITMAN_CI_HOST_PATH_PREFIX` | empty |
 
@@ -147,6 +149,6 @@ CI limits:
 - Repository writers can run repository-controlled CI code. Any CI secret exposed to a job must be treated as accessible to writers.
 - CI logs and artifacts require owner or collaborator membership even when repository source code is public.
 - CI logs mask exact configured secret values, but masking is defense in depth. Do not print secrets.
-- CI containers are restricted, but a Docker socket is still privileged infrastructure. Pre-pull only approved images. CI jobs must run as a numeric non-root UID:GID.
+- CI containers are restricted, but a Docker socket is still privileged infrastructure. Pre-pull only approved images. CI jobs must run as a numeric non-root UID:GID. Enable `GITMAN_CI_ALLOW_DOCKER_SOCKET` only for trusted repositories that require `docker: true`.
 - When the worker itself runs in Docker, configure the worker and host path prefixes so sibling containers mount host-visible paths. The included Compose file does this automatically.
 - Set `GITMAN_PUBLIC_URL`, force secure cookies, and trust proxy headers only when the reverse proxy is controlled and correctly configured.

@@ -41,6 +41,8 @@ Gitman is configured with environment variables.
 | `GITMAN_CI_WORKSPACE_MAX_BYTES` | `1073741824` | Maximum workspace usage checked by the worker. |
 | `GITMAN_CI_CACHE_MAX_BYTES` | `1073741824` | Maximum repository cache usage checked by the worker. |
 | `GITMAN_CI_CONTAINER_USER` | Worker process numeric UID:GID | Numeric non-root UID:GID used inside jobs. Root is rejected. |
+| `GITMAN_CI_ALLOW_DOCKER_SOCKET` | `false` | Allow pipelines with `docker: true` to receive the host Docker socket. Enable only on trusted dedicated runners. |
+| `GITMAN_CI_DOCKER_SOCKET_PATH` | `/var/run/docker.sock` | Worker-visible Docker socket path passed through to Docker-enabled jobs. |
 | `GITMAN_CI_WORKER_PATH_PREFIX` | Empty | Worker-visible prefix translated for sibling-container bind mounts. Set with host prefix. |
 | `GITMAN_CI_HOST_PATH_PREFIX` | Empty | Docker-host-visible prefix translated for sibling-container bind mounts. Set with worker prefix. |
 
