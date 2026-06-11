@@ -42,6 +42,8 @@ type Config struct {
 	CIWorkspaceMaxBytes int64
 	CICacheMaxBytes     int64
 	CIContainerUser     string
+	CIAllowDockerSocket bool
+	CIDockerSocketPath  string
 	CIWorkerPathPrefix  string
 	CIHostPathPrefix    string
 }
@@ -92,6 +94,8 @@ func LoadConfig() *Config {
 		CIWorkspaceMaxBytes: getEnvInt64("GITMAN_CI_WORKSPACE_MAX_BYTES", 1024*1024*1024),
 		CICacheMaxBytes:     getEnvInt64("GITMAN_CI_CACHE_MAX_BYTES", 1024*1024*1024),
 		CIContainerUser:     getEnvNonEmpty("GITMAN_CI_CONTAINER_USER", defaultCIContainerUser()),
+		CIAllowDockerSocket: getEnvBool("GITMAN_CI_ALLOW_DOCKER_SOCKET", false),
+		CIDockerSocketPath:  getEnv("GITMAN_CI_DOCKER_SOCKET_PATH", "/var/run/docker.sock"),
 		CIWorkerPathPrefix:  cleanOptionalPathPrefix(getEnv("GITMAN_CI_WORKER_PATH_PREFIX", "")),
 		CIHostPathPrefix:    cleanOptionalPathPrefix(getEnv("GITMAN_CI_HOST_PATH_PREFIX", "")),
 	}

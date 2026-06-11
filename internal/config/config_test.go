@@ -35,6 +35,12 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if cfg.WorkerConcurrency != 1 {
 		t.Errorf("expected default WorkerConcurrency=1, got %d", cfg.WorkerConcurrency)
 	}
+	if cfg.CIAllowDockerSocket {
+		t.Error("expected default CIAllowDockerSocket=false")
+	}
+	if cfg.CIDockerSocketPath != "/var/run/docker.sock" {
+		t.Errorf("unexpected default CIDockerSocketPath: %s", cfg.CIDockerSocketPath)
+	}
 	if !strings.Contains(cfg.DBPath, ".data/db/gitman.sqlite") {
 		t.Errorf("unexpected DBPath: %s", cfg.DBPath)
 	}
@@ -47,6 +53,8 @@ func TestLoadConfigOverrides(t *testing.T) {
 	t.Setenv("GITMAN_WORKER_CONCURRENCY", "4")
 	t.Setenv("GITMAN_SECRET_KEY", "testkey")
 	t.Setenv("GITMAN_INTERNAL_URL", "http://example.com")
+	t.Setenv("GITMAN_CI_ALLOW_DOCKER_SOCKET", "true")
+	t.Setenv("GITMAN_CI_DOCKER_SOCKET_PATH", "/tmp/custom-docker.sock")
 	cfg := LoadConfig()
 	if cfg.Port != "9090" {
 		t.Errorf("expected Port=9090, got %s", cfg.Port)
@@ -62,6 +70,12 @@ func TestLoadConfigOverrides(t *testing.T) {
 	}
 	if cfg.SecretKey != "testkey" {
 		t.Errorf("expected SecretKey=testkey, got %s", cfg.SecretKey)
+	}
+	if !cfg.CIAllowDockerSocket {
+		t.Error("expected CIAllowDockerSocket=true")
+	}
+	if cfg.CIDockerSocketPath != "/tmp/custom-docker.sock" {
+		t.Errorf("unexpected CIDockerSocketPath: %s", cfg.CIDockerSocketPath)
 	}
 }
 

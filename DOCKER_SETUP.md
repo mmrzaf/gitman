@@ -51,6 +51,15 @@ docker pull golang:1.24-alpine
 
 This prevents repository-controlled CI configuration from pulling arbitrary images into Docker storage. Set `GITMAN_CI_CONTAINER_USER` only when a numeric non-root UID:GID override is required; otherwise the worker uses its own numeric non-root UID:GID. Running the CI worker as root is rejected.
 
+For trusted repositories that build Docker images through the host daemon, enable socket passthrough before starting the worker:
+
+```bash
+export GITMAN_CI_ALLOW_DOCKER_SOCKET=true
+docker compose up -d --build worker
+```
+
+Then add `docker: true` to that repository's `.gitman-ci.yml`. Docker-enabled jobs effectively control the runner host Docker daemon. Use a dedicated runner host and do not expose this capability to untrusted repository writers.
+
 ## CI secrets
 
 Set an encryption key before storing CI secrets:
