@@ -597,6 +597,10 @@ func (j *job) runDocker(ctx context.Context, cfg *CIConfig, envFile, runnerPath 
 	if cacheDir != "" {
 		args = append(args, "-v", fmt.Sprintf("%s:/gitman/cache", hostCacheDir))
 	}
+	args, err = appendDockerSocketArgs(args, j.cfg, cfg.Docker)
+	if err != nil {
+		return err
+	}
 	if j.cfg.MemoryLimit != "" {
 		args = append(args, "--memory", j.cfg.MemoryLimit)
 	}
@@ -655,6 +659,39 @@ func (j *job) runDocker(ctx context.Context, cfg *CIConfig, envFile, runnerPath 
 		j.logf("Exit status: SUCCESS")
 	}
 	return err
+}
+
+func appendDockerSocketArgs(args []string, cfg *config.Config, enabled bool) ([]string, error) {
+	if !enabled {
+		return args, nil
+	}
+	if !cfg.CIAllowDockerSocket {
+		return nil, fmt.Errorf("pipeline requests docker socket access, but GITMAN_CI_ALLOW_DOCKER_SOCKET is disabled")
+	}
+	gid, err := dockerSocketGroupID(cfg.CIDockerSocketPath)
+	if err != nil {
+		return nil, err
+	}
+	return append(args,
+		"-v", fmt.Sprintf("%s:/var/run/docker.sock", cfg.CIDockerSocketPath),
+		"--group-add", gid,
+		"-e", "DOCKER_HOST=unix:///var/run/docker.sock",
+	), nil
+}
+
+func dockerSocketGroupID(path string) (string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf("inspect Docker socket %s: %w", path, err)
+	}
+	if info.Mode()&os.ModeSocket == 0 {
+		return "", fmt.Errorf("docker socket path %s is not a Unix socket", path)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return "", fmt.Errorf("inspect Docker socket ownership %s: unsupported platform", path)
+	}
+	return strconv.FormatUint(uint64(stat.Gid), 10), nil
 }
 
 func (j *job) dockerHostPath(path string) (string, error) {
@@ -1313,6 +1350,14 @@ func validateWorkerConfig(cfg *config.Config) error {
 	}
 	if workerPrefix != "" && (!filepath.IsAbs(workerPrefix) || !filepath.IsAbs(hostPrefix)) {
 		return fmt.Errorf("CI Docker path prefixes must be absolute")
+	}
+	if cfg.CIAllowDockerSocket {
+		if !filepath.IsAbs(cfg.CIDockerSocketPath) {
+			return fmt.Errorf("GITMAN_CI_DOCKER_SOCKET_PATH must be absolute")
+		}
+		if _, err := dockerSocketGroupID(cfg.CIDockerSocketPath); err != nil {
+			return err
+		}
 	}
 	if workerPrefix != "" {
 		for name, path := range map[string]string{

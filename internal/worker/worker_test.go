@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -216,6 +217,55 @@ func TestCleanupStaleWorkspacesKeepsRecentUnmarkedDirectory(t *testing.T) {
 	cleanupStaleWorkspaces(context.Background(), root, database, time.Now().Add(-2*time.Minute))
 	if _, err := os.Stat(workspace); err != nil {
 		t.Fatalf("recent unmarked workspace was removed: %v", err)
+	}
+}
+
+func TestParseCIConfigAcceptsDockerFlag(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ciConfigFile)
+	data := []byte("image: docker:29-cli\ndocker: true\nsteps:\n  - name: test\n    run: docker version\n")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := parseCIConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Docker {
+		t.Fatal("expected docker socket access to be enabled")
+	}
+}
+
+func TestAppendDockerSocketArgsRequiresOperatorOptIn(t *testing.T) {
+	_, err := appendDockerSocketArgs(nil, &config.Config{}, true)
+	if err == nil || !strings.Contains(err.Error(), "GITMAN_CI_ALLOW_DOCKER_SOCKET") {
+		t.Fatalf("expected operator opt-in error, got %v", err)
+	}
+}
+
+func TestAppendDockerSocketArgsMountsSocketAndAddsGroup(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "docker.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	args, err := appendDockerSocketArgs([]string{"run"}, &config.Config{
+		CIAllowDockerSocket: true,
+		CIDockerSocketPath:  socketPath,
+	}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(args, " ")
+	for _, want := range []string{
+		socketPath + ":/var/run/docker.sock",
+		"--group-add",
+		"DOCKER_HOST=unix:///var/run/docker.sock",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected %q in Docker args: %s", want, joined)
+		}
 	}
 }
 

@@ -25,9 +25,10 @@ var imageRefRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._/-]*(?::[a-zA-Z0-9.
 
 // CIConfig holds the parsed contents of .gitman-ci.yml.
 type CIConfig struct {
-	Image string
-	Env   []envEntry
-	Steps []CIStep
+	Image  string
+	Docker bool
+	Env    []envEntry
+	Steps  []CIStep
 }
 
 // envEntry is a resolved environment variable declaration.
@@ -47,9 +48,10 @@ type CIStep struct {
 
 // rawConfig mirrors the YAML layout for unmarshalling.
 type rawConfig struct {
-	Image string            `yaml:"image"`
-	Env   map[string]string `yaml:"env"`
-	Steps []struct {
+	Image  string            `yaml:"image"`
+	Docker bool              `yaml:"docker"`
+	Env    map[string]string `yaml:"env"`
+	Steps  []struct {
 		Name string `yaml:"name"`
 		Run  string `yaml:"run"`
 	} `yaml:"steps"`
@@ -100,7 +102,7 @@ func parseCIConfig(path string) (*CIConfig, error) {
 		return nil, fmt.Errorf("too many CI steps")
 	}
 
-	cfg := &CIConfig{Image: image}
+	cfg := &CIConfig{Image: image, Docker: raw.Docker}
 
 	keys := make([]string, 0, len(raw.Env))
 	for k := range raw.Env {
