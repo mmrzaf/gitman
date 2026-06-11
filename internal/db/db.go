@@ -3,13 +3,16 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/mmrzaf/gitman"
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 type DB struct {
@@ -35,17 +38,9 @@ func InitDB(dbPath string) (*DB, error) {
 	conn.SetMaxOpenConns(1)
 	conn.SetMaxIdleConns(1)
 
-	pragmas := []string{
-		"PRAGMA busy_timeout=5000",
-		"PRAGMA foreign_keys=ON",
-		"PRAGMA journal_mode=WAL",
-		"PRAGMA synchronous=NORMAL",
-	}
-	for _, pragma := range pragmas {
-		if _, err := conn.ExecContext(context.Background(), pragma); err != nil {
-			_ = conn.Close()
-			return nil, fmt.Errorf("failed to set %q: %w", pragma, err)
-		}
+	if err := applyConnectionPragmas(context.Background(), conn); err != nil {
+		_ = conn.Close()
+		return nil, err
 	}
 	if err := conn.Ping(); err != nil {
 		_ = conn.Close()
@@ -64,6 +59,55 @@ func InitDB(dbPath string) (*DB, error) {
 		return nil, fmt.Errorf("migrations failed: %w", err)
 	}
 	return database, nil
+}
+
+func applyConnectionPragmas(ctx context.Context, conn *sql.DB) error {
+	pragmas := []string{
+		"PRAGMA busy_timeout=5000",
+		"PRAGMA foreign_keys=ON",
+		"PRAGMA journal_mode=WAL",
+		"PRAGMA synchronous=NORMAL",
+	}
+	for _, pragma := range pragmas {
+		if err := execPragmaWithBusyRetry(ctx, conn, pragma); err != nil {
+			return fmt.Errorf("failed to set %q: %w", pragma, err)
+		}
+	}
+	return nil
+}
+
+func execPragmaWithBusyRetry(ctx context.Context, conn *sql.DB, pragma string) error {
+	const retryFor = 5 * time.Second
+
+	deadline := time.Now().Add(retryFor)
+	delay := 10 * time.Millisecond
+	for {
+		if _, err := conn.ExecContext(ctx, pragma); err != nil {
+			if !isSQLiteBusy(err) || time.Now().After(deadline) {
+				return err
+			}
+		} else {
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+		if delay < 100*time.Millisecond {
+			delay *= 2
+		}
+	}
+}
+
+func isSQLiteBusy(err error) bool {
+	var sqliteErr *sqlite.Error
+	if !errors.As(err, &sqliteErr) {
+		return false
+	}
+	code := sqliteErr.Code()
+	return code == sqlite3.SQLITE_BUSY || code == sqlite3.SQLITE_LOCKED
 }
 
 func ensureDatabaseParent(dbPath string) error {
