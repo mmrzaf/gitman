@@ -1,4 +1,4 @@
-.PHONY: build test clean install run-web run-worker run-admin fmt lint deps dev help
+.PHONY: build test clean install run-web run-worker run-admin fmt lint deps dev verify release-source help
 
 BINARY_NAME=gitman
 BUILD_DIR=bin
@@ -20,6 +20,18 @@ build: ## Build the GitMan binary
 	@echo "Building GitMan..."
 	@mkdir -p $(BUILD_DIR)
 	$(GO) build -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/gitman
+
+verify: ## Run release verification checks
+	$(GO) test ./...
+	$(GO) vet ./...
+	golangci-lint run
+	govulncheck ./...
+	@mkdir -p $(BUILD_DIR)
+	$(GO) build -trimpath -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/gitman
+	docker build -t gitman:verify .
+
+release-source: ## Create tracked-files-only source archive
+	scripts/release-source-archive.sh $${VERSION:?set VERSION}
 
 build-all: ## Build for multiple platforms
 	@echo "Building for multiple platforms..."
