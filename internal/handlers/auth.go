@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -32,15 +33,27 @@ func (app *App) HandleLoginPOST(w http.ResponseWriter, r *http.Request) {
 
 	username := strings.TrimSpace(r.FormValue("username"))
 	password := r.FormValue("password")
+	clientIP := app.clientIP(r)
+	if ok, retryAfter := app.loginLimiter().allow(username, clientIP); !ok {
+		w.Header().Set("Retry-After", fmt.Sprintf("%.0f", retryAfter.Seconds()))
+		w.WriteHeader(http.StatusTooManyRequests)
+		app.renderPage(w, r, "login.html", PageData{
+			Title: "Login",
+			Error: "Too many login attempts. Please try again later.",
+		})
+		return
+	}
 
 	user, err := app.DB.GetUserByUsername(r.Context(), username)
 	if err != nil || user == nil || !db.VerifyPassword(user.PasswordHash, password) {
+		app.loginLimiter().recordFailure(username, clientIP)
 		app.renderPage(w, r, "login.html", PageData{
 			Title: "Login",
 			Error: "Invalid username or password",
 		})
 		return
 	}
+	app.loginLimiter().recordSuccess(username)
 
 	token, err := app.DB.CreateSession(r.Context(), user.ID)
 	if err != nil {

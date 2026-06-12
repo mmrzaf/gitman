@@ -59,6 +59,12 @@ func runWeb(cfg *config.Config, database *db.DB, args []string) error {
 		Templates: templates,
 		StaticFS:  staticFS,
 	}
+	if err := database.DeleteExpiredSessions(context.Background()); err != nil {
+		slog.Warn("failed to prune expired sessions at startup", "error", err)
+	}
+	pruneCtx, stopPrune := context.WithCancel(context.Background())
+	defer stopPrune()
+	go pruneExpiredSessions(pruneCtx, database)
 
 	router := handlers.SetupRouter(app)
 
@@ -97,4 +103,19 @@ func runWeb(cfg *config.Config, database *db.DB, args []string) error {
 	}
 
 	return nil
+}
+
+func pruneExpiredSessions(ctx context.Context, database *db.DB) {
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := database.DeleteExpiredSessions(context.Background()); err != nil {
+				slog.Warn("failed to prune expired sessions", "error", err)
+			}
+		}
+	}
 }

@@ -38,10 +38,18 @@ const (
 var embeddedFiles = gitman.FS
 
 type App struct {
-	Config    *config.Config
-	DB        *db.DB
-	Templates map[string]*template.Template
-	StaticFS  http.FileSystem
+	Config       *config.Config
+	DB           *db.DB
+	Templates    map[string]*template.Template
+	StaticFS     http.FileSystem
+	LoginLimiter *loginLimiter
+}
+
+func (app *App) loginLimiter() *loginLimiter {
+	if app.LoginLimiter == nil {
+		app.LoginLimiter = newLoginLimiter(time.Now)
+	}
+	return app.LoginLimiter
 }
 
 type RepoNavData struct {
@@ -267,7 +275,7 @@ func (app *App) AuthMiddleware(next http.Handler) http.Handler {
 		if cookie, err := r.Cookie("session_token"); err == nil {
 			user, err := app.DB.GetUserBySession(r.Context(), cookie.Value)
 			if err == nil && user != nil {
-				if extendErr := app.DB.ExtendSession(r.Context(), cookie.Value, 24*time.Hour); extendErr != nil {
+				if extendErr := app.DB.ExtendSessionIfExpiring(r.Context(), cookie.Value, 24*time.Hour, 12*time.Hour); extendErr != nil {
 					slog.Warn("failed to extend session", "error", extendErr)
 				}
 				ctx := context.WithValue(r.Context(), userContextKey, user)

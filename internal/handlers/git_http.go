@@ -15,7 +15,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/mmrzaf/gitman/internal/git"
 	"github.com/mmrzaf/gitman/internal/models"
-	"golang.org/x/crypto/bcrypt"
 )
 
 // GitHTTPAuthMiddleware handles standard HTTP Basic Authentication for Git smart HTTP.
@@ -53,13 +52,6 @@ func (app *App) GitHTTPAuthMiddleware(next http.Handler) http.Handler {
 
 			if err == nil && tokenUser != nil && tokenUser.Username == authUser {
 				currentUser = tokenUser
-			} else {
-				user, err := app.DB.GetUserByUsername(r.Context(), authUser)
-				if err == nil && user != nil {
-					if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(authPass)); err == nil {
-						currentUser = user
-					}
-				}
 			}
 		}
 
