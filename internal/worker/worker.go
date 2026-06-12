@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	cipolicy "github.com/mmrzaf/gitman/internal/ci"
 	"github.com/mmrzaf/gitman/internal/config"
 	"github.com/mmrzaf/gitman/internal/db"
 	"github.com/mmrzaf/gitman/internal/models"
@@ -225,6 +226,7 @@ type job struct {
 	workspace           string
 	checkout            string
 	artifactsStagingDir string
+	refPolicy           cipolicy.RefPolicy
 }
 
 func (j *job) execute(ctx context.Context) error {
@@ -299,6 +301,19 @@ func (j *job) execute(ctx context.Context) error {
 	j.logf("Image  : %s", ciCfg.Image)
 	j.logf("Steps  : %d", len(ciCfg.Steps))
 	j.logf("")
+
+	policy, err := (cipolicy.Resolver{DB: j.database, ReposPath: j.cfg.ReposPath}).Resolve(
+		ctx,
+		&models.User{Username: j.owner},
+		&models.Repository{ID: j.repo.id, Name: j.repo.name},
+		j.run.Branch,
+		j.run.Tag,
+	)
+	if err != nil {
+		j.logf("ERROR: CI ref policy is unavailable for this run; failing closed: %v", err)
+		return j.complete(ctx, "failed")
+	}
+	j.refPolicy = policy
 
 	envFile, err := j.resolveEnvFile(ctx, ciCfg)
 	if err != nil {
@@ -433,6 +448,9 @@ func (j *job) resolveEnvFile(ctx context.Context, cfg *CIConfig) (string, error)
 	}
 
 	if hasSecrets {
+		if !j.refPolicy.AllowSecrets {
+			return "", fmt.Errorf("pipeline requests CI secrets, but ref %s %q is not trusted for secrets", j.refPolicy.RefType, j.refPolicy.RefName)
+		}
 		secrets, err := j.database.GetRepoSecrets(ctx, j.repo.id)
 		if err != nil {
 			return "", fmt.Errorf("fetch repo secrets: %w", err)
@@ -597,7 +615,7 @@ func (j *job) runDocker(ctx context.Context, cfg *CIConfig, envFile, runnerPath 
 	if cacheDir != "" {
 		args = append(args, "-v", fmt.Sprintf("%s:/gitman/cache", hostCacheDir))
 	}
-	args, err = appendDockerSocketArgs(args, j.cfg, cfg.Docker)
+	args, err = appendDockerSocketArgs(args, j.cfg, cfg.Docker, j.refPolicy.AllowDockerSocket)
 	if err != nil {
 		return err
 	}
@@ -661,12 +679,15 @@ func (j *job) runDocker(ctx context.Context, cfg *CIConfig, envFile, runnerPath 
 	return err
 }
 
-func appendDockerSocketArgs(args []string, cfg *config.Config, enabled bool) ([]string, error) {
+func appendDockerSocketArgs(args []string, cfg *config.Config, enabled bool, refAllowed bool) ([]string, error) {
 	if !enabled {
 		return args, nil
 	}
 	if !cfg.CIAllowDockerSocket {
 		return nil, fmt.Errorf("pipeline requests docker socket access, but GITMAN_CI_ALLOW_DOCKER_SOCKET is disabled")
+	}
+	if !refAllowed {
+		return nil, fmt.Errorf("pipeline requests docker socket access, but the exact CI ref is not trusted for Docker socket access")
 	}
 	gid, err := dockerSocketGroupID(cfg.CIDockerSocketPath)
 	if err != nil {

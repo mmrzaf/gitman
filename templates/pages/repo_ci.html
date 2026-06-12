@@ -14,11 +14,34 @@
 
 {{template "flash" .}}
 
-<div style="display:flex;gap:10px;align-items:center;margin-bottom:1.5rem;flex-wrap:wrap">
+<div style="display:flex;gap:16px;align-items:flex-start;margin-bottom:1.5rem;flex-wrap:wrap">
   {{if $.User}}
-  <form method="POST" action="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/trigger">
+  <form method="POST" action="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/trigger" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
     <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-    <button type="submit" style="background:var(--button-bg);color:var(--button-text);border:none;padding:0.45rem 0.9rem;border-radius:6px;cursor:pointer">▶ Run CI</button>
+    <label>Branch<br>
+      <select id="ci-branch" name="branch" onchange="if (this.value) document.getElementById('ci-tag').value = ''">
+        <option value="">Use default branch, tag, or commit</option>
+        {{range .Data.Branches}}
+        <option value="{{.}}" {{if eq . $.Data.DefaultBranch}}selected{{end}}>{{.}}</option>
+        {{end}}
+      </select>
+    </label>
+    <button type="submit" style="background:var(--button-bg);color:var(--button-text);border:none;padding:0.45rem 0.9rem;border-radius:6px;cursor:pointer">Run CI</button>
+    <details style="flex-basis:100%">
+      <summary style="cursor:pointer;color:var(--link)">Advanced</summary>
+      <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-top:0.75rem">
+        <label>Tag<br>
+          <select id="ci-tag" name="tag" onchange="if (this.value) document.getElementById('ci-branch').value = ''">
+            <option value="">No tag</option>
+            {{range .Data.Tags}}<option value="{{.}}">{{.}}</option>{{end}}
+          </select>
+        </label>
+        <label>Historical commit<br>
+          <input name="commit_hash" placeholder="optional commit hash" style="min-width:18rem">
+        </label>
+      </div>
+    </details>
+    <p class="muted" style="flex-basis:100%;margin:0;font-size:0.88em">Gitman checks out the exact selected commit and reads <code>.gitman-ci.yml</code> from that commit.</p>
   </form>
   {{end}}
 
@@ -31,6 +54,9 @@
       <button type="submit" style="background:#d9534f;color:#fff;border:none;padding:0.3rem 0.7rem;border-radius:6px;cursor:pointer;margin-left:8px">Remove hook</button>
     </form>
     {{else}}
+    {{if eq .Data.HookState "unmanaged"}}
+    <span class="muted">Auto-trigger: unmanaged post-receive hook present</span>
+    {{else}}
     <details style="display:inline-block">
       <summary style="cursor:pointer;color:var(--link)">Install auto-trigger hook</summary>
       <div class="card" style="margin-top:0.5rem;padding:1rem">
@@ -42,9 +68,49 @@
       </div>
     </details>
     {{end}}
+    {{end}}
   </div>
   {{end}}
 </div>
+
+{{if and $.User (eq $.User.ID .Data.Owner.ID)}}
+<details class="card" style="margin-bottom:1.5rem;padding:1rem;border:1px solid rgba(127,127,127,0.2);border-radius:6px">
+  <summary style="cursor:pointer;font-weight:bold">CI ref trust rules</summary>
+  <p class="muted">Default branch auto-runs and may use secrets. Other branches and tags can run manually, but auto-runs, secrets, and Docker socket access require an exact rule. Docker socket access also requires the global operator setting.</p>
+  {{if .Data.RefRules}}
+  <table style="width:100%;font-size:0.9em">
+    <thead><tr><th>Type</th><th>Name</th><th>Auto</th><th>Secrets</th><th>Docker socket</th><th></th></tr></thead>
+    <tbody>
+      {{range .Data.RefRules}}
+      <tr>
+        <td>{{.RefType}}</td><td><code>{{.RefName}}</code></td>
+        <td>{{if .AutoRun}}yes{{else}}no{{end}}</td>
+        <td>{{if .AllowSecrets}}yes{{else}}no{{end}}</td>
+        <td>{{if .AllowDockerSocket}}yes{{else}}no{{end}}</td>
+        <td>
+          <form method="POST" action="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/ci/rules/delete">
+            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+            <input type="hidden" name="ref_type" value="{{.RefType}}">
+            <input type="hidden" name="ref_name" value="{{.RefName}}">
+            <button type="submit">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{end}}
+  <form method="POST" action="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/rules" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-top:1rem">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <label>Type<br><select name="ref_type"><option value="branch">branch</option><option value="tag">tag</option></select></label>
+    <label>Exact ref<br><input name="ref_name" required></label>
+    <label><input type="checkbox" name="auto_run"> Auto-run</label>
+    <label><input type="checkbox" name="allow_secrets"> Secrets</label>
+    <label><input type="checkbox" name="allow_docker_socket"> Docker socket</label>
+    <button type="submit">Save rule</button>
+  </form>
+</details>
+{{end}}
 
 {{if .Data.Runs}}
 <div>
@@ -56,6 +122,7 @@
       {{if eq .Status "running"}}background:#e3f2fd;color:#1565c0;border:1px solid #90caf9{{end}}
       {{if eq .Status "pending"}}background:#fff8e1;color:#f57f17;border:1px solid #ffe082{{end}}
       {{if eq .Status "skipped"}}background:#f5f5f5;color:#616161;border:1px solid #bdbdbd{{end}}
+      {{if eq .Status "cancelled"}}background:#eeeeee;color:#424242;border:1px solid #9e9e9e{{end}}
       padding:3px 10px;border-radius:12px;font-size:0.82em;font-weight:bold;white-space:nowrap">{{.Status}}</span>
 
     <div style="flex:1;min-width:0">
@@ -65,6 +132,7 @@
         {{if .CommitHash}}<span class="muted"> {{short .CommitHash 7}}</span>{{end}}
       </div>
       <div class="muted" style="font-size:0.82em;margin-top:2px">{{.Event}} · {{.CreatedAt.Format "Jan 02 15:04:05"}}</div>
+      {{if .CancelReason}}<div class="muted" style="font-size:0.82em;margin-top:2px">{{.CancelReason}}</div>{{end}}
     </div>
 
     <a href="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/ci/{{.ID}}" style="font-size:0.9em;white-space:nowrap">View log →</a>
