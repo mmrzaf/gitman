@@ -49,7 +49,7 @@ type SSHKey struct {
 }
 
 // CIRun represents a single CI/CD pipeline execution.
-// Status values: pending | running | success | failed | skipped
+// Status values: pending | running | success | failed | skipped | cancelled
 type CIRun struct {
 	ID          string     `json:"id"`
 	RepoID      string     `json:"repo_id"`
@@ -59,11 +59,24 @@ type CIRun struct {
 	Event       string     `json:"event"`
 	Status      string     `json:"status"`
 	LogFile     string     `json:"log_file"`
+	CancelReason string   `json:"cancel_reason"`
 	AttemptID   string     `json:"attempt_id,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
 	StartedAt   *time.Time `json:"started_at,omitempty"`
 	HeartbeatAt *time.Time `json:"heartbeat_at,omitempty"`
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
+}
+
+// RepoCIRefRule stores exact per-repository trust settings for one CI ref.
+type RepoCIRefRule struct {
+	RepoID            string    `json:"repo_id"`
+	RefType           string    `json:"ref_type"`
+	RefName           string    `json:"ref_name"`
+	AutoRun           bool      `json:"auto_run"`
+	AllowSecrets      bool      `json:"allow_secrets"`
+	AllowDockerSocket bool      `json:"allow_docker_socket"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 // RepoSecret represents an encrypted key/value pair for CI environment injection.

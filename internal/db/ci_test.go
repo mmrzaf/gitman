@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/mmrzaf/gitman/internal/models"
 )
 
 func TestCreateAndClaimCIRun(t *testing.T) {
@@ -127,6 +129,111 @@ func TestGetCIRunsByRepo(t *testing.T) {
 	}
 	if len(runs) != 2 {
 		t.Errorf("expected 2 runs, got %d", len(runs))
+	}
+}
+
+func TestCreatePushCIRunCancelsOlderPendingSameBranch(t *testing.T) {
+	database := setupTestDB(t)
+	defer database.Close()
+	ctx := context.Background()
+	user, err := database.CreateUser(ctx, "dedupe", "CiPass1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoID, err := database.CreateRepository(ctx, user.ID, "dedupe-repo", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldID, err := database.CreatePushCIRun(ctx, repoID, "aaaaaaaa", "development", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manualID, err := database.CreateCIRun(ctx, repoID, "bbbbbbbb", "development", "", "manual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherID, err := database.CreatePushCIRun(ctx, repoID, "cccccccc", "main", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newID, err := database.CreatePushCIRun(ctx, repoID, "dddddddd", "development", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldRun, _ := database.GetCIRunByID(ctx, oldID)
+	if oldRun.Status != "cancelled" || oldRun.CancelReason == "" {
+		t.Fatalf("older push was not visibly cancelled: %+v", oldRun)
+	}
+	for _, id := range []string{manualID, otherID, newID} {
+		run, err := database.GetCIRunByID(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if run.Status != "pending" {
+			t.Fatalf("run %s should remain pending: %+v", id, run)
+		}
+	}
+}
+
+func TestCreatePushCIRunDoesNotCancelRunning(t *testing.T) {
+	database := setupTestDB(t)
+	defer database.Close()
+	ctx := context.Background()
+	user, _ := database.CreateUser(ctx, "runningpush", "CiPass1")
+	repoID, _ := database.CreateRepository(ctx, user.ID, "running-repo", "", false)
+	oldID, err := database.CreatePushCIRun(ctx, repoID, "aaaaaaaa", "main", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ClaimNextPendingRun(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.CreatePushCIRun(ctx, repoID, "bbbbbbbb", "main", ""); err != nil {
+		t.Fatal(err)
+	}
+	oldRun, _ := database.GetCIRunByID(ctx, oldID)
+	if oldRun.Status != "running" {
+		t.Fatalf("running push was cancelled: %+v", oldRun)
+	}
+}
+
+func TestRepoCIRefRulesCRUD(t *testing.T) {
+	database := setupTestDB(t)
+	defer database.Close()
+	ctx := context.Background()
+	user, _ := database.CreateUser(ctx, "rules", "CiPass1")
+	repoID, _ := database.CreateRepository(ctx, user.ID, "rules-repo", "", false)
+	rule := models.RepoCIRefRule{
+		RepoID:            repoID,
+		RefType:           "branch",
+		RefName:           "development",
+		AutoRun:           true,
+		AllowSecrets:      true,
+		AllowDockerSocket: true,
+	}
+	if err := database.UpsertRepoCIRefRule(ctx, rule); err != nil {
+		t.Fatal(err)
+	}
+	got, err := database.GetRepoCIRefRule(ctx, repoID, "branch", "development")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || !got.AutoRun || !got.AllowSecrets || !got.AllowDockerSocket {
+		t.Fatalf("unexpected rule: %+v", got)
+	}
+	rules, err := database.ListRepoCIRefRules(ctx, repoID)
+	if err != nil || len(rules) != 1 {
+		t.Fatalf("expected one rule, got %d err=%v", len(rules), err)
+	}
+	if err := database.DeleteRepoCIRefRule(ctx, repoID, "branch", "development"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = database.GetRepoCIRefRule(ctx, repoID, "branch", "development")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != nil {
+		t.Fatalf("rule was not deleted: %+v", got)
 	}
 }
 

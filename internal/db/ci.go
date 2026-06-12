@@ -13,7 +13,7 @@ import (
 )
 
 const ciRunColumns = `id, repo_id, commit_hash, branch, tag, event, status, log_file,
-	attempt_id, created_at, started_at, heartbeat_at, completed_at`
+	cancel_reason, attempt_id, created_at, started_at, heartbeat_at, completed_at`
 
 type rowScanner interface {
 	Scan(dest ...any) error
@@ -25,7 +25,7 @@ func scanCIRun(scanner rowScanner) (*models.CIRun, error) {
 	var startedAt, heartbeatAt, completedAt sql.NullInt64
 	if err := scanner.Scan(
 		&r.ID, &r.RepoID, &r.CommitHash, &r.Branch, &r.Tag,
-		&r.Event, &r.Status, &r.LogFile, &r.AttemptID, &createdAt,
+		&r.Event, &r.Status, &r.LogFile, &r.CancelReason, &r.AttemptID, &createdAt,
 		&startedAt, &heartbeatAt, &completedAt,
 	); err != nil {
 		return nil, err
@@ -45,6 +45,67 @@ func (db *DB) CreateCIRun(ctx context.Context, repoID, commitHash, branch, tag, 
 		VALUES (?, ?, ?, ?, ?, ?, 'pending')
 	`, id, repoID, commitHash, branch, tag, event)
 	return id, err
+}
+
+// CreatePushCIRun cancels older pending push runs for the same exact ref and
+// inserts the new pending run atomically.
+func (db *DB) CreatePushCIRun(ctx context.Context, repoID, commitHash, branch, tag string) (string, error) {
+	if branch == "" && tag == "" {
+		return "", fmt.Errorf("push run requires branch or tag")
+	}
+	if branch != "" && tag != "" {
+		return "", fmt.Errorf("push run cannot target both branch and tag")
+	}
+
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{})
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			slog.Warn("failed to rollback transaction", "error", rollbackErr)
+		}
+	}()
+
+	reason := fmt.Sprintf("Superseded by newer push %s", shortCommit(commitHash))
+	if branch != "" {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE ci_runs
+			SET status = 'cancelled', cancel_reason = ?, completed_at = ?, heartbeat_at = NULL
+			WHERE repo_id = ? AND event = 'push' AND status = 'pending'
+			  AND branch = ? AND tag = ''
+		`, reason, time.Now().Unix(), repoID, branch); err != nil {
+			return "", err
+		}
+	} else {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE ci_runs
+			SET status = 'cancelled', cancel_reason = ?, completed_at = ?, heartbeat_at = NULL
+			WHERE repo_id = ? AND event = 'push' AND status = 'pending'
+			  AND tag = ? AND branch = ''
+		`, reason, time.Now().Unix(), repoID, tag); err != nil {
+			return "", err
+		}
+	}
+
+	id := uuid.New().String()
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO ci_runs (id, repo_id, commit_hash, branch, tag, event, status)
+		VALUES (?, ?, ?, ?, ?, 'push', 'pending')
+	`, id, repoID, commitHash, branch, tag); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+func shortCommit(commit string) string {
+	if len(commit) <= 12 {
+		return commit
+	}
+	return commit[:12]
 }
 
 // ClaimNextPendingRun atomically leases one pending run. A fresh attempt ID is
@@ -153,7 +214,7 @@ func (db *DB) UpdateCIRunLogFile(ctx context.Context, runID, attemptID, logFile 
 // CompleteCIRun sets status and completed_at for one exact execution attempt.
 func (db *DB) CompleteCIRun(ctx context.Context, runID, attemptID, status string) error {
 	switch status {
-	case "success", "failed", "skipped":
+	case "success", "failed", "skipped", "cancelled":
 	default:
 		return fmt.Errorf("invalid CI run status %q", status)
 	}
