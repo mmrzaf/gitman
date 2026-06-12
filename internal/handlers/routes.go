@@ -16,6 +16,9 @@ func SetupRouter(app *App) *chi.Mux {
 	r.Use(middleware.RedirectSlashes)
 	r.Use(app.securityHeaders) // safe for all requests
 
+	// Static files do not require session resolution.
+	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(app.StaticFS)))
+
 	// ── Git Smart HTTP routes (NO CSRF) ─────────────────────────────
 	r.Route("/{username}/{repo_name}.git", func(r chi.Router) {
 		r.Use(app.GitHTTPAuthMiddleware)
@@ -41,9 +44,6 @@ func SetupRouter(app *App) *chi.Mux {
 		r.Use(app.AuthMiddleware)
 		r.Use(limitRequestBody(maxUIRequestBodyBytes))
 		r.Use(app.CSRFMiddleware)
-
-		// Static files
-		r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(app.StaticFS)))
 
 		// Public pages (login, register, home, health)
 		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
@@ -105,6 +105,8 @@ func SetupRouter(app *App) *chi.Mux {
 				r.Use(app.RequireRepoMember)
 				r.Get("/ci", app.HandleCIGET)
 				r.Post("/ci/trigger", app.HandleCITriggerPOST)
+				r.Post("/ci/rules", app.HandleCISettingsRulePOST)
+				r.Post("/ci/rules/delete", app.HandleCISettingsRuleDeletePOST)
 				r.Get("/ci/{run_id}", app.HandleCIRunGET)
 				r.Get("/ci/{run_id}/log", app.HandleCIRunLogGET)
 

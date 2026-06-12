@@ -53,7 +53,7 @@ git branch -M main
 git push -u origin main
 ```
 
-When Git prompts for credentials, use your Gitman username and either your account password or personal access token as the password.
+When Git prompts for credentials, use your Gitman username and a personal access token as the password. Account passwords are not accepted for Git Smart HTTP.
 
 ## 5. Enable CI only when needed
 

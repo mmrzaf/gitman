@@ -208,10 +208,10 @@ func TestInitDBAdoptsIntermediateLeaseSchema(t *testing.T) {
 	if err := database.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 2 {
-		t.Fatalf("expected schema version 2, got %d", version)
+	if version != 3 {
+		t.Fatalf("expected schema version 3, got %d", version)
 	}
-	for _, column := range []string{"started_at", "heartbeat_at", "attempt_id"} {
+	for _, column := range []string{"started_at", "heartbeat_at", "attempt_id", "cancel_reason"} {
 		var count int
 		if err := database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('ci_runs') WHERE name = ?", column).Scan(&count); err != nil {
 			t.Fatal(err)

@@ -67,7 +67,7 @@ func (app *App) HandleReposPOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := git.InitBareRepo(r.Context(), repoPath); err != nil {
+	if err := git.InitBareRepo(r.Context(), repoPath, app.Config.GitReceiveMaxBytes); err != nil {
 		app.renderPartial(w, r, "repos.html", "repos_panel", PageData{
 			User:  user,
 			Error: "Failed to initialize git repository on disk. Check for orphaned repository files.",

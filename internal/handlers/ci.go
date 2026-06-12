@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	cipolicy "github.com/mmrzaf/gitman/internal/ci"
 	"github.com/mmrzaf/gitman/internal/db"
 	"github.com/mmrzaf/gitman/internal/git"
 	"github.com/mmrzaf/gitman/internal/models"
@@ -28,10 +29,15 @@ import (
 var secretKeyRegex = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 
 type CIPageData struct {
-	Owner      *models.User
-	Repository *models.Repository
-	Runs       []models.CIRun
-	HookExists bool
+	Owner         *models.User
+	Repository    *models.Repository
+	Runs          []models.CIRun
+	HookExists    bool
+	HookState     string
+	Branches      []string
+	Tags          []string
+	DefaultBranch string
+	RefRules      []models.RepoCIRefRule
 }
 
 type CIRunPageData struct {
@@ -61,17 +67,117 @@ func (app *App) HandleCIGET(w http.ResponseWriter, r *http.Request) {
 	}
 
 	hookExists := hookIsInstalled(app.Config.ReposPath, owner.Username, repo.Name)
+	hookState := app.hookState(owner.Username, repo.Name)
+
+	var branches, tags []string
+	defaultBranch := ""
+	repoPath, err := git.SecureRepoPath(app.Config.ReposPath, owner.Username, repo.Name)
+	if err == nil && !git.IsEmpty(ctx, repoPath) {
+		if branches, err = git.GetBranches(ctx, repoPath); err != nil {
+			branches = []string{}
+		}
+		if tags, err = git.GetTags(ctx, repoPath); err != nil {
+			tags = []string{}
+		}
+		if defaultBranch, err = git.GetDefaultBranch(ctx, repoPath); err != nil {
+			defaultBranch = ""
+		}
+	}
+	refRules, err := app.DB.ListRepoCIRefRules(ctx, repo.ID)
+	if err != nil {
+		slog.Warn("failed to list CI ref rules", "repo", repo.ID, "error", err)
+		refRules = []models.RepoCIRefRule{}
+	}
 
 	app.renderPage(w, r, "repo_ci.html", PageData{
 		Title: repo.Name + " - CI",
 		User:  GetUser(r),
 		Data: CIPageData{
-			Owner:      owner,
-			Repository: repo,
-			Runs:       runs,
-			HookExists: hookExists,
+			Owner:         owner,
+			Repository:    repo,
+			Runs:          runs,
+			HookExists:    hookExists,
+			HookState:     string(hookState),
+			Branches:      branches,
+			Tags:          tags,
+			DefaultBranch: defaultBranch,
+			RefRules:      refRules,
 		},
 	})
+}
+
+func (app *App) HandleCISettingsRulePOST(w http.ResponseWriter, r *http.Request) {
+	repo := GetRepo(r)
+	owner := GetRepoOwner(r)
+	currentUser := GetUser(r)
+	if currentUser == nil || currentUser.ID != repo.OwnerID {
+		app.renderError(w, r, PageData{User: currentUser}, "Forbidden", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		app.renderError(w, r, PageData{User: currentUser}, "Invalid form data", http.StatusBadRequest)
+		return
+	}
+	refType := strings.TrimSpace(r.FormValue("ref_type"))
+	refName := strings.TrimSpace(r.FormValue("ref_name"))
+	if refType != "branch" && refType != "tag" {
+		app.renderError(w, r, PageData{User: currentUser}, "Invalid CI ref type", http.StatusBadRequest)
+		return
+	}
+	if err := git.ValidateRefName(refName); err != nil || refName == "" {
+		app.renderError(w, r, PageData{User: currentUser}, "Invalid CI ref name", http.StatusBadRequest)
+		return
+	}
+	repoPath, err := git.SecureRepoPath(app.Config.ReposPath, owner.Username, repo.Name)
+	if err != nil {
+		app.renderError(w, r, PageData{User: currentUser}, "Invalid repository path", http.StatusInternalServerError)
+		return
+	}
+	if refType == "branch" {
+		if _, err := git.ResolveBranchCommitHash(r.Context(), repoPath, refName); err != nil {
+			app.renderError(w, r, PageData{User: currentUser}, "Branch does not resolve in repository", http.StatusBadRequest)
+			return
+		}
+	} else {
+		if _, err := git.ResolveTagCommitHash(r.Context(), repoPath, refName); err != nil {
+			app.renderError(w, r, PageData{User: currentUser}, "Tag does not resolve in repository", http.StatusBadRequest)
+			return
+		}
+	}
+	rule := models.RepoCIRefRule{
+		RepoID:            repo.ID,
+		RefType:           refType,
+		RefName:           refName,
+		AutoRun:           r.FormValue("auto_run") == "on",
+		AllowSecrets:      r.FormValue("allow_secrets") == "on",
+		AllowDockerSocket: r.FormValue("allow_docker_socket") == "on",
+	}
+	if err := app.DB.UpsertRepoCIRefRule(r.Context(), rule); err != nil {
+		app.renderError(w, r, PageData{User: currentUser}, "Failed to save CI ref rule", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, fmt.Sprintf("/%s/%s/ci?success=ci_rule_saved", owner.Username, repo.Name), http.StatusSeeOther)
+}
+
+func (app *App) HandleCISettingsRuleDeletePOST(w http.ResponseWriter, r *http.Request) {
+	repo := GetRepo(r)
+	owner := GetRepoOwner(r)
+	currentUser := GetUser(r)
+	if currentUser == nil || currentUser.ID != repo.OwnerID {
+		app.renderError(w, r, PageData{User: currentUser}, "Forbidden", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		app.renderError(w, r, PageData{User: currentUser}, "Invalid form data", http.StatusBadRequest)
+		return
+	}
+	refType := strings.TrimSpace(r.FormValue("ref_type"))
+	refName := strings.TrimSpace(r.FormValue("ref_name"))
+	if err := app.DB.DeleteRepoCIRefRule(r.Context(), repo.ID, refType, refName); err != nil {
+		app.renderError(w, r, PageData{User: currentUser}, "Failed to delete CI ref rule", http.StatusBadRequest)
+		return
+	}
+	http.Redirect(w, r, fmt.Sprintf("/%s/%s/ci?success=ci_rule_deleted", owner.Username, repo.Name), http.StatusSeeOther)
 }
 
 type triggerRequest struct {
@@ -223,7 +329,12 @@ func (app *App) createCIRun(w http.ResponseWriter, r *http.Request, repo *models
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return "", false
 	}
-	runID, err := app.DB.CreateCIRun(r.Context(), repo.ID, req.CommitHash, req.Branch, req.Tag, req.Event)
+	var runID string
+	if req.Event == "push" {
+		runID, err = app.DB.CreatePushCIRun(r.Context(), repo.ID, req.CommitHash, req.Branch, req.Tag)
+	} else {
+		runID, err = app.DB.CreateCIRun(r.Context(), repo.ID, req.CommitHash, req.Branch, req.Tag, req.Event)
+	}
 	if err != nil {
 		slog.Error("failed to create CI run", "repo", repo.ID, "error", err)
 		http.Error(w, "Failed to create CI run", http.StatusInternalServerError)
@@ -269,10 +380,38 @@ func (app *App) HandleCITriggerWebhook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Repository owner not found", http.StatusInternalServerError)
 		return
 	}
-	runID, ok := app.createCIRun(w, r, repo, owner, "push")
-	if !ok {
+	req, err := decodeTriggerRequest(w, r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	req, err = normalizeCITrigger(r.Context(), app.Config.ReposPath, owner, repo, req, "push")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	policy, err := (cipolicy.Resolver{DB: app.DB, ReposPath: app.Config.ReposPath}).Resolve(r.Context(), owner, repo, req.Branch, req.Tag)
+	if err != nil {
+		slog.Warn("CI webhook denied because ref policy failed closed", "repo", repo.ID, "branch", req.Branch, "tag", req.Tag, "error", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]string{"result": "ignored", "reason": "ref policy unavailable"})
+		return
+	}
+	if !policy.AutoRun {
+		slog.Info("CI webhook ignored by ref policy", "repo", repo.ID, "ref_type", policy.RefType, "ref", policy.RefName, "source", policy.Source)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]string{"result": "ignored", "reason": "auto-run disabled for ref"})
+		return
+	}
+	runID, err := app.DB.CreatePushCIRun(r.Context(), repo.ID, req.CommitHash, req.Branch, req.Tag)
+	if err != nil {
+		slog.Error("failed to create push CI run", "repo", repo.ID, "error", err)
+		http.Error(w, "Failed to create CI run", http.StatusInternalServerError)
+		return
+	}
+	slog.Info("CI run created", "run_id", runID, "repo", repo.ID, "event", req.Event, "policy_source", policy.Source)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(map[string]string{"run_id": runID})
@@ -506,13 +645,44 @@ func hookPath(reposPath, ownerUsername, repoName string) (string, error) {
 	return filepath.Join(repoPath, "hooks", "post-receive"), nil
 }
 
+const gitmanHookMarker = "# Managed by Gitman CI/CD. Schema: 1"
+
+type hookState string
+
+const (
+	hookAbsent    hookState = "absent"
+	hookManaged   hookState = "managed"
+	hookUnmanaged hookState = "unmanaged"
+)
+
+func detectHookState(path string) hookState {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return hookAbsent
+	}
+	if err != nil {
+		return hookUnmanaged
+	}
+	if strings.Contains(string(data), gitmanHookMarker) {
+		return hookManaged
+	}
+	return hookUnmanaged
+}
+
+func (app *App) hookState(ownerUsername, repoName string) hookState {
+	hp, err := hookPath(app.Config.ReposPath, ownerUsername, repoName)
+	if err != nil {
+		return hookUnmanaged
+	}
+	return detectHookState(hp)
+}
+
 func hookIsInstalled(reposPath, ownerUsername, repoName string) bool {
 	hp, err := hookPath(reposPath, ownerUsername, repoName)
 	if err != nil {
 		return false
 	}
-	_, err = os.Stat(hp)
-	return err == nil
+	return detectHookState(hp) == hookManaged
 }
 
 func (app *App) HandleCIHookInstallPOST(w http.ResponseWriter, r *http.Request) {
@@ -530,12 +700,27 @@ func (app *App) HandleCIHookInstallPOST(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	hp, err := hookPath(app.Config.ReposPath, owner.Username, repo.Name)
+	if err != nil {
+		app.renderError(w, r, PageData{User: currentUser}, "Invalid repository path", http.StatusInternalServerError)
+		return
+	}
+	state := detectHookState(hp)
+	if state == hookUnmanaged {
+		app.renderError(w, r, PageData{User: currentUser}, "Refusing to overwrite unmanaged post-receive hook", http.StatusConflict)
+		return
+	}
+
 	previousSecret, err := app.DB.GetWebhookSecret(r.Context(), repo.ID)
 	if err != nil {
 		app.renderError(w, r, PageData{User: currentUser}, "Failed to read existing webhook secret", http.StatusInternalServerError)
 		return
 	}
 
+	if err := os.MkdirAll(filepath.Dir(hp), 0o700); err != nil {
+		app.renderError(w, r, PageData{User: currentUser}, "Failed to create hooks directory", http.StatusInternalServerError)
+		return
+	}
 	secretBytes := make([]byte, 32)
 	if _, err := rand.Read(secretBytes); err != nil {
 		app.renderError(w, r, PageData{User: currentUser}, "Failed to generate webhook secret", http.StatusInternalServerError)
@@ -547,23 +732,10 @@ func (app *App) HandleCIHookInstallPOST(w http.ResponseWriter, r *http.Request) 
 		app.renderError(w, r, PageData{User: currentUser}, "Failed to save webhook secret", http.StatusInternalServerError)
 		return
 	}
-
 	rollbackSecret := func() {
 		if err := app.DB.SetWebhookSecret(r.Context(), repo.ID, previousSecret); err != nil {
 			slog.Warn("failed to restore previous webhook secret", "repo", repo.ID, "error", err)
 		}
-	}
-	hp, err := hookPath(app.Config.ReposPath, owner.Username, repo.Name)
-	if err != nil {
-		rollbackSecret()
-		app.renderError(w, r, PageData{User: currentUser}, "Invalid repository path", http.StatusInternalServerError)
-		return
-	}
-
-	if err := os.MkdirAll(filepath.Dir(hp), 0o700); err != nil {
-		rollbackSecret()
-		app.renderError(w, r, PageData{User: currentUser}, "Failed to create hooks directory", http.StatusInternalServerError)
-		return
 	}
 	script := buildHookScript(app.Config.InternalURL, owner.Username, repo.Name, secret)
 
@@ -573,11 +745,11 @@ func (app *App) HandleCIHookInstallPOST(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	slog.Info("post-receive hook installed", "repo", repo.ID, "by", currentUser.Username)
+	slog.Info("post-receive hook installed", "repo", repo.ID, "by", currentUser.Username, "previous_state", state)
 	http.Redirect(w, r, fmt.Sprintf("/%s/%s/ci?success=hook_installed", owner.Username, repo.Name), http.StatusSeeOther)
 }
 
-// HandleCIHookUninstallPOST removes the post-receive hook from the bare repo.
+// HandleCIHookUninstallPOST removes the Gitman-managed post-receive hook from the bare repo.
 func (app *App) HandleCIHookUninstallPOST(w http.ResponseWriter, r *http.Request) {
 	repo := GetRepo(r)
 	owner := GetRepoOwner(r)
@@ -593,19 +765,24 @@ func (app *App) HandleCIHookUninstallPOST(w http.ResponseWriter, r *http.Request
 		app.renderError(w, r, PageData{User: currentUser}, "Invalid repository path", http.StatusInternalServerError)
 		return
 	}
+	state := detectHookState(hp)
+	if state == hookUnmanaged {
+		app.renderError(w, r, PageData{User: currentUser}, "Refusing to remove unmanaged post-receive hook", http.StatusConflict)
+		return
+	}
 
-	// Revoke first. If filesystem cleanup fails, the remaining hook is inert and
-	// copied webhook credentials are no longer usable.
 	if err := app.DB.SetWebhookSecret(r.Context(), repo.ID, ""); err != nil {
 		app.renderError(w, r, PageData{User: currentUser}, "Failed to revoke webhook secret; hook was not removed", http.StatusInternalServerError)
 		return
 	}
-	if err := os.Remove(hp); err != nil && !os.IsNotExist(err) {
-		app.renderError(w, r, PageData{User: currentUser}, "Webhook secret revoked, but the inert hook file could not be removed", http.StatusInternalServerError)
-		return
+	if state == hookManaged {
+		if err := os.Remove(hp); err != nil && !os.IsNotExist(err) {
+			app.renderError(w, r, PageData{User: currentUser}, "Webhook secret revoked, but the inert hook file could not be removed", http.StatusInternalServerError)
+			return
+		}
 	}
 
-	slog.Info("post-receive hook uninstalled", "repo", repo.ID, "by", currentUser.Username)
+	slog.Info("post-receive hook uninstalled", "repo", repo.ID, "by", currentUser.Username, "previous_state", state)
 	http.Redirect(w, r, fmt.Sprintf("/%s/%s/ci", owner.Username, repo.Name), http.StatusSeeOther)
 }
 
@@ -641,7 +818,8 @@ func writeExecutableFileAtomic(path, content string) error {
 
 func buildHookScript(serverURL, ownerUsername, repoName, secret string) string {
 	return fmt.Sprintf(`#!/bin/bash
-# Managed by Gitman CI/CD. Re-install from the CI settings page to rotate the token.
+%s
+# Re-install from the CI settings page to rotate the token.
 GITMAN_SERVER=%s
 GITMAN_SECRET=%s
 GITMAN_OWNER=%s
@@ -667,10 +845,13 @@ while read -r old new ref; do
         --data-urlencode "tag=$tag" \
         --data-urlencode "event=push" \
         "$GITMAN_SERVER/repos/$GITMAN_OWNER/$GITMAN_REPO/ci/webhook" \
-        >/dev/null 2>&1 || true
+        >/dev/null 2>&1 || {
+            command -v logger >/dev/null 2>&1 && logger -t gitman-ci-hook -- "webhook delivery failed for $GITMAN_OWNER/$GITMAN_REPO ref=$ref"
+            true
+        }
 done
 exit 0
-`, shellQuote(serverURL), shellQuote(secret), shellQuote(ownerUsername), shellQuote(repoName))
+`, gitmanHookMarker, shellQuote(serverURL), shellQuote(secret), shellQuote(ownerUsername), shellQuote(repoName))
 }
 
 // Artifact endpoints use ?ref=<branch-or-tag> and a wildcard artifact path so
@@ -829,6 +1010,8 @@ func StatusBadge(status string) (label, class string) {
 		return "Failed", "badge-failed"
 	case "skipped":
 		return "Skipped", "badge-skipped"
+	case "cancelled":
+		return "Cancelled", "badge-cancelled"
 	default:
 		return status, "badge-unknown"
 	}

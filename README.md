@@ -7,7 +7,7 @@ Gitman is aimed at small teams and private infrastructure. It is not a multi-ten
 ## Features
 
 - Browser UI for repositories, branches, tags, commits, files, collaborators, SSH keys, and personal access tokens.
-- Git smart HTTP with password or personal access token authentication.
+- Git smart HTTP with personal access token authentication.
 - Optional SSH Git transport through the host OpenSSH server and generated `authorized_keys` forced commands.
 - Private and public repositories with read and write collaborators.
 - Built-in CI jobs defined in `.gitman-ci.yml`.
@@ -79,9 +79,9 @@ steps:
     run: cp coverage.out /gitman/artifacts/coverage.out
 ```
 
-CI jobs run in Docker containers with network access disabled by default, a read-only root filesystem, dropped Linux capabilities, PID limits, CPU and memory limits, Docker log persistence disabled, bounded Gitman logs, bounded artifact staging, bounded workspace usage, and serialized per-repository cache writes. Job images must already exist on the runner because CI uses `--pull never`. With `GITMAN_CI_NETWORK=none`, dependencies must come from the image, the repository, or an already-warmed `/gitman/cache` mount.
+CI jobs run in Docker containers with network access disabled by default, a read-only root filesystem, dropped Linux capabilities, PID limits, CPU and memory limits, Docker log persistence disabled, bounded Gitman logs, bounded artifact staging, bounded workspace usage, and serialized per-repository cache writes. Manual runs can select a branch, tag, or reachable historical commit; Gitman always reads `.gitman-ci.yml` from the exact selected commit. Job images must already exist on the runner because CI uses `--pull never`. With `GITMAN_CI_NETWORK=none`, dependencies must come from the image, the repository, or an already-warmed `/gitman/cache` mount.
 
-The worker mounts the Docker socket. Treat the worker as privileged host infrastructure. Application-level disk checks limit damage but are not hard quotas. Run the worker on a dedicated runner host or inside a VM with kernel-enforced filesystem quotas before accepting untrusted repository writers.
+Non-default branches and tags do not auto-run by default and do not receive CI secrets unless the repository owner adds an exact trust rule. Docker socket access requires both `GITMAN_CI_ALLOW_DOCKER_SOCKET=true` and exact-ref approval. Treat Docker-enabled jobs as privileged host infrastructure. Application-level disk checks limit damage but are not hard quotas. Run the worker on a dedicated runner host or inside a VM with kernel-enforced filesystem quotas before accepting untrusted repository writers.
 
 ## Admin CLI
 
@@ -99,6 +99,8 @@ gitman admin users delete alice
 
 gitman admin repos backup /srv/backups/repos-$(date +%F)
 gitman admin repos backup-all /srv/backups/gitman-$(date +%F)
+gitman admin repos configure-all
+gitman version
 ```
 
 Backup destinations must be absent or empty, and must not be inside the repository or artifact trees. Repository and artifact files are copied live. Use a maintenance window or filesystem snapshots when strict point-in-time consistency is required.
@@ -120,6 +122,7 @@ Core environment variables:
 | `GITMAN_ALLOW_REGISTER` | `false` | Enable public account registration. |
 | `GITMAN_FORCE_SECURE_COOKIES` | `false` | Always mark browser cookies as secure. Enable behind HTTPS. |
 | `GITMAN_TRUST_PROXY_HEADERS` | `false` | Trust proxy HTTPS headers. Enable only behind a trusted reverse proxy. |
+| `GITMAN_GIT_RECEIVE_MAX_BYTES` | `536870912` | Git receive-pack input ceiling applied to new repos and `admin repos configure-all`. |
 
 CI limits:
 
@@ -146,9 +149,9 @@ CI limits:
 
 ## Security model
 
-- Repository writers can run repository-controlled CI code. Any CI secret exposed to a job must be treated as accessible to writers.
+- Repository writers can run repository-controlled CI code. Any CI secret exposed to a trusted ref job must be treated as accessible to writers who can modify that ref.
 - CI logs and artifacts require owner or collaborator membership even when repository source code is public.
 - CI logs mask exact configured secret values, but masking is defense in depth. Do not print secrets.
-- CI containers are restricted, but a Docker socket is still privileged infrastructure. Pre-pull only approved images. CI jobs must run as a numeric non-root UID:GID. Enable `GITMAN_CI_ALLOW_DOCKER_SOCKET` only for trusted repositories that require `docker: true`.
+- CI containers are restricted, but a Docker socket is still privileged infrastructure. Pre-pull only approved images. CI jobs must run as a numeric non-root UID:GID. Enable `GITMAN_CI_ALLOW_DOCKER_SOCKET` only for trusted repositories and exact refs that require `docker: true`.
 - When the worker itself runs in Docker, configure the worker and host path prefixes so sibling containers mount host-visible paths. The included Compose file does this automatically.
 - Set `GITMAN_PUBLIC_URL`, force secure cookies, and trust proxy headers only when the reverse proxy is controlled and correctly configured.

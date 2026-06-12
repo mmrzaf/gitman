@@ -236,9 +236,16 @@ func TestParseCIConfigAcceptsDockerFlag(t *testing.T) {
 }
 
 func TestAppendDockerSocketArgsRequiresOperatorOptIn(t *testing.T) {
-	_, err := appendDockerSocketArgs(nil, &config.Config{}, true)
+	_, err := appendDockerSocketArgs(nil, &config.Config{}, true, true)
 	if err == nil || !strings.Contains(err.Error(), "GITMAN_CI_ALLOW_DOCKER_SOCKET") {
 		t.Fatalf("expected operator opt-in error, got %v", err)
+	}
+}
+
+func TestAppendDockerSocketArgsRequiresRefApproval(t *testing.T) {
+	_, err := appendDockerSocketArgs(nil, &config.Config{CIAllowDockerSocket: true}, true, false)
+	if err == nil || !strings.Contains(err.Error(), "exact CI ref") {
+		t.Fatalf("expected exact-ref approval error, got %v", err)
 	}
 }
 
@@ -253,7 +260,7 @@ func TestAppendDockerSocketArgsMountsSocketAndAddsGroup(t *testing.T) {
 	args, err := appendDockerSocketArgs([]string{"run"}, &config.Config{
 		CIAllowDockerSocket: true,
 		CIDockerSocketPath:  socketPath,
-	}, true)
+	}, true, true)
 	if err != nil {
 		t.Fatal(err)
 	}

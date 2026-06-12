@@ -21,7 +21,7 @@ Authentication rules:
 | Clone and fetch | Anonymous allowed | Owner or `read`/`write` collaborator |
 | Push | Owner or `write` collaborator | Owner or `write` collaborator |
 
-For authenticated operations, Git uses HTTP Basic authentication. Use your Gitman username and either your account password or personal access token as the password.
+For authenticated operations, Git uses HTTP Basic authentication. Use your Gitman username and a personal access token as the password. Account passwords are not accepted for Git Smart HTTP.
 
 ## Git over SSH
 

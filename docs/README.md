@@ -33,7 +33,7 @@ Gitman supports:
 - Browser login and optional self-registration.
 - Public and private repositories.
 - Repository owners plus `read` and `write` collaborators.
-- Git smart HTTP using passwords or personal access tokens.
+- Git smart HTTP using personal access tokens.
 - Optional host OpenSSH integration using generated forced commands.
 - Branches, tags, commit lists, file browsing, source archives, CI logs, and nested artifacts.
 - Root-level `.gitman-ci.yml` pipelines executed by a separate worker.

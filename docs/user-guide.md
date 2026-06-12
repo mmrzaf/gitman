@@ -37,7 +37,7 @@ Create tokens from **Access Tokens**. A token:
 
 - Starts with `gm_`.
 - Is displayed only once.
-- Can be used instead of an account password for Git over HTTP.
+- Is required for authenticated Git over HTTP.
 - Can authenticate artifact API downloads using `Authorization: Bearer <token>`.
 - Can be revoked from the UI.
 

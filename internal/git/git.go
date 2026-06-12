@@ -154,7 +154,10 @@ func run(ctx context.Context, repoPath string, args ...string) ([]byte, error) {
 // InitBareRepo initializes a new bare repository at fullPath. Existing paths
 // are rejected so orphaned repository contents can never be adopted by a new
 // database record.
-func InitBareRepo(ctx context.Context, fullPath string) error {
+func InitBareRepo(ctx context.Context, fullPath string, receiveMaxBytes int64) error {
+	if receiveMaxBytes <= 0 {
+		return fmt.Errorf("receive.maxInputSize must be positive")
+	}
 	if _, err := os.Lstat(fullPath); err == nil {
 		return ErrRepoPathExists
 	} else if !os.IsNotExist(err) {
@@ -173,8 +176,25 @@ func InitBareRepo(ctx context.Context, fullPath string) error {
 		}
 		return fmt.Errorf("git init --bare failed: %w", err)
 	}
+	if err := ConfigureReceiveMaxInputSize(ctx, fullPath, receiveMaxBytes); err != nil {
+		if rmErr := os.RemoveAll(fullPath); rmErr != nil {
+			return fmt.Errorf("configure receive.maxInputSize failed: %v (cleanup error: %v)", err, rmErr)
+		}
+		return err
+	}
 
 	slog.Info("bare repository created successfully", "repo", fullPath)
+	return nil
+}
+
+func ConfigureReceiveMaxInputSize(ctx context.Context, repoPath string, maxBytes int64) error {
+	if maxBytes <= 0 {
+		return fmt.Errorf("receive.maxInputSize must be positive")
+	}
+	_, err := run(ctx, repoPath, "config", "receive.maxInputSize", strconv.FormatInt(maxBytes, 10))
+	if err != nil {
+		return fmt.Errorf("configure receive.maxInputSize: %w", err)
+	}
 	return nil
 }
 

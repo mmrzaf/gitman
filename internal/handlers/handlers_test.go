@@ -7,13 +7,17 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/mmrzaf/gitman/internal/config"
 	"github.com/mmrzaf/gitman/internal/db"
+	"github.com/mmrzaf/gitman/internal/git"
+	"github.com/mmrzaf/gitman/internal/models"
 )
 
 func setupTestApp(t *testing.T) *App {
@@ -249,10 +253,12 @@ func TestListArtifactsIncludesNestedFilesAndSkipsSymlinks(t *testing.T) {
 func TestBuildHookScriptUsesFormEncoding(t *testing.T) {
 	script := buildHookScript("http://web:8080", "owner", "repo", "secret")
 	for _, expected := range []string{
+		gitmanHookMarker,
 		`--data-urlencode "commit_hash=$new"`,
 		`--data-urlencode "branch=$branch"`,
 		`--data-urlencode "tag=$tag"`,
 		`--data-urlencode "event=push"`,
+		`logger -t gitman-ci-hook`,
 	} {
 		if !strings.Contains(script, expected) {
 			t.Fatalf("hook script missing %q:\n%s", expected, script)
@@ -265,6 +271,131 @@ func TestBuildHookScriptUsesFormEncoding(t *testing.T) {
 	}
 	if strings.Contains(script, `Content-Type: application/json`) {
 		t.Fatalf("hook should not hand-roll JSON:\n%s", script)
+	}
+}
+
+func TestDetectHookState(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "post-receive")
+	if got := detectHookState(path); got != hookAbsent {
+		t.Fatalf("expected absent, got %s", got)
+	}
+	if err := os.WriteFile(path, []byte("#!/bin/sh\necho custom\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if got := detectHookState(path); got != hookUnmanaged {
+		t.Fatalf("expected unmanaged, got %s", got)
+	}
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+gitmanHookMarker+"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if got := detectHookState(path); got != hookManaged {
+		t.Fatalf("expected managed, got %s", got)
+	}
+}
+
+func TestLoginLimiterUsernameAndSuccessReset(t *testing.T) {
+	now := time.Unix(1000, 0)
+	limiter := newLoginLimiter(func() time.Time { return now })
+	for i := 0; i < loginUsernameLimit; i++ {
+		if ok, _ := limiter.allow("Alice", "192.0.2.1"); !ok {
+			t.Fatalf("attempt %d blocked too early", i)
+		}
+		limiter.recordFailure("Alice", "192.0.2.1")
+	}
+	if ok, retry := limiter.allow(" alice ", "192.0.2.2"); ok || retry <= 0 {
+		t.Fatalf("expected username block, ok=%v retry=%s", ok, retry)
+	}
+	limiter.recordSuccess("ALICE")
+	if ok, _ := limiter.allow("alice", "192.0.2.2"); !ok {
+		t.Fatal("success did not reset username limiter")
+	}
+}
+
+func TestClientIPTrustsProxyOnlyWhenConfigured(t *testing.T) {
+	app := &App{Config: &config.Config{}}
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "198.51.100.10:1234"
+	req.Header.Set("X-Forwarded-For", "203.0.113.5")
+	if got := app.clientIP(req); got != "198.51.100.10" {
+		t.Fatalf("proxy header was trusted while disabled: %s", got)
+	}
+	app.Config.TrustProxyHeaders = true
+	if got := app.clientIP(req); got != "203.0.113.5" {
+		t.Fatalf("trusted proxy header was not used: %s", got)
+	}
+}
+
+func setupCIRefRepo(t *testing.T, reposPath string, owner *models.User, repo *models.Repository) (mainCommit, devCommit, tagCommit string) {
+	t.Helper()
+	repoPath, err := git.SecureRepoPath(reposPath, owner.Username, repo.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := git.InitBareRepo(context.Background(), repoPath, 512*1024*1024); err != nil {
+		t.Fatal(err)
+	}
+	work := t.TempDir()
+	runGit := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", work}, args...)...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	clone := exec.Command("git", "clone", repoPath, work)
+	if out, err := clone.CombinedOutput(); err != nil {
+		t.Fatalf("clone failed: %v\n%s", err, out)
+	}
+	runGit("config", "user.email", "test@example.com")
+	runGit("config", "user.name", "Test User")
+	if err := os.WriteFile(filepath.Join(work, ".gitman-ci.yml"), []byte("image: alpine\nsteps:\n- name: main\n  run: echo main\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit("checkout", "-b", "main")
+	runGit("add", ".gitman-ci.yml")
+	runGit("commit", "-m", "main")
+	mainCommit = runGit("rev-parse", "HEAD")
+	runGit("tag", "v1.0.0")
+	tagCommit = mainCommit
+	runGit("checkout", "-b", "development")
+	if err := os.WriteFile(filepath.Join(work, ".gitman-ci.yml"), []byte("image: alpine\nsteps:\n- name: dev\n  run: echo dev\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", ".gitman-ci.yml")
+	runGit("commit", "-m", "development")
+	devCommit = runGit("rev-parse", "HEAD")
+	runGit("push", "origin", "main", "development", "v1.0.0")
+	return mainCommit, devCommit, tagCommit
+}
+
+func TestNormalizeCITriggerManualRefs(t *testing.T) {
+	app := setupTestApp(t)
+	owner, _ := app.DB.GetUserByUsername(context.Background(), "testuser")
+	repoID, err := app.DB.CreateRepository(context.Background(), owner.ID, "refs", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, _ := app.DB.GetRepositoryByID(context.Background(), repoID)
+	_, devCommit, tagCommit := setupCIRefRepo(t, app.Config.ReposPath, owner, repo)
+	got, err := normalizeCITrigger(context.Background(), app.Config.ReposPath, owner, repo, triggerRequest{Branch: "development"}, "manual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CommitHash != devCommit {
+		t.Fatalf("development resolved to %s, want %s", got.CommitHash, devCommit)
+	}
+	got, err = normalizeCITrigger(context.Background(), app.Config.ReposPath, owner, repo, triggerRequest{Tag: "v1.0.0"}, "manual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CommitHash != tagCommit {
+		t.Fatalf("tag resolved to %s, want %s", got.CommitHash, tagCommit)
+	}
+	if _, err := normalizeCITrigger(context.Background(), app.Config.ReposPath, owner, repo, triggerRequest{Branch: "main", CommitHash: devCommit}, "manual"); err == nil {
+		t.Fatal("unreachable branch commit was accepted")
 	}
 }
 

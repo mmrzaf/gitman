@@ -78,10 +78,25 @@ func (db *DB) UpdateUserPassword(ctx context.Context, username, password string)
 		return err
 	}
 
-	res, err := db.ExecContext(
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var userID string
+	err = tx.QueryRowContext(ctx, "SELECT id FROM users WHERE username = ?", username).Scan(&userID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errors.New("user not found")
+	}
+	if err != nil {
+		return err
+	}
+
+	res, err := tx.ExecContext(
 		ctx,
-		"UPDATE users SET password_hash = ?, updated_at = ? WHERE username = ?",
-		string(hash), time.Now().Unix(), username,
+		"UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?",
+		string(hash), time.Now().Unix(), userID,
 	)
 	if err != nil {
 		return err
@@ -95,7 +110,13 @@ func (db *DB) UpdateUserPassword(ctx context.Context, username, password string)
 		return errors.New("user not found")
 	}
 
-	return nil
+	if _, err := tx.ExecContext(ctx, "DELETE FROM sessions WHERE user_id = ?", userID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM access_tokens WHERE user_id = ?", userID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // DeleteUserByUsername removes a user and their associated data (cascading deletes handles the rest)

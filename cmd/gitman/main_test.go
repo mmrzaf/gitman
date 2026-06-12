@@ -17,3 +17,9 @@ func TestHelp(t *testing.T) {
 		t.Errorf("help output missing expected text: %s", output)
 	}
 }
+
+func TestVersionStringDefault(t *testing.T) {
+	if got := versionString(); got == "" {
+		t.Fatal("version string is empty")
+	}
+}

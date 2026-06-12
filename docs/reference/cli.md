@@ -4,6 +4,8 @@
 
 ```bash
 gitman
+gitman version
+gitman --version
 ```
 
 ## Start web
@@ -48,6 +50,9 @@ Deleting a user removes their database record, repositories, artifacts, caches, 
 ```bash
 gitman admin repos backup <destination>
 gitman admin repos backup-all <destination>
+gitman admin repos configure-all
 ```
 
 See [backups and upgrades](../operator/backups-and-upgrades.md).
+
+`configure-all` applies the configured Git receive-pack input ceiling to existing managed repositories.
