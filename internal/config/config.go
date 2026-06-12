@@ -27,6 +27,7 @@ type Config struct {
 	WorkerConcurrency  int
 	ForceSecureCookies bool
 	TrustProxyHeaders  bool
+	GitReceiveMaxBytes int64
 
 	CacheRoot           string
 	MemoryLimit         string
@@ -79,6 +80,7 @@ func LoadConfig() *Config {
 		WorkerConcurrency:  getEnvInt("GITMAN_WORKER_CONCURRENCY", 1),
 		ForceSecureCookies: getEnvBool("GITMAN_FORCE_SECURE_COOKIES", false),
 		TrustProxyHeaders:  getEnvBool("GITMAN_TRUST_PROXY_HEADERS", false),
+		GitReceiveMaxBytes: getEnvRequiredPositiveInt64("GITMAN_GIT_RECEIVE_MAX_BYTES", 512*1024*1024),
 
 		CacheRoot:           getEnv("GITMAN_CACHE_ROOT", ".data/ci/cache"),
 		MemoryLimit:         getEnv("GITMAN_MEMORY_LIMIT", "512m"),
@@ -141,6 +143,17 @@ func getEnvInt64(key string, fallback int64) int64 {
 		if n, err := strconv.ParseInt(val, 10, 64); err == nil && n > 0 {
 			return n
 		}
+	}
+	return fallback
+}
+
+func getEnvRequiredPositiveInt64(key string, fallback int64) int64 {
+	if val, ok := os.LookupEnv(key); ok {
+		n, err := strconv.ParseInt(val, 10, 64)
+		if err != nil || n <= 0 {
+			log.Fatalf("%s must be a positive integer", key)
+		}
+		return n
 	}
 	return fallback
 }

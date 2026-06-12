@@ -10,6 +10,7 @@ import (
 
 	"github.com/mmrzaf/gitman/internal/config"
 	"github.com/mmrzaf/gitman/internal/db"
+	"github.com/mmrzaf/gitman/internal/git"
 )
 
 // BackupRepos creates an atomic filesystem backup of the repositories tree.
@@ -52,6 +53,88 @@ func BackupAll(ctx context.Context, database *db.DB, cfg *config.Config, destina
 		}
 		return nil
 	})
+}
+
+func ConfigureAllRepos(ctx context.Context, database *db.DB, cfg *config.Config) error {
+	if cfg.GitReceiveMaxBytes <= 0 {
+		return fmt.Errorf("GITMAN_GIT_RECEIVE_MAX_BYTES must be positive")
+	}
+	base, err := filepath.Abs(cfg.ReposPath)
+	if err != nil {
+		return err
+	}
+	rows, err := database.QueryContext(ctx, `
+		SELECT u.username, r.name
+		FROM repositories r
+		JOIN users u ON u.id = r.owner_id
+		ORDER BY u.username, r.name
+	`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var owner, repoName string
+		if err := rows.Scan(&owner, &repoName); err != nil {
+			return err
+		}
+		repoPath, err := git.SecureRepoPath(cfg.ReposPath, owner, repoName)
+		if err != nil {
+			return err
+		}
+		repoAbs, err := filepath.Abs(repoPath)
+		if err != nil {
+			return err
+		}
+		if !pathWithin(base, repoAbs) {
+			return fmt.Errorf("repository path escaped root: %s", repoAbs)
+		}
+		if err := rejectSymlinkPath(base, repoAbs); err != nil {
+			return err
+		}
+		info, err := os.Lstat(repoAbs)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("repository path is not a real directory: %s", repoAbs)
+		}
+		if err := git.ConfigureReceiveMaxInputSize(ctx, repoAbs, cfg.GitReceiveMaxBytes); err != nil {
+			return err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	return rows.Close()
+}
+
+func rejectSymlinkPath(base, candidate string) error {
+	rel, err := filepath.Rel(base, candidate)
+	if err != nil {
+		return err
+	}
+	current := base
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		if part == "." || part == "" {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("refusing symlink in repository path: %s", current)
+		}
+	}
+	return nil
 }
 
 func withAtomicDestination(destination string, populate func(staging string) error) error {

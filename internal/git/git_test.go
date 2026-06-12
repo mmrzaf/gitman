@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -15,7 +16,7 @@ func setupTestRepo(t *testing.T) string {
 	dir := t.TempDir()
 	repoPath := filepath.Join(dir, "test.git")
 	ctx := context.Background()
-	err := InitBareRepo(ctx, repoPath)
+	err := InitBareRepo(ctx, repoPath, 512*1024*1024)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,6 +56,13 @@ func TestInitBareRepo(t *testing.T) {
 	repoPath := setupTestRepo(t)
 	if _, err := os.Stat(filepath.Join(repoPath, "HEAD")); os.IsNotExist(err) {
 		t.Error("HEAD not found")
+	}
+	out, err := run(context.Background(), repoPath, "config", "--get", "receive.maxInputSize")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(out)); got != "536870912" {
+		t.Fatalf("expected receive.maxInputSize 536870912, got %q", got)
 	}
 }
 
@@ -227,7 +235,7 @@ func TestDeleteRepo(t *testing.T) {
 
 func TestInitBareRepoRejectsExistingPath(t *testing.T) {
 	repoPath := setupTestRepo(t)
-	err := InitBareRepo(context.Background(), repoPath)
+	err := InitBareRepo(context.Background(), repoPath, 512*1024*1024)
 	if !errors.Is(err, ErrRepoPathExists) {
 		t.Fatalf("expected ErrRepoPathExists, got %v", err)
 	}

@@ -88,7 +88,7 @@ func readPasswordFromStdin() (string, error) {
 
 func runAdminRepos(cfg *config.Config, database *db.DB, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: gitman admin repos <backup|backup-all>")
+		return fmt.Errorf("usage: gitman admin repos <backup|backup-all|configure-all>")
 	}
 	switch args[0] {
 	case "backup":
@@ -101,6 +101,11 @@ func runAdminRepos(cfg *config.Config, database *db.DB, args []string) error {
 			return fmt.Errorf("usage: gitman admin repos backup-all <destination>")
 		}
 		return admin.BackupAll(context.Background(), database, cfg, args[1])
+	case "configure-all":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: gitman admin repos configure-all")
+		}
+		return admin.ConfigureAllRepos(context.Background(), database, cfg)
 	default:
 		return fmt.Errorf("unknown repos action: %s", args[0])
 	}
