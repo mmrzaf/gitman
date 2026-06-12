@@ -15,6 +15,12 @@ type Command struct {
 	Run  func(*config.Config, *db.DB, []string) error
 }
 
+var version = "dev"
+
+func versionString() string {
+	return version
+}
+
 var commands = map[string]Command{}
 
 func register(cmd Command) {
@@ -22,6 +28,10 @@ func register(cmd Command) {
 }
 
 func Execute(args []string) error {
+	if len(args) >= 2 && (args[1] == "--version" || args[1] == "version") {
+		_, err := fmt.Fprintln(os.Stdout, versionString())
+		return err
+	}
 	cfg := config.LoadConfig()
 	initLogger(cfg)
 
