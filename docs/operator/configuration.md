@@ -22,6 +22,7 @@ Gitman is configured with environment variables.
 | `GITMAN_ALLOW_REGISTER` | `false` | Enables public account registration. |
 | `GITMAN_FORCE_SECURE_COOKIES` | `false` | Always marks browser cookies secure. Enable behind HTTPS. |
 | `GITMAN_TRUST_PROXY_HEADERS` | `false` | Trusts proxy HTTPS headers. Enable only behind a trusted reverse proxy. |
+| `GITMAN_GIT_RECEIVE_MAX_BYTES` | `536870912` | Configures `receive.maxInputSize` for new bare repositories and `admin repos configure-all`. Invalid or non-positive values fail startup. |
 
 ## Worker settings
 
@@ -46,7 +47,17 @@ Gitman is configured with environment variables.
 | `GITMAN_CI_WORKER_PATH_PREFIX` | Empty | Worker-visible prefix translated for sibling-container bind mounts. Set with host prefix. |
 | `GITMAN_CI_HOST_PATH_PREFIX` | Empty | Docker-host-visible prefix translated for sibling-container bind mounts. Set with worker prefix. |
 
-Invalid positive integer or duration values silently fall back to defaults during config loading. Worker startup performs additional validation for critical values.
+Invalid positive integer or duration values silently fall back to defaults during config loading, except `GITMAN_GIT_RECEIVE_MAX_BYTES`, which fails closed when present and invalid. Worker startup performs additional validation for critical values.
+
+## Repository receive limits
+
+New repositories receive the configured Git `receive.maxInputSize` limit. After changing `GITMAN_GIT_RECEIVE_MAX_BYTES` or upgrading existing repositories, reconcile managed repositories with:
+
+```bash
+gitman admin repos configure-all
+```
+
+The command walks repository records, keeps paths contained under `GITMAN_REPOS`, refuses symlinked repository paths, and applies the receive-pack limit.
 
 ## Docker Compose naming adapter
 
