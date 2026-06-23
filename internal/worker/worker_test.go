@@ -244,8 +244,8 @@ func TestAppendDockerSocketArgsRequiresOperatorOptIn(t *testing.T) {
 
 func TestAppendDockerSocketArgsRequiresRefApproval(t *testing.T) {
 	_, err := appendDockerSocketArgs(nil, &config.Config{CIAllowDockerSocket: true}, true, false)
-	if err == nil || !strings.Contains(err.Error(), "exact CI ref") {
-		t.Fatalf("expected exact-ref approval error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "CI ref") {
+		t.Fatalf("expected ref approval error, got %v", err)
 	}
 }
 

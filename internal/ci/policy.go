@@ -21,6 +21,7 @@ type RefPolicy struct {
 	Source            string
 	RefType           string
 	RefName           string
+	RuleRefName       string
 }
 
 type Resolver struct {
@@ -44,7 +45,7 @@ func (r Resolver) Resolve(ctx context.Context, owner *models.User, repo *models.
 		return RefPolicy{}, fmt.Errorf("invalid CI ref: %w", err)
 	}
 
-	rule, err := r.DB.GetRepoCIRefRule(ctx, repo.ID, refType, refName)
+	rule, err := r.DB.MatchRepoCIRefRule(ctx, repo.ID, refType, refName)
 	if err != nil {
 		return RefPolicy{}, fmt.Errorf("load CI ref rule: %w", err)
 	}
@@ -56,6 +57,7 @@ func (r Resolver) Resolve(ctx context.Context, owner *models.User, repo *models.
 			Source:            PolicySourceRule,
 			RefType:           refType,
 			RefName:           refName,
+			RuleRefName:       rule.RefName,
 		}, nil
 	}
 

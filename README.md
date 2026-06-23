@@ -40,7 +40,7 @@ The UI is available at `http://localhost:8080` by default.
 Start the CI worker separately when CI is needed. Pull approved job images on the runner first: Gitman starts CI containers with `--pull never` so repository-controlled jobs cannot grow Docker storage by pulling arbitrary images.
 
 ```bash
-docker pull golang:1.26-bookworm
+docker pull golang:1.26-alpine
 ./bin/gitman worker
 ```
 
@@ -63,7 +63,7 @@ Open `http://localhost:8080`. See [DOCKER_SETUP.md](DOCKER_SETUP.md) before expo
 Add `.gitman-ci.yml` at the repository root:
 
 ```yaml
-image: golang:1.26-bookworm
+image: golang:1.26-alpine
 env:
   APP_ENV: test
   GOMODCACHE: /gitman/cache/go/pkg/mod
@@ -81,7 +81,7 @@ steps:
 
 CI jobs run in Docker containers with network access disabled by default, a read-only root filesystem, dropped Linux capabilities, PID limits, CPU and memory limits, Docker log persistence disabled, bounded Gitman logs, bounded artifact staging, bounded workspace usage, and serialized per-repository cache writes. Manual runs can select a branch, tag, or reachable historical commit; Gitman always reads `.gitman-ci.yml` from the exact selected commit. Job images must already exist on the runner because CI uses `--pull never`. With `GITMAN_CI_NETWORK=none`, dependencies must come from the image, the repository, or an already-warmed `/gitman/cache` mount.
 
-Non-default branches and tags do not auto-run by default and do not receive CI secrets unless the repository owner adds an exact trust rule. Docker socket access requires both `GITMAN_CI_ALLOW_DOCKER_SOCKET=true` and exact-ref approval. Treat Docker-enabled jobs as privileged host infrastructure. Application-level disk checks limit damage but are not hard quotas. Run the worker on a dedicated runner host or inside a VM with kernel-enforced filesystem quotas before accepting untrusted repository writers.
+Non-default branches and tags do not auto-run by default and do not receive CI secrets unless the repository owner adds a matching trust rule. Rules may be exact refs or glob patterns such as `v*` for version tags. Docker socket access requires both `GITMAN_CI_ALLOW_DOCKER_SOCKET=true` and matching ref approval. Treat Docker-enabled jobs as privileged host infrastructure. Application-level disk checks limit damage but are not hard quotas. Run the worker on a dedicated runner host or inside a VM with kernel-enforced filesystem quotas before accepting untrusted repository writers.
 
 ## Admin CLI
 
@@ -152,6 +152,6 @@ CI limits:
 - Repository writers can run repository-controlled CI code. Any CI secret exposed to a trusted ref job must be treated as accessible to writers who can modify that ref.
 - CI logs and artifacts require owner or collaborator membership even when repository source code is public.
 - CI logs mask exact configured secret values, but masking is defense in depth. Do not print secrets.
-- CI containers are restricted, but a Docker socket is still privileged infrastructure. Pre-pull only approved images. CI jobs must run as a numeric non-root UID:GID. Enable `GITMAN_CI_ALLOW_DOCKER_SOCKET` only for trusted repositories and exact refs that require `docker: true`.
+- CI containers are restricted, but a Docker socket is still privileged infrastructure. Pre-pull only approved images. CI jobs must run as a numeric non-root UID:GID. Enable `GITMAN_CI_ALLOW_DOCKER_SOCKET` only for trusted repositories and matching refs or patterns that require `docker: true`.
 - When the worker itself runs in Docker, configure the worker and host path prefixes so sibling containers mount host-visible paths. The included Compose file does this automatically.
 - Set `GITMAN_PUBLIC_URL`, force secure cookies, and trust proxy headers only when the reverse proxy is controlled and correctly configured.

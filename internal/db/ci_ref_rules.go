@@ -5,8 +5,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"path"
+	"sort"
+	"strings"
 	"time"
 
+	"github.com/mmrzaf/gitman/internal/git"
 	"github.com/mmrzaf/gitman/internal/models"
 )
 
@@ -34,10 +38,47 @@ func validateCIRefRule(refType, refName string) error {
 	if refType != "branch" && refType != "tag" {
 		return fmt.Errorf("invalid CI ref rule type %q", refType)
 	}
+	if err := validateCIRefRuleName(refName); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateCIRefRuleName(refName string) error {
+	refName = strings.TrimSpace(refName)
 	if refName == "" {
 		return fmt.Errorf("CI ref rule name is required")
 	}
+	if strings.ContainsAny(refName, "\x00\r\n") {
+		return fmt.Errorf("CI ref rule name contains unsupported control characters")
+	}
+	if strings.ContainsAny(refName, "*?[") {
+		if _, err := path.Match(refName, "test"); err != nil {
+			return fmt.Errorf("invalid CI ref rule pattern %q: %w", refName, err)
+		}
+		return nil
+	}
+	if err := git.ValidateRefName(refName); err != nil {
+		return fmt.Errorf("invalid CI ref rule name %q: %w", refName, err)
+	}
 	return nil
+}
+
+func isCIRefRulePattern(refName string) bool {
+	return strings.ContainsAny(refName, "*?[")
+}
+
+func ciRefRuleSpecificity(refName string) int {
+	score := 0
+	for _, r := range refName {
+		switch r {
+		case '*', '?', '[', ']':
+			score--
+		default:
+			score++
+		}
+	}
+	return score
 }
 
 func (db *DB) UpsertRepoCIRefRule(ctx context.Context, rule models.RepoCIRefRule) error {
@@ -75,6 +116,45 @@ func (db *DB) GetRepoCIRefRule(ctx context.Context, repoID, refType, refName str
 		return nil, nil
 	}
 	return rule, err
+}
+
+func (db *DB) MatchRepoCIRefRule(ctx context.Context, repoID, refType, refName string) (*models.RepoCIRefRule, error) {
+	if refType != "branch" && refType != "tag" {
+		return nil, fmt.Errorf("invalid CI ref rule type %q", refType)
+	}
+	if err := git.ValidateRefName(refName); err != nil {
+		return nil, fmt.Errorf("invalid CI ref %q: %w", refName, err)
+	}
+
+	rule, err := db.GetRepoCIRefRule(ctx, repoID, refType, refName)
+	if err != nil || rule != nil {
+		return rule, err
+	}
+
+	rules, err := db.ListRepoCIRefRules(ctx, repoID)
+	if err != nil {
+		return nil, err
+	}
+	var matches []models.RepoCIRefRule
+	for _, candidate := range rules {
+		if candidate.RefType != refType || !isCIRefRulePattern(candidate.RefName) {
+			continue
+		}
+		matched, err := path.Match(candidate.RefName, refName)
+		if err != nil {
+			return nil, fmt.Errorf("invalid stored CI ref rule pattern %q: %w", candidate.RefName, err)
+		}
+		if matched {
+			matches = append(matches, candidate)
+		}
+	}
+	if len(matches) == 0 {
+		return nil, nil
+	}
+	sort.SliceStable(matches, func(i, j int) bool {
+		return ciRefRuleSpecificity(matches[i].RefName) > ciRefRuleSpecificity(matches[j].RefName)
+	})
+	return &matches[0], nil
 }
 
 func (db *DB) ListRepoCIRefRules(ctx context.Context, repoID string) (rules []models.RepoCIRefRule, err error) {

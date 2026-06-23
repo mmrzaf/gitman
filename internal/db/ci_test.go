@@ -335,3 +335,56 @@ func TestRequeueStaleCIRuns(t *testing.T) {
 		t.Fatal("stale attempt completed replacement lease")
 	}
 }
+
+func TestRepoCIRefRulesPatternMatch(t *testing.T) {
+	database := setupTestDB(t)
+	defer database.Close()
+	ctx := context.Background()
+	user, _ := database.CreateUser(ctx, "rulepatterns", "CiPass1")
+	repoID, _ := database.CreateRepository(ctx, user.ID, "rule-patterns-repo", "", false)
+
+	if err := database.UpsertRepoCIRefRule(ctx, models.RepoCIRefRule{
+		RepoID:            repoID,
+		RefType:           "tag",
+		RefName:           "v*",
+		AutoRun:           true,
+		AllowSecrets:      true,
+		AllowDockerSocket: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.UpsertRepoCIRefRule(ctx, models.RepoCIRefRule{
+		RepoID:            repoID,
+		RefType:           "tag",
+		RefName:           "v1.0.0",
+		AutoRun:           false,
+		AllowSecrets:      false,
+		AllowDockerSocket: false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	pattern, err := database.MatchRepoCIRefRule(ctx, repoID, "tag", "v1.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pattern == nil || pattern.RefName != "v*" || !pattern.AllowDockerSocket {
+		t.Fatalf("pattern rule did not match: %+v", pattern)
+	}
+
+	exact, err := database.MatchRepoCIRefRule(ctx, repoID, "tag", "v1.0.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exact == nil || exact.RefName != "v1.0.0" || exact.AllowDockerSocket {
+		t.Fatalf("exact rule did not override pattern: %+v", exact)
+	}
+
+	missing, err := database.MatchRepoCIRefRule(ctx, repoID, "tag", "release-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if missing != nil {
+		t.Fatalf("unexpected match: %+v", missing)
+	}
+}

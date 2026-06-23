@@ -39,7 +39,7 @@ This Go example assumes required modules are already present in the image or a w
 | Key | Required | Type | Notes |
 | --- | --- | --- | --- |
 | `image` | Yes | String | Docker image reference. Must already exist on the runner. |
-| `docker` | No | Boolean | Request host Docker socket access. Requires operator opt-in and exact-ref approval. Use only for trusted repositories and refs. |
+| `docker` | No | Boolean | Request host Docker socket access. Requires operator opt-in and matching ref-rule approval. Use only for trusted repositories and refs. |
 | `env` | No | Mapping of strings | Environment keys must match `[A-Z][A-Z0-9_]*`. Keys starting with `GITMAN_` are reserved. |
 | `steps` | Yes | List | At least one step, maximum 200. |
 | `steps[].name` | Yes | String | Non-empty, maximum 120 characters, no CR/LF/NUL. |

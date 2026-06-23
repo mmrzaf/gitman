@@ -12,6 +12,7 @@ import (
 	"mime"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -124,24 +125,36 @@ func (app *App) HandleCISettingsRulePOST(w http.ResponseWriter, r *http.Request)
 		app.renderError(w, r, PageData{User: currentUser}, "Invalid CI ref type", http.StatusBadRequest)
 		return
 	}
-	if err := git.ValidateRefName(refName); err != nil || refName == "" {
+	if refName == "" || strings.ContainsAny(refName, "\x00\r\n") {
 		app.renderError(w, r, PageData{User: currentUser}, "Invalid CI ref name", http.StatusBadRequest)
 		return
 	}
-	repoPath, err := git.SecureRepoPath(app.Config.ReposPath, owner.Username, repo.Name)
-	if err != nil {
-		app.renderError(w, r, PageData{User: currentUser}, "Invalid repository path", http.StatusInternalServerError)
-		return
-	}
-	if refType == "branch" {
-		if _, err := git.ResolveBranchCommitHash(r.Context(), repoPath, refName); err != nil {
-			app.renderError(w, r, PageData{User: currentUser}, "Branch does not resolve in repository", http.StatusBadRequest)
+	refIsPattern := strings.ContainsAny(refName, "*?[")
+	if refIsPattern {
+		if _, err := path.Match(refName, "test"); err != nil {
+			app.renderError(w, r, PageData{User: currentUser}, "Invalid CI ref pattern", http.StatusBadRequest)
 			return
 		}
 	} else {
-		if _, err := git.ResolveTagCommitHash(r.Context(), repoPath, refName); err != nil {
-			app.renderError(w, r, PageData{User: currentUser}, "Tag does not resolve in repository", http.StatusBadRequest)
+		if err := git.ValidateRefName(refName); err != nil {
+			app.renderError(w, r, PageData{User: currentUser}, "Invalid CI ref name", http.StatusBadRequest)
 			return
+		}
+		repoPath, err := git.SecureRepoPath(app.Config.ReposPath, owner.Username, repo.Name)
+		if err != nil {
+			app.renderError(w, r, PageData{User: currentUser}, "Invalid repository path", http.StatusInternalServerError)
+			return
+		}
+		if refType == "branch" {
+			if _, err := git.ResolveBranchCommitHash(r.Context(), repoPath, refName); err != nil {
+				app.renderError(w, r, PageData{User: currentUser}, "Branch does not resolve in repository", http.StatusBadRequest)
+				return
+			}
+		} else {
+			if _, err := git.ResolveTagCommitHash(r.Context(), repoPath, refName); err != nil {
+				app.renderError(w, r, PageData{User: currentUser}, "Tag does not resolve in repository", http.StatusBadRequest)
+				return
+			}
 		}
 	}
 	rule := models.RepoCIRefRule{
@@ -153,7 +166,7 @@ func (app *App) HandleCISettingsRulePOST(w http.ResponseWriter, r *http.Request)
 		AllowDockerSocket: r.FormValue("allow_docker_socket") == "on",
 	}
 	if err := app.DB.UpsertRepoCIRefRule(r.Context(), rule); err != nil {
-		app.renderError(w, r, PageData{User: currentUser}, "Failed to save CI ref rule", http.StatusInternalServerError)
+		app.renderError(w, r, PageData{User: currentUser}, "Failed to save CI ref rule", http.StatusBadRequest)
 		return
 	}
 	http.Redirect(w, r, fmt.Sprintf("/%s/%s/ci?success=ci_rule_saved", owner.Username, repo.Name), http.StatusSeeOther)

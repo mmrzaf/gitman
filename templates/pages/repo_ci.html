@@ -76,7 +76,7 @@
 {{if and $.User (eq $.User.ID .Data.Owner.ID)}}
 <details class="card" style="margin-bottom:1.5rem;padding:1rem;border:1px solid rgba(127,127,127,0.2);border-radius:6px">
   <summary style="cursor:pointer;font-weight:bold">CI ref trust rules</summary>
-  <p class="muted">Default branch auto-runs and may use secrets. Other branches and tags can run manually, but auto-runs, secrets, and Docker socket access require an exact rule. Docker socket access also requires the global operator setting.</p>
+  <p class="muted">Default branch auto-runs and may use secrets. Other branches and tags can run manually, but auto-runs, secrets, and Docker socket access require a trust rule. Rules may be exact refs or glob patterns like <code>v*</code> and <code>release/*</code>. Docker socket access also requires the global operator setting.</p>
   {{if .Data.RefRules}}
   <table style="width:100%;font-size:0.9em">
     <thead><tr><th>Type</th><th>Name</th><th>Auto</th><th>Secrets</th><th>Docker socket</th><th></th></tr></thead>
@@ -103,7 +103,7 @@
   <form method="POST" action="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/rules" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-top:1rem">
     <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
     <label>Type<br><select name="ref_type"><option value="branch">branch</option><option value="tag">tag</option></select></label>
-    <label>Exact ref<br><input name="ref_name" required></label>
+    <label>Ref or pattern<br><input name="ref_name" required placeholder="main, v*, release/*"></label>
     <label><input type="checkbox" name="auto_run"> Auto-run</label>
     <label><input type="checkbox" name="allow_secrets"> Secrets</label>
     <label><input type="checkbox" name="allow_docker_socket"> Docker socket</label>
