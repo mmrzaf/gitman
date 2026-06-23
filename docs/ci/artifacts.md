@@ -3,7 +3,7 @@
 A job publishes artifacts by writing regular files under `/gitman/artifacts`.
 
 ```yaml
-image: alpine:3.24
+image: debian:bookworm-slim
 steps:
   - name: build
     run: |

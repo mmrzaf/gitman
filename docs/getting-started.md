@@ -60,13 +60,13 @@ When Git prompts for credentials, use your Gitman username and a personal access
 Pre-pull each approved job image on the Docker host. Gitman will not pull images during a run.
 
 ```bash
-docker pull alpine:3.24
+docker pull debian:bookworm-slim
 ```
 
 Add a root-level `.gitman-ci.yml` to a repository:
 
 ```yaml
-image: alpine:3.24
+image: debian:bookworm-slim
 steps:
   - name: verify
     run: echo "CI is working"

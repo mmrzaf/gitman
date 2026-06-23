@@ -3,6 +3,11 @@ services:
     build:
       context: .
       args:
+        GO_IMAGE: "${GO_IMAGE:-golang:1.26-bookworm}"
+        RUNTIME_IMAGE: "${RUNTIME_IMAGE:-debian:bookworm-slim}"
+        DEBIAN_MIRROR: "${DEBIAN_MIRROR:-http://linux-mirror.liara.ir/repository/debian}"
+        DEBIAN_SECURITY_MIRROR: "${DEBIAN_SECURITY_MIRROR:-http://linux-mirror.liara.ir/repository/debian-security}"
+        GOPROXY: "${GOPROXY:-https://mirror.abrha.net/repository/go/,direct}"
         GIT_UID: "${GIT_UID:-1000}"
         VERSION: "${GITMAN_VERSION:-dev}"
     image: gitman:latest

@@ -3,12 +3,7 @@
 ## Validate
 
 ```bash
-go test ./...
-go vet ./...
-golangci-lint run
-govulncheck ./...
-go build -trimpath -o bin/gitman ./cmd/gitman
-docker build -t gitman:verify .
+VERSION=v1.0.0-beta.12 make verify
 VERSION=v1.0.0-beta.12 make release-source
 ```
 

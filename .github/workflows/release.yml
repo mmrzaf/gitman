@@ -21,10 +21,15 @@ concurrency:
 
 env:
   APP_NAME: gitman
-  GO_VERSION: '1.26.4'
+  GO_VERSION: '1.26'
   GOLANGCI_LINT_VERSION: 'v2.12'
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  GO_IMAGE: golang:1.26-bookworm
+  RUNTIME_IMAGE: debian:bookworm-slim
+  DEBIAN_MIRROR: http://linux-mirror.liara.ir/repository/debian
+  DEBIAN_SECURITY_MIRROR: http://linux-mirror.liara.ir/repository/debian-security
+  GOPROXY: https://mirror.abrha.net/repository/go/,direct
 
 jobs:
   release-metadata:
@@ -86,7 +91,11 @@ jobs:
         run: |
           set -euo pipefail
           go version
-          test "$(go env GOVERSION)" = "go${GO_VERSION}"
+          goversion="$(go env GOVERSION)"
+          case "$goversion" in
+            "go${GO_VERSION}"|"go${GO_VERSION}."*) ;;
+            *) echo "Expected Go ${GO_VERSION}.x, got ${goversion}" >&2; exit 1 ;;
+          esac
 
       - name: Download modules
         run: go mod download
@@ -134,7 +143,14 @@ jobs:
           VERSION: ${{ needs.release-metadata.outputs.version }}
         run: |
           set -euo pipefail
-          docker build --build-arg VERSION="$VERSION" -t gitman:verify .
+          docker build \
+            --build-arg GO_IMAGE="$GO_IMAGE" \
+            --build-arg RUNTIME_IMAGE="$RUNTIME_IMAGE" \
+            --build-arg DEBIAN_MIRROR="$DEBIAN_MIRROR" \
+            --build-arg DEBIAN_SECURITY_MIRROR="$DEBIAN_SECURITY_MIRROR" \
+            --build-arg GOPROXY="$GOPROXY" \
+            --build-arg VERSION="$VERSION" \
+            -t gitman:verify .
           test "$(docker run --rm gitman:verify gitman version)" = "$VERSION"
 
   build-binaries:
@@ -268,6 +284,11 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
+            GO_IMAGE=${{ env.GO_IMAGE }}
+            RUNTIME_IMAGE=${{ env.RUNTIME_IMAGE }}
+            DEBIAN_MIRROR=${{ env.DEBIAN_MIRROR }}
+            DEBIAN_SECURITY_MIRROR=${{ env.DEBIAN_SECURITY_MIRROR }}
+            GOPROXY=${{ env.GOPROXY }}
             VERSION=${{ needs.release-metadata.outputs.version }}
 
   docker-archive:
@@ -290,7 +311,14 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           image="gitman:${CLEAN_VERSION}"
-          docker build --platform linux/amd64 --build-arg VERSION="$VERSION" -t "$image" .
+          docker build --platform linux/amd64 \
+            --build-arg GO_IMAGE="$GO_IMAGE" \
+            --build-arg RUNTIME_IMAGE="$RUNTIME_IMAGE" \
+            --build-arg DEBIAN_MIRROR="$DEBIAN_MIRROR" \
+            --build-arg DEBIAN_SECURITY_MIRROR="$DEBIAN_SECURITY_MIRROR" \
+            --build-arg GOPROXY="$GOPROXY" \
+            --build-arg VERSION="$VERSION" \
+            -t "$image" .
           test "$(docker run --rm "$image" gitman version)" = "$VERSION"
           docker save "$image" | gzip -9 >"dist/gitman-docker-image-linux-amd64-${CLEAN_VERSION}.tar.gz"
           sha256sum "dist/gitman-docker-image-linux-amd64-${CLEAN_VERSION}.tar.gz" >"dist/gitman-docker-image-linux-amd64-${CLEAN_VERSION}.tar.gz.sha256"

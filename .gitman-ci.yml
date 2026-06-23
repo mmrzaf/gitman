@@ -6,11 +6,24 @@ env:
   IMAGE_NAME: gitman
   DOCKER_BUILDKIT: "1"
 
+  GO_IMAGE: golang:1.26-bookworm
+  RUNTIME_IMAGE: debian:bookworm-slim
+
+  DEBIAN_MIRROR: http://linux-mirror.liara.ir/repository/debian
+  DEBIAN_SECURITY_MIRROR: http://linux-mirror.liara.ir/repository/debian-security
+  GOPROXY: https://mirror.abrha.net/repository/go/,direct
+
 steps:
   - name: verify docker access
     run: |
       set -eu
       docker version
+
+  - name: verify local base images
+    run: |
+      set -eu
+      docker image inspect "$GO_IMAGE" >/dev/null
+      docker image inspect "$RUNTIME_IMAGE" >/dev/null
 
   - name: resolve image tag
     run: |
@@ -50,6 +63,11 @@ steps:
 
       docker build \
         --pull=false \
+        --build-arg GO_IMAGE="$GO_IMAGE" \
+        --build-arg RUNTIME_IMAGE="$RUNTIME_IMAGE" \
+        --build-arg DEBIAN_MIRROR="$DEBIAN_MIRROR" \
+        --build-arg DEBIAN_SECURITY_MIRROR="$DEBIAN_SECURITY_MIRROR" \
+        --build-arg GOPROXY="$GOPROXY" \
         --build-arg VERSION="$IMAGE_TAG" \
         --label "org.opencontainers.image.revision=$GITMAN_COMMIT" \
         --label "org.opencontainers.image.ref.name=$RAW_IMAGE_TAG" \
