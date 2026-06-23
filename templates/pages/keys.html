@@ -1,28 +1,31 @@
 {{define "content"}}
-<div class="page-header">
-  <h2>SSH Keys</h2>
-  <p class="muted">Manage SSH keys that are allowed to access your repositories.</p>
+<div class="page-header page-header-row">
+  <div>
+    <h2>SSH Keys</h2>
+    <p class="muted">Manage SSH keys allowed to access your repositories.</p>
+  </div>
 </div>
 
-{{template "keys_panel" .}}
+<div class="content-grid">
+  <section>
+    {{template "keys_panel" .}}
+  </section>
 
-<hr />
-<h3>How to Get Your SSH Key</h3>
-<p>Generate it: <code>ssh-keygen -t ed25519 -C "your_email@example.com"</code></p>
-<p>Then copy the public key: <code>cat ~/.ssh/id_ed25519.pub</code></p>
-
-<hr />
-<h3>Add New Key</h3>
-<form method="POST" action="/keys" hx-post="/keys" hx-target="#keys-panel" hx-swap="outerHTML">
-  <p>
-    <label for="key-name">Key Name (e.g., Work Laptop)</label><br />
-    <input id="key-name" type="text" name="name" required style="width: 100%" />
-  </p>
-  <p>
-    <label for="public-key">Public Key (starts with ssh-rsa, ssh-ed25519, etc.)</label><br />
-    <textarea id="public-key" name="public_key" rows="4" required style="width: 100%"></textarea>
-  </p>
-  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
-  <button type="submit">Add SSH Key</button>
-</form>
+  <aside class="form-card side-panel">
+    <h3>Add SSH key</h3>
+    <p class="muted">Generate one with <code>ssh-keygen -t ed25519</code>, then paste the public key.</p>
+    <form method="POST" action="/keys" hx-post="/keys" hx-target="#keys-panel" hx-swap="outerHTML" class="form-stack">
+      <label class="field">
+        <span>Name</span>
+        <input id="key-name" type="text" name="name" required placeholder="Work laptop" />
+      </label>
+      <label class="field">
+        <span>Public key</span>
+        <textarea id="public-key" name="public_key" rows="5" required placeholder="ssh-ed25519 AAAA..."></textarea>
+      </label>
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
+      <button type="submit">Add SSH key</button>
+    </form>
+  </aside>
+</div>
 {{end}}

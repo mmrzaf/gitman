@@ -3,31 +3,35 @@
   {{template "flash" .}}
 
   {{if .Data.NewToken}}
-  <div class="card" style="border: 2px solid #28a745; background-color: rgba(40, 167, 69, 0.1)">
-    <h3 style="color: #28a745; margin-top: 0">Success!</h3>
-    <p>Make sure to copy your personal access token now. You won’t be able to see it again!</p>
-    <pre><code style="font-size: 1.2em; user-select: all;">{{.Data.NewToken}}</code></pre>
+  <div class="card success-card">
+    <h3>Token created</h3>
+    <p class="muted">Copy this token now. It will not be shown again.</p>
+    <pre class="secret-box"><code>{{.Data.NewToken}}</code></pre>
   </div>
-  <hr />
   {{end}}
 
-  <div class="keys-list">
-    {{if .Data.Tokens}}
-      {{range .Data.Tokens}}
-      <div class="card">
-        <div class="card-header" style="display: flex; justify-content: space-between; align-items: start">
-          <strong>{{.Name}}</strong>
-          <form method="POST" action="/tokens/{{.ID}}/delete" hx-post="/tokens/{{.ID}}/delete" hx-target="#tokens-panel" hx-swap="outerHTML" hx-confirm="Revoke token {{.Name}}?">
-            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}" />
-            <button type="submit" class="danger" style="padding: 2px 8px; background-color: #d9534f">Revoke</button>
-          </form>
-        </div>
-        <p class="muted">Created: {{.CreatedAt.Format "Jan 02, 2006"}}</p>
+  {{if .Data.Tokens}}
+  <div class="resource-list">
+    {{range .Data.Tokens}}
+    <article class="resource-row">
+      <div class="resource-main">
+        <div class="resource-title"><strong>{{.Name}}</strong></div>
+        <div class="resource-meta">Created {{.CreatedAt.Format "Jan 02, 2006"}}</div>
       </div>
-      {{end}}
-    {{else}}
-      <p class="muted">No tokens generated yet.</p>
+      <div class="resource-actions">
+        <form method="POST" action="/tokens/{{.ID}}/delete" hx-post="/tokens/{{.ID}}/delete" hx-target="#tokens-panel" hx-swap="outerHTML" hx-confirm="Revoke token {{.Name}}?">
+          <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}" />
+          <button type="submit" class="danger small">Revoke</button>
+        </form>
+      </div>
+    </article>
     {{end}}
   </div>
+  {{else}}
+  <div class="empty-state">
+    <p>No access tokens yet.</p>
+    <p class="muted">Generate a token to authenticate Git over HTTP.</p>
+  </div>
+  {{end}}
 </div>
 {{end}}

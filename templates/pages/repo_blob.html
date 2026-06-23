@@ -1,33 +1,32 @@
 {{define "content"}}
-<div class="page-header" style="margin-bottom: 1.5rem">
-  <h2>
-    <a href="/{{.Data.Owner.Username}}" style="text-decoration: none; color: inherit">{{.Data.Owner.Username}}</a>
+<div class="page-header">
+  <h2 class="repo-title">
+    <a href="/{{.Data.Owner.Username}}">{{.Data.Owner.Username}}</a>
     /
-    <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}" style="text-decoration: none; color: inherit">{{.Data.Repository.Name}}</a>
+    <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}">{{.Data.Repository.Name}}</a>
   </h2>
-  <p class="muted" style="margin-top: 5px">
-    {{if .Data.Repository.Description}}{{.Data.Repository.Description}}{{else}}No description provided.{{end}}
-  </p>
+  <p class="muted">{{if .Data.Repository.Description}}{{.Data.Repository.Description}}{{else}}No description provided.{{end}}</p>
 </div>
 
 {{template "repo_nav" .}}
 
-<div style="display: flex; gap: 10px; align-items: center; margin-bottom: 1rem; flex-wrap: wrap;">
-  <div style="background: rgba(127, 127, 127, 0.15); padding: 5px 12px; border-radius: 4px; font-family: monospace; font-size: 0.95em">
-    <strong>Ref:</strong> {{.Data.CurrentRef}}
-  </div>
-  <div style="background: rgba(127, 127, 127, 0.15); padding: 5px 12px; border-radius: 4px; font-family: monospace; font-size: 0.95em">
-    <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/tree?ref={{.Data.CurrentRef}}" style="text-decoration: none; color: inherit">← tree</a>
-    &nbsp;/&nbsp;<strong>{{.Data.CurrentPath}}</strong>
-    <span class="muted" style="margin-left: 8px">({{.Data.BlobSize}} B)</span>
+<div class="selector-bar">
+  <div class="selector-group">
+    <span class="chip mono">ref {{.Data.CurrentRef}}</span>
+    <a class="chip" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/tree?ref={{.Data.CurrentRef}}">tree</a>
+    <span class="chip mono">/{{.Data.CurrentPath}}</span>
+    <span class="muted mono">{{.Data.BlobSize}} B</span>
   </div>
 </div>
 
-<div class="card" style="padding: 0; border: 1px solid rgba(127, 127, 127, 0.2); border-radius: 6px; overflow-x: auto;">
+<div class="card flush">
   {{if .Data.IsTooBig}}
-  <div style="padding: 2rem; text-align: center"><p class="muted">This file is too large to render in the browser ({{.Data.BlobSize}} bytes).</p></div>
+  <div class="empty-state">
+    <p>This file is too large to render in the browser.</p>
+    <p class="muted">{{.Data.BlobSize}} bytes</p>
+  </div>
   {{else}}
-  <pre style="margin: 0; padding: 1.5rem; background-color: transparent"><code style="background-color: transparent; padding: 0; white-space: inherit;">{{.Data.BlobContent}}</code></pre>
+  <pre><code>{{.Data.BlobContent}}</code></pre>
   {{end}}
 </div>
 {{end}}

@@ -1,16 +1,13 @@
 {{define "content"}}
-<div class="page-header" style="margin-bottom: 1.5rem">
-  <h2>
-    <a href="/{{.Data.Owner.Username}}" style="text-decoration: none; color: inherit">{{.Data.Owner.Username}}</a>
+<div class="page-header">
+  <h2 class="repo-title">
+    <a href="/{{.Data.Owner.Username}}">{{.Data.Owner.Username}}</a>
     /
-    <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}" style="text-decoration: none; color: inherit">{{.Data.Repository.Name}}</a>
+    <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}">{{.Data.Repository.Name}}</a>
   </h2>
-  <p class="muted" style="margin-top: 5px">
-    {{if .Data.Repository.Description}}{{.Data.Repository.Description}}{{else}}No description provided.{{end}}
-  </p>
+  <p class="muted">{{if .Data.Repository.Description}}{{.Data.Repository.Description}}{{else}}No description provided.{{end}}</p>
 </div>
 
 {{template "repo_nav" .}}
-
 {{template "collaborators_panel" .}}
 {{end}}

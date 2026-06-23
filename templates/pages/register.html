@@ -1,22 +1,25 @@
 {{define "content"}}
-<div class="page-header">
-  <h2>Register</h2>
-  <p class="muted">Create an account to start hosting Git repositories.</p>
+<div class="card auth-card">
+  <div class="page-header">
+    <h2>Register</h2>
+    <p class="muted">Create an account to host Git repositories.</p>
+  </div>
+
+  {{template "flash" .}}
+
+  <form method="POST" action="/register" class="form-stack">
+    <label class="field">
+      <span>Username</span>
+      <input id="username" type="text" name="username" required autocomplete="username" />
+    </label>
+    <label class="field">
+      <span>Password</span>
+      <input id="password" type="password" name="password" required autocomplete="new-password" />
+    </label>
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
+    <button type="submit">Register</button>
+  </form>
+
+  <p class="muted mt-1">Already have an account? <a href="/login">Login</a>.</p>
 </div>
-
-{{template "flash" .}}
-
-<form method="POST" action="/register">
-  <p>
-    <label for="username">Username</label><br />
-    <input id="username" type="text" name="username" required autocomplete="username" />
-  </p>
-  <p>
-    <label for="password">Password</label><br />
-    <input id="password" type="password" name="password" required autocomplete="new-password" />
-  </p>
-  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
-  <button type="submit">Register</button>
-</form>
-<p class="muted">Already have an account? <a href="/login">Login here</a>.</p>
 {{end}}

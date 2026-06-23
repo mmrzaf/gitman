@@ -12,7 +12,7 @@
 
 <div class="card">
   <div class="panel-title">
-    <div class="toolbar" style="margin:0;justify-content:flex-start">
+    <div class="inline-actions">
       <span class="badge {{statusClass .Data.Run.Status}}">{{statusLabel .Data.Run.Status}}</span>
       <code>{{.Data.Run.ID}}</code>
     </div>
@@ -34,41 +34,29 @@
 {{if .Data.Artifacts}}
 <div class="card">
   <div class="panel-title"><h3>Artifacts</h3></div>
-  <ul style="list-style:none;padding:0;margin:0">
+  <div class="resource-list">
     {{range .Data.Artifacts}}
-    <li style="margin-bottom:0.5rem">
-      <a href="/api/repos/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/artifacts/run/{{$.Data.Run.ID}}/{{pathEscape .}}" hx-boost="false" download="{{.}}">{{.}}</a>
-    </li>
+    <a class="button secondary" href="/api/repos/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/artifacts/run/{{$.Data.Run.ID}}/{{pathEscape .}}" hx-boost="false" download="{{.}}">{{.}}</a>
     {{end}}
-  </ul>
+  </div>
 </div>
 {{end}}
 
 <div class="panel-title">
   <h3>Build log</h3>
-  <a
-    class="button secondary small"
-    href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/{{.Data.Run.ID}}/logs/download"
-    hx-boost="false"
-    download="{{.Data.Repository.Name}}-{{short .Data.Run.ID 8}}-ci-logs.log"
-  >Download all logs</a>
+  <a class="button secondary small" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/{{.Data.Run.ID}}/logs/download" hx-boost="false" download="{{.Data.Repository.Name}}-{{short .Data.Run.ID 8}}-ci-logs.log">Download all logs</a>
 </div>
 
 {{if or (eq .Data.Run.Status "running") (eq .Data.Run.Status "pending")}}
-<pre
-  id="build-log"
-  class="log-box"
-  data-log-url="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/{{.Data.Run.ID}}/log"
-  data-refresh-ms="3000"
->{{if .Data.LogContent}}{{.Data.LogContent}}{{else}}Waiting for worker to start…{{end}}</pre>
-<p class="muted" style="font-size:0.84rem;margin-top:0.4rem">Auto-refreshing every 3 seconds</p>
+<pre id="build-log" class="log-box" data-log-url="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/{{.Data.Run.ID}}/log" data-refresh-ms="3000">{{if .Data.LogContent}}{{.Data.LogContent}}{{else}}Waiting for worker to start…{{end}}</pre>
+<p class="note">Auto-refreshing every 3 seconds.</p>
 {{else}}
 <pre class="log-box">{{if .Data.LogContent}}{{.Data.LogContent}}{{else}}(no log output){{end}}</pre>
 {{end}}
 
 {{if eq .Data.Run.Status "skipped"}}
 <div class="card tight">
-  <p class="muted" style="margin:0">This run was skipped because no <code>.gitman-ci.yml</code> was found in the repository root.</p>
+  <p class="muted">This run was skipped because no <code>.gitman-ci.yml</code> was found in the repository root.</p>
 </div>
 {{end}}
 {{end}}
