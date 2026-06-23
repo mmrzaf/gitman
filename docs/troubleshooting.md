@@ -17,7 +17,7 @@ The selected commit does not contain a root-level `.gitman-ci.yml`.
 Gitman uses `docker run --pull never`. Pre-pull or build the exact configured image on the runner host:
 
 ```bash
-docker pull alpine:3.20
+docker pull alpine:3.24
 ```
 
 ## Dependencies cannot download

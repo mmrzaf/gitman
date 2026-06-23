@@ -5,7 +5,7 @@ Gitman reads `.gitman-ci.yml` from the repository root of the selected commit.
 ## Minimal example
 
 ```yaml
-image: alpine:3.20
+image: alpine:3.24
 steps:
   - name: verify
     run: |
@@ -16,7 +16,7 @@ steps:
 ## Full example
 
 ```yaml
-image: golang:1.24-alpine
+image: golang:1.26-alpine
 env:
   APP_ENV: test
   GOMODCACHE: /gitman/cache/go/pkg/mod

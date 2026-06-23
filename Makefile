@@ -3,6 +3,8 @@
 BINARY_NAME=gitman
 BUILD_DIR=bin
 GO=go
+VERSION ?= dev
+LDFLAGS=-s -w -X main.version=$(VERSION)
 
 # Default target
 .DEFAULT_GOAL := help
@@ -17,9 +19,9 @@ help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(GREEN)%-15s$(NC) %s\n", $$1, $$2}'
 
 build: ## Build the GitMan binary
-	@echo "Building GitMan..."
+	@echo "Building GitMan $(VERSION)..."
 	@mkdir -p $(BUILD_DIR)
-	$(GO) build -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/gitman
+	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/gitman
 
 verify: ## Run release verification checks
 	$(GO) test ./...
@@ -27,20 +29,30 @@ verify: ## Run release verification checks
 	golangci-lint run
 	govulncheck ./...
 	@mkdir -p $(BUILD_DIR)
-	$(GO) build -trimpath -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/gitman
-	docker build -t gitman:verify .
+	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/gitman
+	test "$$($(BUILD_DIR)/$(BINARY_NAME) version)" = "$(VERSION)"
+	test "$$($(BUILD_DIR)/$(BINARY_NAME) --version)" = "$(VERSION)"
+	docker build --build-arg VERSION="$(VERSION)" -t gitman:verify .
+	test "$$(docker run --rm gitman:verify gitman version)" = "$(VERSION)"
 
 release-source: ## Create tracked-files-only source archive
 	scripts/release-source-archive.sh $${VERSION:?set VERSION}
 
 build-all: ## Build for multiple platforms
-	@echo "Building for multiple platforms..."
+	@echo "Building GitMan $(VERSION) for multiple platforms..."
 	@mkdir -p $(BUILD_DIR)
-	GOOS=linux GOARCH=amd64 $(GO) build -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/gitman
-	GOOS=linux GOARCH=arm64 $(GO) build -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 ./cmd/gitman
-	GOOS=darwin GOARCH=amd64 $(GO) build -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64 ./cmd/gitman
-	GOOS=darwin GOARCH=arm64 $(GO) build -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 ./cmd/gitman
-	GOOS=windows GOARCH=amd64 $(GO) build -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe ./cmd/gitman
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/gitman
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 ./cmd/gitman
+	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64 ./cmd/gitman
+	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 ./cmd/gitman
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe ./cmd/gitman
+	test -s $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64
+	test -s $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64
+	test -s $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64
+	test -s $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64
+	test -s $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe
+	test "$$($(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 version)" = "$(VERSION)"
+	test "$$($(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 --version)" = "$(VERSION)"
 
 test: ## Run tests
 	$(GO) test -v -race -coverprofile=coverage.out ./...

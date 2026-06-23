@@ -1,48 +1,17 @@
-.data
-.git
+.git/
+.github/
+.data/
+data/
+bin/
+dist/
+coverage.*
+*.out
+*.sqlite
+*.sqlite-*
+*.db
+*.log
+.env
 *.md
 .gitignore
 Justfile
 Makefile
-# Binaries for programs and plugins
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
-
-# Test binary, built with `go test -c`
-*.test
-
-# Code coverage profiles and other test artifacts
-*.out
-coverage.*
-*.coverprofile
-profile.cov
-
-# Dependency directories (remove the comment below to include it)
-# vendor/
-
-# Go workspace file
-go.work
-go.work.sum
-
-# env file
-.env
-
-# Editor/IDE
-# .idea/
-# .vscode/
-
-# Binaries
-/bin/
-/main
-
-# Runtime data
-.data/
-*.sqlite
-
-# OS / editor
-.DS_Store
-.idea/
-.vscode/

@@ -48,7 +48,15 @@
   {{end}}
 </ul>
 {{end}}
-<h3 style="margin-bottom:0.5rem">Build Log</h3>
+<div style="display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap;margin-bottom:0.5rem">
+  <h3 style="margin:0">Build Log</h3>
+  <a
+    href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/{{.Data.Run.ID}}/logs/download"
+    hx-boost="false"
+    download="{{.Data.Repository.Name}}-{{short .Data.Run.ID 8}}-ci-logs.log"
+    style="text-decoration:none;border:1px solid rgba(127,127,127,0.3);padding:5px 10px;border-radius:4px;font-size:0.9em"
+  >Download all logs</a>
+</div>
 
 {{if or (eq .Data.Run.Status "running") (eq .Data.Run.Status "pending")}}
 <div id="log-container">

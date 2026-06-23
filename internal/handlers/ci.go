@@ -472,7 +472,7 @@ func (app *App) HandleCIRunGET(w http.ResponseWriter, r *http.Request) {
 	logContent := ""
 	if run.LogFile != "" {
 		if data, err := os.ReadFile(run.LogFile); err == nil {
-			logContent = string(data)
+			logContent = ansiEscapeRegex.ReplaceAllString(string(data), "")
 		}
 	}
 	artifacts := listArtifacts(artifactRunDir(app.Config.ArtifactsPath, owner.Username, repo.Name, run.ID, run.AttemptID))
@@ -513,6 +513,142 @@ func (app *App) HandleCIRunLogGET(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeCILogFragment(w, ansiEscapeRegex.ReplaceAllString(string(data), ""))
+}
+
+func ciRunLogDir(artifactsPath, owner, repo, runID string) string {
+	return filepath.Join(artifactsPath, "logs", owner, repo, runID)
+}
+
+func pathIsWithinDir(baseDir, candidate string) bool {
+	baseAbs, err := filepath.Abs(baseDir)
+	if err != nil {
+		return false
+	}
+	candidateAbs, err := filepath.Abs(candidate)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(baseAbs, candidateAbs)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+func collectCIRunLogFiles(artifactsPath, owner, repo string, run *models.CIRun) ([]string, error) {
+	if run == nil {
+		return nil, nil
+	}
+
+	logDir := ciRunLogDir(artifactsPath, owner, repo, run.ID)
+	seen := map[string]struct{}{}
+	var logs []string
+	addLog := func(path string) error {
+		if path == "" || !pathIsWithinDir(logDir, path) {
+			return nil
+		}
+		info, err := os.Lstat(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return nil
+		}
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			return err
+		}
+		if _, ok := seen[abs]; ok {
+			return nil
+		}
+		seen[abs] = struct{}{}
+		logs = append(logs, abs)
+		return nil
+	}
+
+	entries, err := os.ReadDir(logDir)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	for _, entry := range entries {
+		if entry.Type()&os.ModeSymlink != 0 || entry.IsDir() || !strings.HasSuffix(entry.Name(), ".log") {
+			continue
+		}
+		if err := addLog(filepath.Join(logDir, entry.Name())); err != nil {
+			return nil, err
+		}
+	}
+	if err := addLog(run.LogFile); err != nil {
+		return nil, err
+	}
+	sort.Strings(logs)
+	return logs, nil
+}
+
+func (app *App) HandleCIRunLogsDownloadGET(w http.ResponseWriter, r *http.Request) {
+	repo := GetRepo(r)
+	owner := GetRepoOwner(r)
+	runID := chi.URLParam(r, "run_id")
+	run, err := app.DB.GetCIRunByID(r.Context(), runID)
+	if err != nil || run == nil || run.RepoID != repo.ID {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+
+	logs, err := collectCIRunLogFiles(app.Config.ArtifactsPath, owner.Username, repo.Name, run)
+	if err != nil {
+		slog.Warn("failed to collect CI log files", "run", run.ID, "error", err)
+		http.Error(w, "log files not readable", http.StatusInternalServerError)
+		return
+	}
+
+	filename := fmt.Sprintf("%s-%s-ci-logs.log", repo.Name, shortString(run.ID, 8))
+	noStore(w)
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
+
+	if len(logs) == 0 {
+		_, _ = io.WriteString(w, "log not yet available — worker is preparing the workspace\n")
+		return
+	}
+
+	writeString := func(s string) bool {
+		if _, err := io.WriteString(w, s); err != nil {
+			slog.Warn("failed to write CI log download response", "run", run.ID, "error", err)
+			return false
+		}
+		return true
+	}
+	writef := func(format string, args ...any) bool {
+		return writeString(fmt.Sprintf(format, args...))
+	}
+
+	for i, logPath := range logs {
+		data, err := os.ReadFile(logPath)
+		if err != nil {
+			if !writef("=== %s ===\n(log file not readable: %v)\n", filepath.Base(logPath), err) {
+				return
+			}
+			continue
+		}
+		if len(logs) > 1 {
+			if i > 0 && !writeString("\n") {
+				return
+			}
+			if !writef("=== %s ===\n", filepath.Base(logPath)) {
+				return
+			}
+		}
+		if !writeString(ansiEscapeRegex.ReplaceAllString(string(data), "")) {
+			return
+		}
+		if len(data) > 0 && data[len(data)-1] != '\n' && !writeString("\n") {
+			return
+		}
+	}
 }
 
 func (app *App) HandleCISecretsGET(w http.ResponseWriter, r *http.Request) {

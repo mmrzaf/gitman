@@ -109,6 +109,7 @@ func SetupRouter(app *App) *chi.Mux {
 				r.Post("/ci/rules/delete", app.HandleCISettingsRuleDeletePOST)
 				r.Get("/ci/{run_id}", app.HandleCIRunGET)
 				r.Get("/ci/{run_id}/log", app.HandleCIRunLogGET)
+				r.Get("/ci/{run_id}/logs/download", app.HandleCIRunLogsDownloadGET)
 
 				// Secrets
 				r.Get("/ci/secrets", app.HandleCISecretsGET)
