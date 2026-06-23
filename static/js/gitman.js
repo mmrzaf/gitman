@@ -1,52 +1,13 @@
 (() => {
-  function closestTarget(selector) {
-    return selector ? document.querySelector(selector) : null;
-  }
-
-  function installHxForms() {
+  function installConfirmForms() {
     document.addEventListener("submit", (event) => {
       const form = event.target;
       if (!(form instanceof HTMLFormElement)) return;
-      const hxPost = form.getAttribute("hx-post");
-      if (!hxPost) return;
 
-      const message = form.getAttribute("hx-confirm");
+      const message = form.getAttribute("data-confirm");
       if (message && !window.confirm(message)) {
         event.preventDefault();
-        return;
       }
-
-      event.preventDefault();
-      const target = closestTarget(form.getAttribute("hx-target"));
-      const swap = form.getAttribute("hx-swap") || "innerHTML";
-      const button = form.querySelector("button[type='submit']");
-      if (button) button.disabled = true;
-
-      fetch(hxPost, {
-        method: "POST",
-        body: new FormData(form),
-        credentials: "same-origin",
-        headers: { "HX-Request": "true" },
-      })
-        .then((res) => res.text().then((text) => ({ ok: res.ok, text })))
-        .then(({ ok, text }) => {
-          if (!target) {
-            window.location.reload();
-            return;
-          }
-          if (swap === "outerHTML") {
-            target.outerHTML = text;
-          } else {
-            target.innerHTML = text;
-          }
-          if (!ok) console.warn("Gitman form request failed");
-        })
-        .catch(() => {
-          window.location.reload();
-        })
-        .finally(() => {
-          if (button) button.disabled = false;
-        });
     });
   }
 
@@ -79,7 +40,7 @@
   }
 
   function start() {
-    installHxForms();
+    installConfirmForms();
     startLogRefresh();
   }
 

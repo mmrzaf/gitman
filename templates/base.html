@@ -26,7 +26,7 @@
           <a href="/repos">Repos</a>
           <a href="/tokens">Tokens</a>
           <a href="/keys">SSH Keys</a>
-          <form method="post" action="/logout" hx-boost="false">
+          <form method="post" action="/logout">
             <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
             <button class="link-button" type="submit">Logout</button>
           </form>

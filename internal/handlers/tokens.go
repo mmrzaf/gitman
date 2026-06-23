@@ -33,16 +33,21 @@ func (app *App) getTokensForUser(r *http.Request, userID string) []models.Access
 	return tokens
 }
 
-func (app *App) HandleTokensGET(w http.ResponseWriter, r *http.Request) {
-	user := GetUser(r)
-
+func (app *App) renderTokensPage(w http.ResponseWriter, r *http.Request, user *models.User, errStr, successStr, newToken string) {
 	app.renderPage(w, r, "tokens.html", PageData{
-		Title: "Access Tokens",
-		User:  user,
+		Title:   "Access Tokens",
+		User:    user,
+		Error:   errStr,
+		Success: successStr,
 		Data: TokensPageData{
-			Tokens: app.getTokensForUser(r, user.ID),
+			Tokens:   app.getTokensForUser(r, user.ID),
+			NewToken: newToken,
 		},
 	})
+}
+
+func (app *App) HandleTokensGET(w http.ResponseWriter, r *http.Request) {
+	app.renderTokensPage(w, r, GetUser(r), "", "", "")
 }
 
 func (app *App) HandleTokensPOST(w http.ResponseWriter, r *http.Request) {
@@ -50,26 +55,14 @@ func (app *App) HandleTokensPOST(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(r.FormValue("name"))
 
 	if name == "" {
-		app.renderPartial(w, r, "tokens.html", "tokens_panel", PageData{
-			User:  user,
-			Error: "Token name is required.",
-			Data: TokensPageData{
-				Tokens: app.getTokensForUser(r, user.ID),
-			},
-		})
+		app.renderTokensPage(w, r, user, "Token name is required.", "", "")
 		return
 	}
 
 	plainToken, err := generateSecureToken()
 	if err != nil {
 		slog.Error("failed to generate token", "user_id", user.ID, "error", err)
-		app.renderPartial(w, r, "tokens.html", "tokens_panel", PageData{
-			User:  user,
-			Error: "Failed to create token.",
-			Data: TokensPageData{
-				Tokens: app.getTokensForUser(r, user.ID),
-			},
-		})
+		app.renderTokensPage(w, r, user, "Failed to create token.", "", "")
 		return
 	}
 
@@ -78,24 +71,11 @@ func (app *App) HandleTokensPOST(w http.ResponseWriter, r *http.Request) {
 
 	err = app.DB.CreateAccessToken(r.Context(), user.ID, name, tokenHash)
 	if err != nil {
-		app.renderPartial(w, r, "tokens.html", "tokens_panel", PageData{
-			User:  user,
-			Error: "Failed to create token.",
-			Data: TokensPageData{
-				Tokens: app.getTokensForUser(r, user.ID),
-			},
-		})
+		app.renderTokensPage(w, r, user, "Failed to create token.", "", "")
 		return
 	}
 
-	app.renderPartial(w, r, "tokens.html", "tokens_panel", PageData{
-		User:    user,
-		Success: "Token created successfully.",
-		Data: TokensPageData{
-			Tokens:   app.getTokensForUser(r, user.ID),
-			NewToken: plainToken,
-		},
-	})
+	app.renderTokensPage(w, r, user, "", "Token created successfully.", plainToken)
 }
 
 func (app *App) HandleTokenDeletePOST(w http.ResponseWriter, r *http.Request) {
@@ -103,33 +83,15 @@ func (app *App) HandleTokenDeletePOST(w http.ResponseWriter, r *http.Request) {
 	tokenID := chi.URLParam(r, "id")
 
 	if tokenID == "" {
-		app.renderPartial(w, r, "tokens.html", "tokens_panel", PageData{
-			User:  user,
-			Error: "Invalid token id.",
-			Data: TokensPageData{
-				Tokens: app.getTokensForUser(r, user.ID),
-			},
-		})
+		app.renderTokensPage(w, r, user, "Invalid token id.", "", "")
 		return
 	}
 
 	err := app.DB.DeleteAccessToken(r.Context(), tokenID, user.ID)
 	if err != nil {
-		app.renderPartial(w, r, "tokens.html", "tokens_panel", PageData{
-			User:  user,
-			Error: "Failed to delete token.",
-			Data: TokensPageData{
-				Tokens: app.getTokensForUser(r, user.ID),
-			},
-		})
+		app.renderTokensPage(w, r, user, "Failed to delete token.", "", "")
 		return
 	}
 
-	app.renderPartial(w, r, "tokens.html", "tokens_panel", PageData{
-		User:    user,
-		Success: "Token deleted.",
-		Data: TokensPageData{
-			Tokens: app.getTokensForUser(r, user.ID),
-		},
-	})
+	app.renderTokensPage(w, r, user, "", "Token deleted.", "")
 }

@@ -15,7 +15,7 @@
         <div class="clone-line"><span class="muted">Clone</span> <code>git clone {{$.Config.SSHUser}}@{{$.Config.ServerHost}}:{{$.User.Username}}/{{.Name}}.git</code></div>
       </div>
       <div class="resource-actions">
-        <form method="POST" action="/repos/{{.ID}}/delete" hx-post="/repos/{{.ID}}/delete" hx-target="#repos-panel" hx-swap="outerHTML" hx-confirm="Delete repository {{.Name}}? This cannot be undone.">
+        <form method="POST" action="/repos/{{.ID}}/delete" data-confirm="Delete repository {{.Name}}? This cannot be undone.">
           <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}" />
           <button type="submit" class="danger small">Delete</button>
         </form>

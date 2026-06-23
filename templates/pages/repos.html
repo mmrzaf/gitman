@@ -14,7 +14,7 @@
   <aside class="form-card side-panel">
     <h3>Create repository</h3>
     <p class="muted">Names may contain letters, numbers, dashes, and underscores.</p>
-    <form method="POST" action="/repos" hx-post="/repos" hx-target="#repos-panel" hx-swap="outerHTML" class="form-stack">
+    <form method="POST" action="/repos" class="form-stack">
       <label class="field">
         <span>Name</span>
         <input id="repo-name" type="text" name="name" required pattern="^[a-zA-Z0-9_-]+$" title="Only letters, numbers, dashes, and underscores." />

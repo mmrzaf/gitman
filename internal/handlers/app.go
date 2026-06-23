@@ -262,14 +262,6 @@ func (app *App) renderPage(w http.ResponseWriter, r *http.Request, page string, 
 	}
 }
 
-func (app *App) renderPartial(w http.ResponseWriter, r *http.Request, tmplMapKey string, partialName string, data PageData) {
-	app.preparePageData(r, &data)
-	if err := app.renderTemplate(w, tmplMapKey, partialName, data); err != nil {
-		slog.Error("failed to render partial", "template", tmplMapKey, "partial", partialName, "error", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-	}
-}
-
 func (app *App) renderError(w http.ResponseWriter, r *http.Request, data PageData, msg string, code int) {
 	w.WriteHeader(code)
 
@@ -328,11 +320,6 @@ func (app *App) AuthMiddleware(next http.Handler) http.Handler {
 func (app *App) RequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Context().Value(userContextKey) == nil {
-			if r.Header.Get("HX-Request") == "true" {
-				w.Header().Set("HX-Redirect", "/login")
-				w.WriteHeader(http.StatusUnauthorized)
-				return
-			}
 			http.Redirect(w, r, "/login", http.StatusFound)
 			return
 		}

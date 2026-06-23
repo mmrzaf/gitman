@@ -14,7 +14,7 @@
   <aside class="form-card side-panel">
     <h3>Add SSH key</h3>
     <p class="muted">Generate one with <code>ssh-keygen -t ed25519</code>, then paste the public key.</p>
-    <form method="POST" action="/keys" hx-post="/keys" hx-target="#keys-panel" hx-swap="outerHTML" class="form-stack">
+    <form method="POST" action="/keys" class="form-stack">
       <label class="field">
         <span>Name</span>
         <input id="key-name" type="text" name="name" required placeholder="Work laptop" />

@@ -59,8 +59,8 @@ git push -u origin main</code></pre>
     {{if .Data.CurrentPath}}<span class="chip mono">/{{.Data.CurrentPath}}</span>{{end}}
   </div>
   <div class="archive-downloads">
-    <a class="button secondary small" hx-boost="false" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/archive/zip?ref={{.Data.CurrentRef}}" download="{{.Data.Repository.Name}}-{{.Data.CurrentRef}}.zip">ZIP</a>
-    <a class="button secondary small" hx-boost="false" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/archive/tar.gz?ref={{.Data.CurrentRef}}" download="{{.Data.Repository.Name}}-{{.Data.CurrentRef}}.tar.gz">TAR.GZ</a>
+    <a class="button secondary small" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/archive/zip?ref={{.Data.CurrentRef}}" download="{{.Data.Repository.Name}}-{{.Data.CurrentRef}}.zip">ZIP</a>
+    <a class="button secondary small" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/archive/tar.gz?ref={{.Data.CurrentRef}}" download="{{.Data.Repository.Name}}-{{.Data.CurrentRef}}.tar.gz">TAR.GZ</a>
   </div>
 </div>
 

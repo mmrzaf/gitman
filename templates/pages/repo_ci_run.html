@@ -36,7 +36,7 @@
   <div class="panel-title"><h3>Artifacts</h3></div>
   <div class="resource-list">
     {{range .Data.Artifacts}}
-    <a class="button secondary" href="/api/repos/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/artifacts/run/{{$.Data.Run.ID}}/{{pathEscape .}}" hx-boost="false" download="{{.}}">{{.}}</a>
+    <a class="button secondary" href="/api/repos/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/artifacts/run/{{$.Data.Run.ID}}/{{pathEscape .}}" download="{{.}}">{{.}}</a>
     {{end}}
   </div>
 </div>
@@ -44,7 +44,7 @@
 
 <div class="panel-title">
   <h3>Build log</h3>
-  <a class="button secondary small" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/{{.Data.Run.ID}}/logs/download" hx-boost="false" download="{{.Data.Repository.Name}}-{{short .Data.Run.ID 8}}-ci-logs.log">Download all logs</a>
+  <a class="button secondary small" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/{{.Data.Run.ID}}/logs/download" download="{{.Data.Repository.Name}}-{{short .Data.Run.ID 8}}-ci-logs.log">Download all logs</a>
 </div>
 
 {{if or (eq .Data.Run.Status "running") (eq .Data.Run.Status "pending")}}

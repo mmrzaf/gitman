@@ -14,7 +14,7 @@
   <aside class="form-card side-panel">
     <h3>Generate token</h3>
     <p class="muted">Copy the token after creation. It is shown once and cannot be recovered.</p>
-    <form method="POST" action="/tokens" hx-post="/tokens" hx-target="#tokens-panel" hx-swap="outerHTML" class="form-stack">
+    <form method="POST" action="/tokens" class="form-stack">
       <label class="field">
         <span>Name</span>
         <input id="token-name" type="text" name="name" required placeholder="Work laptop" />

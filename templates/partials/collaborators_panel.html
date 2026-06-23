@@ -19,7 +19,7 @@
               <td><strong>{{.User.Username}}</strong></td>
               <td><span class="chip">{{.AccessLevel}}</span></td>
               <td>
-                <form method="POST" action="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/collaborators/remove?user_id={{.User.ID}}" hx-post="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/collaborators/remove?user_id={{.User.ID}}" hx-target="#collaborators-panel" hx-swap="outerHTML" hx-confirm="Remove collaborator {{.User.Username}}?" class="inline-actions">
+                <form method="POST" action="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/collaborators/remove?user_id={{.User.ID}}" data-confirm="Remove collaborator {{.User.Username}}?" class="inline-actions">
                   <button type="submit" class="danger small">Remove</button>
                   <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}" />
                 </form>
@@ -40,7 +40,7 @@
     <aside class="form-card side-panel">
       <h3>Add collaborator</h3>
       <p class="muted">Grant repository access to another Gitman user.</p>
-      <form method="POST" action="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/collaborators/add" hx-post="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/collaborators/add" hx-target="#collaborators-panel" hx-swap="outerHTML" class="form-stack">
+      <form method="POST" action="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/collaborators/add" class="form-stack">
         <label class="field">
           <span>Username</span>
           <input type="text" name="username" placeholder="username" required />
