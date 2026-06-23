@@ -1,24 +1,38 @@
 {{define "content"}}
-<div class="page-header">
-  <h2>Dashboard</h2>
-  <p class="muted">Welcome to your Gitman server.</p>
-  {{if .User}}
-  <div class="page-actions">
-    <a href="/repos" class="button">View Repositories</a>
+<div class="page-header page-header-row">
+  <div>
+    <h2>Dashboard</h2>
+    <p class="muted">A small Git server for repositories, CI runs, SSH keys, and HTTP access tokens.</p>
   </div>
-  {{end}}
+  {{if .User}}<a href="/repos" class="button">View repositories</a>{{end}}
 </div>
 
 {{template "flash" .}}
 
 {{if not .User}}
-<p>To get started, create an account or sign in:</p>
-<ul>
-  {{if .Config.AllowRegister}}<li><a href="/register">Register a new account</a></li>{{end}}
-  <li><a href="/login">Login to an existing account</a></li>
-</ul>
+<div class="card auth-card">
+  <h3>Get started</h3>
+  <p class="muted">Sign in to manage repositories hosted on this Gitman server.</p>
+  <div class="page-actions">
+    <a class="button" href="/login">Login</a>
+    {{if .Config.AllowRegister}}<a class="button secondary" href="/register">Register</a>{{end}}
+  </div>
+</div>
 {{else}}
-<p>Use SSH and Git to clone, push, and pull from your personal Gitman repositories.</p>
-<p class="muted">Tip: If this is your first time, add your SSH key on the <a href="/keys">SSH Keys</a> page.</p>
+<div class="content-grid">
+  <section class="card">
+    <h3>Repositories</h3>
+    <p class="muted">Create repositories, browse files, manage collaborators, and run CI pipelines.</p>
+    <a class="button secondary" href="/repos">Open repositories</a>
+  </section>
+  <aside class="card side-panel">
+    <h3>First-time setup</h3>
+    <p class="muted">Add an SSH key before pushing over SSH. Use access tokens for Git over HTTP.</p>
+    <div class="form-stack">
+      <a class="button secondary" href="/keys">Manage SSH keys</a>
+      <a class="button secondary" href="/tokens">Manage tokens</a>
+    </div>
+  </aside>
+</div>
 {{end}}
 {{end}}

@@ -3,8 +3,8 @@
 ## Validate
 
 ```bash
-VERSION=v1.0.0-beta.12 make verify
-VERSION=v1.0.0-beta.12 make release-source
+VERSION=v1.0.0-beta.14 make verify
+VERSION=v1.0.0-beta.14 make release-source
 ```
 
 Exercise at least:
@@ -67,7 +67,7 @@ Document:
 Verify release injection before publishing:
 
 ```bash
-go build -trimpath -ldflags "-X main.version=v1.0.0-beta.12" -o bin/gitman ./cmd/gitman
+go build -trimpath -ldflags "-X main.version=v1.0.0-beta.14" -o bin/gitman ./cmd/gitman
 bin/gitman version
 bin/gitman --version
 ```

@@ -29,12 +29,15 @@ steps:
     run: |
       set -eu
 
-      REF_KIND="commit"
-      RAW_IMAGE_TAG="$GITMAN_COMMIT"
+      RAW_IMAGE_TAG="${GITMAN_TAG:-}"
 
-      if [ -n "${GITMAN_TAG:-}" ]; then
-        REF_KIND="tag"
-        RAW_IMAGE_TAG="$GITMAN_TAG"
+      if [ -z "$RAW_IMAGE_TAG" ]; then
+        RAW_IMAGE_TAG="$(git describe --tags --exact-match "${GITMAN_COMMIT:-HEAD}" 2>/dev/null || true)"
+      fi
+
+      if [ -z "$RAW_IMAGE_TAG" ]; then
+        echo "Gitman Docker image builds require a git tag; GITMAN_TAG is empty and HEAD is not exactly tagged" >&2
+        exit 1
       fi
 
       IMAGE_TAG="$(printf '%s' "$RAW_IMAGE_TAG" \
@@ -44,11 +47,12 @@ steps:
         | cut -c1-128)"
 
       if [ -z "$IMAGE_TAG" ]; then
-        IMAGE_TAG="$GITMAN_COMMIT"
+        echo "Resolved image tag is empty" >&2
+        exit 1
       fi
 
       cat > .gitman-image.env <<EOF_TAG
-      REF_KIND=$REF_KIND
+      REF_KIND=tag
       RAW_IMAGE_TAG=$RAW_IMAGE_TAG
       IMAGE_TAG=$IMAGE_TAG
       IMAGE_REF=$IMAGE_NAME:$IMAGE_TAG

@@ -1,19 +1,27 @@
 {{define "content"}}
-<div class="page-header">
-  <h2>Personal Access Tokens</h2>
-  <p class="muted">Tokens are required for authenticated Git over HTTP.</p>
+<div class="page-header page-header-row">
+  <div>
+    <h2>Access Tokens</h2>
+    <p class="muted">Create and revoke personal access tokens for Git over HTTP.</p>
+  </div>
 </div>
 
-{{template "tokens_panel" .}}
+<div class="content-grid">
+  <section>
+    {{template "tokens_panel" .}}
+  </section>
 
-<hr />
-<h3>Generate New Token</h3>
-<form method="POST" action="/tokens" hx-post="/tokens" hx-target="#tokens-panel" hx-swap="outerHTML">
-  <p>
-    <label for="token-name">Token Name (e.g., Work Laptop)</label><br />
-    <input id="token-name" type="text" name="name" required style="width: 100%" />
-  </p>
-  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
-  <button type="submit">Generate Token</button>
-</form>
+  <aside class="form-card side-panel">
+    <h3>Generate token</h3>
+    <p class="muted">Copy the token after creation. It is shown once and cannot be recovered.</p>
+    <form method="POST" action="/tokens" class="form-stack">
+      <label class="field">
+        <span>Name</span>
+        <input id="token-name" type="text" name="name" required placeholder="Work laptop" />
+      </label>
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
+      <button type="submit">Generate token</button>
+    </form>
+  </aside>
+</div>
 {{end}}

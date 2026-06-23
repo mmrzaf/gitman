@@ -51,23 +51,23 @@ type SSHKey struct {
 // CIRun represents a single CI/CD pipeline execution.
 // Status values: pending | running | success | failed | skipped | cancelled
 type CIRun struct {
-	ID          string     `json:"id"`
-	RepoID      string     `json:"repo_id"`
-	CommitHash  string     `json:"commit_hash"`
-	Branch      string     `json:"branch"`
-	Tag         string     `json:"tag"`
-	Event       string     `json:"event"`
-	Status      string     `json:"status"`
-	LogFile     string     `json:"log_file"`
-	CancelReason string   `json:"cancel_reason"`
-	AttemptID   string     `json:"attempt_id,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
-	StartedAt   *time.Time `json:"started_at,omitempty"`
-	HeartbeatAt *time.Time `json:"heartbeat_at,omitempty"`
-	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	ID           string     `json:"id"`
+	RepoID       string     `json:"repo_id"`
+	CommitHash   string     `json:"commit_hash"`
+	Branch       string     `json:"branch"`
+	Tag          string     `json:"tag"`
+	Event        string     `json:"event"`
+	Status       string     `json:"status"`
+	LogFile      string     `json:"log_file"`
+	CancelReason string     `json:"cancel_reason"`
+	AttemptID    string     `json:"attempt_id,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	StartedAt    *time.Time `json:"started_at,omitempty"`
+	HeartbeatAt  *time.Time `json:"heartbeat_at,omitempty"`
+	CompletedAt  *time.Time `json:"completed_at,omitempty"`
 }
 
-// RepoCIRefRule stores exact per-repository trust settings for one CI ref.
+// RepoCIRefRule stores per-repository trust settings for one exact CI ref or glob ref pattern.
 type RepoCIRefRule struct {
 	RepoID            string    `json:"repo_id"`
 	RefType           string    `json:"ref_type"`

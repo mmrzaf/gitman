@@ -2,27 +2,32 @@
 <div id="repos-panel">
   {{template "flash" .}}
 
-  <div class="repos-list">
-    {{if .Data.Repos}}
-      {{range .Data.Repos}}
-      <div class="card">
-        <div class="card-header" style="display: flex; justify-content: space-between; align-items: start">
-          <div>
-            <a href="/{{$.User.Username}}/{{.Name}}" style="text-decoration: none; font-size: 1.2em"><strong>{{.Name}}</strong></a>
-            <span class="muted"> · {{if .IsPrivate}}private{{else}}public{{end}}</span>
-          </div>
-          <form method="POST" action="/repos/{{.ID}}/delete" hx-post="/repos/{{.ID}}/delete" hx-target="#repos-panel" hx-swap="outerHTML" hx-confirm="Delete repository {{.Name}}? This cannot be undone.">
-            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}" />
-            <button type="submit" class="danger" style="padding: 2px 8px; background-color: #d9534f">Delete</button>
-          </form>
+  {{if .Data.Repos}}
+  <div class="resource-list">
+    {{range .Data.Repos}}
+    <article class="resource-row">
+      <div class="resource-main">
+        <div class="resource-title">
+          <a href="/{{$.User.Username}}/{{.Name}}">{{.Name}}</a>
+          <span class="chip">{{if .IsPrivate}}private{{else}}public{{end}}</span>
         </div>
-        {{if .Description}}<p class="muted">{{.Description}}</p>{{end}}
-        <p><span class="muted">Clone:</span> <code>git clone {{$.Config.SSHUser}}@{{$.Config.ServerHost}}:{{$.User.Username}}/{{.Name}}.git</code></p>
+        {{if .Description}}<p class="resource-meta">{{.Description}}</p>{{end}}
+        <div class="clone-line"><span class="muted">Clone</span> <code>git clone {{$.Config.SSHUser}}@{{$.Config.ServerHost}}:{{$.User.Username}}/{{.Name}}.git</code></div>
       </div>
-      {{end}}
-    {{else}}
-      <p class="muted">You don't have any repositories yet.</p>
+      <div class="resource-actions">
+        <form method="POST" action="/repos/{{.ID}}/delete" data-confirm="Delete repository {{.Name}}? This cannot be undone.">
+          <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}" />
+          <button type="submit" class="danger small">Delete</button>
+        </form>
+      </div>
+    </article>
     {{end}}
   </div>
+  {{else}}
+  <div class="empty-state">
+    <p>No repositories yet.</p>
+    <p class="muted">Create one from the panel on this page, then push over SSH or HTTP.</p>
+  </div>
+  {{end}}
 </div>
 {{end}}

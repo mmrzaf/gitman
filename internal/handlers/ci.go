@@ -6,12 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"html"
 	"io"
 	"log/slog"
 	"mime"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -124,24 +124,36 @@ func (app *App) HandleCISettingsRulePOST(w http.ResponseWriter, r *http.Request)
 		app.renderError(w, r, PageData{User: currentUser}, "Invalid CI ref type", http.StatusBadRequest)
 		return
 	}
-	if err := git.ValidateRefName(refName); err != nil || refName == "" {
+	if refName == "" || strings.ContainsAny(refName, "\x00\r\n") {
 		app.renderError(w, r, PageData{User: currentUser}, "Invalid CI ref name", http.StatusBadRequest)
 		return
 	}
-	repoPath, err := git.SecureRepoPath(app.Config.ReposPath, owner.Username, repo.Name)
-	if err != nil {
-		app.renderError(w, r, PageData{User: currentUser}, "Invalid repository path", http.StatusInternalServerError)
-		return
-	}
-	if refType == "branch" {
-		if _, err := git.ResolveBranchCommitHash(r.Context(), repoPath, refName); err != nil {
-			app.renderError(w, r, PageData{User: currentUser}, "Branch does not resolve in repository", http.StatusBadRequest)
+	refIsPattern := strings.ContainsAny(refName, "*?[")
+	if refIsPattern {
+		if _, err := path.Match(refName, "test"); err != nil {
+			app.renderError(w, r, PageData{User: currentUser}, "Invalid CI ref pattern", http.StatusBadRequest)
 			return
 		}
 	} else {
-		if _, err := git.ResolveTagCommitHash(r.Context(), repoPath, refName); err != nil {
-			app.renderError(w, r, PageData{User: currentUser}, "Tag does not resolve in repository", http.StatusBadRequest)
+		if err := git.ValidateRefName(refName); err != nil {
+			app.renderError(w, r, PageData{User: currentUser}, "Invalid CI ref name", http.StatusBadRequest)
 			return
+		}
+		repoPath, err := git.SecureRepoPath(app.Config.ReposPath, owner.Username, repo.Name)
+		if err != nil {
+			app.renderError(w, r, PageData{User: currentUser}, "Invalid repository path", http.StatusInternalServerError)
+			return
+		}
+		if refType == "branch" {
+			if _, err := git.ResolveBranchCommitHash(r.Context(), repoPath, refName); err != nil {
+				app.renderError(w, r, PageData{User: currentUser}, "Branch does not resolve in repository", http.StatusBadRequest)
+				return
+			}
+		} else {
+			if _, err := git.ResolveTagCommitHash(r.Context(), repoPath, refName); err != nil {
+				app.renderError(w, r, PageData{User: currentUser}, "Tag does not resolve in repository", http.StatusBadRequest)
+				return
+			}
 		}
 	}
 	rule := models.RepoCIRefRule{
@@ -153,7 +165,7 @@ func (app *App) HandleCISettingsRulePOST(w http.ResponseWriter, r *http.Request)
 		AllowDockerSocket: r.FormValue("allow_docker_socket") == "on",
 	}
 	if err := app.DB.UpsertRepoCIRefRule(r.Context(), rule); err != nil {
-		app.renderError(w, r, PageData{User: currentUser}, "Failed to save CI ref rule", http.StatusInternalServerError)
+		app.renderError(w, r, PageData{User: currentUser}, "Failed to save CI ref rule", http.StatusBadRequest)
 		return
 	}
 	http.Redirect(w, r, fmt.Sprintf("/%s/%s/ci?success=ci_rule_saved", owner.Username, repo.Name), http.StatusSeeOther)
@@ -491,8 +503,8 @@ var ansiEscapeRegex = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 
 func writeCILogFragment(w http.ResponseWriter, content string) {
 	noStore(w)
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = io.WriteString(w, html.EscapeString(content))
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = io.WriteString(w, content)
 }
 
 func (app *App) HandleCIRunLogGET(w http.ResponseWriter, r *http.Request) {
@@ -651,24 +663,20 @@ func (app *App) HandleCIRunLogsDownloadGET(w http.ResponseWriter, r *http.Reques
 	}
 }
 
-func (app *App) HandleCISecretsGET(w http.ResponseWriter, r *http.Request) {
+func (app *App) renderCISecretsPage(w http.ResponseWriter, r *http.Request, errStr, successStr string) {
 	repo := GetRepo(r)
 	owner := GetRepoOwner(r)
 	currentUser := GetUser(r)
-
-	if currentUser == nil || currentUser.ID != repo.OwnerID {
-		app.renderError(w, r, PageData{User: currentUser}, "Forbidden", http.StatusForbidden)
-		return
-	}
-
 	secrets, err := app.DB.GetRepoSecrets(r.Context(), repo.ID)
 	if err != nil {
 		secrets = []models.RepoSecret{}
 	}
 
 	app.renderPage(w, r, "repo_ci_secrets.html", PageData{
-		Title: repo.Name + " - CI Secrets",
-		User:  currentUser,
+		Title:   repo.Name + " - CI Secrets",
+		User:    currentUser,
+		Error:   errStr,
+		Success: successStr,
 		Data: CISecretsPageData{
 			Owner:      owner,
 			Repository: repo,
@@ -678,99 +686,79 @@ func (app *App) HandleCISecretsGET(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (app *App) HandleCISecretsAddPOST(w http.ResponseWriter, r *http.Request) {
+func (app *App) HandleCISecretsGET(w http.ResponseWriter, r *http.Request) {
 	repo := GetRepo(r)
-	owner := GetRepoOwner(r)
 	currentUser := GetUser(r)
 
-	renderPanel := func(errStr, successStr string) {
-		secrets, _ := app.DB.GetRepoSecrets(r.Context(), repo.ID)
-		app.renderPartial(w, r, "repo_ci_secrets.html", "ci_secrets_panel", PageData{
-			User:    currentUser,
-			Error:   errStr,
-			Success: successStr,
-			Data: CISecretsPageData{
-				Owner:      owner,
-				Repository: repo,
-				Secrets:    secrets,
-				NoKey:      app.Config.SecretKey == "",
-			},
-		})
+	if currentUser == nil || currentUser.ID != repo.OwnerID {
+		app.renderError(w, r, PageData{User: currentUser}, "Forbidden", http.StatusForbidden)
+		return
 	}
 
+	app.renderCISecretsPage(w, r, "", "")
+}
+
+func (app *App) HandleCISecretsAddPOST(w http.ResponseWriter, r *http.Request) {
+	repo := GetRepo(r)
+	currentUser := GetUser(r)
+
 	if currentUser == nil || currentUser.ID != repo.OwnerID {
-		renderPanel("Only the repository owner can manage secrets.", "")
+		app.renderCISecretsPage(w, r, "Only the repository owner can manage secrets.", "")
 		return
 	}
 
 	if app.Config.SecretKey == "" {
-		renderPanel("GITMAN_SECRET_KEY is not configured on this server. Secrets cannot be stored.", "")
+		app.renderCISecretsPage(w, r, "GITMAN_SECRET_KEY is not configured on this server. Secrets cannot be stored.", "")
 		return
 	}
 
 	if err := r.ParseForm(); err != nil {
-		renderPanel("Invalid form data.", "")
+		app.renderCISecretsPage(w, r, "Invalid form data.", "")
 		return
 	}
 	key := strings.TrimSpace(r.FormValue("key"))
 	value := r.FormValue("value")
 
 	if key == "" || value == "" {
-		renderPanel("Key and value are required.", "")
+		app.renderCISecretsPage(w, r, "Key and value are required.", "")
 		return
 	}
 
 	if !secretKeyRegex.MatchString(key) {
-		renderPanel("Key must be uppercase letters, digits, and underscores, starting with a letter.", "")
+		app.renderCISecretsPage(w, r, "Key must be uppercase letters, digits, and underscores, starting with a letter.", "")
 		return
 	}
 
 	encrypted, err := db.EncryptSecret(app.Config.SecretKey, value)
 	if err != nil {
-		renderPanel("Failed to encrypt secret.", "")
+		app.renderCISecretsPage(w, r, "Failed to encrypt secret.", "")
 		return
 	}
 
 	if err := app.DB.AddRepoSecret(r.Context(), repo.ID, key, encrypted); err != nil {
-		renderPanel("Failed to save secret.", "")
+		app.renderCISecretsPage(w, r, "Failed to save secret.", "")
 		return
 	}
 
-	renderPanel("", fmt.Sprintf("Secret %q saved.", key))
+	app.renderCISecretsPage(w, r, "", fmt.Sprintf("Secret %q saved.", key))
 }
 
 func (app *App) HandleCISecretsDeletePOST(w http.ResponseWriter, r *http.Request) {
 	repo := GetRepo(r)
-	owner := GetRepoOwner(r)
 	currentUser := GetUser(r)
 	secretID := chi.URLParam(r, "id")
 
-	renderPanel := func(errStr, successStr string) {
-		secrets, _ := app.DB.GetRepoSecrets(r.Context(), repo.ID)
-		app.renderPartial(w, r, "repo_ci_secrets.html", "ci_secrets_panel", PageData{
-			User:    currentUser,
-			Error:   errStr,
-			Success: successStr,
-			Data: CISecretsPageData{
-				Owner:      owner,
-				Repository: repo,
-				Secrets:    secrets,
-				NoKey:      app.Config.SecretKey == "",
-			},
-		})
-	}
-
 	if currentUser == nil || currentUser.ID != repo.OwnerID {
-		renderPanel("Forbidden.", "")
+		app.renderCISecretsPage(w, r, "Forbidden.", "")
 		return
 	}
 
 	if err := app.DB.DeleteRepoSecret(r.Context(), secretID, repo.ID); err != nil {
-		renderPanel("Failed to delete secret.", "")
+		app.renderCISecretsPage(w, r, "Failed to delete secret.", "")
 		return
 	}
 
-	renderPanel("", "Secret deleted.")
+	app.renderCISecretsPage(w, r, "", "Secret deleted.")
 }
 
 func hookPath(reposPath, ownerUsername, repoName string) (string, error) {

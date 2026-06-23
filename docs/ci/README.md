@@ -35,13 +35,13 @@ The CI page can run the repository default branch, any existing branch, a tag, o
 
 Repository owners can install an auto-trigger hook from the **CI/CD** page. The generated bare-repository `post-receive` hook submits one push event for each updated branch or tag. Deleted refs are ignored. Hook delivery failures do not fail the Git push.
 
-Automatic runs are trusted-ref aware. By default, only the repository default branch auto-runs. Other branches and tags can still be run manually, but push-triggered runs for them are ignored until the owner adds an exact CI ref trust rule.
+Automatic runs are trusted-ref aware. By default, only the repository default branch auto-runs. Other branches and tags can still be run manually, but push-triggered runs for them are ignored until the owner adds a CI ref trust rule. Rules may be exact refs or glob patterns such as `v*` for version tags and `release/*` for release branches.
 
 Rapid pushes use latest-pending-push-wins semantics for each exact branch or tag. Older pending push runs for the same ref become `cancelled` with a visible reason. Manual runs and already-running jobs are not cancelled.
 
 ## Trusted refs, secrets, and Docker socket
 
-Default policy when no exact rule exists:
+Default policy when no matching rule exists:
 
 | Ref | Manual run | Automatic push run | Secrets | Docker socket |
 | --- | ---: | ---: | ---: | ---: |
@@ -49,9 +49,9 @@ Default policy when no exact rule exists:
 | Other branch | Allowed | Denied | Denied | Denied |
 | Tag | Allowed | Denied | Denied | Denied |
 
-Repository owners can add exact branch or tag rules on the CI page. A rule can enable auto-run, CI secrets, and Docker socket trust for that exact ref. Stale rules remain visible and deletable if the Git ref is later removed.
+Repository owners can add exact branch or tag rules, or glob pattern rules, on the CI page. A rule can enable auto-run, CI secrets, and Docker socket trust for matching refs. Exact rules win over pattern rules. Stale exact rules remain visible and deletable if the Git ref is later removed.
 
-If a pipeline requests a secret on an untrusted ref, the worker fails before decrypting repository secrets. If `.gitman-ci.yml` sets `docker: true`, both `GITMAN_CI_ALLOW_DOCKER_SOCKET=true` and exact-ref Docker approval are required.
+If a pipeline requests a secret on an untrusted ref, the worker fails before decrypting repository secrets. If `.gitman-ci.yml` sets `docker: true`, both `GITMAN_CI_ALLOW_DOCKER_SOCKET=true` and matching Docker approval are required.
 
 ## Hook ownership
 

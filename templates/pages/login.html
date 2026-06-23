@@ -1,26 +1,29 @@
 {{define "content"}}
-<div class="page-header">
-  <h2>Login</h2>
-  <p class="muted">Sign in to manage your repositories and SSH keys.</p>
+<div class="card auth-card">
+  <div class="page-header">
+    <h2>Login</h2>
+    <p class="muted">Sign in to manage repositories and keys.</p>
+  </div>
+
+  {{template "flash" .}}
+
+  <form method="POST" action="/login" class="form-stack">
+    <label class="field">
+      <span>Username</span>
+      <input id="username" type="text" name="username" required autocomplete="username" />
+    </label>
+    <label class="field">
+      <span>Password</span>
+      <input id="password" type="password" name="password" required autocomplete="current-password" />
+    </label>
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
+    <button type="submit">Login</button>
+  </form>
+
+  {{if .Config.AllowRegister}}
+  <p class="muted mt-1">Need an account? <a href="/register">Register</a>.</p>
+  {{else}}
+  <p class="muted mt-1">Registration is disabled on this server.</p>
+  {{end}}
 </div>
-
-{{template "flash" .}}
-
-<form method="POST" action="/login">
-  <p>
-    <label for="username">Username</label><br />
-    <input id="username" type="text" name="username" required autocomplete="username" />
-  </p>
-  <p>
-    <label for="password">Password</label><br />
-    <input id="password" type="password" name="password" required autocomplete="current-password" />
-  </p>
-  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
-  <button type="submit">Login</button>
-</form>
-{{if .Config.AllowRegister}}
-<p class="muted">Don't have an account? <a href="/register">Register here</a>.</p>
-{{else}}
-<p class="muted">Registration is disabled on this server.</p>
-{{end}}
 {{end}}

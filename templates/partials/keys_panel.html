@@ -2,23 +2,28 @@
 <div id="keys-panel">
   {{template "flash" .}}
 
-  <div class="keys-list">
-    {{if .Data.Keys}}
-      {{range .Data.Keys}}
-      <div class="card">
-        <div class="card-header" style="display: flex; justify-content: space-between; align-items: start">
-          <strong>{{.Name}}</strong>
-          <form method="POST" action="/keys/{{.ID}}/delete" hx-post="/keys/{{.ID}}/delete" hx-target="#keys-panel" hx-swap="outerHTML" hx-confirm="Delete SSH key {{.Name}}?">
-            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}" />
-            <button type="submit" class="danger" style="padding: 2px 8px; background-color: #d9534f">Delete</button>
-          </form>
-        </div>
-        <p class="muted" style="word-break: break-all"><code>{{slice .PublicKey 0 60}}...</code></p>
+  {{if .Data.Keys}}
+  <div class="resource-list">
+    {{range .Data.Keys}}
+    <article class="resource-row">
+      <div class="resource-main">
+        <div class="resource-title"><strong>{{.Name}}</strong></div>
+        <div class="resource-meta"><code>{{slice .PublicKey 0 60}}...</code></div>
       </div>
-      {{end}}
-    {{else}}
-      <p class="muted">No SSH keys found. Add one below to push/pull repositories.</p>
+      <div class="resource-actions">
+        <form method="POST" action="/keys/{{.ID}}/delete" data-confirm="Delete SSH key {{.Name}}?">
+          <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}" />
+          <button type="submit" class="danger small">Delete</button>
+        </form>
+      </div>
+    </article>
     {{end}}
   </div>
+  {{else}}
+  <div class="empty-state">
+    <p>No SSH keys yet.</p>
+    <p class="muted">Add a key to push and pull repositories over SSH.</p>
+  </div>
+  {{end}}
 </div>
 {{end}}

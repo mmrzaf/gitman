@@ -1,53 +1,46 @@
 {{define "content"}}
-<div class="page-header" style="margin-bottom: 1.5rem">
-  <h2>
-    <a href="/{{.Data.Owner.Username}}" style="text-decoration: none; color: inherit">{{.Data.Owner.Username}}</a>
+<div class="page-header">
+  <h2 class="repo-title">
+    <a href="/{{.Data.Owner.Username}}">{{.Data.Owner.Username}}</a>
     /
-    <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}" style="text-decoration: none; color: inherit">{{.Data.Repository.Name}}</a>
+    <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}">{{.Data.Repository.Name}}</a>
   </h2>
-  <p class="muted" style="margin-top: 5px">
-    {{if .Data.Repository.Description}}{{.Data.Repository.Description}}{{else}}No description provided.{{end}}
-  </p>
+  <p class="muted">{{if .Data.Repository.Description}}{{.Data.Repository.Description}}{{else}}No description provided.{{end}}</p>
 </div>
 
 {{template "repo_nav" .}}
 
 {{if .Data.IsEmpty}}
-<div class="card" style="padding: 1.5rem; border: 1px solid rgba(127, 127, 127, 0.2); border-radius: 6px;">
-  <h3 style="margin-top: 0">Quick Setup</h3>
-  <p class="muted">This repository is empty. To get started, push an existing repository from the command line:</p>
+<div class="card">
+  <h3>Quick setup</h3>
+  <p class="muted">This repository is empty. Push an existing repository from the command line.</p>
 
-  <h4 style="margin-bottom: 5px">Via SSH</h4>
-  <pre style="background: rgba(127, 127, 127, 0.1); padding: 10px; border-radius: 4px; overflow-x: auto; margin-top: 0;"><code>git remote add origin {{$.Config.SSHUser}}@{{$.Config.ServerHost}}:{{.Data.Owner.Username}}/{{.Data.Repository.Name}}.git
+  <h4>SSH</h4>
+  <pre><code>git remote add origin {{$.Config.SSHUser}}@{{$.Config.ServerHost}}:{{.Data.Owner.Username}}/{{.Data.Repository.Name}}.git
 git branch -M main
 git push -u origin main</code></pre>
 
-  <h4 style="margin-bottom: 5px">Via HTTP</h4>
-  <pre style="background: rgba(127, 127, 127, 0.1); padding: 10px; border-radius: 4px; overflow-x: auto; margin: 0;"><code>git remote add origin {{$.Config.PublicURL}}/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}.git
+  <h4 class="mt-1">HTTP</h4>
+  <pre><code>git remote add origin {{$.Config.PublicURL}}/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}.git
 git branch -M main
 git push -u origin main</code></pre>
 </div>
 {{else}}
-<div style="background: rgba(127, 127, 127, 0.05); border: 1px solid rgba(127, 127, 127, 0.2); padding: 12px; border-radius: 6px; margin-bottom: 1.5rem;">
-  <div style="margin-bottom: 8px; font-weight: bold; font-size: 0.95em">Clone this repository</div>
-  <div style="display: flex; flex-direction: column; gap: 8px">
-    <div style="display: flex; align-items: center; gap: 10px">
-      <span class="muted" style="width: 40px; font-size: 0.9em; font-weight: bold">SSH</span>
-      <input type="text" readonly value="git clone {{$.Config.SSHUser}}@{{$.Config.ServerHost}}:{{.Data.Owner.Username}}/{{.Data.Repository.Name}}.git" style="flex: 1; padding: 6px 10px; border: 1px solid rgba(127, 127, 127, 0.3); border-radius: 4px; font-family: monospace; font-size: 0.9em; background: transparent; color: inherit;" onclick="this.select()" />
-    </div>
-    <div style="display: flex; align-items: center; gap: 10px">
-      <span class="muted" style="width: 40px; font-size: 0.9em; font-weight: bold">HTTP</span>
-      <input type="text" readonly value="git clone {{$.Config.PublicURL}}/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}.git" style="flex: 1; padding: 6px 10px; border: 1px solid rgba(127, 127, 127, 0.3); border-radius: 4px; font-family: monospace; font-size: 0.9em; background: transparent; color: inherit;" onclick="this.select()" />
-    </div>
+<div class="clone-box">
+  <h3>Clone this repository</h3>
+  <div class="clone-row">
+    <span class="clone-label">SSH</span>
+    <input class="code-input" type="text" readonly value="git clone {{$.Config.SSHUser}}@{{$.Config.ServerHost}}:{{.Data.Owner.Username}}/{{.Data.Repository.Name}}.git" onclick="this.select()" />
+  </div>
+  <div class="clone-row">
+    <span class="clone-label">HTTP</span>
+    <input class="code-input" type="text" readonly value="git clone {{$.Config.PublicURL}}/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}.git" onclick="this.select()" />
   </div>
 </div>
 
-<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 10px;">
-  <div style="display: flex; gap: 10px; align-items: center">
-    <select
-      onchange="window.location.href=this.value"
-      style="padding: 5px 10px; border: 1px solid rgba(127, 127, 127, 0.3); border-radius: 4px; font-family: monospace; font-size: 0.95em; background: transparent; color: inherit; cursor: pointer;"
-    >
+<div class="selector-bar">
+  <div class="selector-group">
+    <select onchange="window.location.href=this.value" class="code-input" aria-label="Select ref">
       {{if .Data.Branches}}
       <optgroup label="Branches">
         {{range .Data.Branches}}
@@ -63,27 +56,29 @@ git push -u origin main</code></pre>
       </optgroup>
       {{end}}
     </select>
-    {{if .Data.CurrentPath}}<div style="background: rgba(127, 127, 127, 0.15); padding: 5px 12px; border-radius: 4px; font-family: monospace; font-size: 0.95em"><strong>Path:</strong> /{{.Data.CurrentPath}}</div>{{end}}
+    {{if .Data.CurrentPath}}<span class="chip mono">/{{.Data.CurrentPath}}</span>{{end}}
   </div>
-  <div class="archive-downloads" style="display: flex; gap: 10px; font-size: 0.9em">
-    <a hx-boost="false" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/archive/zip?ref={{.Data.CurrentRef}}" download="{{.Data.Repository.Name}}-{{.Data.CurrentRef}}.zip" style="text-decoration: none; border: 1px solid rgba(127, 127, 127, 0.3); padding: 5px 10px; border-radius: 4px;">Download ZIP</a>
-    <a hx-boost="false" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/archive/tar.gz?ref={{.Data.CurrentRef}}" download="{{.Data.Repository.Name}}-{{.Data.CurrentRef}}.tar.gz" style="text-decoration: none; border: 1px solid rgba(127, 127, 127, 0.3); padding: 5px 10px; border-radius: 4px;">Download TAR.GZ</a>
+  <div class="archive-downloads">
+    <a class="button secondary small" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/archive/zip?ref={{.Data.CurrentRef}}" download="{{.Data.Repository.Name}}-{{.Data.CurrentRef}}.zip">ZIP</a>
+    <a class="button secondary small" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/archive/tar.gz?ref={{.Data.CurrentRef}}" download="{{.Data.Repository.Name}}-{{.Data.CurrentRef}}.tar.gz">TAR.GZ</a>
   </div>
 </div>
 
-<div class="card" style="padding: 0; border: 1px solid rgba(127, 127, 127, 0.2); border-radius: 6px; overflow: hidden;">
-  <table style="width: 100%; border-collapse: collapse; margin: 0">
+<div class="list-card">
+  <table class="data-table file-table">
     <tbody>
       {{range .Data.Tree}}
-      <tr style="border-bottom: 1px solid rgba(127, 127, 127, 0.1)">
-        <td style="padding: 12px 15px">
-          {{if eq .Type "tree"}} 📁
-          <a href="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/tree?ref={{$.Data.CurrentRef}}&amp;path={{if $.Data.CurrentPath}}{{$.Data.CurrentPath}}/{{end}}{{.Name}}" style="text-decoration: none; color: inherit"><strong>{{.Name}}</strong>/</a>
-          {{else}} 📄
-          <a href="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/blob?ref={{$.Data.CurrentRef}}&amp;path={{if $.Data.CurrentPath}}{{$.Data.CurrentPath}}/{{end}}{{.Name}}" style="text-decoration: none; color: inherit">{{.Name}}</a>
+      <tr>
+        <td>
+          {{if eq .Type "tree"}}
+          <span class="file-kind">dir</span>
+          <a href="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/tree?ref={{$.Data.CurrentRef}}&amp;path={{if $.Data.CurrentPath}}{{$.Data.CurrentPath}}/{{end}}{{.Name}}"><strong>{{.Name}}</strong>/</a>
+          {{else}}
+          <span class="file-kind">file</span>
+          <a href="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/blob?ref={{$.Data.CurrentRef}}&amp;path={{if $.Data.CurrentPath}}{{$.Data.CurrentPath}}/{{end}}{{.Name}}">{{.Name}}</a>
           {{end}}
         </td>
-        <td class="muted" style="padding: 12px 15px; text-align: right; font-size: 0.9em; font-family: monospace;">{{if eq .Type "blob"}}{{.Size}} B{{else}}-{{end}}</td>
+        <td class="muted mono text-right">{{if eq .Type "blob"}}{{.Size}} B{{else}}-{{end}}</td>
       </tr>
       {{end}}
     </tbody>

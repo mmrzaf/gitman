@@ -1,26 +1,35 @@
 {{define "content"}}
-<div class="page-header">
-  <h2>Repositories</h2>
-  <p class="muted">Manage your Git repositories hosted on this server.</p>
+<div class="page-header page-header-row">
+  <div>
+    <h2>Repositories</h2>
+    <p class="muted">Manage Git repositories hosted on this server.</p>
+  </div>
 </div>
 
-{{template "repos_panel" .}}
+<div class="content-grid">
+  <section>
+    {{template "repos_panel" .}}
+  </section>
 
-<hr />
-<h3>Create New Repository</h3>
-<form method="POST" action="/repos" hx-post="/repos" hx-target="#repos-panel" hx-swap="outerHTML">
-  <p>
-    <label for="repo-name">Repository Name (no spaces)</label><br />
-    <input id="repo-name" type="text" name="name" required style="width: 100%; max-width: 300px" pattern="^[a-zA-Z0-9_-]+$" title="Only letters, numbers, dashes, and underscores." />
-  </p>
-  <p>
-    <label for="repo-description">Description</label><br />
-    <input id="repo-description" type="text" name="description" style="width: 100%; max-width: 500px" />
-  </p>
-  <p>
-    <label><input type="checkbox" name="is_private" checked /> Private Repository</label>
-  </p>
-  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
-  <button type="submit">Create Repository</button>
-</form>
+  <aside class="form-card side-panel">
+    <h3>Create repository</h3>
+    <p class="muted">Names may contain letters, numbers, dashes, and underscores.</p>
+    <form method="POST" action="/repos" class="form-stack">
+      <label class="field">
+        <span>Name</span>
+        <input id="repo-name" type="text" name="name" required pattern="^[a-zA-Z0-9_-]+$" title="Only letters, numbers, dashes, and underscores." />
+      </label>
+      <label class="field">
+        <span>Description</span>
+        <input id="repo-description" type="text" name="description" maxlength="500" />
+      </label>
+      <label class="checkbox-row">
+        <input type="checkbox" name="is_private" checked />
+        Private repository
+      </label>
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
+      <button type="submit">Create repository</button>
+    </form>
+  </aside>
+</div>
 {{end}}

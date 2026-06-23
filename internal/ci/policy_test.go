@@ -86,3 +86,24 @@ func TestResolverExplicitRuleOverridesDefault(t *testing.T) {
 		t.Fatalf("explicit rule was not applied: %+v", policy)
 	}
 }
+
+func TestResolverPatternRuleAllowsVersionTags(t *testing.T) {
+	database, reposPath, owner, repo := setupPolicyTest(t)
+	if err := database.UpsertRepoCIRefRule(context.Background(), models.RepoCIRefRule{
+		RepoID:            repo.ID,
+		RefType:           "tag",
+		RefName:           "v*",
+		AutoRun:           true,
+		AllowSecrets:      true,
+		AllowDockerSocket: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	policy, err := (Resolver{DB: database, ReposPath: reposPath}).Resolve(context.Background(), owner, repo, "", "v1.0.0-beta.13")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policy.Source != PolicySourceRule || policy.RefName != "v1.0.0-beta.13" || policy.RuleRefName != "v*" || !policy.AutoRun || !policy.AllowSecrets || !policy.AllowDockerSocket {
+		t.Fatalf("pattern rule was not applied: %+v", policy)
+	}
+}
