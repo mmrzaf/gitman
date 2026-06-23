@@ -75,7 +75,7 @@ jobs:
     needs: release-metadata
     steps:
       - name: Checkout release tag
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.release-metadata.outputs.version }}
           fetch-depth: 0
@@ -178,7 +178,7 @@ jobs:
             ext: '.exe'
     steps:
       - name: Checkout release tag
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.release-metadata.outputs.version }}
           fetch-depth: 0
@@ -216,7 +216,7 @@ jobs:
     needs: [release-metadata, verify]
     steps:
       - name: Checkout release tag
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.release-metadata.outputs.version }}
           fetch-depth: 0
@@ -245,7 +245,7 @@ jobs:
     needs: [release-metadata, verify]
     steps:
       - name: Checkout release tag
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.release-metadata.outputs.version }}
           fetch-depth: 0
@@ -297,7 +297,7 @@ jobs:
     needs: [release-metadata, verify]
     steps:
       - name: Checkout release tag
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.release-metadata.outputs.version }}
           fetch-depth: 0
