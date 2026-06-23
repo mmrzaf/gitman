@@ -37,7 +37,7 @@ docker compose up -d --build
 Pre-pull approved job images on the Docker host:
 
 ```bash
-docker pull golang:1.26-alpine
+docker pull golang:1.26-bookworm
 ```
 
 ## Create the first account

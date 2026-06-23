@@ -16,7 +16,7 @@ Gitman is aimed at small teams and private infrastructure. It is not a multi-ten
 
 ## Requirements
 
-- Go `1.26.4` to build from source.
+- Go `1.26` to build from source.
 - `git` available in `PATH` at runtime.
 - Docker only when the built-in CI worker is enabled.
 - OpenSSH only when SSH Git transport is enabled.
@@ -40,7 +40,7 @@ The UI is available at `http://localhost:8080` by default.
 Start the CI worker separately when CI is needed. Pull approved job images on the runner first: Gitman starts CI containers with `--pull never` so repository-controlled jobs cannot grow Docker storage by pulling arbitrary images.
 
 ```bash
-docker pull golang:1.26-alpine
+docker pull golang:1.26-bookworm
 ./bin/gitman worker
 ```
 
@@ -63,7 +63,7 @@ Open `http://localhost:8080`. See [DOCKER_SETUP.md](DOCKER_SETUP.md) before expo
 Add `.gitman-ci.yml` at the repository root:
 
 ```yaml
-image: golang:1.26-alpine
+image: golang:1.26-bookworm
 env:
   APP_ENV: test
   GOMODCACHE: /gitman/cache/go/pkg/mod

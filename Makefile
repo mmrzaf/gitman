@@ -4,7 +4,13 @@ BINARY_NAME=gitman
 BUILD_DIR=bin
 GO=go
 VERSION ?= dev
+GO_IMAGE ?= golang:1.26-bookworm
+RUNTIME_IMAGE ?= debian:bookworm-slim
+DEBIAN_MIRROR ?= http://linux-mirror.liara.ir/repository/debian
+DEBIAN_SECURITY_MIRROR ?= http://linux-mirror.liara.ir/repository/debian-security
+GOPROXY ?= https://mirror.abrha.net/repository/go/,direct
 LDFLAGS=-s -w -X main.version=$(VERSION)
+DOCKER_BUILD_ARGS=--build-arg GO_IMAGE="$(GO_IMAGE)" --build-arg RUNTIME_IMAGE="$(RUNTIME_IMAGE)" --build-arg DEBIAN_MIRROR="$(DEBIAN_MIRROR)" --build-arg DEBIAN_SECURITY_MIRROR="$(DEBIAN_SECURITY_MIRROR)" --build-arg GOPROXY="$(GOPROXY)" --build-arg VERSION="$(VERSION)"
 
 # Default target
 .DEFAULT_GOAL := help
@@ -32,7 +38,7 @@ verify: ## Run release verification checks
 	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/gitman
 	test "$$($(BUILD_DIR)/$(BINARY_NAME) version)" = "$(VERSION)"
 	test "$$($(BUILD_DIR)/$(BINARY_NAME) --version)" = "$(VERSION)"
-	docker build --build-arg VERSION="$(VERSION)" -t gitman:verify .
+	docker build $(DOCKER_BUILD_ARGS) -t gitman:verify .
 	test "$$(docker run --rm gitman:verify gitman version)" = "$(VERSION)"
 
 release-source: ## Create tracked-files-only source archive
@@ -95,8 +101,8 @@ lint: ## Run linter
 	golangci-lint run
 
 deps: ## Download and tidy dependencies
-	$(GO) mod download
-	$(GO) mod tidy
+	GOPROXY=$(GOPROXY) $(GO) mod download
+	GOPROXY=$(GOPROXY) $(GO) mod tidy
 
 mod-update: ## Update dependencies
 	$(GO) get -u ./...
