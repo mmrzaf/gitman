@@ -1,25 +1,66 @@
-image: gitman-ci-go:1.24-alpine
+image: docker:29-cli
+
+docker: true
 
 env:
-  GOMODCACHE: /gitman/cache/go/pkg/mod
-  GOCACHE: /gitman/cache/go/build
-  CGO_ENABLED: "0"
-  GOFLAGS: "-mod=mod"
-  GOPROXY: https://mirror.abrha.net/repository/go/,direct
-  GOTMPDIR: /gitman/cache/go/tmp
+  IMAGE_NAME: gitman
+  DOCKER_BUILDKIT: "1"
 
 steps:
-  - name: prepare cache
+  - name: verify docker access
     run: |
-      mkdir -p "$GOMODCACHE" "$GOCACHE" "$GOTMPDIR"
-      echo "Module cache: $GOMODCACHE"
-      echo "Build cache: $GOCACHE"
+      set -eu
+      docker version
 
-  - name: test
-    run: go test ./...
-
-  - name: build
-    run: go build ./cmd/gitman
-  - name: save cache
+  - name: resolve image tag
     run: |
-      echo "Go cache persisted in /gitman/cache"
+      set -eu
+
+      REF_KIND="commit"
+      RAW_IMAGE_TAG="$GITMAN_COMMIT"
+
+      if [ -n "${GITMAN_TAG:-}" ]; then
+        REF_KIND="tag"
+        RAW_IMAGE_TAG="$GITMAN_TAG"
+      fi
+
+      IMAGE_TAG="$(printf '%s' "$RAW_IMAGE_TAG" \
+        | sed 's/[^A-Za-z0-9_.-]/-/g' \
+        | sed 's/^[.-]*//' \
+        | sed 's/[.-]*$//' \
+        | cut -c1-128)"
+
+      if [ -z "$IMAGE_TAG" ]; then
+        IMAGE_TAG="$GITMAN_COMMIT"
+      fi
+
+      cat > .gitman-image.env <<EOF_TAG
+      REF_KIND=$REF_KIND
+      RAW_IMAGE_TAG=$RAW_IMAGE_TAG
+      IMAGE_TAG=$IMAGE_TAG
+      IMAGE_REF=$IMAGE_NAME:$IMAGE_TAG
+      EOF_TAG
+
+      cat .gitman-image.env
+
+  - name: build docker image
+    run: |
+      set -eu
+      . ./.gitman-image.env
+
+      docker build \
+        --pull=false \
+        --build-arg VERSION="$IMAGE_TAG" \
+        --label "org.opencontainers.image.revision=$GITMAN_COMMIT" \
+        --label "org.opencontainers.image.ref.name=$RAW_IMAGE_TAG" \
+        --label "org.opencontainers.image.version=$IMAGE_TAG" \
+        --tag "$IMAGE_REF" \
+        .
+
+  - name: verify built image
+    run: |
+      set -eu
+      . ./.gitman-image.env
+
+      docker image inspect "$IMAGE_REF" >/dev/null
+      docker run --rm "$IMAGE_REF" gitman version

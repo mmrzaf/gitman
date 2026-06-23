@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- Go `1.24.6`.
+- Go `1.26.4`.
 - `git` in `PATH` for all Gitman commands after top-level help.
 - Docker CLI and Docker daemon access only for `gitman worker`.
 - Host OpenSSH only when SSH Git transport is enabled.
@@ -44,7 +44,7 @@ The current web process listens on all interfaces for the selected port. `GITMAN
 Run the worker separately only on a host intended to execute CI jobs:
 
 ```bash
-docker pull golang:1.24-alpine
+docker pull golang:1.26-alpine
 ./bin/gitman worker
 ```
 

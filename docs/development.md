@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Go `1.24.6`.
+- Go `1.26.4`.
 - `git` in `PATH`.
 - Docker only for exercising the CI worker.
 
@@ -28,7 +28,7 @@ GITMAN_LOG_LEVEL=debug ./bin/gitman web
 ## Local worker
 
 ```bash
-docker pull alpine:3.20
+docker pull alpine:3.24
 GITMAN_LOG_LEVEL=debug ./bin/gitman worker
 ```
 

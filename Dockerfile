@@ -1,4 +1,4 @@
-FROM golang:1.24.6-alpine AS builder
+FROM golang:1.26.4-alpine AS builder
 
 RUN apk add --no-cache git ca-certificates
 
@@ -7,9 +7,10 @@ COPY go.mod go.sum ./
 RUN GOTOOLCHAIN=local go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOTOOLCHAIN=local go build -trimpath -ldflags="-s -w" -o /gitman ./cmd/gitman
+ARG VERSION=dev
+RUN CGO_ENABLED=0 GOTOOLCHAIN=local go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /gitman ./cmd/gitman
 
-FROM alpine:3.20
+FROM alpine:3.24
 
 ARG GIT_UID=1000
 RUN apk add --no-cache git git-daemon curl bash docker-cli ca-certificates \

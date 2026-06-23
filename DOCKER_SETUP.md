@@ -46,7 +46,7 @@ GITMAN_BIND_ADDRESS=0.0.0.0 docker compose up -d
 Gitman starts CI containers with `--pull never`. Pre-pull approved images on the Docker host before triggering jobs:
 
 ```bash
-docker pull golang:1.24-alpine
+docker pull golang:1.26-alpine
 ```
 
 This prevents repository-controlled CI configuration from pulling arbitrary images into Docker storage. Set `GITMAN_CI_CONTAINER_USER` only when a numeric non-root UID:GID override is required; otherwise the worker uses its own numeric non-root UID:GID. Running the CI worker as root is rejected.
