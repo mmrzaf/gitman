@@ -118,6 +118,24 @@ func escapePath(s string) string {
 var templateFuncs = template.FuncMap{
 	"short":      shortString,
 	"pathEscape": escapePath,
+	"statusLabel": func(status string) string {
+		label, _ := StatusBadge(status)
+		return label
+	},
+	"statusClass": func(status string) string {
+		_, class := StatusBadge(status)
+		return class
+	},
+	"runDuration": func(run any) string {
+		switch v := run.(type) {
+		case *models.CIRun:
+			return FormatDuration(v)
+		case models.CIRun:
+			return FormatDuration(&v)
+		default:
+			return ""
+		}
+	},
 }
 
 func LoadTemplates() (map[string]*template.Template, error) {

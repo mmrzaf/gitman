@@ -29,7 +29,14 @@ const (
 	shutdownGrace = 60 * time.Second
 )
 
-var errDiskLimitExceeded = errors.New("disk limit exceeded")
+var (
+	errDiskLimitExceeded           = errors.New("disk limit exceeded")
+	errDockerSocketWorkerDisabled  = errors.New("docker socket access disabled by worker")
+	errDockerSocketRefNotTrusted   = errors.New("docker socket access not trusted for ref")
+	errDockerSocketUnavailable     = errors.New("docker socket unavailable")
+	errDockerHostPathMisconfigured = errors.New("docker host path mapping misconfigured")
+	errCISecretsRefNotTrusted      = errors.New("CI secrets not trusted for ref")
+)
 
 func Run(cfg *config.Config, database *db.DB) error {
 	if err := validateWorkerConfig(cfg); err != nil {
@@ -283,6 +290,7 @@ func (j *job) execute(ctx context.Context) error {
 
 	j.checkout = filepath.Join(j.workspace, "src")
 	if err := j.clone(ctx); err != nil {
+		j.logRunnerFailure(ctx, err, nil)
 		return j.complete(ctx, "failed")
 	}
 
@@ -314,10 +322,12 @@ func (j *job) execute(ctx context.Context) error {
 		return j.complete(ctx, "failed")
 	}
 	j.refPolicy = policy
+	j.logf("Ref policy : %s", j.refPolicySummary())
+	j.logf("")
 
 	envFile, err := j.resolveEnvFile(ctx, ciCfg)
 	if err != nil {
-		j.logf("ERROR: %v", err)
+		j.logRunnerFailure(ctx, err, ciCfg)
 		return j.complete(ctx, "failed")
 	}
 	j.enableSecretMasking()
@@ -345,14 +355,82 @@ func (j *job) execute(ctx context.Context) error {
 	finalStatus := "success"
 	if dockerErr != nil {
 		finalStatus = "failed"
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			j.logf("ERROR: CI job timed out after %s", j.cfg.CIJobTimeout)
-		}
+		j.logRunnerFailure(ctx, dockerErr, ciCfg)
 	}
 
 	j.logf("")
 	j.logf("=== Run %s: %s ===", j.run.ID, strings.ToUpper(finalStatus))
 	return j.complete(ctx, finalStatus)
+}
+
+func (j *job) logSection(name string) {
+	j.logf("--- %s ---", name)
+}
+
+func (j *job) logError(format string, args ...any) {
+	j.logf("ERROR: "+format, args...)
+}
+
+func (j *job) refPolicySummary() string {
+	if j.refPolicy.RefType == "" && j.refPolicy.RefName == "" {
+		return "not resolved"
+	}
+	matched := ""
+	if j.refPolicy.RuleRefName != "" && j.refPolicy.RuleRefName != j.refPolicy.RefName {
+		matched = fmt.Sprintf(", matched=%q", j.refPolicy.RuleRefName)
+	}
+	return fmt.Sprintf("%s %q from %s%s (auto_run=%t secrets=%t docker_socket=%t)",
+		j.refPolicy.RefType,
+		j.refPolicy.RefName,
+		j.refPolicy.Source,
+		matched,
+		j.refPolicy.AutoRun,
+		j.refPolicy.AllowSecrets,
+		j.refPolicy.AllowDockerSocket,
+	)
+}
+
+func (j *job) logRunnerFailure(ctx context.Context, err error, cfg *CIConfig) {
+	if err == nil {
+		return
+	}
+	switch {
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+		j.logError("CI job timed out after %s.", j.cfg.CIJobTimeout)
+	case errors.Is(err, errDockerSocketWorkerDisabled):
+		j.logError("Docker socket access was requested by .gitman-ci.yml, but the worker does not allow Docker socket passthrough.")
+		j.logf("Details    : %v", err)
+		j.logf("Fix        : set GITMAN_CI_ALLOW_DOCKER_SOCKET=true, mount the Docker socket into the worker, and recreate the worker container.")
+	case errors.Is(err, errDockerSocketRefNotTrusted):
+		j.logError("Docker socket access was requested by .gitman-ci.yml, but this %s %q is not trusted for Docker socket access.", j.refPolicy.RefType, j.refPolicy.RefName)
+		j.logf("Ref policy : %s", j.refPolicySummary())
+		j.logf("Details    : %v", err)
+		j.logf("Fix        : add or update a matching CI ref rule and enable Docker socket access. For release tags, use a rule like: tag v*")
+	case errors.Is(err, errDockerSocketUnavailable):
+		j.logError("Docker socket access was requested, but the configured socket is unavailable or invalid.")
+		j.logf("Details    : %v", err)
+		j.logf("Fix        : verify GITMAN_CI_DOCKER_SOCKET_PATH and the worker socket mount.")
+	case errors.Is(err, errCISecretsRefNotTrusted):
+		j.logError("CI secrets were requested by .gitman-ci.yml, but this %s %q is not trusted for secrets.", j.refPolicy.RefType, j.refPolicy.RefName)
+		j.logf("Ref policy : %s", j.refPolicySummary())
+		j.logf("Details    : %v", err)
+		j.logf("Fix        : add or update a matching CI ref rule and enable secrets.")
+	case errors.Is(err, errDockerHostPathMisconfigured):
+		j.logError("Docker host path mapping is misconfigured.")
+		j.logf("Details    : %v", err)
+		j.logf("Fix        : set GITMAN_CI_WORKER_PATH_PREFIX and GITMAN_CI_HOST_PATH_PREFIX together, or unset both for a non-containerized worker.")
+	case errors.Is(err, errDiskLimitExceeded):
+		j.logError("CI disk limit exceeded.")
+		j.logf("Details    : %v", err)
+		j.logf("Fix        : reduce workspace/cache/artifact output or increase the CI size limits.")
+	case cfg != nil && cfg.Image != "" && strings.Contains(strings.ToLower(err.Error()), "no such image"):
+		j.logError("Runner image %q is not available locally and Gitman is configured with --pull=never.", cfg.Image)
+		j.logf("Details    : %v", err)
+		j.logf("Fix        : pre-pull the image on the worker host or change the CI image to one already available.")
+	default:
+		j.logError("CI runner failed before or during execution.")
+		j.logf("Details    : %v", err)
+	}
 }
 
 func (j *job) complete(ctx context.Context, status string) error {
@@ -370,10 +448,10 @@ func (j *job) clone(ctx context.Context) error {
 	repoURL := "file://" + bareRepo
 	cloneLimits := []diskLimit{{name: "workspace", path: j.workspace, maxBytes: j.cfg.CIWorkspaceMaxBytes}}
 
-	j.logf("--- Cloning repository ---")
+	j.logSection("Cloning repository")
 	usedFullClone := false
 	cloneCmd := exec.CommandContext(ctx,
-		"git", "clone", "--no-local", "--depth", "1",
+		"git", "-c", "advice.detachedHead=false", "clone", "--no-local", "--depth", "1",
 		"--branch", selectRef(j.run.Branch, j.run.Tag),
 		repoURL, j.checkout,
 	)
@@ -413,7 +491,7 @@ func (j *job) fullClone(ctx context.Context, repoURL string, limits []diskLimit)
 	if err := os.RemoveAll(j.checkout); err != nil {
 		return fmt.Errorf("reset checkout before full clone: %w", err)
 	}
-	fallback := exec.CommandContext(ctx, "git", "clone", "--no-local", repoURL, j.checkout)
+	fallback := exec.CommandContext(ctx, "git", "-c", "advice.detachedHead=false", "clone", "--no-local", repoURL, j.checkout)
 	fallback.Stdout = j.logWriter
 	fallback.Stderr = j.logWriter
 	if err := runCommandWithDiskLimits(ctx, fallback, limits); err != nil {
@@ -427,7 +505,7 @@ func (j *job) checkoutCommit(ctx context.Context) error {
 	if len(j.run.CommitHash) < 7 {
 		return nil
 	}
-	cmd := exec.CommandContext(ctx, "git", "-C", j.checkout, "checkout", j.run.CommitHash)
+	cmd := exec.CommandContext(ctx, "git", "-C", j.checkout, "-c", "advice.detachedHead=false", "checkout", "--detach", j.run.CommitHash)
 	cmd.Stdout = j.logWriter
 	cmd.Stderr = j.logWriter
 	if err := cmd.Run(); err != nil {
@@ -449,7 +527,7 @@ func (j *job) resolveEnvFile(ctx context.Context, cfg *CIConfig) (string, error)
 
 	if hasSecrets {
 		if !j.refPolicy.AllowSecrets {
-			return "", fmt.Errorf("pipeline requests CI secrets, but ref %s %q is not trusted for secrets", j.refPolicy.RefType, j.refPolicy.RefName)
+			return "", fmt.Errorf("%w: pipeline requests CI secrets, but ref %s %q is not trusted for secrets", errCISecretsRefNotTrusted, j.refPolicy.RefType, j.refPolicy.RefName)
 		}
 		secrets, err := j.database.GetRepoSecrets(ctx, j.repo.id)
 		if err != nil {
@@ -538,16 +616,27 @@ func (j *job) generateRunnerScript(cfg *CIConfig) string {
 	sb.WriteString("#!/bin/sh\n")
 	sb.WriteString("set -eu\n\n")
 	sb.WriteString("mkdir -p /gitman/artifacts /tmp/gitman-home\n")
-	sb.WriteString("export HOME=/tmp/gitman-home\n\n")
+	sb.WriteString("export HOME=/tmp/gitman-home\n")
+	sb.WriteString("gitman_current_step=\"\"\n")
+	sb.WriteString("gitman_on_exit() {\n")
+	sb.WriteString("  status=$?\n")
+	sb.WriteString("  if [ \"$status\" -ne 0 ] && [ -n \"$gitman_current_step\" ]; then\n")
+	sb.WriteString("    printf '%s --- Step: %s: FAILED (exit %s) ---\\n' \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\" \"$gitman_current_step\" \"$status\"\n")
+	sb.WriteString("  fi\n")
+	sb.WriteString("  exit \"$status\"\n")
+	sb.WriteString("}\n")
+	sb.WriteString("trap gitman_on_exit EXIT\n\n")
 
 	for _, step := range cfg.Steps {
 		quotedName := shellSingleQuote(step.Name)
+		fmt.Fprintf(&sb, "gitman_current_step=%s\n", quotedName)
 		fmt.Fprintf(&sb, "printf '%%s --- Step: %%s ---\\n' \"$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)\" %s\n", quotedName)
 		sb.WriteString(step.Run)
 		if !strings.HasSuffix(step.Run, "\n") {
 			sb.WriteString("\n")
 		}
-		fmt.Fprintf(&sb, "printf '%%s --- Step: %%s: SUCCESS ---\\n' \"$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)\" %s\n\n", quotedName)
+		fmt.Fprintf(&sb, "printf '%%s --- Step: %%s: SUCCESS ---\\n' \"$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)\" %s\n", quotedName)
+		sb.WriteString("gitman_current_step=\"\"\n\n")
 	}
 
 	return sb.String()
@@ -566,21 +655,21 @@ func (j *job) runDocker(ctx context.Context, cfg *CIConfig, envFile, runnerPath 
 	cidFile := filepath.Join(j.workspace, "container.cid")
 	hostCheckout, err := j.dockerHostPath(j.checkout)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: checkout path: %w", errDockerHostPathMisconfigured, err)
 	}
 	hostArtifacts, err := j.dockerHostPath(j.artifactsStagingDir)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: artifacts path: %w", errDockerHostPathMisconfigured, err)
 	}
 	hostRunner, err := j.dockerHostPath(runnerPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: runner path: %w", errDockerHostPathMisconfigured, err)
 	}
 	hostCacheDir := ""
 	if cacheDir != "" {
 		hostCacheDir, err = j.dockerHostPath(cacheDir)
 		if err != nil {
-			return err
+			return fmt.Errorf("%w: cache path: %w", errDockerHostPathMisconfigured, err)
 		}
 	}
 	defer func() {
@@ -627,7 +716,7 @@ func (j *job) runDocker(ctx context.Context, cfg *CIConfig, envFile, runnerPath 
 	}
 	args = append(args, cfg.Image, "/bin/sh", "/gitman/runner.sh")
 
-	j.logf("--- Starting container ---")
+	j.logSection("Starting container")
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Stdout = j.logWriter
 	cmd.Stderr = j.logWriter
@@ -641,7 +730,7 @@ func (j *job) runDocker(ctx context.Context, cfg *CIConfig, envFile, runnerPath 
 		return err
 	}
 	if err := cmd.Start(); err != nil {
-		return err
+		return fmt.Errorf("start Docker runner container: %w", err)
 	}
 
 	watchCtx, stopWatch := context.WithCancel(context.Background())
@@ -670,7 +759,7 @@ func (j *job) runDocker(ctx context.Context, cfg *CIConfig, envFile, runnerPath 
 		}
 	}
 
-	j.logf("--- Container exited ---")
+	j.logSection("Container exited")
 	if err != nil {
 		j.logf("Exit status: FAILED (%v)", err)
 	} else {
@@ -684,14 +773,14 @@ func appendDockerSocketArgs(args []string, cfg *config.Config, enabled bool, ref
 		return args, nil
 	}
 	if !cfg.CIAllowDockerSocket {
-		return nil, fmt.Errorf("pipeline requests docker socket access, but GITMAN_CI_ALLOW_DOCKER_SOCKET is disabled")
+		return nil, fmt.Errorf("%w: pipeline requests docker socket access, but GITMAN_CI_ALLOW_DOCKER_SOCKET is disabled", errDockerSocketWorkerDisabled)
 	}
 	if !refAllowed {
-		return nil, fmt.Errorf("pipeline requests docker socket access, but the CI ref is not trusted for Docker socket access")
+		return nil, fmt.Errorf("%w: pipeline requests docker socket access, but the CI ref is not trusted for Docker socket access", errDockerSocketRefNotTrusted)
 	}
 	gid, err := dockerSocketGroupID(cfg.CIDockerSocketPath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", errDockerSocketUnavailable, err)
 	}
 	return append(args,
 		"-v", fmt.Sprintf("%s:/var/run/docker.sock", cfg.CIDockerSocketPath),
@@ -1172,7 +1261,7 @@ func runCommandWithDiskLimits(ctx context.Context, cmd *exec.Cmd, limits []diskL
 		return err
 	}
 	if err := cmd.Start(); err != nil {
-		return err
+		return fmt.Errorf("start command: %w", err)
 	}
 
 	done := make(chan struct{})

@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"html"
 	"io"
 	"log/slog"
 	"mime"
@@ -504,8 +503,8 @@ var ansiEscapeRegex = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 
 func writeCILogFragment(w http.ResponseWriter, content string) {
 	noStore(w)
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = io.WriteString(w, html.EscapeString(content))
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = io.WriteString(w, content)
 }
 
 func (app *App) HandleCIRunLogGET(w http.ResponseWriter, r *http.Request) {

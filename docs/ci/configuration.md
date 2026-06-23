@@ -105,6 +105,12 @@ The default network mode is `none`. Dependencies must come from the image, repos
 
 Gitman uses `docker run --pull never`. Ask an operator to pre-pull or build approved images before referencing them.
 
+## Log format and failure handling
+
+Gitman writes timestamped CI logs. Each shell step prints a start marker and either a success marker or a failure marker with the exit code. Failures that happen before the job container starts, such as Docker socket policy denial, missing local image, bad path mapping, or disk-limit failures, are printed with `ERROR`, `Details`, and a practical `Fix` line.
+
+Git checkout uses detached commits internally, but Gitman's worker suppresses Git's detached-head advice so logs stay focused on CI output.
+
 ## Cache behavior
 
 The worker serializes cache writes per repository. If it cannot obtain the cache lock promptly, the job runs without `/gitman/cache`. Keep jobs correct when the cache is absent.

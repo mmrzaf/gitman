@@ -1,18 +1,18 @@
 {{define "base.html"}}
 <!doctype html>
-<html lang="en" data-theme="auto">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <title>{{if .Title}}{{.Title}} - {{end}}Gitman</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="theme-color"
-      content="#005bbb"
+      content="#f6f7f8"
       media="(prefers-color-scheme: light)"
     />
     <meta
       name="theme-color"
-      content="#1d1f23"
+      content="#16181b"
       media="(prefers-color-scheme: dark)"
     />
     <link rel="icon" href="/static/favicon.ico" sizes="any" />
@@ -20,50 +20,100 @@
     <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png" />
     <link rel="apple-touch-icon" href="/static/apple-touch-icon.png" />
     <link rel="manifest" href="/static/site.webmanifest" />
-    <link rel="stylesheet" href="/static/css/water.min.css" />
-    <script src="/static/js/htmx.min.js" defer></script>
+    <script src="/static/js/gitman.js" defer></script>
 
     <style>
       :root {
-        --bg: #f7f7f8;
-        --text: #222;
-        --muted: #666;
+        --bg: #f6f7f8;
+        --text: #202124;
+        --muted: #6b7280;
         --card-bg: #ffffff;
-        --border: #ccc;
+        --border: #d8dde3;
+        --border-soft: #e8ebef;
         --input-bg: #ffffff;
-        --input-border: #bbb;
-        --code-bg: #f0f0f0;
-        --link: #005bbb;
-        --button-bg: #005bbb;
-        --button-text: #fff;
+        --input-border: #c9cfd6;
+        --code-bg: #f2f4f7;
+        --link: #0b57d0;
+        --button-bg: #1f2937;
+        --button-text: #ffffff;
+        --danger: #b42318;
+        --danger-border: #e6b8b4;
+        --success: #0f766e;
+        --warning: #9a6700;
+        --info: #1d4ed8;
+        --focus: rgba(11, 87, 208, 0.25);
+        --chip-bg: #f1f3f5;
+        --nav-hover: #eef1f4;
+        --radius: 8px;
       }
+
       @media (prefers-color-scheme: dark) {
         :root {
-          --bg: #1d1f23;
-          --text: #e6e6e6;
-          --muted: #a3a3a3;
-          --card-bg: #2a2c30;
-          --border: #4a4d52;
-          --input-bg: #2f3136;
-          --input-border: #555;
-          --code-bg: #2a2c30;
-          --link: #66aaff;
-          --button-bg: #3578e5;
+          --bg: #16181b;
+          --text: #e8eaed;
+          --muted: #a9b0bb;
+          --card-bg: #1f2328;
+          --border: #3b424c;
+          --border-soft: #303640;
+          --input-bg: #1b1f24;
+          --input-border: #4b5563;
+          --code-bg: #15191f;
+          --link: #8ab4f8;
+          --button-bg: #d1d5db;
+          --button-text: #111827;
+          --danger-border: #7f1d1d;
+          --focus: rgba(138, 180, 248, 0.25);
+          --chip-bg: #252b33;
+          --nav-hover: #242a31;
         }
       }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        min-height: 100%;
+      }
+
       body {
-        max-width: 900px;
+        max-width: 980px;
         margin: 0 auto;
         padding: 1.5rem;
         background: var(--bg);
         color: var(--text);
+        font-family: Arial, Helvetica, sans-serif;
+        font-size: 15px;
+        line-height: 1.5;
       }
+
       a {
         color: var(--link);
       }
+
+      a:hover {
+        text-decoration-thickness: 2px;
+      }
+
+      h1,
+      h2,
+      h3,
+      h4 {
+        line-height: 1.25;
+      }
+
+      h1,
+      h2,
+      h3,
+      h4,
+      p {
+        margin-top: 0;
+      }
+
       .muted {
         color: var(--muted);
       }
+
       input,
       textarea,
       select {
@@ -71,121 +121,503 @@
         color: var(--text);
         border: 1px solid var(--input-border);
         border-radius: 6px;
-        padding: 0.5rem;
-      }
-      button,
-      .button {
-        background: var(--button-bg);
-        color: var(--button-text) !important;
-        border: none;
-        padding: 0.45rem 0.9rem;
-        border-radius: 6px;
-        cursor: pointer;
-      }
-      code,
-      pre {
-        background: var(--code-bg) !important;
-        color: var(--text);
-      }
-      .card {
-        background: var(--card-bg);
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        padding: 1rem 1.25rem;
-        margin-bottom: 1rem;
+        padding: 0.48rem 0.58rem;
+        font: inherit;
       }
 
-      .flash-error {
-        background: #fbeaea;
-        border-left: 4px solid #d9534f;
-        padding: 0.75rem 1rem;
-        border-radius: 6px;
-        margin-bottom: 1rem;
-        color: #222;
+      input:focus,
+      textarea:focus,
+      select:focus {
+        outline: 2px solid var(--focus);
+        border-color: var(--link);
       }
-      .flash-success {
-        background: #eafbe8;
-        border-left: 4px solid #5cb85c;
-        padding: 0.75rem 1rem;
-        border-radius: 6px;
-        margin-bottom: 1rem;
-        color: #222;
-      }
-      @media (prefers-color-scheme: dark) {
-        .flash-error {
-          background: #3a1f1f;
-          border-left-color: #e57373;
-          color: #ffb3b3;
-        }
-        .flash-success {
-          background: #1f3a22;
-          border-left-color: #81c784;
-          color: #b3ffb6;
-        }
-      }
-      header {
-        display: flex;
-        justify-content: space-between;
+
+      button,
+      .button {
+        display: inline-flex;
         align-items: center;
-        margin-bottom: 2rem;
+        justify-content: center;
+        gap: 0.35rem;
+        background: var(--button-bg);
+        color: var(--button-text) !important;
+        border: 1px solid var(--button-bg);
+        padding: 0.45rem 0.85rem;
+        border-radius: 6px;
+        cursor: pointer;
+        font: inherit;
+        font-weight: 600;
+        text-decoration: none;
+        white-space: nowrap;
       }
-      nav a,
-      nav form {
-        margin-left: 1rem;
+
+      button:hover,
+      .button:hover {
+        filter: brightness(0.96);
+        text-decoration: none;
       }
-      nav form {
-        display: inline;
+
+      button:disabled,
+      .button[aria-disabled="true"] {
+        opacity: 0.55;
+        cursor: not-allowed;
       }
+
+      .button.secondary,
+      button.secondary {
+        background: transparent;
+        color: var(--text) !important;
+        border-color: var(--border);
+      }
+
+      .button.danger,
+      button.danger {
+        background: transparent;
+        color: var(--danger) !important;
+        border-color: var(--danger-border);
+      }
+
+      .button.small,
+      button.small {
+        padding: 0.25rem 0.55rem;
+        font-size: 0.88rem;
+      }
+
       .link-button {
         background: none;
         border: 0;
         color: var(--link) !important;
         padding: 0;
         font: inherit;
+        font-weight: 500;
         text-decoration: underline;
         cursor: pointer;
       }
-      /* Consistent repo navigation style */
-      .repo-nav {
-        margin-bottom: 1.5rem;
-        border-bottom: 1px solid rgba(127, 127, 127, 0.2);
-        padding-bottom: 10px;
-        font-size: 1.05em;
+
+      code,
+      pre,
+      .log-box {
+        font-family:
+          ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+          "Liberation Mono", "Courier New", monospace;
       }
-      .repo-nav a,
-      .repo-nav strong {
-        margin-right: 0.5rem;
+
+      code,
+      pre {
+        background: var(--code-bg) !important;
+        color: var(--text);
+      }
+
+      code {
+        border-radius: 4px;
+        padding: 0.08rem 0.22rem;
+      }
+
+      pre {
+        border: 1px solid var(--border-soft);
+        border-radius: var(--radius);
+        padding: 1rem;
+        overflow-x: auto;
+      }
+
+      header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 1rem;
+        margin-bottom: 2rem;
+        padding-bottom: 1rem;
+        border-bottom: 1px solid var(--border-soft);
+      }
+
+      header h1 {
+        margin: 0;
+        font-size: 1.45rem;
+      }
+
+      .brand {
+        color: inherit;
         text-decoration: none;
       }
-      .repo-nav a:hover {
+
+      .brand:hover {
         text-decoration: underline;
+      }
+
+      nav {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        flex-wrap: wrap;
+      }
+
+      nav a,
+      nav form {
+        margin: 0;
+      }
+
+      nav form {
+        display: inline;
+      }
+
+      .card {
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 1rem 1.25rem;
+        margin-bottom: 1rem;
+      }
+
+      .card.tight {
+        padding: 0.75rem 1rem;
+      }
+
+      .page-header {
+        margin-bottom: 1.25rem;
+      }
+
+      .page-header h2 {
+        margin-bottom: 0.25rem;
+      }
+
+      .panel-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        margin-bottom: 0.75rem;
+      }
+
+      .panel-title h3,
+      .panel-title h4 {
+        margin: 0;
+      }
+
+      .repo-title a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      .repo-title a:hover {
+        text-decoration: underline;
+      }
+
+      .page-actions,
+      .toolbar,
+      .form-row {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+      }
+
+      .toolbar {
+        justify-content: space-between;
+        margin-bottom: 1rem;
+      }
+
+      .form-row {
+        align-items: end;
+      }
+
+      .form-help {
+        flex-basis: 100%;
+        margin: 0;
+        font-size: 0.88rem;
+      }
+
+      .field label,
+      label.field {
+        display: block;
+        font-size: 0.92rem;
+        font-weight: 600;
+      }
+
+      .field span {
+        display: block;
+        margin-bottom: 0.2rem;
+      }
+
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        border: 1px solid var(--border-soft);
+        background: var(--chip-bg);
+        border-radius: 999px;
+        padding: 0.14rem 0.5rem;
+        font-size: 0.84rem;
+        white-space: nowrap;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        padding: 0.18rem 0.58rem;
+        font-size: 0.78rem;
+        font-weight: 700;
+        line-height: 1.3;
+        white-space: nowrap;
+      }
+
+      .badge-success {
+        color: #166534;
+        background: #dcfce7;
+        border-color: #86efac;
+      }
+
+      .badge-failed {
+        color: #991b1b;
+        background: #fee2e2;
+        border-color: #fecaca;
+      }
+
+      .badge-running {
+        color: #1e40af;
+        background: #dbeafe;
+        border-color: #bfdbfe;
+      }
+
+      .badge-pending {
+        color: #854d0e;
+        background: #fef3c7;
+        border-color: #fde68a;
+      }
+
+      .badge-skipped,
+      .badge-cancelled,
+      .badge-unknown {
+        color: #374151;
+        background: #f3f4f6;
+        border-color: #d1d5db;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        .badge-success {
+          color: #bbf7d0;
+          background: #14351f;
+          border-color: #166534;
+        }
+
+        .badge-failed {
+          color: #fecaca;
+          background: #3f1515;
+          border-color: #991b1b;
+        }
+
+        .badge-running {
+          color: #bfdbfe;
+          background: #12254f;
+          border-color: #1e40af;
+        }
+
+        .badge-pending {
+          color: #fde68a;
+          background: #3b2a0a;
+          border-color: #854d0e;
+        }
+
+        .badge-skipped,
+        .badge-cancelled,
+        .badge-unknown {
+          color: #d1d5db;
+          background: #20252d;
+          border-color: #4b5563;
+        }
+      }
+
+      .data-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.92rem;
+      }
+
+      .data-table th,
+      .data-table td {
+        border-bottom: 1px solid var(--border-soft);
+        padding: 0.6rem 0.55rem;
+        text-align: left;
+        vertical-align: top;
+      }
+
+      .data-table th {
+        color: var(--muted);
+        font-weight: 700;
+      }
+
+      .data-table tr:last-child td {
+        border-bottom: 0;
+      }
+
+      .metadata {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.92rem;
+      }
+
+      .metadata th,
+      .metadata td {
+        padding: 0.28rem 0.6rem 0.28rem 0;
+        text-align: left;
+        vertical-align: top;
+      }
+
+      .metadata th {
+        color: var(--muted);
+        font-weight: 600;
+        width: 8rem;
+        white-space: nowrap;
+      }
+
+      .ci-run-row {
+        display: flex;
+        align-items: center;
+        gap: 0.85rem;
+        padding: 0.78rem 1rem;
+      }
+
+      .ci-run-row + .ci-run-row {
+        border-top: 1px solid var(--border-soft);
+      }
+
+      .ci-run-main {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .ci-run-meta {
+        font-size: 0.84rem;
+        margin-top: 0.12rem;
+      }
+
+      .empty-state {
+        text-align: center;
+        padding: 2rem;
+        border-style: dashed;
+      }
+
+      .log-box {
+        background: var(--code-bg) !important;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 1rem;
+        overflow-x: auto;
+        white-space: pre-wrap;
+        font-size: 0.85rem;
+        max-height: 640px;
+        overflow-y: auto;
+      }
+
+      .flash-error,
+      .flash-success {
+        padding: 0.75rem 1rem;
+        border-radius: 6px;
+        margin-bottom: 1rem;
+      }
+
+      .flash-error {
+        background: #fef2f2;
+        border-left: 4px solid #dc2626;
+        color: #7f1d1d;
+      }
+
+      .flash-success {
+        background: #f0fdf4;
+        border-left: 4px solid #16a34a;
+        color: #14532d;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        .flash-error {
+          background: #341515;
+          color: #fecaca;
+        }
+
+        .flash-success {
+          background: #12351f;
+          color: #bbf7d0;
+        }
+      }
+
+      .repo-nav {
+        display: flex;
+        gap: 0.35rem;
+        flex-wrap: wrap;
+        margin-bottom: 1.25rem;
+        border-bottom: 1px solid var(--border-soft);
+        padding-bottom: 0.65rem;
+      }
+
+      .repo-nav a,
+      .repo-nav strong {
+        margin: 0;
+        padding: 0.25rem 0.5rem;
+        border-radius: 6px;
+        text-decoration: none;
+      }
+
+      .repo-nav a:hover {
+        background: var(--chip-bg);
+        text-decoration: none;
+      }
+
+      @media (max-width: 720px) {
+        body {
+          padding: 1rem;
+        }
+
+        header {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        .ci-run-row {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        .toolbar,
+        .panel-title {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        .metadata th {
+          width: auto;
+        }
       }
     </style>
   </head>
-  <body hx-boost="true">
+
+  <body>
     <header>
       <h1>
-        <a href="/" style="text-decoration: none; color: inherit">Gitman</a>
+        <a class="brand" href="/">Gitman</a>
       </h1>
+
       <nav>
         {{if .User}}
-        <span class="muted">Signed in as {{.User.Username}}</span>
-        <a href="/repos">Repos</a>
-        <a href="/tokens">Access Tokens</a>
-        <a href="/keys">SSH Keys</a>
-        <form method="post" action="/logout" hx-boost="false">
-          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
-          <button class="link-button" type="submit">Logout</button>
-        </form>
-        {{else}} {{if .Config.AllowRegister}}
-
-        <a href="/register">Register</a>
-        {{end}}
-        <a href="/login">Login</a>
+          <span class="muted">Signed in as {{.User.Username}}</span>
+          <a href="/repos">Repos</a>
+          <a href="/tokens">Access Tokens</a>
+          <a href="/keys">SSH Keys</a>
+          <form method="post" action="/logout" hx-boost="false">
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
+            <button class="link-button" type="submit">Logout</button>
+          </form>
+        {{else}}
+          {{if .Config.AllowRegister}}
+            <a href="/register">Register</a>
+          {{end}}
+          <a href="/login">Login</a>
         {{end}}
       </nav>
     </header>
-    <main id="content">{{block "content" .}}{{end}}</main>
+
+    <main id="content">
+      {{block "content" .}}{{end}}
+    </main>
   </body>
 </html>
 {{end}}
