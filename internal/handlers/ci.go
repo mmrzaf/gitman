@@ -615,21 +615,38 @@ func (app *App) HandleCIRunLogsDownloadGET(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	writeString := func(s string) bool {
+		if _, err := io.WriteString(w, s); err != nil {
+			slog.Warn("failed to write CI log download response", "run", run.ID, "error", err)
+			return false
+		}
+		return true
+	}
+	writef := func(format string, args ...any) bool {
+		return writeString(fmt.Sprintf(format, args...))
+	}
+
 	for i, logPath := range logs {
 		data, err := os.ReadFile(logPath)
 		if err != nil {
-			fmt.Fprintf(w, "=== %s ===\n(log file not readable: %v)\n", filepath.Base(logPath), err)
+			if !writef("=== %s ===\n(log file not readable: %v)\n", filepath.Base(logPath), err) {
+				return
+			}
 			continue
 		}
 		if len(logs) > 1 {
-			if i > 0 {
-				_, _ = io.WriteString(w, "\n")
+			if i > 0 && !writeString("\n") {
+				return
 			}
-			fmt.Fprintf(w, "=== %s ===\n", filepath.Base(logPath))
+			if !writef("=== %s ===\n", filepath.Base(logPath)) {
+				return
+			}
 		}
-		_, _ = io.WriteString(w, ansiEscapeRegex.ReplaceAllString(string(data), ""))
-		if len(data) > 0 && data[len(data)-1] != '\n' {
-			_, _ = io.WriteString(w, "\n")
+		if !writeString(ansiEscapeRegex.ReplaceAllString(string(data), "")) {
+			return
+		}
+		if len(data) > 0 && data[len(data)-1] != '\n' && !writeString("\n") {
+			return
 		}
 	}
 }
