@@ -687,7 +687,7 @@ func appendDockerSocketArgs(args []string, cfg *config.Config, enabled bool, ref
 		return nil, fmt.Errorf("pipeline requests docker socket access, but GITMAN_CI_ALLOW_DOCKER_SOCKET is disabled")
 	}
 	if !refAllowed {
-		return nil, fmt.Errorf("pipeline requests docker socket access, but the exact CI ref is not trusted for Docker socket access")
+		return nil, fmt.Errorf("pipeline requests docker socket access, but the CI ref is not trusted for Docker socket access")
 	}
 	gid, err := dockerSocketGroupID(cfg.CIDockerSocketPath)
 	if err != nil {
