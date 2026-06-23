@@ -220,15 +220,19 @@ func TestHandleRegisterDisabled(t *testing.T) {
 	}
 }
 
-func TestWriteCILogFragmentEscapesHTML(t *testing.T) {
+func TestWriteCILogFragmentServesPlainText(t *testing.T) {
 	w := httptest.NewRecorder()
-	writeCILogFragment(w, `<img src=x onerror="alert(1)">`)
+	payload := `<img src=x onerror="alert(1)">`
+	writeCILogFragment(w, payload)
 	body := w.Body.String()
-	if strings.Contains(body, "<img") {
-		t.Fatalf("CI log fragment contains executable HTML: %s", body)
+	if body != payload {
+		t.Fatalf("expected raw log text, got %q", body)
 	}
-	if !strings.Contains(body, "&lt;img") {
-		t.Fatalf("CI log fragment was not escaped: %s", body)
+	if strings.Contains(body, "&lt;img") {
+		t.Fatalf("CI log text endpoint unexpectedly HTML-escaped output: %s", body)
+	}
+	if got := w.Header().Get("Content-Type"); got != "text/plain; charset=utf-8" {
+		t.Fatalf("expected text/plain content type, got %q", got)
 	}
 	if got := w.Header().Get("Cache-Control"); got != "no-store" {
 		t.Fatalf("expected no-store, got %q", got)
