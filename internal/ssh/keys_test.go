@@ -2,6 +2,7 @@ package ssh
 
 import (
 	"context"
+	"crypto/ed25519"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,7 +10,21 @@ import (
 
 	"github.com/mmrzaf/gitman/internal/config"
 	"github.com/mmrzaf/gitman/internal/db"
+	crypto_ssh "golang.org/x/crypto/ssh"
 )
+
+func testPublicKey(t *testing.T, seedByte byte) string {
+	t.Helper()
+	seed := make([]byte, ed25519.SeedSize)
+	for i := range seed {
+		seed[i] = seedByte
+	}
+	key, err := crypto_ssh.NewPublicKey(ed25519.NewKeyFromSeed(seed).Public())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(string(crypto_ssh.MarshalAuthorizedKey(key)))
+}
 
 func setupTestDB(t *testing.T) *db.DB {
 	t.Helper()
@@ -19,9 +34,16 @@ func setupTestDB(t *testing.T) *db.DB {
 	}
 	t.Cleanup(func() { database.Close() })
 	ctx := context.Background()
-	user, _ := database.CreateUser(ctx, "gituser", "Pass1")
-	_ = database.AddSSHKey(ctx, user.ID, "key1", "ssh-rsa AAAAB3...")
-	_ = database.AddSSHKey(ctx, user.ID, "key2", "ecdsa-sha2-nistp256 AAAAE2V...")
+	user, err := database.CreateUser(ctx, "gituser", "Pass1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.AddSSHKey(ctx, user.ID, "key1", testPublicKey(t, 1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.AddSSHKey(ctx, user.ID, "key2", testPublicKey(t, 2)); err != nil {
+		t.Fatal(err)
+	}
 	return database
 }
 

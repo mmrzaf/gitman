@@ -8,7 +8,8 @@
     <article class="resource-row">
       <div class="resource-main">
         <div class="resource-title"><strong>{{.Name}}</strong></div>
-        <div class="resource-meta"><code>{{slice .PublicKey 0 60}}...</code></div>
+        {{if .Fingerprint}}<div class="resource-meta"><code>{{.Fingerprint}}</code></div>{{end}}
+        <div class="resource-meta">Added {{.CreatedAt.Format "Jan 02, 2006"}}</div>
       </div>
       <div class="resource-actions">
         <form method="POST" action="/keys/{{.ID}}/delete" data-confirm="Delete SSH key {{.Name}}?">

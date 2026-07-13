@@ -12,6 +12,7 @@ import (
 
 	"github.com/mmrzaf/gitman/internal/config"
 	"github.com/mmrzaf/gitman/internal/db"
+	crypto_ssh "golang.org/x/crypto/ssh"
 )
 
 var authorizedKeysMu sync.Mutex
@@ -54,11 +55,20 @@ func SyncAuthorizedKeys(ctx context.Context, database *db.DB, cfg *config.Config
 		return err
 	}
 
+	seenFingerprints := make(map[string]string, len(keys))
 	for _, key := range keys {
-		pubKey := strings.TrimSpace(key.PublicKey)
-		pubKey = strings.ReplaceAll(pubKey, "\n", "")
-		pubKey = strings.ReplaceAll(pubKey, "\r", "")
-		pubKey = strings.ReplaceAll(pubKey, `"`, "")
+		parsed, _, _, _, err := crypto_ssh.ParseAuthorizedKey([]byte(strings.TrimSpace(key.PublicKey)))
+		if err != nil {
+			_ = tmp.Close()
+			return fmt.Errorf("SSH key %s is invalid: %w", key.ID, err)
+		}
+		fingerprint := crypto_ssh.FingerprintSHA256(parsed)
+		if existingID, exists := seenFingerprints[fingerprint]; exists {
+			_ = tmp.Close()
+			return fmt.Errorf("SSH keys %s and %s have the same fingerprint %s", existingID, key.ID, fingerprint)
+		}
+		seenFingerprints[fingerprint] = key.ID
+		pubKey := strings.TrimSpace(string(crypto_ssh.MarshalAuthorizedKey(parsed)))
 
 		forcedCommand := strconv.Quote(fmt.Sprintf("%s serve %s", cfg.BinaryPath, key.ID))
 		options := fmt.Sprintf(

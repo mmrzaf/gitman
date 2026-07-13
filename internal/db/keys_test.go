@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -45,5 +46,20 @@ func TestSSHKeys(t *testing.T) {
 	keys, _ = db.GetUserSSHKeys(ctx, user.ID)
 	if len(keys) != 1 {
 		t.Error("key not deleted")
+	}
+}
+
+func TestSSHKeyCannotBeAttachedTwice(t *testing.T) {
+	database := setupTestDB(t)
+	defer database.Close()
+	ctx := context.Background()
+	first, _ := database.CreateUser(ctx, "keyone", "Pass1")
+	second, _ := database.CreateUser(ctx, "keytwo", "Pass1")
+	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKeyMaterial"
+	if err := database.AddSSHKey(ctx, first.ID, "first", key); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.AddSSHKey(ctx, second.ID, "second", key); !errors.Is(err, ErrSSHKeyExists) {
+		t.Fatalf("expected ErrSSHKeyExists, got %v", err)
 	}
 }
