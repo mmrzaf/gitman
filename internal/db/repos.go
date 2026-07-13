@@ -124,11 +124,46 @@ func (db *DB) GetRepositoryByID(ctx context.Context, id string) (*models.Reposit
 	return &r, nil
 }
 
-// DeleteRepository removes a repo from the DB
-func (db *DB) DeleteRepository(ctx context.Context, id, ownerID string) error {
-	query := `DELETE FROM repositories WHERE id = ? AND owner_id = ?`
-	_, err := db.ExecContext(ctx, query, id, ownerID)
-	return err
+// DeleteRepository removes an idle repository from the database. The active
+// CI condition is part of the DELETE statement so a worker claim racing the
+// caller's earlier safety check cannot orphan attempt-scoped files.
+func (db *DB) DeleteRepository(ctx context.Context, id, ownerID string) (bool, error) {
+	res, err := db.ExecContext(ctx, `
+		DELETE FROM repositories
+		WHERE id = ? AND owner_id = ?
+		  AND NOT EXISTS (
+			SELECT 1 FROM ci_runs
+			WHERE repo_id = repositories.id
+			  AND (
+				status IN ('pending', 'running')
+				OR (status = 'cancelled' AND heartbeat_at IS NOT NULL)
+			  )
+		  )
+	`, id, ownerID)
+	if err != nil {
+		return false, err
+	}
+	rows, err := res.RowsAffected()
+	return rows > 0, err
+}
+
+func (db *DB) UpdateRepositorySettings(ctx context.Context, id, ownerID, description string, isPrivate bool) error {
+	res, err := db.ExecContext(ctx, `
+		UPDATE repositories
+		SET description = ?, is_private = ?, updated_at = strftime('%s', 'now')
+		WHERE id = ? AND owner_id = ?
+	`, description, isPrivate, id, ownerID)
+	if err != nil {
+		return err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 // AddCollaborator adds or updates a collaborator's access level.

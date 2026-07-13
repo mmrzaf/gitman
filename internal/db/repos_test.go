@@ -2,6 +2,9 @@ package db
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"strings"
 	"testing"
 )
 
@@ -113,12 +116,62 @@ func TestDeleteRepository(t *testing.T) {
 
 	user, _ := db.CreateUser(ctx, "owner", "OwnerPass1")
 	id, _ := db.CreateRepository(ctx, user.ID, "todelete", "", false)
-	err := db.DeleteRepository(ctx, id, user.ID)
+	deleted, err := db.DeleteRepository(ctx, id, user.ID)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !deleted {
+		t.Fatal("expected repository to be deleted")
 	}
 	_, err = db.GetRepositoryByID(ctx, id)
 	if err == nil {
 		t.Error("expected error fetching deleted repo")
+	}
+}
+
+func TestDeleteRepositoryRejectsActiveCIAtomically(t *testing.T) {
+	database := setupTestDB(t)
+	defer database.Close()
+	ctx := context.Background()
+
+	owner, _ := database.CreateUser(ctx, "delete-owner", "OwnerPass1")
+	repoID, _ := database.CreateRepository(ctx, owner.ID, "busy", "", false)
+	if _, err := database.CreateCIRun(ctx, repoID, strings.Repeat("a", 40), "main", "", "manual"); err != nil {
+		t.Fatal(err)
+	}
+
+	deleted, err := database.DeleteRepository(ctx, repoID, owner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted {
+		t.Fatal("active repository was deleted")
+	}
+	if _, err := database.GetRepositoryByID(ctx, repoID); err != nil {
+		t.Fatalf("repository should remain: %v", err)
+	}
+}
+
+func TestUpdateRepositorySettings(t *testing.T) {
+	database := setupTestDB(t)
+	defer database.Close()
+	ctx := context.Background()
+
+	owner, _ := database.CreateUser(ctx, "settings-owner", "OwnerPass1")
+	other, _ := database.CreateUser(ctx, "settings-other", "OtherPass1")
+	repoID, _ := database.CreateRepository(ctx, owner.ID, "settings", "before", false)
+
+	if err := database.UpdateRepositorySettings(ctx, repoID, other.ID, "forbidden", true); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("non-owner update error = %v, want sql.ErrNoRows", err)
+	}
+	if err := database.UpdateRepositorySettings(ctx, repoID, owner.ID, "after", true); err != nil {
+		t.Fatalf("UpdateRepositorySettings: %v", err)
+	}
+	repo, err := database.GetRepositoryByID(ctx, repoID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repo.Description != "after" || !repo.IsPrivate {
+		t.Fatalf("settings = (%q, %t), want (%q, true)", repo.Description, repo.IsPrivate, "after")
 	}
 }

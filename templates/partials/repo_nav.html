@@ -7,6 +7,7 @@
   {{if .RepoNav.IsOwner}}<a href="/{{$owner}}/{{$repo}}/collaborators">Collaborators</a>{{end}}
   {{if .RepoNav.CanViewCI}}<a href="/{{$owner}}/{{$repo}}/ci">CI/CD</a>{{end}}
   {{if .RepoNav.IsOwner}}<a href="/{{$owner}}/{{$repo}}/ci/secrets">Secrets</a>{{end}}
+  {{if .RepoNav.IsOwner}}<a href="/{{$owner}}/{{$repo}}/settings">Settings</a>{{end}}
 </nav>
 {{end}}
 {{end}}

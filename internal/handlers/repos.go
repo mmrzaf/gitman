@@ -90,6 +90,17 @@ func (app *App) HandleRepoDeletePOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	hasActiveRuns, err := app.DB.HasActiveCIRuns(r.Context(), repo.ID)
+	if err != nil {
+		slog.Error("failed to check active CI runs before repository deletion", "repo", repo.ID, "error", err)
+		app.renderReposPage(w, r, user, "Could not verify repository activity. Repository was not deleted.", "")
+		return
+	}
+	if hasActiveRuns {
+		app.renderReposPage(w, r, user, "Cancel or wait for queued and running CI jobs before deleting this repository.", "")
+		return
+	}
+
 	repoPath, pathErr := git.SecureRepoPath(app.Config.ReposPath, user.Username, repo.Name)
 	if pathErr != nil {
 		app.renderReposPage(w, r, user, "Invalid repository path.", "")
@@ -103,7 +114,8 @@ func (app *App) HandleRepoDeletePOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := app.DB.DeleteRepository(r.Context(), repoID, user.ID); err != nil {
+	deleted, err := app.DB.DeleteRepository(r.Context(), repoID, user.ID)
+	if err != nil {
 		restoreErr := git.RestoreQuarantinedRepo(quarantinePath, repoPath)
 		if restoreErr != nil {
 			slog.Error("failed to delete repository record and restore quarantined files", "repoID", repoID, "quarantine", quarantinePath, "delete_error", err, "restore_error", restoreErr)
@@ -112,6 +124,15 @@ func (app *App) HandleRepoDeletePOST(w http.ResponseWriter, r *http.Request) {
 		}
 		slog.Error("failed to delete repository from DB", "repoID", repoID, "error", err)
 		app.renderReposPage(w, r, user, "Failed to delete repository record. Repository files were restored.", "")
+		return
+	}
+	if !deleted {
+		if restoreErr := git.RestoreQuarantinedRepo(quarantinePath, repoPath); restoreErr != nil {
+			slog.Error("failed to restore repository after concurrent CI activity", "repoID", repoID, "quarantine", quarantinePath, "error", restoreErr)
+			app.renderReposPage(w, r, user, "CI activity changed during deletion and repository files could not be restored. Contact an operator; the repository remains quarantined.", "")
+			return
+		}
+		app.renderReposPage(w, r, user, "A CI job started while deletion was being prepared. Cancel or wait for it, then try again.", "")
 		return
 	}
 
@@ -131,4 +152,58 @@ func (app *App) HandleRepoDeletePOST(w http.ResponseWriter, r *http.Request) {
 	}
 
 	app.renderReposPage(w, r, user, "", "Repository deleted.")
+}
+
+type RepoSettingsPageData struct {
+	Owner      *models.User
+	Repository *models.Repository
+}
+
+func (app *App) renderRepoSettings(w http.ResponseWriter, r *http.Request, errMessage, successMessage string) {
+	repo := GetRepo(r)
+	owner := GetRepoOwner(r)
+	app.renderPage(w, r, "repo_settings.html", PageData{
+		Title:   repo.Name + " - Settings",
+		User:    GetUser(r),
+		Error:   errMessage,
+		Success: successMessage,
+		RepoNav: app.repoNavData(r, ""),
+		Data: RepoSettingsPageData{
+			Owner:      owner,
+			Repository: repo,
+		},
+	})
+}
+
+func (app *App) HandleRepoSettingsGET(w http.ResponseWriter, r *http.Request) {
+	user := GetUser(r)
+	repo := GetRepo(r)
+	if user == nil || repo == nil || user.ID != repo.OwnerID {
+		app.renderError(w, r, PageData{User: user}, "Forbidden", http.StatusForbidden)
+		return
+	}
+	app.renderRepoSettings(w, r, "", "")
+}
+
+func (app *App) HandleRepoSettingsPOST(w http.ResponseWriter, r *http.Request) {
+	user := GetUser(r)
+	repo := GetRepo(r)
+	if user == nil || repo == nil || user.ID != repo.OwnerID {
+		app.renderError(w, r, PageData{User: user}, "Forbidden", http.StatusForbidden)
+		return
+	}
+	description := strings.TrimSpace(r.FormValue("description"))
+	if len(description) > 500 {
+		app.renderRepoSettings(w, r, "Description is limited to 500 characters.", "")
+		return
+	}
+	isPrivate := r.FormValue("is_private") == "on"
+	if err := app.DB.UpdateRepositorySettings(r.Context(), repo.ID, user.ID, description, isPrivate); err != nil {
+		slog.Error("failed to update repository settings", "repo", repo.ID, "error", err)
+		app.renderRepoSettings(w, r, "Repository settings could not be saved.", "")
+		return
+	}
+	repo.Description = description
+	repo.IsPrivate = isPrivate
+	app.renderRepoSettings(w, r, "", "Repository settings saved.")
 }
