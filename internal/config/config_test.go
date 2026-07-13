@@ -53,7 +53,6 @@ func TestLoadConfigOverrides(t *testing.T) {
 	t.Setenv("GITMAN_ALLOW_REGISTER", "true")
 	t.Setenv("GITMAN_WORKER_CONCURRENCY", "4")
 	t.Setenv("GITMAN_SECRET_KEY", "testkey")
-	t.Setenv("GITMAN_INTERNAL_URL", "http://example.com")
 	t.Setenv("GITMAN_CI_ALLOW_DOCKER_SOCKET", "true")
 	t.Setenv("GITMAN_CI_DOCKER_SOCKET_PATH", "/tmp/custom-docker.sock")
 	cfg := LoadConfig()

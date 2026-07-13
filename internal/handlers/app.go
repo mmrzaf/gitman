@@ -14,8 +14,10 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -43,9 +45,12 @@ type App struct {
 	Templates    map[string]*template.Template
 	StaticFS     http.FileSystem
 	LoginLimiter *loginLimiter
+	loginMu      sync.Mutex
 }
 
 func (app *App) loginLimiter() *loginLimiter {
+	app.loginMu.Lock()
+	defer app.loginMu.Unlock()
 	if app.LoginLimiter == nil {
 		app.LoginLimiter = newLoginLimiter(time.Now)
 	}
@@ -306,8 +311,11 @@ func (app *App) AuthMiddleware(next http.Handler) http.Handler {
 		if cookie, err := r.Cookie("session_token"); err == nil {
 			user, err := app.DB.GetUserBySession(r.Context(), cookie.Value)
 			if err == nil && user != nil {
-				if extendErr := app.DB.ExtendSessionIfExpiring(r.Context(), cookie.Value, 24*time.Hour, 12*time.Hour); extendErr != nil {
+				extended, extendErr := app.DB.ExtendSessionIfExpiring(r.Context(), cookie.Value, sessionDuration, 12*time.Hour)
+				if extendErr != nil {
 					slog.Warn("failed to extend session", "error", extendErr)
+				} else if extended {
+					app.setSessionCookie(w, r, cookie.Value, time.Now().Add(sessionDuration))
 				}
 				ctx := context.WithValue(r.Context(), userContextKey, user)
 				next.ServeHTTP(w, r.WithContext(ctx))
@@ -342,6 +350,20 @@ func (app *App) RequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Context().Value(userContextKey) == nil {
 			http.Redirect(w, r, "/login", http.StatusFound)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (app *App) RequireAPIAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Context().Value(userContextKey) == nil {
+			noStore(w)
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "authentication required"})
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -413,17 +435,41 @@ func GetRepoOwner(r *http.Request) *models.User {
 	return nil
 }
 
-func (app *App) HandleHealth(w http.ResponseWriter, r *http.Request) {
+func (app *App) HandleLiveness(w http.ResponseWriter, _ *http.Request) {
+	noStore(w)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func (app *App) HandleReadiness(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
 	if err := app.DB.PingContext(r.Context()); err != nil {
+		slog.Warn("readiness database check failed", "error", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": err.Error()})
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "not_ready", "component": "database"})
 		return
+	}
+	for name, configuredPath := range map[string]string{
+		"repositories": app.Config.ReposPath,
+		"artifacts":    app.Config.ArtifactsPath,
+	} {
+		info, err := os.Stat(configuredPath)
+		if err != nil || !info.IsDir() {
+			slog.Warn("readiness storage check failed", "component", name, "path", configuredPath, "error", err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "not_ready", "component": name})
+			return
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func (app *App) HandleHealth(w http.ResponseWriter, r *http.Request) {
+	app.HandleReadiness(w, r)
 }
 
 func generateCSRFToken() (string, error) {

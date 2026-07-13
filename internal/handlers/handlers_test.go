@@ -39,7 +39,6 @@ func setupTestApp(t *testing.T) *App {
 		SSHUser:           "git",
 		ServerHost:        "localhost",
 		ArtifactsPath:     t.TempDir(),
-		InternalURL:       "http://localhost:8080",
 		SecretKey:         "testsecretkey",
 		WorkerConcurrency: 1,
 	}
@@ -188,6 +187,91 @@ func TestHandleReposGET(t *testing.T) {
 	}
 }
 
+func TestHealthRoutesBypassAuthAndCSRF(t *testing.T) {
+	app := setupTestApp(t)
+	router := SetupRouter(app)
+	for _, path := range []string{"/health", "/healthz", "/readyz"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: expected 200, got %d: %s", path, w.Code, w.Body.String())
+		}
+		if cookies := w.Result().Cookies(); len(cookies) != 0 {
+			t.Fatalf("%s: health probe unexpectedly set cookies: %v", path, cookies)
+		}
+		if got := w.Header().Get("Cache-Control"); got != "no-store" {
+			t.Fatalf("%s: expected no-store, got %q", path, got)
+		}
+	}
+}
+
+func TestReadinessDoesNotExposeStorageErrors(t *testing.T) {
+	app := setupTestApp(t)
+	app.Config.ReposPath = filepath.Join(t.TempDir(), "missing")
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	w := httptest.NewRecorder()
+	app.HandleReadiness(w, req)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `"component":"repositories"`) || strings.Contains(body, app.Config.ReposPath) {
+		t.Fatalf("unexpected readiness response: %s", body)
+	}
+}
+
+func TestArtifactAPIUnauthenticatedResponseIsJSON(t *testing.T) {
+	app := setupTestApp(t)
+	router := SetupRouter(app)
+	req := httptest.NewRequest(http.MethodGet, "/api/repos/testuser/repo/artifacts/latest/branch/main/report.txt", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", w.Code)
+	}
+	if got := w.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("expected JSON response, got %q", got)
+	}
+	if got := w.Header().Get("Location"); got != "" {
+		t.Fatalf("API response redirected to %q", got)
+	}
+}
+
+func TestAuthMiddlewareRefreshesExpiringSessionCookie(t *testing.T) {
+	app := setupTestApp(t)
+	user, _ := app.DB.GetUserByUsername(context.Background(), "testuser")
+	token, err := app.DB.CreateSession(context.Background(), user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.DB.ExecContext(context.Background(), "UPDATE sessions SET expires_at = ?", time.Now().Add(time.Minute).Unix()); err != nil {
+		t.Fatal(err)
+	}
+	handler := app.AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if GetUser(r) == nil {
+			t.Error("session user was not resolved")
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(&http.Cookie{Name: "session_token", Value: token})
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", w.Code)
+	}
+	var refreshed *http.Cookie
+	for _, cookie := range w.Result().Cookies() {
+		if cookie.Name == "session_token" {
+			refreshed = cookie
+		}
+	}
+	if refreshed == nil || refreshed.Value != token || refreshed.MaxAge < 23*60*60 {
+		t.Fatalf("session cookie was not refreshed: %+v", refreshed)
+	}
+}
+
 func TestHandleKeysGET(t *testing.T) {
 	app := setupTestApp(t)
 	user, _ := app.DB.GetUserByUsername(context.Background(), "testuser")
@@ -254,27 +338,89 @@ func TestListArtifactsIncludesNestedFilesAndSkipsSymlinks(t *testing.T) {
 	}
 }
 
-func TestBuildHookScriptUsesFormEncoding(t *testing.T) {
-	script := buildHookScript("http://web:8080", "owner", "repo", "secret")
+func TestBuildHookScriptUsesDurableLocalQueue(t *testing.T) {
+	script := buildHookScript("owner", "repo")
 	for _, expected := range []string{
 		gitmanHookMarker,
-		`--data-urlencode "commit_hash=$new"`,
-		`--data-urlencode "branch=$branch"`,
-		`--data-urlencode "tag=$tag"`,
-		`--data-urlencode "event=push"`,
+		ciHookQueueDirName,
+		`mktemp "$QUEUE_DIR/.event.XXXXXXXXXXXX"`,
+		`printf '%s\n%s\n%s\n' "$old" "$new" "$ref"`,
 		`logger -t gitman-ci-hook`,
 	} {
 		if !strings.Contains(script, expected) {
 			t.Fatalf("hook script missing %q:\n%s", expected, script)
 		}
 	}
-	for _, expected := range []string{"--connect-timeout 2", "--max-time 5"} {
-		if !strings.Contains(script, expected) {
-			t.Fatalf("hook script missing %q:\n%s", expected, script)
+	if strings.Contains(script, "curl ") {
+		t.Fatalf("durable hook must not depend on synchronous HTTP delivery:\n%s", script)
+	}
+	if strings.Contains(script, "secret") || strings.Contains(script, "token") {
+		t.Fatalf("durable hook must not contain credentials:\n%s", script)
+	}
+}
+
+func TestSupportedSSHKeyTypesRejectDSAAndCertificates(t *testing.T) {
+	for _, keyType := range []string{
+		"ssh-rsa",
+		"ecdsa-sha2-nistp256",
+		"ecdsa-sha2-nistp384",
+		"ecdsa-sha2-nistp521",
+		"ssh-ed25519",
+		"sk-ecdsa-sha2-nistp256@openssh.com",
+		"sk-ssh-ed25519@openssh.com",
+	} {
+		if !supportedSSHKeyType(keyType) {
+			t.Errorf("supported key type %q was rejected", keyType)
 		}
 	}
-	if strings.Contains(script, `Content-Type: application/json`) {
-		t.Fatalf("hook should not hand-roll JSON:\n%s", script)
+	for _, keyType := range []string{"ssh-dss", "ssh-ed25519-cert-v01@openssh.com", "unknown"} {
+		if supportedSSHKeyType(keyType) {
+			t.Errorf("unsupported key type %q was accepted", keyType)
+		}
+	}
+}
+
+func TestBuildHookScriptQueuesOnlyUpdatedBranchesAndTags(t *testing.T) {
+	hooksDir := t.TempDir()
+	hookPath := filepath.Join(hooksDir, "post-receive")
+	if err := os.WriteFile(hookPath, []byte(buildHookScript("owner", "repo")), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	oldCommit := strings.Repeat("a", 40)
+	branchCommit := strings.Repeat("b", 40)
+	tagCommit := strings.Repeat("c", 40)
+	input := strings.Join([]string{
+		oldCommit + " " + branchCommit + " refs/heads/main",
+		oldCommit + " " + tagCommit + " refs/tags/v1.0.0",
+		oldCommit + " " + strings.Repeat("0", 40) + " refs/heads/deleted",
+		oldCommit + " " + branchCommit + " refs/notes/test",
+	}, "\n") + "\n"
+	cmd := exec.Command(hookPath)
+	cmd.Stdin = strings.NewReader(input)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("hook failed: %v\n%s", err, out)
+	}
+
+	entries, err := os.ReadDir(filepath.Join(hooksDir, ciHookQueueDirName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("queued event count = %d, want 2", len(entries))
+	}
+	var events []string
+	for _, entry := range entries {
+		data, err := os.ReadFile(filepath.Join(hooksDir, ciHookQueueDirName, entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		events = append(events, string(data))
+	}
+	joined := strings.Join(events, "\n")
+	for _, expected := range []string{branchCommit + "\nrefs/heads/main", tagCommit + "\nrefs/tags/v1.0.0"} {
+		if !strings.Contains(joined, expected) {
+			t.Fatalf("queued events missing %q: %q", expected, joined)
+		}
 	}
 }
 
@@ -295,6 +441,12 @@ func TestDetectHookState(t *testing.T) {
 	}
 	if got := detectHookState(path); got != hookManaged {
 		t.Fatalf("expected managed, got %s", got)
+	}
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n# Managed by Gitman CI/CD. Schema: 1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if got := detectHookState(path); got != hookOutdated {
+		t.Fatalf("expected outdated, got %s", got)
 	}
 }
 

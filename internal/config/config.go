@@ -25,7 +25,6 @@ type Config struct {
 	PublicURL          string
 	ArtifactsPath      string
 	SecretKey          string
-	InternalURL        string
 	LogLevel           string
 	AllowRegister      bool
 	WorkerConcurrency  int
@@ -80,7 +79,6 @@ func LoadConfig() *Config {
 		PublicURL:          publicURL,
 		ArtifactsPath:      getEnv("GITMAN_ARTIFACTS", ".data/artifacts"),
 		SecretKey:          getEnv("GITMAN_SECRET_KEY", ""),
-		InternalURL:        strings.TrimRight(getEnv("GITMAN_INTERNAL_URL", "http://localhost:8080"), "/"),
 		LogLevel:           getEnv("GITMAN_LOG_LEVEL", "info"),
 		AllowRegister:      getEnvBool("GITMAN_ALLOW_REGISTER", false),
 		WorkerConcurrency:  getEnvInt("GITMAN_WORKER_CONCURRENCY", 1),
