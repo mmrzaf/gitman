@@ -12,7 +12,8 @@ Gitman is aimed at small teams and private infrastructure. It is not a multi-ten
 - Private and public repositories with read and write collaborators.
 - Built-in CI jobs defined in `.gitman-ci.yml`.
 - CI secrets encrypted at rest when `GITMAN_SECRET_KEY` is configured.
-- CI logs, nested artifacts, repository archives, backups, and an admin CLI.
+- Durable push-triggered CI, cancellation and exact-commit retries, live logs, outcome reasons, and nested artifacts.
+- Repository settings and guarded deletion, repository archives, backups, and an admin CLI.
 
 ## Requirements
 
@@ -36,6 +37,8 @@ unset ADMIN_PASSWORD
 ```
 
 The UI is available at `http://localhost:8080` by default.
+
+Operational probes are available at `/healthz` for liveness and `/readyz` for readiness. `/health` remains an alias for readiness.
 
 Start the CI worker separately when CI is needed. Pull approved job images on the runner first: Gitman starts CI containers with `--pull never` so repository-controlled jobs cannot grow Docker storage by pulling arbitrary images.
 
@@ -117,7 +120,6 @@ Core environment variables:
 | `GITMAN_ARTIFACTS` | `.data/artifacts` | CI log and artifact root. |
 | `GITMAN_CACHE_ROOT` | `.data/ci/cache` | Persistent CI cache root. |
 | `GITMAN_PUBLIC_URL` | `http://localhost:8080` | Browser-facing base URL used for clone links. |
-| `GITMAN_INTERNAL_URL` | `http://localhost:8080` | URL used by generated Git hooks. |
 | `GITMAN_SECRET_KEY` | empty | CI-secret encryption key. Empty disables CI-secret storage. |
 | `GITMAN_ALLOW_REGISTER` | `false` | Enable public account registration. |
 | `GITMAN_FORCE_SECURE_COOKIES` | `false` | Always mark browser cookies as secure. Enable behind HTTPS. |

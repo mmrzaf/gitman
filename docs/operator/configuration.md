@@ -16,9 +16,8 @@ Gitman is configured with environment variables.
 | `GITMAN_SSH_USER` | `git` | SSH username displayed in clone links. |
 | `GITMAN_SERVER_HOST` | `localhost` | Hostname displayed in SSH clone links. It does not control the HTTP bind address. |
 | `GITMAN_PUBLIC_URL` | `http://<server-host>:<port>` | Browser-facing base URL used in HTTP clone links. Trailing slash is removed. |
-| `GITMAN_INTERNAL_URL` | `http://localhost:8080` | URL embedded into generated CI post-receive hooks. Trailing slash is removed. |
 | `GITMAN_SECRET_KEY` | Empty | Passphrase for encrypting repository CI secrets. Empty disables CI-secret storage. |
-| `GITMAN_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error`. Unknown values fall back to `info`. |
+| `GITMAN_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error`. Invalid explicit values fail startup. |
 | `GITMAN_ALLOW_REGISTER` | `false` | Enables public account registration. |
 | `GITMAN_FORCE_SECURE_COOKIES` | `false` | Always marks browser cookies secure. Enable behind HTTPS. |
 | `GITMAN_TRUST_PROXY_HEADERS` | `false` | Trusts proxy HTTPS headers. Enable only behind a trusted reverse proxy. |
@@ -47,7 +46,17 @@ Gitman is configured with environment variables.
 | `GITMAN_CI_WORKER_PATH_PREFIX` | Empty | Worker-visible prefix translated for sibling-container bind mounts. Set with host prefix. |
 | `GITMAN_CI_HOST_PATH_PREFIX` | Empty | Docker-host-visible prefix translated for sibling-container bind mounts. Set with worker prefix. |
 
-Invalid positive integer or duration values silently fall back to defaults during config loading, except `GITMAN_GIT_RECEIVE_MAX_BYTES`, which fails closed when present and invalid. Worker startup performs additional validation for critical values.
+Explicitly configured booleans, positive integers, byte limits, and durations are validated before startup. Invalid values fail with the exact environment-variable name instead of silently changing behavior. Gitman also validates URLs, paths, log level, and the relationship between heartbeat and lease durations.
+
+`GITMAN_INTERNAL_URL` is no longer used in Beta 15 because managed hooks deliver through the repository-local durable queue. It may be removed from existing deployments; if left present, Gitman ignores it.
+
+## Health probes
+
+- `GET /healthz` is a process-only liveness probe and does not query SQLite.
+- `GET /readyz` checks SQLite plus the configured repository and artifact directories.
+- `GET /health` is the backward-compatible readiness endpoint used by the included Compose file.
+
+Probe routes bypass browser session and CSRF middleware, return JSON with `Cache-Control: no-store`, and do not set cookies.
 
 ## Repository receive limits
 
