@@ -419,3 +419,10 @@ func runGitTest(t *testing.T, dir string, args ...string) string {
 	}
 	return string(out)
 }
+
+func TestCIFailureSummaryIncludesExitCode(t *testing.T) {
+	err := exec.Command("sh", "-c", "exit 7").Run()
+	if got := ciFailureSummary(context.Background(), err, &CIConfig{}); got != "Pipeline exited with code 7" {
+		t.Fatalf("unexpected summary: %q", got)
+	}
+}

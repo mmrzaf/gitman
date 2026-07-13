@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -386,5 +387,155 @@ func TestRepoCIRefRulesPatternMatch(t *testing.T) {
 	}
 	if missing != nil {
 		t.Fatalf("unexpected match: %+v", missing)
+	}
+}
+
+func TestCIRunCancelAndRetry(t *testing.T) {
+	database := setupTestDB(t)
+	defer database.Close()
+	ctx := context.Background()
+	user, _ := database.CreateUser(ctx, "controlowner", "CiPass1")
+	repoID, _ := database.CreateRepository(ctx, user.ID, "control-repo", "", false)
+
+	runID, err := database.CreateCIRun(ctx, repoID, "abcdef", "main", "", "manual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancelled, err := database.CancelCIRun(ctx, repoID, runID, "Cancelled in test")
+	if err != nil || !cancelled {
+		t.Fatalf("cancel failed: cancelled=%v err=%v", cancelled, err)
+	}
+	run, err := database.GetCIRunByID(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != "cancelled" || run.StatusReason != "Cancelled in test" {
+		t.Fatalf("unexpected cancelled run: %+v", run)
+	}
+
+	retryID, err := database.RetryCIRun(ctx, repoID, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry, err := database.GetCIRunByID(ctx, retryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retry.Status != "pending" || retry.Event != "retry" || retry.RetryOfRunID != runID || retry.CommitHash != run.CommitHash {
+		t.Fatalf("unexpected retry run: %+v", retry)
+	}
+}
+
+func TestCreatePushCIRunWithTriggerKeyIsIdempotent(t *testing.T) {
+	database := setupTestDB(t)
+	defer database.Close()
+	ctx := context.Background()
+	user, _ := database.CreateUser(ctx, "queueowner", "CiPass1")
+	repoID, _ := database.CreateRepository(ctx, user.ID, "queue-repo", "", false)
+
+	first, err := database.CreatePushCIRunWithTriggerKey(ctx, repoID, "abcdef", "main", "", "delivery-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := database.CreatePushCIRunWithTriggerKey(ctx, repoID, "abcdef", "main", "", "delivery-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second {
+		t.Fatalf("duplicate delivery created a different run: %s != %s", first, second)
+	}
+	runs, err := database.GetCIRunsByRepo(ctx, repoID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected one run, got %d", len(runs))
+	}
+}
+
+func TestHasActiveCIRuns(t *testing.T) {
+	database := setupTestDB(t)
+	defer database.Close()
+	ctx := context.Background()
+	user, _ := database.CreateUser(ctx, "activeowner", "CiPass1")
+	repoID, _ := database.CreateRepository(ctx, user.ID, "active-repo", "", false)
+
+	active, err := database.HasActiveCIRuns(ctx, repoID)
+	if err != nil || active {
+		t.Fatalf("empty repository active=%v err=%v", active, err)
+	}
+	runID, err := database.CreateCIRun(ctx, repoID, "abcdef", "main", "", "manual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err = database.HasActiveCIRuns(ctx, repoID)
+	if err != nil || !active {
+		t.Fatalf("pending run active=%v err=%v", active, err)
+	}
+	cancelled, err := database.CancelCIRun(ctx, repoID, runID, "test complete")
+	if err != nil || !cancelled {
+		t.Fatalf("cancelled=%v err=%v", cancelled, err)
+	}
+	active, err = database.HasActiveCIRuns(ctx, repoID)
+	if err != nil || active {
+		t.Fatalf("completed repository active=%v err=%v", active, err)
+	}
+}
+
+func TestCancelledRunningRunRemainsActiveUntilWorkerAcknowledges(t *testing.T) {
+	database := setupTestDB(t)
+	defer database.Close()
+	ctx := context.Background()
+	user, _ := database.CreateUser(ctx, "cancelackowner", "CiPass1")
+	repoID, _ := database.CreateRepository(ctx, user.ID, "cancel-ack-repo", "", false)
+	runID, err := database.CreateCIRun(ctx, repoID, "abcdef", "main", "", "manual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := database.ClaimNextPendingRun(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cancelled, err := database.CancelCIRun(ctx, repoID, runID, "test"); err != nil || !cancelled {
+		t.Fatalf("cancelled=%v err=%v", cancelled, err)
+	}
+	if active, err := database.HasActiveCIRuns(ctx, repoID); err != nil || !active {
+		t.Fatalf("stopping cancelled run active=%v err=%v", active, err)
+	}
+	if err := database.AcknowledgeCancelledCIRun(ctx, runID, claimed.AttemptID); err != nil {
+		t.Fatal(err)
+	}
+	acknowledged, err := database.GetCIRunByID(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if acknowledged.AttemptID != claimed.AttemptID || acknowledged.HeartbeatAt != nil {
+		t.Fatalf("acknowledgement lost attempt identity: %+v", acknowledged)
+	}
+	if active, err := database.HasActiveCIRuns(ctx, repoID); err != nil || active {
+		t.Fatalf("acknowledged cancelled run active=%v err=%v", active, err)
+	}
+}
+
+func TestReleaseStaleCancelledCIRuns(t *testing.T) {
+	database := setupTestDB(t)
+	defer database.Close()
+	ctx := context.Background()
+	user, _ := database.CreateUser(ctx, "stalecancelowner", "CiPass1")
+	repoID, _ := database.CreateRepository(ctx, user.ID, "stale-cancel-repo", "", false)
+	runID, _ := database.CreateCIRun(ctx, repoID, "abcdef", "main", "", "manual")
+	claimed, _ := database.ClaimNextPendingRun(ctx)
+	if cancelled, err := database.CancelCIRun(ctx, repoID, runID, "test"); err != nil || !cancelled {
+		t.Fatalf("cancelled=%v err=%v", cancelled, err)
+	}
+	if _, err := database.ExecContext(ctx, "UPDATE ci_runs SET completed_at = ? WHERE id = ?", time.Now().Add(-10*time.Minute).Unix(), runID); err != nil {
+		t.Fatal(err)
+	}
+	released, err := database.ReleaseStaleCancelledCIRuns(ctx, time.Now().Add(-2*time.Minute))
+	if err != nil || released != 1 {
+		t.Fatalf("released=%d err=%v", released, err)
+	}
+	if err := database.AcknowledgeCancelledCIRun(ctx, runID, claimed.AttemptID); !errors.Is(err, ErrCIRunLeaseInactive) {
+		t.Fatalf("expected inactive attempt after release, got %v", err)
 	}
 }

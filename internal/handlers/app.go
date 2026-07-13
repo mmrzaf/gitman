@@ -136,6 +136,27 @@ var templateFuncs = template.FuncMap{
 			return ""
 		}
 	},
+	"queueDuration": func(run any) string {
+		switch v := run.(type) {
+		case *models.CIRun:
+			return FormatQueueDuration(v)
+		case models.CIRun:
+			return FormatQueueDuration(&v)
+		default:
+			return ""
+		}
+	},
+	"canCancelRun": func(status string) bool {
+		return status == "pending" || status == "running"
+	},
+	"canRetryRun": func(status string) bool {
+		switch status {
+		case "success", "failed", "skipped", "cancelled":
+			return true
+		default:
+			return false
+		}
+	},
 }
 
 func LoadTemplates() (map[string]*template.Template, error) {

@@ -61,6 +61,8 @@ type CIRun struct {
 	Status       string     `json:"status"`
 	LogFile      string     `json:"log_file"`
 	CancelReason string     `json:"cancel_reason"`
+	StatusReason string     `json:"status_reason"`
+	RetryOfRunID string     `json:"retry_of_run_id,omitempty"`
 	AttemptID    string     `json:"attempt_id,omitempty"`
 	CreatedAt    time.Time  `json:"created_at"`
 	StartedAt    *time.Time `json:"started_at,omitempty"`

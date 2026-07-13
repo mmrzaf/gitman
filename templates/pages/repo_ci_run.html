@@ -5,35 +5,63 @@
     /
     <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}">{{.Data.Repository.Name}}</a>
   </h2>
-  <p class="muted">{{if .Data.Repository.Description}}{{.Data.Repository.Description}}{{else}}No description provided.{{end}}</p>
+  <p class="muted">CI run <code>{{short .Data.Run.ID 8}}</code></p>
 </div>
 
 {{template "repo_nav" .}}
+{{template "flash" .}}
 
 <div class="card">
   <div class="panel-title">
-    <div class="inline-actions">
-      <span class="badge {{statusClass .Data.Run.Status}}">{{statusLabel .Data.Run.Status}}</span>
-      <code>{{.Data.Run.ID}}</code>
+    <div class="ci-run-heading">
+      <span class="badge {{statusClass .Data.Run.Status}}" data-ci-status>{{statusLabel .Data.Run.Status}}</span>
+      <strong>{{if .Data.Run.Branch}}{{.Data.Run.Branch}}{{else if .Data.Run.Tag}}tag {{.Data.Run.Tag}}{{else}}detached commit{{end}}</strong>
+      {{if .Data.Run.CommitHash}}<code>{{short .Data.Run.CommitHash 12}}</code>{{end}}
     </div>
-    <a class="button secondary small" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci">Back to CI</a>
+    <div class="inline-actions">
+      {{if .Data.CanControl}}
+        {{if canCancelRun .Data.Run.Status}}
+        <form method="POST" action="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/{{.Data.Run.ID}}/cancel" data-confirm="Cancel this CI run?">
+          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
+          <button class="danger small" type="submit">Cancel run</button>
+        </form>
+        {{else if canRetryRun .Data.Run.Status}}
+        <form method="POST" action="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/{{.Data.Run.ID}}/retry">
+          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
+          <button class="small" type="submit">Retry run</button>
+        </form>
+        {{end}}
+      {{end}}
+      <a class="button secondary small" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci">All runs</a>
+    </div>
   </div>
 
+  {{if .Data.Run.StatusReason}}
+  <div class="run-outcome {{if eq .Data.Run.Status "failed"}}run-outcome-error{{end}}">
+    <strong>Outcome</strong>
+    <span>{{.Data.Run.StatusReason}}</span>
+  </div>
+  {{end}}
+
   <table class="metadata">
-    <tr><th>Event</th><td>{{.Data.Run.Event}}</td></tr>
+    <tr><th>Status</th><td>{{statusLabel .Data.Run.Status}}</td></tr>
+    <tr><th>Trigger</th><td>{{.Data.Run.Event}}</td></tr>
+    {{if .Data.Run.RetryOfRunID}}<tr><th>Retry of</th><td><a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/{{.Data.Run.RetryOfRunID}}"><code>{{short .Data.Run.RetryOfRunID 8}}</code></a></td></tr>{{end}}
     {{if .Data.Run.Branch}}<tr><th>Branch</th><td><code>{{.Data.Run.Branch}}</code></td></tr>{{end}}
     {{if .Data.Run.Tag}}<tr><th>Tag</th><td><code>{{.Data.Run.Tag}}</code></td></tr>{{end}}
-    {{if .Data.Run.CommitHash}}<tr><th>Commit</th><td><code>{{short .Data.Run.CommitHash 12}}</code></td></tr>{{end}}
-    {{if .Data.Run.CancelReason}}<tr><th>Cancellation</th><td>{{.Data.Run.CancelReason}}</td></tr>{{end}}
-    <tr><th>Started</th><td>{{.Data.Run.CreatedAt.Format "2006-01-02 15:04:05"}}</td></tr>
-    {{if .Data.Run.CompletedAt}}<tr><th>Completed</th><td>{{.Data.Run.CompletedAt.Format "2006-01-02 15:04:05"}}</td></tr>{{end}}
-    <tr><th>Duration</th><td>{{runDuration .Data.Run}}</td></tr>
+    {{if .Data.Run.CommitHash}}<tr><th>Commit</th><td><code>{{.Data.Run.CommitHash}}</code></td></tr>{{end}}
+    <tr><th>Queued</th><td>{{.Data.Run.CreatedAt.Format "2006-01-02 15:04:05"}}</td></tr>
+    {{if .Data.Run.StartedAt}}<tr><th>Started</th><td>{{.Data.Run.StartedAt.Format "2006-01-02 15:04:05"}}</td></tr>{{end}}
+    {{if .Data.Run.CompletedAt}}<tr><th>Finished</th><td>{{.Data.Run.CompletedAt.Format "2006-01-02 15:04:05"}}</td></tr>{{end}}
+    <tr><th>Queue time</th><td>{{queueDuration .Data.Run}}</td></tr>
+    {{if .Data.Run.StartedAt}}<tr><th>Run time</th><td>{{runDuration .Data.Run}}</td></tr>{{end}}
+    <tr><th>Run ID</th><td><code>{{.Data.Run.ID}}</code></td></tr>
   </table>
 </div>
 
 {{if .Data.Artifacts}}
 <div class="card">
-  <div class="panel-title"><h3>Artifacts</h3></div>
+  <div class="panel-title"><h3>Artifacts</h3><span class="muted">{{len .Data.Artifacts}} file(s)</span></div>
   <div class="resource-list">
     {{range .Data.Artifacts}}
     <a class="button secondary" href="/api/repos/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/artifacts/run/{{$.Data.Run.ID}}/{{pathEscape .}}" download="{{.}}">{{.}}</a>
@@ -43,20 +71,17 @@
 {{end}}
 
 <div class="panel-title">
-  <h3>Build log</h3>
-  <a class="button secondary small" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/{{.Data.Run.ID}}/logs/download" download="{{.Data.Repository.Name}}-{{short .Data.Run.ID 8}}-ci-logs.log">Download all logs</a>
+  <div>
+    <h3>Build log</h3>
+    <p class="muted">Raw output from this exact execution.</p>
+  </div>
+  <a class="button secondary small" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/{{.Data.Run.ID}}/logs/download" download="{{.Data.Repository.Name}}-{{short .Data.Run.ID 8}}-ci-logs.log">Download log</a>
 </div>
 
 {{if or (eq .Data.Run.Status "running") (eq .Data.Run.Status "pending")}}
-<pre id="build-log" class="log-box" data-log-url="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/{{.Data.Run.ID}}/log" data-refresh-ms="3000">{{if .Data.LogContent}}{{.Data.LogContent}}{{else}}Waiting for worker to start…{{end}}</pre>
-<p class="note">Auto-refreshing every 3 seconds.</p>
+<pre id="build-log" class="log-box" aria-live="polite" data-log-url="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/{{.Data.Run.ID}}/log" data-refresh-ms="2000">{{if .Data.LogContent}}{{.Data.LogContent}}{{else}}Waiting for the worker…{{end}}</pre>
+<p class="note">Live log. The page refreshes once the run finishes.</p>
 {{else}}
 <pre class="log-box">{{if .Data.LogContent}}{{.Data.LogContent}}{{else}}(no log output){{end}}</pre>
-{{end}}
-
-{{if eq .Data.Run.Status "skipped"}}
-<div class="card tight">
-  <p class="muted">This run was skipped because no <code>.gitman-ci.yml</code> was found in the repository root.</p>
-</div>
 {{end}}
 {{end}}

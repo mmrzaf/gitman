@@ -61,26 +61,27 @@ func Run(cfg *config.Config, database *db.DB) error {
 		slog.Warn("requeued stale CI runs", "count", requeued)
 	}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-	go reapStaleRuns(ctx, cfg, database)
+	signals := make(chan os.Signal, 2)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signals)
 
-	done := make(chan struct{})
+	pollCtx, stopPolling := context.WithCancel(context.Background())
+	defer stopPolling()
+	jobRootCtx, cancelJobs := context.WithCancel(context.Background())
+	defer cancelJobs()
+	go reapStaleRuns(pollCtx, cfg, database)
+
 	var wg sync.WaitGroup
 
 	for i := 0; i < cfg.WorkerConcurrency; i++ {
 		wg.Add(1)
-		go worker(ctx, cfg, database, done, &wg)
+		go worker(pollCtx, jobRootCtx, cfg, database, &wg)
 	}
 
 	slog.Info("worker pool ready")
-	<-ctx.Done()
-	slog.Info("shutdown signal received, stopping polling", "signal", ctx.Err())
-
-	close(done)
-
-	drainCtx, drainCancel := context.WithTimeout(context.Background(), shutdownGrace)
-	defer drainCancel()
+	sig := <-signals
+	slog.Info("shutdown signal received; draining active CI jobs", "signal", sig, "grace", shutdownGrace)
+	stopPolling()
 
 	drainDone := make(chan struct{})
 	go func() {
@@ -88,13 +89,27 @@ func Run(cfg *config.Config, database *db.DB) error {
 		close(drainDone)
 	}()
 
+	drainTimer := time.NewTimer(shutdownGrace)
+	defer drainTimer.Stop()
 	select {
 	case <-drainDone:
 		slog.Info("all workers finished gracefully")
-	case <-drainCtx.Done():
-		slog.Warn("shutdown grace period expired; some jobs may still be stopping")
+		return nil
+	case sig := <-signals:
+		slog.Warn("second shutdown signal received; cancelling active CI jobs", "signal", sig)
+	case <-drainTimer.C:
+		slog.Warn("shutdown grace period expired; cancelling active CI jobs")
 	}
 
+	cancelJobs()
+	forceTimer := time.NewTimer(15 * time.Second)
+	defer forceTimer.Stop()
+	select {
+	case <-drainDone:
+		slog.Info("active CI jobs stopped")
+	case <-forceTimer.C:
+		slog.Warn("active CI jobs did not stop before process shutdown")
+	}
 	return nil
 }
 
@@ -122,27 +137,25 @@ func reapStaleRuns(ctx context.Context, cfg *config.Config, database *db.DB) {
 	}
 }
 
-func worker(ctx context.Context, cfg *config.Config, database *db.DB, done <-chan struct{}, wg *sync.WaitGroup) {
+func worker(pollCtx, jobParentCtx context.Context, cfg *config.Config, database *db.DB, wg *sync.WaitGroup) {
 	defer wg.Done()
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-done:
-			return
-		case <-ctx.Done():
+		case <-pollCtx.Done():
 			return
 		case <-ticker.C:
-			if err := processNext(ctx, cfg, database); err != nil {
+			if err := processNext(pollCtx, jobParentCtx, cfg, database); err != nil {
 				slog.Error("job processing error", "error", err)
 			}
 		}
 	}
 }
 
-func processNext(ctx context.Context, cfg *config.Config, database *db.DB) error {
-	run, err := database.ClaimNextPendingRun(ctx)
+func processNext(claimCtx, jobParentCtx context.Context, cfg *config.Config, database *db.DB) error {
+	run, err := database.ClaimNextPendingRun(claimCtx)
 	if err != nil {
 		return fmt.Errorf("claim run: %w", err)
 	}
@@ -150,21 +163,23 @@ func processNext(ctx context.Context, cfg *config.Config, database *db.DB) error
 		return nil
 	}
 
-	jobCtx, cancelJob := context.WithCancel(ctx)
+	jobCtx, cancelJob := context.WithCancel(jobParentCtx)
 	if cfg.CIJobTimeout > 0 {
-		jobCtx, cancelJob = context.WithTimeout(ctx, cfg.CIJobTimeout)
+		jobCtx, cancelJob = context.WithTimeout(jobParentCtx, cfg.CIJobTimeout)
 	}
 	defer cancelJob()
 
 	heartbeatCtx, stopHeartbeat := context.WithCancel(context.Background())
 	defer stopHeartbeat()
 	leaseLost := make(chan error, 1)
-	go heartbeatRun(heartbeatCtx, database, run.ID, run.AttemptID, cfg.CIHeartbeatInterval, cancelJob, leaseLost)
+	go heartbeatRun(heartbeatCtx, database, run.ID, run.AttemptID, cfg.CIHeartbeatInterval, cfg.CILeaseTimeout, cancelJob, leaseLost)
 
 	repo, owner, err := resolveRepo(jobCtx, database, run.RepoID)
 	if err != nil {
 		slog.Error("cannot resolve repo for run", "run_id", run.ID, "attempt_id", run.AttemptID, "error", err)
-		_ = database.CompleteCIRun(context.Background(), run.ID, run.AttemptID, "failed")
+		if completeErr := completeCIRunReliably(database, run.ID, run.AttemptID, "failed", "Repository could not be resolved"); completeErr != nil && !errors.Is(completeErr, db.ErrCIRunLeaseInactive) {
+			return fmt.Errorf("record unresolved repository failure: %w", completeErr)
+		}
 		return nil
 	}
 
@@ -177,9 +192,21 @@ func processNext(ctx context.Context, cfg *config.Config, database *db.DB) error
 	}
 
 	if err := j.execute(jobCtx); err != nil {
+		current, readErr := database.GetCIRunByID(context.Background(), run.ID)
+		if readErr == nil && current != nil && current.Status != "running" {
+			if current.Status == "cancelled" {
+				if ackErr := acknowledgeCancelledRun(database, run.ID, run.AttemptID); ackErr != nil && !errors.Is(ackErr, db.ErrCIRunLeaseInactive) {
+					return fmt.Errorf("acknowledge cancelled CI run: %w", ackErr)
+				}
+				slog.Info("CI run stopped after cancellation", "run_id", run.ID, "attempt_id", run.AttemptID)
+				return nil
+			}
+			return fmt.Errorf("CI run finished but worker returned an error: %w", err)
+		}
 		select {
 		case leaseErr := <-leaseLost:
-			slog.Error("CI run cancelled after lease loss", "run_id", run.ID, "attempt_id", run.AttemptID, "error", leaseErr)
+			slog.Warn("CI run stopped after lease loss", "run_id", run.ID, "attempt_id", run.AttemptID, "error", leaseErr)
+			return nil
 		default:
 			if errors.Is(jobCtx.Err(), context.DeadlineExceeded) {
 				slog.Error("CI run timed out", "run_id", run.ID, "attempt_id", run.AttemptID, "timeout", cfg.CIJobTimeout)
@@ -187,15 +214,41 @@ func processNext(ctx context.Context, cfg *config.Config, database *db.DB) error
 				slog.Error("CI run fatal error", "run_id", run.ID, "attempt_id", run.AttemptID, "error", err)
 			}
 		}
-		_ = database.CompleteCIRun(context.Background(), run.ID, run.AttemptID, "failed")
+		if completeErr := completeCIRunReliably(database, run.ID, run.AttemptID, "failed", "Worker failed before recording a final result"); completeErr != nil && !errors.Is(completeErr, db.ErrCIRunLeaseInactive) {
+			return fmt.Errorf("record fallback CI failure: %w", completeErr)
+		}
 	}
 	return nil
 }
 
-func heartbeatRun(ctx context.Context, database *db.DB, runID, attemptID string, interval time.Duration, cancelJob context.CancelFunc, leaseLost chan<- error) {
+func acknowledgeCancelledRun(database *db.DB, runID, attemptID string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return database.AcknowledgeCancelledCIRun(ctx, runID, attemptID)
+}
+
+func completeCIRunReliably(database *db.DB, runID, attemptID, status, reason string) error {
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		lastErr = database.CompleteCIRunWithReason(ctx, runID, attemptID, status, reason)
+		cancel()
+		if lastErr == nil || errors.Is(lastErr, db.ErrCIRunLeaseInactive) {
+			return lastErr
+		}
+		time.Sleep(time.Duration(attempt+1) * 200 * time.Millisecond)
+	}
+	return lastErr
+}
+
+func heartbeatRun(ctx context.Context, database *db.DB, runID, attemptID string, interval, leaseTimeout time.Duration, cancelJob context.CancelFunc, leaseLost chan<- error) {
 	if interval <= 0 {
 		interval = 15 * time.Second
 	}
+	if leaseTimeout <= 0 {
+		leaseTimeout = 2 * time.Minute
+	}
+	lastSuccess := time.Now()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -206,8 +259,12 @@ func heartbeatRun(ctx context.Context, database *db.DB, runID, attemptID string,
 			heartbeatCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			err := database.HeartbeatCIRun(heartbeatCtx, runID, attemptID)
 			cancel()
-			if err != nil {
-				slog.Warn("failed to heartbeat CI run; cancelling attempt", "run_id", runID, "attempt_id", attemptID, "error", err)
+			if err == nil {
+				lastSuccess = time.Now()
+				continue
+			}
+			if errors.Is(err, db.ErrCIRunLeaseInactive) || time.Since(lastSuccess) >= leaseTimeout {
+				slog.Warn("CI lease lost; cancelling attempt", "run_id", runID, "attempt_id", attemptID, "error", err)
 				select {
 				case leaseLost <- err:
 				default:
@@ -215,6 +272,7 @@ func heartbeatRun(ctx context.Context, database *db.DB, runID, attemptID string,
 				cancelJob()
 				return
 			}
+			slog.Warn("temporary CI heartbeat failure; keeping attempt active", "run_id", runID, "attempt_id", attemptID, "error", err, "lease_remaining", leaseTimeout-time.Since(lastSuccess))
 		}
 	}
 }
@@ -291,19 +349,19 @@ func (j *job) execute(ctx context.Context) error {
 	j.checkout = filepath.Join(j.workspace, "src")
 	if err := j.clone(ctx); err != nil {
 		j.logRunnerFailure(ctx, err, nil)
-		return j.complete(ctx, "failed")
+		return j.complete(ctx, "failed", "Repository checkout failed")
 	}
 
 	configPath := filepath.Join(j.checkout, ciConfigFile)
 	if _, statErr := os.Stat(configPath); os.IsNotExist(statErr) {
 		j.logf("No %s found; marking run as skipped.", ciConfigFile)
-		return j.complete(ctx, "skipped")
+		return j.complete(ctx, "skipped", "No .gitman-ci.yml found in this commit")
 	}
 
 	ciCfg, err := parseCIConfig(configPath)
 	if err != nil {
 		j.logf("ERROR: failed to parse %s: %v", ciConfigFile, err)
-		return j.complete(ctx, "failed")
+		return j.complete(ctx, "failed", "Invalid .gitman-ci.yml")
 	}
 
 	j.logf("Image  : %s", ciCfg.Image)
@@ -319,7 +377,7 @@ func (j *job) execute(ctx context.Context) error {
 	)
 	if err != nil {
 		j.logf("ERROR: CI ref policy is unavailable for this run; failing closed: %v", err)
-		return j.complete(ctx, "failed")
+		return j.complete(ctx, "failed", "CI ref policy could not be resolved")
 	}
 	j.refPolicy = policy
 	j.logf("Ref policy : %s", j.refPolicySummary())
@@ -328,7 +386,7 @@ func (j *job) execute(ctx context.Context) error {
 	envFile, err := j.resolveEnvFile(ctx, ciCfg)
 	if err != nil {
 		j.logRunnerFailure(ctx, err, ciCfg)
-		return j.complete(ctx, "failed")
+		return j.complete(ctx, "failed", ciFailureSummary(ctx, err, ciCfg))
 	}
 	j.enableSecretMasking()
 	defer j.flushSecretMasking()
@@ -340,27 +398,29 @@ func (j *job) execute(ctx context.Context) error {
 	runnerPath := filepath.Join(j.workspace, ".gitman-runner.sh")
 	if err := writeNewFile(runnerPath, []byte(j.generateRunnerScript(ciCfg)), 0o600); err != nil {
 		j.logf("ERROR: failed to write runner script: %v", err)
-		return j.complete(ctx, "failed")
+		return j.complete(ctx, "failed", "Runner setup failed")
 	}
 
 	j.artifactsStagingDir = filepath.Join(j.workspace, "gitman-artifacts")
 	if err := os.MkdirAll(j.artifactsStagingDir, 0o700); err != nil {
 		j.logf("ERROR: failed to create artifacts staging dir: %v", err)
-		return j.complete(ctx, "failed")
+		return j.complete(ctx, "failed", "Artifact staging could not be prepared")
 	}
 
 	dockerErr := j.runDocker(ctx, ciCfg, envFile, runnerPath)
 	j.collectArtifacts()
 
 	finalStatus := "success"
+	statusReason := ""
 	if dockerErr != nil {
 		finalStatus = "failed"
+		statusReason = ciFailureSummary(ctx, dockerErr, ciCfg)
 		j.logRunnerFailure(ctx, dockerErr, ciCfg)
 	}
 
 	j.logf("")
 	j.logf("=== Run %s: %s ===", j.run.ID, strings.ToUpper(finalStatus))
-	return j.complete(ctx, finalStatus)
+	return j.complete(ctx, finalStatus, statusReason)
 }
 
 func (j *job) logSection(name string) {
@@ -433,11 +493,36 @@ func (j *job) logRunnerFailure(ctx context.Context, err error, cfg *CIConfig) {
 	}
 }
 
-func (j *job) complete(ctx context.Context, status string) error {
-	if err := j.database.CompleteCIRun(ctx, j.run.ID, j.run.AttemptID, status); err != nil {
-		return err
+func ciFailureSummary(ctx context.Context, err error, cfg *CIConfig) string {
+	var exitErr *exec.ExitError
+	switch {
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+		return "Run exceeded its time limit"
+	case errors.Is(ctx.Err(), context.Canceled):
+		return "Run was interrupted while stopping"
+	case errors.Is(err, errDockerSocketWorkerDisabled):
+		return "Docker socket access is disabled on the worker"
+	case errors.Is(err, errDockerSocketRefNotTrusted):
+		return "This ref is not trusted for Docker socket access"
+	case errors.Is(err, errDockerSocketUnavailable):
+		return "Docker socket is unavailable"
+	case errors.Is(err, errCISecretsRefNotTrusted):
+		return "This ref is not trusted to use CI secrets"
+	case errors.Is(err, errDockerHostPathMisconfigured):
+		return "Worker path mapping is misconfigured"
+	case errors.Is(err, errDiskLimitExceeded):
+		return "CI storage limit exceeded"
+	case cfg != nil && cfg.Image != "" && strings.Contains(strings.ToLower(err.Error()), "no such image"):
+		return fmt.Sprintf("Runner image %s is not available", cfg.Image)
+	case errors.As(err, &exitErr):
+		return fmt.Sprintf("Pipeline exited with code %d", exitErr.ExitCode())
+	default:
+		return "Runner execution failed; open the build log for details"
 	}
-	return nil
+}
+
+func (j *job) complete(_ context.Context, status, reason string) error {
+	return completeCIRunReliably(j.database, j.run.ID, j.run.AttemptID, status, reason)
 }
 
 func (j *job) clone(ctx context.Context) error {
@@ -1489,7 +1574,18 @@ func reconcileAndRequeue(ctx context.Context, cfg *config.Config, database *db.D
 		return 0, err
 	}
 	cleanupStaleWorkspaces(ctx, cfg.CIWorkspaceRoot, database, staleBefore)
-	return database.RequeueStaleCIRuns(ctx, staleBefore)
+	requeued, err := database.RequeueStaleCIRuns(ctx, staleBefore)
+	if err != nil {
+		return 0, err
+	}
+	released, err := database.ReleaseStaleCancelledCIRuns(ctx, staleBefore)
+	if err != nil {
+		return requeued, err
+	}
+	if released > 0 {
+		slog.Warn("released stale cancelled CI attempts", "count", released)
+	}
+	return requeued, nil
 }
 
 // reconcileManagedContainers removes Docker containers whose attempt lease is

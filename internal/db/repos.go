@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"log/slog"
 
 	"github.com/google/uuid"
@@ -52,6 +53,31 @@ func (db *DB) GetUserRepositories(ctx context.Context, ownerID string) ([]models
 		r.CreatedAt = unixToTime(createdAt)
 		r.UpdatedAt = unixToTime(updatedAt)
 		repos = append(repos, r)
+	}
+	return repos, rows.Err()
+}
+
+func (db *DB) GetAllRepositories(ctx context.Context) (repos []models.Repository, err error) {
+	query := `SELECT id, owner_id, name, COALESCE(description, ''), is_private, created_at, updated_at
+		FROM repositories ORDER BY owner_id ASC, name ASC`
+	rows, err := db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	for rows.Next() {
+		var repo models.Repository
+		var createdAt, updatedAt int64
+		if err := rows.Scan(&repo.ID, &repo.OwnerID, &repo.Name, &repo.Description, &repo.IsPrivate, &createdAt, &updatedAt); err != nil {
+			return nil, err
+		}
+		repo.CreatedAt = unixToTime(createdAt)
+		repo.UpdatedAt = unixToTime(updatedAt)
+		repos = append(repos, repo)
 	}
 	return repos, rows.Err()
 }
