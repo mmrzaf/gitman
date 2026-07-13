@@ -3,8 +3,8 @@
 ## Validate
 
 ```bash
-VERSION=v1.0.0-beta.14 make verify
-VERSION=v1.0.0-beta.14 make release-source
+VERSION=v1.0.0-beta.15 make verify
+VERSION=v1.0.0-beta.15 make release-source
 ```
 
 Exercise at least:
@@ -15,6 +15,10 @@ Exercise at least:
 - Token creation, one-time display, use, and revoke.
 - SSH-key add/delete and generated `authorized_keys` output when SSH is supported.
 - Manual CI run for the default branch, non-default branch, tag, skipped run, failed run, successful run, artifact download, trusted-ref rules, and auto-trigger hook.
+- CI cancellation for both a pending and running job, retry lineage, live-log refresh, and repository deletion refusal until a cancelled worker has stopped.
+- Durable push triggers while the web process is stopped, including an annotated tag followed by ref deletion before restart.
+- Repository description and visibility updates, owner-only settings access, and quarantined deletion cleanup.
+- `/healthz` liveness and `/readyz` readiness behavior without session cookies.
 - Git HTTP clone and push with a personal access token, and rejection with the account password.
 - Password reset revokes existing sessions and tokens.
 - Backup creation and restore drill.
@@ -67,7 +71,7 @@ Document:
 Verify release injection before publishing:
 
 ```bash
-go build -trimpath -ldflags "-X main.version=v1.0.0-beta.14" -o bin/gitman ./cmd/gitman
+go build -trimpath -ldflags "-X main.version=v1.0.0-beta.15" -o bin/gitman ./cmd/gitman
 bin/gitman version
 bin/gitman --version
 ```
