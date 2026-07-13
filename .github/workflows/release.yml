@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Existing release tag to publish, for example v1.0.0-beta.14'
+        description: 'Existing release tag to publish, for example v1.0.0-beta.15'
         required: true
         type: string
 
@@ -23,6 +23,7 @@ env:
   APP_NAME: gitman
   GO_VERSION: '1.26'
   GOLANGCI_LINT_VERSION: 'v2.12'
+  GOVULNCHECK_VERSION: 'v1.6.0'
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
   GO_IMAGE: golang:1.26-bookworm
@@ -75,7 +76,7 @@ jobs:
     needs: release-metadata
     steps:
       - name: Checkout release tag
-        uses: actions/checkout@v7
+        uses: actions/checkout@v6
         with:
           ref: ${{ needs.release-metadata.outputs.version }}
           fetch-depth: 0
@@ -111,8 +112,8 @@ jobs:
             exit 1
           fi
 
-      - name: Test
-        run: go test ./...
+      - name: Test with race detector
+        run: go test -race ./...
 
       - name: Vet
         run: go vet ./...
@@ -124,7 +125,7 @@ jobs:
           args: --timeout=5m
 
       - name: Vulnerability scan
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+        run: go run golang.org/x/vuln/cmd/govulncheck@${{ env.GOVULNCHECK_VERSION }} ./...
 
       - name: Build smoke binary
         shell: bash
@@ -173,12 +174,9 @@ jobs:
           - goos: darwin
             goarch: arm64
             ext: ''
-          - goos: windows
-            goarch: amd64
-            ext: '.exe'
     steps:
       - name: Checkout release tag
-        uses: actions/checkout@v7
+        uses: actions/checkout@v6
         with:
           ref: ${{ needs.release-metadata.outputs.version }}
           fetch-depth: 0
@@ -216,7 +214,7 @@ jobs:
     needs: [release-metadata, verify]
     steps:
       - name: Checkout release tag
-        uses: actions/checkout@v7
+        uses: actions/checkout@v6
         with:
           ref: ${{ needs.release-metadata.outputs.version }}
           fetch-depth: 0
@@ -245,7 +243,7 @@ jobs:
     needs: [release-metadata, verify]
     steps:
       - name: Checkout release tag
-        uses: actions/checkout@v7
+        uses: actions/checkout@v6
         with:
           ref: ${{ needs.release-metadata.outputs.version }}
           fetch-depth: 0
@@ -297,7 +295,7 @@ jobs:
     needs: [release-metadata, verify]
     steps:
       - name: Checkout release tag
-        uses: actions/checkout@v7
+        uses: actions/checkout@v6
         with:
           ref: ${{ needs.release-metadata.outputs.version }}
           fetch-depth: 0
