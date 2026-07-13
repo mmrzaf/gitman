@@ -45,7 +45,7 @@ Store tokens in a credential manager. Do not commit them.
 
 ## SSH keys
 
-Create SSH keys from **SSH Keys** after the operator enables SSH transport. Gitman regenerates a managed `authorized_keys` file when keys are added or deleted. Shell access is not provided; keys are restricted to Git forced commands.
+Add RSA, ECDSA, Ed25519, or OpenSSH security keys from **SSH Keys** after the operator enables SSH transport. Gitman validates and canonicalizes each key, displays its SHA-256 fingerprint, rejects insecure DSA and certificate records, and atomically regenerates the managed `authorized_keys` file. Shell access is not provided; keys are restricted to Git forced commands.
 
 ## Browser source features
 
@@ -60,4 +60,6 @@ Repository pages provide:
 
 ## CI UI
 
-Members can view run status, logs, and artifacts. Owners and write collaborators can run CI manually. Owners can install or remove the post-receive auto-trigger hook and manage repository secrets.
+Members can view exact run status, queue and execution timing, live logs, outcome reasons, retry history, and artifacts. Owners and write collaborators can run CI manually, cancel queued or running jobs, and retry completed jobs against the same commit. Owners can install or upgrade the durable post-receive auto-trigger hook and manage repository secrets.
+
+Repository owners also have a dedicated **Settings** page for description, visibility, and safe deletion. Repositories with queued or running CI jobs—or a cancelled job whose worker is still stopping—must be settled before deletion.
