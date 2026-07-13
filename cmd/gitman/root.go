@@ -32,7 +32,13 @@ func Execute(args []string) error {
 		_, err := fmt.Fprintln(os.Stdout, versionString())
 		return err
 	}
+	if err := config.ValidateEnvironment(); err != nil {
+		return err
+	}
 	cfg := config.LoadConfig()
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
 	initLogger(cfg)
 
 	if len(args) < 2 {

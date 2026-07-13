@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func indexByte(s string, c byte) int {
@@ -119,5 +120,69 @@ func TestPublicURLDefaultsToConfiguredPort(t *testing.T) {
 	cfg := LoadConfig()
 	if cfg.PublicURL != "http://git.internal:9090" {
 		t.Fatalf("unexpected public URL: %s", cfg.PublicURL)
+	}
+}
+
+func TestValidateEnvironmentRejectsInvalidExplicitValues(t *testing.T) {
+	tests := []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{name: "integer", key: "GITMAN_WORKER_CONCURRENCY", value: "0"},
+		{name: "byte limit", key: "GITMAN_CI_LOG_MAX_BYTES", value: "-1"},
+		{name: "boolean", key: "GITMAN_TRUST_PROXY_HEADERS", value: "sometimes"},
+		{name: "duration", key: "GITMAN_CI_TIMEOUT", value: "0s"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(tt.key, tt.value)
+			if err := ValidateEnvironment(); err == nil || !strings.Contains(err.Error(), tt.key) {
+				t.Fatalf("expected %s validation error, got %v", tt.key, err)
+			}
+		})
+	}
+}
+
+func TestValidateEnvironmentAcceptsSupportedDurationForms(t *testing.T) {
+	t.Setenv("GITMAN_CI_TIMEOUT", "90")
+	t.Setenv("GITMAN_CI_LEASE_TIMEOUT", "2m")
+	t.Setenv("GITMAN_CI_HEARTBEAT_INTERVAL", "15s")
+	if err := ValidateEnvironment(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestConfigValidateRejectsUnsafeValues(t *testing.T) {
+	base := LoadConfig()
+	base.CILeaseTimeout = 2 * time.Minute
+	base.CIHeartbeatInterval = 15 * time.Second
+	if err := base.Validate(); err != nil {
+		t.Fatalf("default config rejected: %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*Config)
+	}{
+		{name: "URL credentials", mutate: func(c *Config) { c.PublicURL = "https://user@example.com" }},
+		{name: "relative Docker socket", mutate: func(c *Config) { c.CIDockerSocketPath = "docker.sock" }},
+		{name: "memory limit", mutate: func(c *Config) { c.MemoryLimit = "unlimited" }},
+		{name: "CPU limit", mutate: func(c *Config) { c.CPULimit = "NaN" }},
+		{name: "network whitespace", mutate: func(c *Config) { c.CINetwork = "bad network" }},
+		{name: "relative path mapping", mutate: func(c *Config) {
+			c.CIWorkerPathPrefix = "data"
+			c.CIHostPathPrefix = "host-data"
+		}},
+		{name: "heartbeat ratio", mutate: func(c *Config) { c.CIHeartbeatInterval = time.Minute }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := *base
+			tt.mutate(&cfg)
+			if err := cfg.Validate(); err == nil {
+				t.Fatal("expected validation error")
+			}
+		})
 	}
 }
