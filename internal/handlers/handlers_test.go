@@ -344,6 +344,8 @@ func TestBuildHookScriptUsesDurableLocalQueue(t *testing.T) {
 		gitmanHookMarker,
 		ciHookQueueDirName,
 		`mktemp "$QUEUE_DIR/.event.XXXXXXXXXXXX"`,
+		`flock -x 9`,
+		`event-%020d`,
 		`printf '%s\n%s\n%s\n' "$old" "$new" "$ref"`,
 		`logger -t gitman-ci-hook`,
 	} {
@@ -405,16 +407,19 @@ func TestBuildHookScriptQueuesOnlyUpdatedBranchesAndTags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 2 {
-		t.Fatalf("queued event count = %d, want 2", len(entries))
-	}
 	var events []string
 	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), "event-") {
+			continue
+		}
 		data, err := os.ReadFile(filepath.Join(hooksDir, ciHookQueueDirName, entry.Name()))
 		if err != nil {
 			t.Fatal(err)
 		}
 		events = append(events, string(data))
+	}
+	if len(events) != 2 {
+		t.Fatalf("queued event count = %d, want 2", len(events))
 	}
 	joined := strings.Join(events, "\n")
 	for _, expected := range []string{branchCommit + "\nrefs/heads/main", tagCommit + "\nrefs/tags/v1.0.0"} {
