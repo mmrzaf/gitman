@@ -40,12 +40,13 @@ type AccessToken struct {
 
 // SSHKey represents an SSH public key attached to a user.
 type SSHKey struct {
-	ID        string    `json:"id"`
-	UserID    string    `json:"user_id"`
-	Name      string    `json:"name"`
-	PublicKey string    `json:"public_key"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID          string    `json:"id"`
+	UserID      string    `json:"user_id"`
+	Name        string    `json:"name"`
+	PublicKey   string    `json:"public_key"`
+	Fingerprint string    `json:"fingerprint,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // CIRun represents a single CI/CD pipeline execution.
@@ -60,6 +61,8 @@ type CIRun struct {
 	Status       string     `json:"status"`
 	LogFile      string     `json:"log_file"`
 	CancelReason string     `json:"cancel_reason"`
+	StatusReason string     `json:"status_reason"`
+	RetryOfRunID string     `json:"retry_of_run_id,omitempty"`
 	AttemptID    string     `json:"attempt_id,omitempty"`
 	CreatedAt    time.Time  `json:"created_at"`
 	StartedAt    *time.Time `json:"started_at,omitempty"`

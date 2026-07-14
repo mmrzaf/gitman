@@ -170,28 +170,40 @@ func TestInitDBConcurrentMigration(t *testing.T) {
 	}
 }
 
-func TestInitDBAdoptsIntermediateLeaseSchema(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "intermediate.sqlite")
+func TestBeta14DataUpgradeAndRollbackPreservesCIRuns(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "beta14.sqlite")
 	raw, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	initSQL, err := gitman.FS.ReadFile("migrations/001_init.up.sql")
+	migrations, err := loadMigrationFiles(gitman.FS, "migrations")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := raw.Exec(string(initSQL)); err != nil {
-		t.Fatal(err)
+	for _, migration := range migrations {
+		if migration.version > 3 {
+			break
+		}
+		if _, err := raw.Exec(migration.up); err != nil {
+			t.Fatalf("apply Beta 14 migration %d: %v", migration.version, err)
+		}
 	}
 	if _, err := raw.Exec(`
 		CREATE TABLE schema_migrations (
 			version INTEGER PRIMARY KEY,
 			applied_at INTEGER DEFAULT (strftime('%s', 'now'))
 		);
-		INSERT INTO schema_migrations (version) VALUES (1);
-		ALTER TABLE ci_runs ADD COLUMN started_at INTEGER;
-		ALTER TABLE ci_runs ADD COLUMN heartbeat_at INTEGER;
-		ALTER TABLE ci_runs ADD COLUMN attempt_id TEXT NOT NULL DEFAULT '';
+		INSERT INTO schema_migrations (version) VALUES (1), (2), (3);
+		INSERT INTO users (id, username, password_hash) VALUES ('user-1', 'beta14', 'hash');
+		INSERT INTO repositories (id, owner_id, name, description) VALUES ('repo-1', 'user-1', 'project', 'kept');
+		INSERT INTO ci_runs (
+			id, repo_id, commit_hash, branch, event, status, log_file,
+			created_at, completed_at, started_at, heartbeat_at, attempt_id, cancel_reason
+		) VALUES (
+			'run-1', 'repo-1', '0123456789012345678901234567890123456789', 'main',
+			'push', 'failed', '/logs/run-1.log', 1700000000, 1700000030,
+			1700000010, NULL, 'attempt-1', ''
+		);
 	`); err != nil {
 		t.Fatal(err)
 	}
@@ -201,23 +213,47 @@ func TestInitDBAdoptsIntermediateLeaseSchema(t *testing.T) {
 
 	database, err := InitDB(dbPath)
 	if err != nil {
-		t.Fatalf("InitDB failed to adopt intermediate schema: %v", err)
+		t.Fatalf("upgrade Beta 14 database: %v", err)
 	}
 	defer database.Close()
+	var commit, status, logFile, attemptID, statusReason, retryOf, triggerKey string
+	if err := database.QueryRow(`
+		SELECT commit_hash, status, log_file, attempt_id, status_reason, retry_of_run_id, trigger_key
+		FROM ci_runs WHERE id = 'run-1'
+	`).Scan(&commit, &status, &logFile, &attemptID, &statusReason, &retryOf, &triggerKey); err != nil {
+		t.Fatal(err)
+	}
+	if commit != "0123456789012345678901234567890123456789" || status != "failed" ||
+		logFile != "/logs/run-1.log" || attemptID != "attempt-1" || statusReason != "" || retryOf != "" || triggerKey != "" {
+		t.Fatalf("Beta 14 CI run changed during upgrade: commit=%q status=%q log=%q attempt=%q reason=%q retry=%q trigger=%q",
+			commit, status, logFile, attemptID, statusReason, retryOf, triggerKey)
+	}
+
+	if err := database.rollbackTo(context.Background(), gitman.FS, "migrations", 3); err != nil {
+		t.Fatalf("rollback Beta 15 migrations: %v", err)
+	}
 	var version int
 	if err := database.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
 	if version != 3 {
-		t.Fatalf("expected schema version 3, got %d", version)
+		t.Fatalf("schema version after rollback = %d, want 3", version)
 	}
-	for _, column := range []string{"started_at", "heartbeat_at", "attempt_id", "cancel_reason"} {
+	if err := database.QueryRow(`
+		SELECT commit_hash, status, log_file, attempt_id FROM ci_runs WHERE id = 'run-1'
+	`).Scan(&commit, &status, &logFile, &attemptID); err != nil {
+		t.Fatal(err)
+	}
+	if commit != "0123456789012345678901234567890123456789" || status != "failed" || logFile != "/logs/run-1.log" || attemptID != "attempt-1" {
+		t.Fatalf("CI run changed during rollback: commit=%q status=%q log=%q attempt=%q", commit, status, logFile, attemptID)
+	}
+	for _, column := range []string{"status_reason", "retry_of_run_id", "trigger_key"} {
 		var count int
 		if err := database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('ci_runs') WHERE name = ?", column).Scan(&count); err != nil {
 			t.Fatal(err)
 		}
-		if count != 1 {
-			t.Fatalf("expected column %s exactly once, got %d", column, count)
+		if count != 0 {
+			t.Fatalf("column %s remained after rollback", column)
 		}
 	}
 }

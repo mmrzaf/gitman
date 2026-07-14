@@ -14,6 +14,21 @@ import (
 
 var usernameRegex = regexp.MustCompile(`^[a-zA-Z0-9](?:[a-zA-Z0-9_-]*[a-zA-Z0-9])?$`)
 
+const sessionDuration = 24 * time.Hour
+
+func (app *App) setSessionCookie(w http.ResponseWriter, r *http.Request, token string, expires time.Time) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     "session_token",
+		Value:    token,
+		Expires:  expires,
+		MaxAge:   int(time.Until(expires).Seconds()),
+		HttpOnly: true,
+		Secure:   app.secureCookie(r),
+		SameSite: http.SameSiteStrictMode,
+		Path:     "/",
+	})
+}
+
 func (app *App) HandleLoginGET(w http.ResponseWriter, r *http.Request) {
 	if GetUser(r) != nil {
 		http.Redirect(w, r, "/repos", http.StatusFound)
@@ -64,15 +79,7 @@ func (app *App) HandleLoginPOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     "session_token",
-		Value:    token,
-		Expires:  time.Now().Add(24 * time.Hour),
-		HttpOnly: true,
-		Secure:   app.secureCookie(r),
-		SameSite: http.SameSiteStrictMode,
-		Path:     "/",
-	})
+	app.setSessionCookie(w, r, token, time.Now().Add(sessionDuration))
 
 	http.Redirect(w, r, "/repos", http.StatusFound)
 }

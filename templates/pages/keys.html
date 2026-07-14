@@ -17,11 +17,11 @@
     <form method="POST" action="/keys" class="form-stack">
       <label class="field">
         <span>Name</span>
-        <input id="key-name" type="text" name="name" required placeholder="Work laptop" />
+        <input id="key-name" type="text" name="name" required maxlength="100" placeholder="Work laptop" />
       </label>
       <label class="field">
         <span>Public key</span>
-        <textarea id="public-key" name="public_key" rows="5" required placeholder="ssh-ed25519 AAAA..."></textarea>
+        <textarea id="public-key" name="public_key" rows="5" required maxlength="16384" placeholder="ssh-ed25519 AAAA..."></textarea>
       </label>
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
       <button type="submit">Add SSH key</button>

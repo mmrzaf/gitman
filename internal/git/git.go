@@ -44,8 +44,9 @@ type TreeEntry struct {
 }
 
 var (
-	safeRefRegex    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9/_.-]*$`)
-	commitHashRegex = regexp.MustCompile(`^[A-Fa-f0-9]{7,40}$`)
+	safeRefRegex          = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9/_.-]*$`)
+	commitHashRegex       = regexp.MustCompile(`^[A-Fa-f0-9]{7,64}$`)
+	canonicalGitHashRegex = regexp.MustCompile(`^(?:[A-Fa-f0-9]{40}|[A-Fa-f0-9]{64})$`)
 )
 
 func ValidateRefName(ref string) error {
@@ -448,7 +449,7 @@ func ResolveCommitHash(ctx context.Context, repoPath, hash string) (string, erro
 		return "", ErrRefNotFound
 	}
 	resolved := strings.TrimSpace(string(out))
-	if !regexp.MustCompile(`^[A-Fa-f0-9]{40}$`).MatchString(resolved) {
+	if !canonicalGitHashRegex.MatchString(resolved) {
 		return "", fmt.Errorf("unexpected resolved commit hash")
 	}
 	return resolved, nil
@@ -476,7 +477,7 @@ func resolveFullRefCommitHash(ctx context.Context, repoPath, fullRef string) (st
 		return "", ErrRefNotFound
 	}
 	resolved := strings.TrimSpace(string(out))
-	if !regexp.MustCompile(`^[A-Fa-f0-9]{40}$`).MatchString(resolved) {
+	if !canonicalGitHashRegex.MatchString(resolved) {
 		return "", fmt.Errorf("unexpected resolved commit hash")
 	}
 	return resolved, nil

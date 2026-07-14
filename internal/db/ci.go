@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,7 +14,9 @@ import (
 )
 
 const ciRunColumns = `id, repo_id, commit_hash, branch, tag, event, status, log_file,
-	cancel_reason, attempt_id, created_at, started_at, heartbeat_at, completed_at`
+	cancel_reason, status_reason, retry_of_run_id, attempt_id, created_at, started_at, heartbeat_at, completed_at`
+
+var ErrCIRunLeaseInactive = errors.New("CI run lease is no longer active")
 
 type rowScanner interface {
 	Scan(dest ...any) error
@@ -25,7 +28,7 @@ func scanCIRun(scanner rowScanner) (*models.CIRun, error) {
 	var startedAt, heartbeatAt, completedAt sql.NullInt64
 	if err := scanner.Scan(
 		&r.ID, &r.RepoID, &r.CommitHash, &r.Branch, &r.Tag,
-		&r.Event, &r.Status, &r.LogFile, &r.CancelReason, &r.AttemptID, &createdAt,
+		&r.Event, &r.Status, &r.LogFile, &r.CancelReason, &r.StatusReason, &r.RetryOfRunID, &r.AttemptID, &createdAt,
 		&startedAt, &heartbeatAt, &completedAt,
 	); err != nil {
 		return nil, err
@@ -50,6 +53,12 @@ func (db *DB) CreateCIRun(ctx context.Context, repoID, commitHash, branch, tag, 
 // CreatePushCIRun cancels older pending push runs for the same exact ref and
 // inserts the new pending run atomically.
 func (db *DB) CreatePushCIRun(ctx context.Context, repoID, commitHash, branch, tag string) (string, error) {
+	return db.CreatePushCIRunWithTriggerKey(ctx, repoID, commitHash, branch, tag, "")
+}
+
+// CreatePushCIRunWithTriggerKey atomically deduplicates a durable trigger,
+// cancels older pending pushes for the same ref, and creates the new run.
+func (db *DB) CreatePushCIRunWithTriggerKey(ctx context.Context, repoID, commitHash, branch, tag, triggerKey string) (string, error) {
 	if branch == "" && tag == "" {
 		return "", fmt.Errorf("push run requires branch or tag")
 	}
@@ -66,39 +75,145 @@ func (db *DB) CreatePushCIRun(ctx context.Context, repoID, commitHash, branch, t
 			slog.Warn("failed to rollback transaction", "error", rollbackErr)
 		}
 	}()
+	triggerKey = strings.TrimSpace(triggerKey)
+	if triggerKey != "" {
+		var existingID string
+		err := tx.QueryRowContext(ctx, "SELECT id FROM ci_runs WHERE trigger_key = ?", triggerKey).Scan(&existingID)
+		if err == nil {
+			return existingID, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return "", err
+		}
+	}
 
 	reason := fmt.Sprintf("Superseded by newer push %s", shortCommit(commitHash))
 	if branch != "" {
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE ci_runs
-			SET status = 'cancelled', cancel_reason = ?, completed_at = ?, heartbeat_at = NULL
+			SET status = 'cancelled', cancel_reason = ?, status_reason = ?, completed_at = ?, heartbeat_at = NULL
 			WHERE repo_id = ? AND event = 'push' AND status = 'pending'
 			  AND branch = ? AND tag = ''
-		`, reason, time.Now().Unix(), repoID, branch); err != nil {
+		`, reason, reason, time.Now().Unix(), repoID, branch); err != nil {
 			return "", err
 		}
 	} else {
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE ci_runs
-			SET status = 'cancelled', cancel_reason = ?, completed_at = ?, heartbeat_at = NULL
+			SET status = 'cancelled', cancel_reason = ?, status_reason = ?, completed_at = ?, heartbeat_at = NULL
 			WHERE repo_id = ? AND event = 'push' AND status = 'pending'
 			  AND tag = ? AND branch = ''
-		`, reason, time.Now().Unix(), repoID, tag); err != nil {
+		`, reason, reason, time.Now().Unix(), repoID, tag); err != nil {
 			return "", err
 		}
 	}
 
 	id := uuid.New().String()
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO ci_runs (id, repo_id, commit_hash, branch, tag, event, status)
-		VALUES (?, ?, ?, ?, ?, 'push', 'pending')
-	`, id, repoID, commitHash, branch, tag); err != nil {
+		INSERT INTO ci_runs (id, repo_id, commit_hash, branch, tag, event, status, trigger_key)
+		VALUES (?, ?, ?, ?, ?, 'push', 'pending', ?)
+	`, id, repoID, commitHash, branch, tag, triggerKey); err != nil {
 		return "", err
 	}
 	if err := tx.Commit(); err != nil {
 		return "", err
 	}
 	return id, nil
+}
+
+// RetryCIRun creates a new pending run with the exact source revision of a
+// completed run. The source run is never mutated.
+func (db *DB) RetryCIRun(ctx context.Context, repoID, runID string) (string, error) {
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{})
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			slog.Warn("failed to rollback transaction", "error", rollbackErr)
+		}
+	}()
+
+	var commitHash, branch, tag, status string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT commit_hash, branch, tag, status
+		FROM ci_runs WHERE id = ? AND repo_id = ?
+	`, runID, repoID).Scan(&commitHash, &branch, &tag, &status); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", sql.ErrNoRows
+		}
+		return "", err
+	}
+	switch status {
+	case "success", "failed", "skipped", "cancelled":
+	default:
+		return "", fmt.Errorf("CI run is not complete")
+	}
+
+	newID := uuid.New().String()
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO ci_runs (
+			id, repo_id, commit_hash, branch, tag, event, status, retry_of_run_id
+		) VALUES (?, ?, ?, ?, ?, 'retry', 'pending', ?)
+	`, newID, repoID, commitHash, branch, tag, runID); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	return newID, nil
+}
+
+// CancelCIRun transitions a pending or running run to cancelled. A running
+// worker loses its active lease on the next heartbeat because status is no
+// longer running.
+func (db *DB) CancelCIRun(ctx context.Context, repoID, runID, reason string) (bool, error) {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "Cancelled by user"
+	}
+	now := time.Now().Unix()
+	res, err := db.ExecContext(ctx, `
+		UPDATE ci_runs
+		SET status = 'cancelled', cancel_reason = ?, status_reason = ?, completed_at = ?,
+			heartbeat_at = CASE WHEN status = 'running' THEN ? ELSE NULL END
+		WHERE id = ? AND repo_id = ? AND status IN ('pending', 'running')
+	`, reason, reason, now, now, runID, repoID)
+	if err != nil {
+		return false, err
+	}
+	rows, err := res.RowsAffected()
+	return rows > 0, err
+}
+
+// AcknowledgeCancelledCIRun records that the worker which owned a cancelled
+// attempt has stopped touching repository-scoped files. The attempt ID remains
+// immutable so its logs and artifacts stay addressable; heartbeat_at is reused
+// as the transient stopping marker after cancellation.
+func (db *DB) AcknowledgeCancelledCIRun(ctx context.Context, runID, attemptID string) error {
+	res, err := db.ExecContext(ctx, `
+		UPDATE ci_runs SET heartbeat_at = NULL
+		WHERE id = ? AND attempt_id = ? AND status = 'cancelled' AND heartbeat_at IS NOT NULL
+	`, runID, attemptID)
+	if err != nil {
+		return err
+	}
+	return requireAffectedRow(res, ErrCIRunLeaseInactive)
+}
+
+// ReleaseStaleCancelledCIRuns prevents a worker crash after cancellation from
+// blocking repository deletion forever. The normal path is the explicit
+// acknowledgement above; this is only crash recovery after a full lease.
+func (db *DB) ReleaseStaleCancelledCIRuns(ctx context.Context, staleBefore time.Time) (int64, error) {
+	res, err := db.ExecContext(ctx, `
+		UPDATE ci_runs SET heartbeat_at = NULL
+		WHERE status = 'cancelled' AND attempt_id <> '' AND heartbeat_at IS NOT NULL
+		  AND completed_at IS NOT NULL AND completed_at < ?
+	`, staleBefore.Unix())
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 func shortCommit(commit string) string {
@@ -125,7 +240,8 @@ func (db *DB) ClaimNextPendingRun(ctx context.Context) (*models.CIRun, error) {
 	attemptID := uuid.New().String()
 	run, err := scanCIRun(tx.QueryRowContext(ctx, `
 		UPDATE ci_runs
-		SET status = 'running', attempt_id = ?, log_file = '', started_at = ?, heartbeat_at = ?, completed_at = NULL
+		SET status = 'running', attempt_id = ?, log_file = '', cancel_reason = '', status_reason = '',
+			started_at = ?, heartbeat_at = ?, completed_at = NULL
 		WHERE id = (
 			SELECT id FROM ci_runs
 			WHERE status = 'pending'
@@ -154,7 +270,7 @@ func (db *DB) HeartbeatCIRun(ctx context.Context, runID, attemptID string) error
 	if err != nil {
 		return err
 	}
-	return requireAffectedRow(res, "CI run lease is no longer active")
+	return requireAffectedRow(res, ErrCIRunLeaseInactive)
 }
 
 // IsCIRunAttemptActive reports whether an attempt still owns a running lease.
@@ -190,7 +306,8 @@ func (db *DB) IsCIRunAttemptFresh(ctx context.Context, runID, attemptID string, 
 func (db *DB) RequeueStaleCIRuns(ctx context.Context, staleBefore time.Time) (int64, error) {
 	res, err := db.ExecContext(ctx, `
 		UPDATE ci_runs
-		SET status = 'pending', attempt_id = '', log_file = '', started_at = NULL, heartbeat_at = NULL
+		SET status = 'pending', attempt_id = '', log_file = '', cancel_reason = '', status_reason = '',
+			started_at = NULL, heartbeat_at = NULL, completed_at = NULL
 		WHERE status = 'running' AND (heartbeat_at IS NULL OR heartbeat_at < ?)
 	`, staleBefore.Unix())
 	if err != nil {
@@ -208,33 +325,39 @@ func (db *DB) UpdateCIRunLogFile(ctx context.Context, runID, attemptID, logFile 
 	if err != nil {
 		return err
 	}
-	return requireAffectedRow(res, "CI run lease is no longer active")
+	return requireAffectedRow(res, ErrCIRunLeaseInactive)
 }
 
 // CompleteCIRun sets status and completed_at for one exact execution attempt.
 func (db *DB) CompleteCIRun(ctx context.Context, runID, attemptID, status string) error {
+	return db.CompleteCIRunWithReason(ctx, runID, attemptID, status, "")
+}
+
+// CompleteCIRunWithReason records one terminal outcome and a concise
+// user-visible explanation for the exact execution attempt.
+func (db *DB) CompleteCIRunWithReason(ctx context.Context, runID, attemptID, status, reason string) error {
 	switch status {
 	case "success", "failed", "skipped", "cancelled":
 	default:
 		return fmt.Errorf("invalid CI run status %q", status)
 	}
 	res, err := db.ExecContext(ctx, `
-		UPDATE ci_runs SET status = ?, completed_at = ?, heartbeat_at = NULL
+		UPDATE ci_runs SET status = ?, status_reason = ?, completed_at = ?, heartbeat_at = NULL
 		WHERE id = ? AND attempt_id = ? AND status = 'running'
-	`, status, time.Now().Unix(), runID, attemptID)
+	`, status, strings.TrimSpace(reason), time.Now().Unix(), runID, attemptID)
 	if err != nil {
 		return err
 	}
-	return requireAffectedRow(res, "CI run lease is no longer active")
+	return requireAffectedRow(res, ErrCIRunLeaseInactive)
 }
 
-func requireAffectedRow(res sql.Result, message string) error {
+func requireAffectedRow(res sql.Result, noRowsErr error) error {
 	rows, err := res.RowsAffected()
 	if err != nil {
 		return err
 	}
 	if rows == 0 {
-		return errors.New(message)
+		return noRowsErr
 	}
 	return nil
 }
@@ -270,6 +393,23 @@ func (db *DB) GetCIRunByID(ctx context.Context, id string) (*models.CIRun, error
 		return nil, nil
 	}
 	return r, err
+}
+
+// HasActiveCIRuns reports whether a repository still has queued or executing
+// CI work. Repository deletion uses this to avoid racing active workers and
+// leaving logs, artifacts, or caches behind after the database row is gone.
+func (db *DB) HasActiveCIRuns(ctx context.Context, repoID string) (bool, error) {
+	var one int
+	err := db.QueryRowContext(ctx, `
+		SELECT 1 FROM ci_runs
+		WHERE repo_id = ?
+		  AND (status IN ('pending', 'running') OR (status = 'cancelled' AND heartbeat_at IS NOT NULL))
+		LIMIT 1
+	`, repoID).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 // GetSuccessfulCIRunsByRepo returns successful CI runs for a repository, newest first.

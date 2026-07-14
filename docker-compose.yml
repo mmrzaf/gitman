@@ -24,7 +24,6 @@ services:
       GITMAN_ARTIFACTS: /data/artifacts
       GITMAN_AUTH_KEYS: /data/authorized_keys
       GITMAN_SECRET_KEY: "${GITMAN_SECRET_KEY:-}"
-      GITMAN_INTERNAL_URL: http://web:8080
       GITMAN_SERVER_HOST: "${GITMAN_SERVER_HOST:-localhost}"
       GITMAN_PUBLIC_URL: "${GITMAN_PUBLIC_URL:-http://localhost:8080}"
       GITMAN_LOG_LEVEL: "${GITMAN_LOG_LEVEL:-info}"

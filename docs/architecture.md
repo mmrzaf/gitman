@@ -48,10 +48,12 @@ A source-release package must retain those directories.
 
 ## Data flow: CI
 
-1. UI or webhook creates a pending row.
+1. UI, external webhook, or the durable repository-local trigger queue creates an idempotent pending row. Hook events use a locked monotonic repository sequence; the web process claims and replays them strictly in that order, restoring an interrupted claim before later events.
 2. Worker claims the row with a new attempt ID and heartbeat lease.
 3. Worker clones from the local bare repository.
 4. Worker validates `.gitman-ci.yml`, resolves secrets, and creates an environment file outside the checkout.
 5. Worker starts a labeled sibling Docker container with restrictions and bind mounts.
 6. Worker collects regular artifacts, records final status, and removes the temporary workspace.
 7. Reconciliation removes stale managed containers and requeues stale attempts after crashes.
+8. User cancellation invalidates the active lease. A running attempt remains deletion-blocking until its worker acknowledges that file activity has stopped; stale acknowledgements are released after the lease timeout following a crash.
+9. Graceful worker shutdown stops claiming new work and drains current attempts before force cancellation.

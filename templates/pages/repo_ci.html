@@ -30,9 +30,9 @@
       <span class="chip">Unmanaged hook present</span>
       {{else}}
       <details>
-        <summary><strong>Install auto-trigger hook</strong></summary>
+        <summary><strong>{{if eq .Data.HookState "outdated"}}Upgrade auto-trigger hook{{else}}Install auto-trigger hook{{end}}</strong></summary>
         <div class="card tight mt-1">
-          <p class="muted">Installs a managed post-receive hook that triggers CI on push.</p>
+          <p class="muted">Installs the durable managed hook. Push events remain queued during web restarts.</p>
           <form method="POST" action="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/hook/install">
             <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
             <button type="submit">Install hook</button>
@@ -43,7 +43,7 @@
     {{end}}
   </div>
 
-  {{if $.User}}
+  {{if .Data.CanControl}}
 <form method="POST" action="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/trigger" class="form-row">
   <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
 
@@ -136,10 +136,29 @@
         {{if .Tag}}<span class="chip">tag {{.Tag}}</span>{{end}}
         {{if .CommitHash}}<span class="muted">{{short .CommitHash 7}}</span>{{end}}
       </div>
-      <div class="ci-run-meta">{{.Event}} · {{.CreatedAt.Format "2006-01-02 15:04:05"}} · {{runDuration .}}</div>
-      {{if .CancelReason}}<div class="ci-run-meta">{{.CancelReason}}</div>{{end}}
+      <div class="ci-run-meta">
+        {{.Event}} · queued {{.CreatedAt.Format "2006-01-02 15:04:05"}}
+        {{if .StartedAt}} · ran {{runDuration .}}{{else}} · waiting {{queueDuration .}}{{end}}
+      </div>
+      {{if .RetryOfRunID}}<div class="ci-run-meta">Retry of <a href="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/ci/{{.RetryOfRunID}}"><code>{{short .RetryOfRunID 8}}</code></a></div>{{end}}
+      {{if .StatusReason}}<div class="ci-run-meta ci-run-reason">{{.StatusReason}}</div>{{end}}
     </div>
-    <a class="button secondary small" href="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/ci/{{.ID}}">View log</a>
+    <div class="ci-run-actions">
+      {{if $.Data.CanControl}}
+        {{if canCancelRun .Status}}
+        <form method="POST" action="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/ci/{{.ID}}/cancel" data-confirm="Cancel this CI run?">
+          <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+          <button class="danger small" type="submit">Cancel</button>
+        </form>
+        {{else if canRetryRun .Status}}
+        <form method="POST" action="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/ci/{{.ID}}/retry">
+          <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+          <button class="small" type="submit">Retry</button>
+        </form>
+        {{end}}
+      {{end}}
+      <a class="button secondary small" href="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/ci/{{.ID}}">Open</a>
+    </div>
   </div>
   {{end}}
 </div>

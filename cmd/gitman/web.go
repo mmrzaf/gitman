@@ -4,16 +4,19 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/mmrzaf/gitman/internal/config"
 	"github.com/mmrzaf/gitman/internal/db"
 	"github.com/mmrzaf/gitman/internal/handlers"
+	gitmanssh "github.com/mmrzaf/gitman/internal/ssh"
 )
 
 func init() {
@@ -35,11 +38,21 @@ func runWeb(cfg *config.Config, database *db.DB, args []string) error {
 	if *port != "" {
 		finalPort = *port
 	}
+	portNumber, err := strconv.Atoi(finalPort)
+	if err != nil || portNumber < 1 || portNumber > 65535 {
+		return fmt.Errorf("web port must be a number between 1 and 65535")
+	}
 
 	if err := os.MkdirAll(cfg.ReposPath, 0o700); err != nil {
 		return err
 	}
 	if err := os.Chmod(cfg.ReposPath, 0o700); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(cfg.ArtifactsPath, 0o700); err != nil {
+		return err
+	}
+	if err := os.Chmod(cfg.ArtifactsPath, 0o700); err != nil {
 		return err
 	}
 
@@ -59,12 +72,16 @@ func runWeb(cfg *config.Config, database *db.DB, args []string) error {
 		Templates: templates,
 		StaticFS:  staticFS,
 	}
+	if err := gitmanssh.SyncAuthorizedKeys(context.Background(), database, cfg); err != nil {
+		return fmt.Errorf("synchronize authorized_keys: %w", err)
+	}
 	if err := database.DeleteExpiredSessions(context.Background()); err != nil {
 		slog.Warn("failed to prune expired sessions at startup", "error", err)
 	}
 	pruneCtx, stopPrune := context.WithCancel(context.Background())
 	defer stopPrune()
 	go pruneExpiredSessions(pruneCtx, database)
+	go app.RunCITriggerQueue(pruneCtx)
 
 	router := handlers.SetupRouter(app)
 

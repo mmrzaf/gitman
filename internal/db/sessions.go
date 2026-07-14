@@ -84,15 +84,19 @@ func (db *DB) ExtendSession(ctx context.Context, token string, duration time.Dur
 	return err
 }
 
-func (db *DB) ExtendSessionIfExpiring(ctx context.Context, token string, duration, threshold time.Duration) error {
+func (db *DB) ExtendSessionIfExpiring(ctx context.Context, token string, duration, threshold time.Duration) (bool, error) {
 	now := time.Now()
 	newExpires := now.Add(duration).Unix()
 	cutoff := now.Add(threshold).Unix()
-	_, err := db.ExecContext(ctx, `
+	res, err := db.ExecContext(ctx, `
 		UPDATE sessions SET expires_at = ?
 		WHERE token IN (?, ?) AND expires_at <= ?
 	`, newExpires, hashSessionToken(token), token, cutoff)
-	return err
+	if err != nil {
+		return false, err
+	}
+	rows, err := res.RowsAffected()
+	return rows > 0, err
 }
 
 func (db *DB) DeleteExpiredSessions(ctx context.Context) error {

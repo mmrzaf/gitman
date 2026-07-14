@@ -19,6 +19,13 @@ func SetupRouter(app *App) *chi.Mux {
 	// Static files do not require session resolution.
 	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(app.StaticFS)))
 
+	// Health probes intentionally bypass session and CSRF work. Liveness must
+	// remain independent of the database; readiness performs the dependency
+	// checks explicitly in its handler.
+	r.Get("/health", app.HandleHealth)
+	r.Get("/healthz", app.HandleLiveness)
+	r.Get("/readyz", app.HandleReadiness)
+
 	// ── Git Smart HTTP routes (NO CSRF) ─────────────────────────────
 	r.Route("/{username}/{repo_name}.git", func(r chi.Router) {
 		r.Use(app.GitHTTPAuthMiddleware)
@@ -30,7 +37,7 @@ func SetupRouter(app *App) *chi.Mux {
 	// ── Artifact download API (requires auth, no CSRF) ──────────────
 	r.Route("/api/repos/{username}/{repo_name}", func(r chi.Router) {
 		r.Use(app.AuthMiddleware)
-		r.Use(app.RequireAuth)
+		r.Use(app.RequireAPIAuth)
 		r.Use(app.RepoAccessMiddleware)
 		r.Use(app.RequireRepoMember)
 		r.Get("/artifacts/latest/branch/*", app.HandleArtifactByBranch)
@@ -45,14 +52,13 @@ func SetupRouter(app *App) *chi.Mux {
 		r.Use(limitRequestBody(maxUIRequestBodyBytes))
 		r.Use(app.CSRFMiddleware)
 
-		// Public pages (login, register, home, health)
+		// Public pages (login, register, home)
 		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 			app.renderPage(w, r, "home.html", PageData{
 				User: GetUser(r),
 				Data: struct{ Page string }{Page: "home"},
 			})
 		})
-		r.Get("/health", app.HandleHealth)
 		r.Get("/login", app.HandleLoginGET)
 		r.Post("/login", app.HandleLoginPOST)
 		if app.Config != nil && app.Config.AllowRegister {
@@ -94,6 +100,9 @@ func SetupRouter(app *App) *chi.Mux {
 			r.Get("/commits/{ref}", app.HandleRepoCommitsGET)
 			r.Get("/archive/*", app.HandleRepoArchiveGET)
 
+			r.Get("/settings", app.HandleRepoSettingsGET)
+			r.Post("/settings", app.HandleRepoSettingsPOST)
+
 			// Collaborators
 			r.Get("/collaborators", app.HandleRepoCollaboratorsGET)
 			r.Post("/collaborators/add", app.HandleRepoCollaboratorsAddPOST)
@@ -108,6 +117,8 @@ func SetupRouter(app *App) *chi.Mux {
 				r.Post("/ci/rules", app.HandleCISettingsRulePOST)
 				r.Post("/ci/rules/delete", app.HandleCISettingsRuleDeletePOST)
 				r.Get("/ci/{run_id}", app.HandleCIRunGET)
+				r.Post("/ci/{run_id}/cancel", app.HandleCIRunCancelPOST)
+				r.Post("/ci/{run_id}/retry", app.HandleCIRunRetryPOST)
 				r.Get("/ci/{run_id}/log", app.HandleCIRunLogGET)
 				r.Get("/ci/{run_id}/logs/download", app.HandleCIRunLogsDownloadGET)
 

@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"log/slog"
 
 	"github.com/google/uuid"
@@ -56,6 +57,31 @@ func (db *DB) GetUserRepositories(ctx context.Context, ownerID string) ([]models
 	return repos, rows.Err()
 }
 
+func (db *DB) GetAllRepositories(ctx context.Context) (repos []models.Repository, err error) {
+	query := `SELECT id, owner_id, name, COALESCE(description, ''), is_private, created_at, updated_at
+		FROM repositories ORDER BY owner_id ASC, name ASC`
+	rows, err := db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	for rows.Next() {
+		var repo models.Repository
+		var createdAt, updatedAt int64
+		if err := rows.Scan(&repo.ID, &repo.OwnerID, &repo.Name, &repo.Description, &repo.IsPrivate, &createdAt, &updatedAt); err != nil {
+			return nil, err
+		}
+		repo.CreatedAt = unixToTime(createdAt)
+		repo.UpdatedAt = unixToTime(updatedAt)
+		repos = append(repos, repo)
+	}
+	return repos, rows.Err()
+}
+
 // GetRepositoryByOwnerAndName fetches a repository by its name, with given owner
 func (db *DB) GetRepositoryByOwnerAndName(ctx context.Context, ownerID string, name string) (*models.Repository, error) {
 	query := `SELECT id, owner_id, name, COALESCE(description, ''), is_private, created_at
@@ -98,11 +124,46 @@ func (db *DB) GetRepositoryByID(ctx context.Context, id string) (*models.Reposit
 	return &r, nil
 }
 
-// DeleteRepository removes a repo from the DB
-func (db *DB) DeleteRepository(ctx context.Context, id, ownerID string) error {
-	query := `DELETE FROM repositories WHERE id = ? AND owner_id = ?`
-	_, err := db.ExecContext(ctx, query, id, ownerID)
-	return err
+// DeleteRepository removes an idle repository from the database. The active
+// CI condition is part of the DELETE statement so a worker claim racing the
+// caller's earlier safety check cannot orphan attempt-scoped files.
+func (db *DB) DeleteRepository(ctx context.Context, id, ownerID string) (bool, error) {
+	res, err := db.ExecContext(ctx, `
+		DELETE FROM repositories
+		WHERE id = ? AND owner_id = ?
+		  AND NOT EXISTS (
+			SELECT 1 FROM ci_runs
+			WHERE repo_id = repositories.id
+			  AND (
+				status IN ('pending', 'running')
+				OR (status = 'cancelled' AND heartbeat_at IS NOT NULL)
+			  )
+		  )
+	`, id, ownerID)
+	if err != nil {
+		return false, err
+	}
+	rows, err := res.RowsAffected()
+	return rows > 0, err
+}
+
+func (db *DB) UpdateRepositorySettings(ctx context.Context, id, ownerID, description string, isPrivate bool) error {
+	res, err := db.ExecContext(ctx, `
+		UPDATE repositories
+		SET description = ?, is_private = ?, updated_at = strftime('%s', 'now')
+		WHERE id = ? AND owner_id = ?
+	`, description, isPrivate, id, ownerID)
+	if err != nil {
+		return err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 // AddCollaborator adds or updates a collaborator's access level.

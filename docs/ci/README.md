@@ -17,7 +17,7 @@ Gitman CI is a deliberately small Docker-backed pipeline runner. A repository de
 
 ## Pipeline lifecycle
 
-1. A manual action or repository post-receive hook creates a pending run.
+1. A manual action or durable repository post-receive event creates a pending run.
 2. A worker claims the run and creates an attempt-scoped lease.
 3. The worker clones the selected commit into a temporary workspace.
 4. Missing `.gitman-ci.yml` marks the run as `skipped`.
@@ -27,13 +27,17 @@ Gitman CI is a deliberately small Docker-backed pipeline runner. A repository de
 
 Run statuses are `pending`, `running`, `success`, `failed`, `skipped`, and `cancelled`.
 
+Owners and write collaborators can cancel pending or running jobs and retry completed jobs from the web interface. A retry creates a new run against the exact original commit and preserves the source run as immutable history. Run pages show queue time, execution time, exit outcome, cancellation or failure reason, worker progress through live logs, artifacts, and retry lineage.
+
 ## Manual runs and refs
 
 The CI page can run the repository default branch, any existing branch, a tag, or a reachable historical commit. Gitman always checks out the exact selected commit and reads `.gitman-ci.yml` from that same commit. It does not support loading pipeline configuration from a different branch.
 
 ## Automatic triggers
 
-Repository owners can install an auto-trigger hook from the **CI/CD** page. The generated bare-repository `post-receive` hook submits one push event for each updated branch or tag. Deleted refs are ignored. Hook delivery failures do not fail the Git push.
+Repository owners can install an auto-trigger hook from the **CI/CD** page. The generated bare-repository `post-receive` hook writes one durable local event for each updated branch or tag. Deleted refs are ignored. A repository-local, locked sequence gives every accepted event a fixed-width monotonic filename, including events accepted within the same clock tick. The web process drains those names in sequence into SQLite with content-bound idempotency, so a brief web restart does not lose or reorder accepted push triggers and never fails the Git push.
+
+Queue draining is serialized per repository across web processes. An event is renamed to an in-progress claim before database work; after a web interruption the next lock owner immediately recovers that claim. A transient failure restores the event and stops that repository's drain so newer events cannot overtake it. Database commit followed by a repeated file delivery resolves to the same run. Malformed files are renamed with a `.malformed-` prefix and reported without blocking later valid events.
 
 Automatic runs are trusted-ref aware. By default, only the repository default branch auto-runs. Other branches and tags can still be run manually, but push-triggered runs for them are ignored until the owner adds a CI ref trust rule. Rules may be exact refs or glob patterns such as `v*` for version tags and `release/*` for release branches.
 
@@ -55,7 +59,7 @@ If a pipeline requests a secret on an untrusted ref, the worker fails before dec
 
 ## Hook ownership
 
-Gitman only manages `hooks/post-receive` when the file is absent or contains the Gitman marker. It refuses to overwrite or delete unmanaged hooks. Reinstalling a managed hook rotates the webhook token. Delivery failures are logged locally with `logger` when available and never print credentials.
+Gitman only manages `hooks/post-receive` when the file is absent or contains a Gitman marker. It refuses to overwrite or delete unmanaged hooks. A managed hook that does not use durable queue format 1 is reported as outdated and can be replaced from the CI page. Managed Beta 15 hooks store events and their durable sequence under the bare repository's `hooks/gitman-ci-queue` directory, contain no credentials, and revoke the obsolete managed-hook webhook secret during replacement.
 
 ## Start authoring
 

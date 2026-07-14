@@ -498,6 +498,20 @@ button.small {
 .ci-run-row:last-child { border-bottom: 0; }
 .ci-run-main { flex: 1; min-width: 0; }
 .ci-run-meta { margin-top: 3px; color: var(--color-text-muted); font-size: 0.86rem; }
+.ci-run-reason { color: var(--color-text); }
+.ci-run-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.ci-run-heading { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
+.run-outcome {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  margin: 14px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg-subtle);
+}
+.run-outcome-error { border-color: var(--color-danger); }
 
 .log-box {
   width: 100%;
@@ -537,6 +551,7 @@ button.small {
   .site-nav { justify-content: flex-start; }
   .page-header-row, .panel-title, .toolbar, .selector-bar, .resource-row, .ci-run-row { align-items: flex-start; flex-direction: column; }
   .resource-actions, .inline-actions { width: 100%; justify-content: flex-start; }
+  .ci-run-actions { width: 100%; justify-content: flex-start; }
   .clone-row { grid-template-columns: 1fr; }
   .data-table th, .data-table td { padding: 10px 9px; }
 }

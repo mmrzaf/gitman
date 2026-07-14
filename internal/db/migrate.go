@@ -63,7 +63,7 @@ func (db *DB) runMigrations(ctx context.Context, migrationsFS embed.FS, dir stri
 			continue
 		}
 		slog.Info("applying migration", "version", m.version, "name", m.name)
-		if err := applyMigration(ctx, conn, m); err != nil {
+		if _, err := conn.ExecContext(ctx, m.up); err != nil {
 			return fmt.Errorf("migration %d (%s) failed: %w", m.version, m.name, err)
 		}
 		if _, err := conn.ExecContext(ctx, "INSERT INTO schema_migrations (version) VALUES (?)", m.version); err != nil {
@@ -75,58 +75,6 @@ func (db *DB) runMigrations(ctx context.Context, migrationsFS embed.FS, dir stri
 	}
 	committed = true
 	return nil
-}
-
-func applyMigration(ctx context.Context, conn migrationConn, migration migrationFile) error {
-	// An intermediate beta build added lease columns outside the migration
-	// ledger. Apply version 2 defensively so those databases can converge on
-	// the versioned schema without duplicate-column failures.
-	if migration.version == 2 && migration.name == "ci_run_leases" {
-		return ensureCIRunLeaseSchema(ctx, conn)
-	}
-	_, err := conn.ExecContext(ctx, migration.up)
-	return err
-}
-
-func ensureCIRunLeaseSchema(ctx context.Context, conn migrationConn) error {
-	columns := []struct {
-		name       string
-		definition string
-	}{
-		{name: "started_at", definition: "INTEGER"},
-		{name: "heartbeat_at", definition: "INTEGER"},
-		{name: "attempt_id", definition: "TEXT NOT NULL DEFAULT ''"},
-	}
-	for _, column := range columns {
-		exists, err := tableColumnExists(ctx, conn, "ci_runs", column.name)
-		if err != nil {
-			return err
-		}
-		if exists {
-			continue
-		}
-		query := fmt.Sprintf("ALTER TABLE ci_runs ADD COLUMN %s %s", column.name, column.definition)
-		if _, err := conn.ExecContext(ctx, query); err != nil {
-			return err
-		}
-	}
-	if _, err := conn.ExecContext(ctx, "CREATE INDEX IF NOT EXISTS idx_ci_runs_heartbeat_at ON ci_runs(heartbeat_at)"); err != nil {
-		return err
-	}
-	_, err := conn.ExecContext(ctx, "CREATE INDEX IF NOT EXISTS idx_ci_runs_attempt_id ON ci_runs(attempt_id)")
-	return err
-}
-
-func tableColumnExists(ctx context.Context, conn migrationConn, table, column string) (bool, error) {
-	if table != "ci_runs" {
-		return false, fmt.Errorf("unsupported migration table %q", table)
-	}
-	var count int
-	err := conn.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM pragma_table_info('ci_runs') WHERE name = ?",
-		column,
-	).Scan(&count)
-	return count > 0, err
 }
 
 // rollbackTo rolls back to a specific version (down migrations) while holding

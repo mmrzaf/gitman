@@ -260,6 +260,29 @@ func TestResolveCommitHash(t *testing.T) {
 	}
 }
 
+func TestResolveCommitHashSHA256(t *testing.T) {
+	repoPath := filepath.Join(t.TempDir(), "sha256.git")
+	cmd := exec.Command("git", "init", "--bare", "--object-format=sha256", repoPath)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Skipf("Git SHA-256 repositories are unavailable: %v\n%s", err, out)
+	}
+	prepareRepoWithCommit(t, repoPath)
+	commits, err := GetCommits(context.Background(), repoPath, "main", 0, 1)
+	if err != nil || len(commits) != 1 {
+		t.Fatalf("get SHA-256 commits: %v", err)
+	}
+	if len(commits[0].Hash) != 64 {
+		t.Fatalf("commit hash length = %d, want 64", len(commits[0].Hash))
+	}
+	resolved, err := ResolveCommitHash(context.Background(), repoPath, commits[0].Hash[:12])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved != commits[0].Hash {
+		t.Fatalf("expected %s, got %s", commits[0].Hash, resolved)
+	}
+}
+
 func TestResolveBranchCommitHashAndReachability(t *testing.T) {
 	repoPath := setupTestRepo(t)
 	prepareRepoWithCommit(t, repoPath)

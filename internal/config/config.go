@@ -1,10 +1,14 @@
 package config
 
 import (
+	"fmt"
 	"log"
 	"log/slog"
+	"math"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -21,7 +25,6 @@ type Config struct {
 	PublicURL          string
 	ArtifactsPath      string
 	SecretKey          string
-	InternalURL        string
 	LogLevel           string
 	AllowRegister      bool
 	WorkerConcurrency  int
@@ -49,6 +52,8 @@ type Config struct {
 	CIHostPathPrefix    string
 }
 
+var dockerMemoryLimitRegex = regexp.MustCompile(`^[1-9][0-9]*(?:[bkmgBKMG])?$`)
+
 func LoadConfig() *Config {
 	exePath, err := os.Executable()
 	if err != nil {
@@ -74,7 +79,6 @@ func LoadConfig() *Config {
 		PublicURL:          publicURL,
 		ArtifactsPath:      getEnv("GITMAN_ARTIFACTS", ".data/artifacts"),
 		SecretKey:          getEnv("GITMAN_SECRET_KEY", ""),
-		InternalURL:        strings.TrimRight(getEnv("GITMAN_INTERNAL_URL", "http://localhost:8080"), "/"),
 		LogLevel:           getEnv("GITMAN_LOG_LEVEL", "info"),
 		AllowRegister:      getEnvBool("GITMAN_ALLOW_REGISTER", false),
 		WorkerConcurrency:  getEnvInt("GITMAN_WORKER_CONCURRENCY", 1),
@@ -101,6 +105,135 @@ func LoadConfig() *Config {
 		CIWorkerPathPrefix:  cleanOptionalPathPrefix(getEnv("GITMAN_CI_WORKER_PATH_PREFIX", "")),
 		CIHostPathPrefix:    cleanOptionalPathPrefix(getEnv("GITMAN_CI_HOST_PATH_PREFIX", "")),
 	}
+}
+
+// ValidateEnvironment rejects explicitly configured values that would
+// otherwise be silently replaced by defaults.
+func ValidateEnvironment() error {
+	positiveInts := []string{
+		"GITMAN_WORKER_CONCURRENCY",
+		"GITMAN_CI_ARTIFACT_MAX_FILES",
+	}
+	positiveInt64s := []string{
+		"GITMAN_GIT_RECEIVE_MAX_BYTES",
+		"GITMAN_CI_ARTIFACT_MAX_BYTES",
+		"GITMAN_CI_LOG_MAX_BYTES",
+		"GITMAN_CI_WORKSPACE_MAX_BYTES",
+		"GITMAN_CI_CACHE_MAX_BYTES",
+	}
+	bools := []string{
+		"GITMAN_ALLOW_REGISTER",
+		"GITMAN_FORCE_SECURE_COOKIES",
+		"GITMAN_TRUST_PROXY_HEADERS",
+		"GITMAN_CI_ALLOW_DOCKER_SOCKET",
+	}
+	durations := []string{
+		"GITMAN_CI_TIMEOUT",
+		"GITMAN_CI_LEASE_TIMEOUT",
+		"GITMAN_CI_HEARTBEAT_INTERVAL",
+	}
+	for _, key := range positiveInts {
+		if value, ok := os.LookupEnv(key); ok {
+			n, err := strconv.Atoi(value)
+			if err != nil || n <= 0 {
+				return fmt.Errorf("%s must be a positive integer", key)
+			}
+		}
+	}
+	for _, key := range positiveInt64s {
+		if value, ok := os.LookupEnv(key); ok {
+			n, err := strconv.ParseInt(value, 10, 64)
+			if err != nil || n <= 0 {
+				return fmt.Errorf("%s must be a positive integer", key)
+			}
+		}
+	}
+	for _, key := range bools {
+		if value, ok := os.LookupEnv(key); ok {
+			if _, err := strconv.ParseBool(value); err != nil {
+				return fmt.Errorf("%s must be true or false", key)
+			}
+		}
+	}
+	for _, key := range durations {
+		if value, ok := os.LookupEnv(key); ok {
+			if d, err := time.ParseDuration(value); err == nil && d > 0 {
+				continue
+			}
+			if seconds, err := strconv.Atoi(value); err == nil && seconds > 0 {
+				continue
+			}
+			return fmt.Errorf("%s must be a positive duration such as 30s or 5m", key)
+		}
+	}
+	return nil
+}
+
+func (c *Config) Validate() error {
+	if c == nil {
+		return fmt.Errorf("configuration is nil")
+	}
+	port, err := strconv.Atoi(c.Port)
+	if err != nil || port < 1 || port > 65535 {
+		return fmt.Errorf("GITMAN_PORT must be a number between 1 and 65535")
+	}
+	for name, raw := range map[string]string{
+		"GITMAN_PUBLIC_URL": c.PublicURL,
+	} {
+		parsed, err := url.Parse(raw)
+		if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" ||
+			(parsed.Scheme != "http" && parsed.Scheme != "https") {
+			return fmt.Errorf("%s must be an absolute http or https URL", name)
+		}
+	}
+	for name, value := range map[string]string{
+		"GITMAN_DB":                    c.DBPath,
+		"GITMAN_REPOS":                 c.ReposPath,
+		"GITMAN_AUTH_KEYS":             c.AuthKeysPath,
+		"GITMAN_ARTIFACTS":             c.ArtifactsPath,
+		"GITMAN_CACHE_ROOT":            c.CacheRoot,
+		"GITMAN_CI_WORKSPACE_ROOT":     c.CIWorkspaceRoot,
+		"GITMAN_BINARY_PATH":           c.BinaryPath,
+		"GITMAN_SSH_USER":              c.SSHUser,
+		"GITMAN_SERVER_HOST":           c.ServerHost,
+		"GITMAN_MEMORY_LIMIT":          c.MemoryLimit,
+		"GITMAN_CPU_LIMIT":             c.CPULimit,
+		"GITMAN_CI_NETWORK":            c.CINetwork,
+		"GITMAN_CI_CONTAINER_USER":     c.CIContainerUser,
+		"GITMAN_CI_DOCKER_SOCKET_PATH": c.CIDockerSocketPath,
+	} {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("%s cannot be empty", name)
+		}
+	}
+	if c.CIHeartbeatInterval*3 > c.CILeaseTimeout {
+		return fmt.Errorf("GITMAN_CI_HEARTBEAT_INTERVAL must be at most one third of GITMAN_CI_LEASE_TIMEOUT")
+	}
+	if (c.CIWorkerPathPrefix == "") != (c.CIHostPathPrefix == "") {
+		return fmt.Errorf("GITMAN_CI_WORKER_PATH_PREFIX and GITMAN_CI_HOST_PATH_PREFIX must be set together")
+	}
+	if c.CIWorkerPathPrefix != "" && (!filepath.IsAbs(c.CIWorkerPathPrefix) || !filepath.IsAbs(c.CIHostPathPrefix)) {
+		return fmt.Errorf("GITMAN_CI_WORKER_PATH_PREFIX and GITMAN_CI_HOST_PATH_PREFIX must be absolute")
+	}
+	if !filepath.IsAbs(c.CIDockerSocketPath) {
+		return fmt.Errorf("GITMAN_CI_DOCKER_SOCKET_PATH must be absolute")
+	}
+	if !dockerMemoryLimitRegex.MatchString(strings.TrimSpace(c.MemoryLimit)) {
+		return fmt.Errorf("GITMAN_MEMORY_LIMIT must be a positive byte value with an optional b, k, m, or g suffix")
+	}
+	cpuLimit, err := strconv.ParseFloat(strings.TrimSpace(c.CPULimit), 64)
+	if err != nil || cpuLimit <= 0 || math.IsNaN(cpuLimit) || math.IsInf(cpuLimit, 0) {
+		return fmt.Errorf("GITMAN_CPU_LIMIT must be a positive number")
+	}
+	if strings.ContainsAny(c.CINetwork, "\x00\r\n\t ") {
+		return fmt.Errorf("GITMAN_CI_NETWORK cannot contain whitespace or control characters")
+	}
+	switch c.LogLevel {
+	case "debug", "info", "warn", "error":
+	default:
+		return fmt.Errorf("GITMAN_LOG_LEVEL must be debug, info, warn, or error")
+	}
+	return nil
 }
 
 func defaultCIContainerUser() string {
