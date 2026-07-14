@@ -35,7 +35,9 @@ The CI page can run the repository default branch, any existing branch, a tag, o
 
 ## Automatic triggers
 
-Repository owners can install an auto-trigger hook from the **CI/CD** page. The generated bare-repository `post-receive` hook writes one durable local event for each updated branch or tag. Deleted refs are ignored. The web process drains queued events into SQLite with idempotency, so a brief web restart does not lose the push trigger and never fails the Git push.
+Repository owners can install an auto-trigger hook from the **CI/CD** page. The generated bare-repository `post-receive` hook writes one durable local event for each updated branch or tag. Deleted refs are ignored. A repository-local, locked sequence gives every accepted event a fixed-width monotonic filename, including events accepted within the same clock tick. The web process drains those names in sequence into SQLite with content-bound idempotency, so a brief web restart does not lose or reorder accepted push triggers and never fails the Git push.
+
+Queue draining is serialized per repository across web processes. An event is renamed to an in-progress claim before database work; after a web interruption the next lock owner immediately recovers that claim. A transient failure restores the event and stops that repository's drain so newer events cannot overtake it. Database commit followed by a repeated file delivery resolves to the same run. Malformed files are renamed with a `.malformed-` prefix and reported without blocking later valid events.
 
 Automatic runs are trusted-ref aware. By default, only the repository default branch auto-runs. Other branches and tags can still be run manually, but push-triggered runs for them are ignored until the owner adds a CI ref trust rule. Rules may be exact refs or glob patterns such as `v*` for version tags and `release/*` for release branches.
 
@@ -57,7 +59,7 @@ If a pipeline requests a secret on an untrusted ref, the worker fails before dec
 
 ## Hook ownership
 
-Gitman only manages `hooks/post-receive` when the file is absent or contains a Gitman marker. It refuses to overwrite or delete unmanaged hooks. Hooks from older Gitman releases are reported as outdated and can be upgraded from the CI page. Managed Beta 15 hooks store events under the bare repository's `hooks/gitman-ci-queue` directory, contain no credentials, and revoke the obsolete managed-hook webhook secret during upgrade.
+Gitman only manages `hooks/post-receive` when the file is absent or contains a Gitman marker. It refuses to overwrite or delete unmanaged hooks. A managed hook that does not use durable queue format 1 is reported as outdated and can be replaced from the CI page. Managed Beta 15 hooks store events and their durable sequence under the bare repository's `hooks/gitman-ci-queue` directory, contain no credentials, and revoke the obsolete managed-hook webhook secret during replacement.
 
 ## Start authoring
 

@@ -65,10 +65,13 @@ Install or upgrade the managed hook from the repository CI page. Confirm the hoo
 Expected:
 
 - the Git push succeeds while the web process is stopped;
-- every trusted event is drained to SQLite once, including the annotated tag's peeled commit;
+- accepted event filenames contain a fixed-width monotonic sequence, even when file timestamps are forced to the same value;
+- every trusted event is drained to SQLite once and in original push order, including the annotated tag's peeled commit;
 - delivery retries do not duplicate a run;
-- a newer pending push for the same exact ref cancels the older pending push with a visible reason;
-- malformed events are discarded, while temporarily unresolvable objects remain queued for retry.
+- a newer pending push for the same exact ref cancels the older pending push with a visible reason and remains the effective pending run;
+- an interrupted `.processing-event-*` claim is recovered immediately after web restart before later sequence numbers;
+- a temporarily unresolvable object remains queued and prevents later events in that repository from overtaking it;
+- malformed events are isolated as `.malformed-event-*` and reported without blocking later valid events.
 
 ## 6. CI controls and worker lifecycle
 
@@ -86,6 +89,7 @@ Exercise successful, failed, skipped, and timed-out jobs. Confirm queue time, ru
 - As an owner, update description and public/private visibility from **Settings**.
 - As a collaborator, confirm the settings page returns `403`.
 - Attempt deletion with pending, running, and still-stopping cancelled CI; each must be refused.
+- Leave a durable push event queued (or temporarily unresolvable) and confirm deletion is refused until it is safely drained.
 - Delete an idle repository and confirm its bare repository is quarantined before the database delete, then its logs, artifacts, and cache are removed.
 - Force the database delete to fail and confirm the quarantined repository is restored.
 - Race a worker claim against deletion and confirm the atomic database guard restores the repository instead of orphaning the attempt.

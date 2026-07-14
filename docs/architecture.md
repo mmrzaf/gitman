@@ -48,7 +48,7 @@ A source-release package must retain those directories.
 
 ## Data flow: CI
 
-1. UI, external webhook, or the durable repository-local trigger queue creates an idempotent pending row.
+1. UI, external webhook, or the durable repository-local trigger queue creates an idempotent pending row. Hook events use a locked monotonic repository sequence; the web process claims and replays them strictly in that order, restoring an interrupted claim before later events.
 2. Worker claims the row with a new attempt ID and heartbeat lease.
 3. Worker clones from the local bare repository.
 4. Worker validates `.gitman-ci.yml`, resolves secrets, and creates an environment file outside the checkout.
