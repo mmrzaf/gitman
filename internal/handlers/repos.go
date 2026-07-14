@@ -90,6 +90,16 @@ func (app *App) HandleRepoDeletePOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	repoPath, pathErr := git.SecureRepoPath(app.Config.ReposPath, user.Username, repo.Name)
+	if pathErr != nil {
+		app.renderReposPage(w, r, user, "Invalid repository path.", "")
+		return
+	}
+
+	// Pull durable filesystem triggers into SQLite before deciding whether the
+	// repository is idle. If an older event is temporarily undeliverable, keep
+	// the repository rather than deleting the only durable copy of the push.
+	app.drainRepoCITriggerQueue(r.Context(), user, repo)
 	hasActiveRuns, err := app.DB.HasActiveCIRuns(r.Context(), repo.ID)
 	if err != nil {
 		slog.Error("failed to check active CI runs before repository deletion", "repo", repo.ID, "error", err)
@@ -100,10 +110,14 @@ func (app *App) HandleRepoDeletePOST(w http.ResponseWriter, r *http.Request) {
 		app.renderReposPage(w, r, user, "Cancel or wait for queued and running CI jobs before deleting this repository.", "")
 		return
 	}
-
-	repoPath, pathErr := git.SecureRepoPath(app.Config.ReposPath, user.Username, repo.Name)
-	if pathErr != nil {
-		app.renderReposPage(w, r, user, "Invalid repository path.", "")
+	hasQueuedTriggers, err := hasQueuedCITriggerFiles(filepath.Join(repoPath, "hooks", ciHookQueueDirName))
+	if err != nil {
+		slog.Error("failed to check durable CI queue before repository deletion", "repo", repo.ID, "error", err)
+		app.renderReposPage(w, r, user, "Could not verify the durable CI queue. Repository was not deleted.", "")
+		return
+	}
+	if hasQueuedTriggers {
+		app.renderReposPage(w, r, user, "Wait for queued push events to enter CI before deleting this repository.", "")
 		return
 	}
 

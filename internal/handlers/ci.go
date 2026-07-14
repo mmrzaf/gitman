@@ -852,7 +852,7 @@ func hookPath(reposPath, ownerUsername, repoName string) (string, error) {
 
 const (
 	gitmanHookPrefix = "# Managed by Gitman CI/CD."
-	gitmanHookMarker = "# Managed by Gitman CI/CD. Schema: 2"
+	gitmanHookMarker = "# Managed by Gitman CI/CD. Durable queue format: 1"
 )
 
 type hookState string
@@ -1032,6 +1032,7 @@ GITMAN_OWNER=%s
 GITMAN_REPO=%s
 HOOK_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 QUEUE_DIR="$HOOK_DIR/%s"
+SEQUENCE_FILE="$QUEUE_DIR/.sequence"
 umask 077
 
 if ! mkdir -p "$QUEUE_DIR"; then
@@ -1048,8 +1049,37 @@ while read -r old new ref; do
     fi
     tmp="$(mktemp "$QUEUE_DIR/.event.XXXXXXXXXXXX")" || continue
     if printf '%%s\n%%s\n%%s\n' "$old" "$new" "$ref" > "$tmp"; then
-        final="$QUEUE_DIR/event-${tmp##*.event.}"
-        mv -f "$tmp" "$final" || rm -f "$tmp"
+        (
+            flock -x 9 || exit 1
+            sequence=0
+            if [[ -f "$SEQUENCE_FILE" ]]; then
+                IFS= read -r sequence < "$SEQUENCE_FILE" || exit 1
+                [[ "$sequence" =~ ^[0-9]+$ ]] || exit 1
+            fi
+            next=$((10#$sequence + 1))
+            while [[ -e "$(printf "$QUEUE_DIR/event-%%020d" "$next")" ||
+                     -e "$(printf "$QUEUE_DIR/.pending-event-%%020d" "$next")" ||
+                     -e "$(printf "$QUEUE_DIR/.processing-event-%%020d" "$next")" ]]; do
+                next=$((next + 1))
+            done
+            pending="$(printf "$QUEUE_DIR/.pending-event-%%020d" "$next")"
+            if ! mv "$tmp" "$pending" || ! sync -f "$QUEUE_DIR"; then
+                exit 1
+            fi
+            sequence_tmp="$(mktemp "$QUEUE_DIR/.sequence.XXXXXXXXXXXX")" || exit 1
+            if ! printf '%%s\n' "$next" > "$sequence_tmp" ||
+               ! sync -f "$sequence_tmp" ||
+               ! mv -f "$sequence_tmp" "$SEQUENCE_FILE"; then
+                rm -f "$sequence_tmp"
+                exit 1
+            fi
+            final="$(printf "$QUEUE_DIR/event-%%020d" "$next")"
+            mv "$pending" "$final" && sync -f "$QUEUE_DIR"
+        ) 9>"$QUEUE_DIR/.sequence.lock"
+        if [[ -e "$tmp" ]]; then
+            command -v logger >/dev/null 2>&1 && logger -t gitman-ci-hook -- "cannot persist CI event for $GITMAN_OWNER/$GITMAN_REPO"
+            rm -f "$tmp"
+        fi
     else
         rm -f "$tmp"
     fi
