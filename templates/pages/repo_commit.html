@@ -31,12 +31,12 @@
 
 <div class="diff-files">
 {{range $index, $file := .Diff.Files}}
-<details id="diff-{{$index}}" class="diff-file" {{if lt $index 12}}open{{end}}>
+<details id="diff-{{$index}}" class="diff-file" {{if lt $index 6}}open{{end}}>
   <summary><span class="diff-status">{{$file.Status}}</span><strong>{{if and $file.OldPath (ne $file.OldPath $file.Path)}}{{$file.OldPath}} → {{end}}{{$file.Path}}</strong><span class="diff-summary-stats">{{if not $file.Binary}}<span class="diff-add">+{{$file.Additions}}</span> <span class="diff-del">−{{$file.Deletions}}</span>{{end}}</span></summary>
   <div class="diff-file-tools">{{if ne $file.StatusCode "D"}}<a href="/{{$.Owner.Username}}/{{$.Repository.Name}}/blob?ref={{urlquery $.Commit.Hash}}&amp;path={{urlquery $file.Path}}">View file</a>{{end}}{{if $file.Similarity}}<span>{{$file.Similarity}}% similar</span>{{end}}</div>
   {{if $file.Binary}}<p class="empty-line">Binary file changed.</p>
   {{else if $file.Hunks}}<div class="diff-hunks">{{range $hunk := $file.Hunks}}<div class="diff-hunk"><div class="diff-hunk-header"><code>{{$hunk.Header}}</code></div><table class="diff-table"><tbody>{{range $line := $hunk.Lines}}<tr class="diff-line diff-line-{{$line.Kind}}"><td class="diff-line-number">{{if $line.OldLine}}{{$line.OldLine}}{{end}}</td><td class="diff-line-number">{{if $line.NewLine}}{{if ne $file.StatusCode "D"}}<a href="/{{$.Owner.Username}}/{{$.Repository.Name}}/blob?ref={{urlquery $.Commit.Hash}}&amp;path={{urlquery $file.Path}}#L{{$line.NewLine}}">{{$line.NewLine}}</a>{{else}}{{$line.NewLine}}{{end}}{{end}}</td><td class="diff-line-sign">{{if eq $line.Kind "add"}}+{{else if eq $line.Kind "delete"}}−{{else}}&nbsp;{{end}}</td><td class="diff-line-code"><pre><code>{{$line.Text}}</code></pre></td></tr>{{end}}</tbody></table></div>{{end}}{{if $file.Truncated}}<p class="empty-line">Patch output was capped for this file.</p>{{end}}</div>
-  {{else}}<p class="empty-line">No textual patch to display.</p>{{end}}
+  {{else if $file.Truncated}}<p class="empty-line">Patch output was capped for this file.</p>{{else}}<p class="empty-line">No textual patch to display.</p>{{end}}
 </details>
 {{end}}
 </div>

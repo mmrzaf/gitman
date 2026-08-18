@@ -14,9 +14,11 @@ import (
 
 const (
 	defaultDiffFileLimit  = 200
-	defaultPatchFileLimit = 100
-	defaultPatchByteLimit = 2 * 1024 * 1024
-	perFilePatchByteLimit = 512 * 1024
+	defaultPatchFileLimit = 60
+	defaultPatchByteLimit = 512 * 1024
+	perFilePatchByteLimit = 192 * 1024
+	defaultPatchLineLimit = 3000
+	perFilePatchLineLimit = 1000
 )
 
 // CommitDetail is the full presentation metadata for one immutable revision.
@@ -416,7 +418,7 @@ func parseUnifiedPatch(out []byte) []DiffHunk {
 	return hunks
 }
 
-func patchForFile(ctx context.Context, repoPath string, detail CommitDetail, file ChangedFile) ([]byte, bool, error) {
+func patchForFile(ctx context.Context, repoPath string, detail CommitDetail, file ChangedFile, byteLimit int) ([]byte, bool, error) {
 	paths := []string{}
 	if file.OldPath != "" {
 		paths = append(paths, file.OldPath)
@@ -436,7 +438,33 @@ func patchForFile(ctx context.Context, repoPath string, detail CommitDetail, fil
 		args = []string{"diff", "--no-color", "--no-ext-diff", "--find-renames", "--unified=3", detail.Parents[0], detail.Hash, "--"}
 		args = append(args, paths...)
 	}
-	return runLimited(ctx, repoPath, perFilePatchByteLimit, args...)
+	return runLimited(ctx, repoPath, byteLimit, args...)
+}
+
+func capDiffHunks(hunks []DiffHunk, lineLimit int) ([]DiffHunk, int, bool) {
+	if lineLimit <= 0 {
+		return nil, 0, len(hunks) > 0
+	}
+	remaining := lineLimit
+	kept := make([]DiffHunk, 0, len(hunks))
+	count := 0
+	for _, hunk := range hunks {
+		if remaining == 0 {
+			return kept, count, true
+		}
+		copyHunk := hunk
+		if len(copyHunk.Lines) > remaining {
+			copyHunk.Lines = append([]DiffLine(nil), copyHunk.Lines[:remaining]...)
+			kept = append(kept, copyHunk)
+			count += remaining
+			return kept, count, true
+		}
+		copyHunk.Lines = append([]DiffLine(nil), copyHunk.Lines...)
+		kept = append(kept, copyHunk)
+		remaining -= len(copyHunk.Lines)
+		count += len(copyHunk.Lines)
+	}
+	return kept, count, false
 }
 
 func GetCommitDiff(ctx context.Context, repoPath string, detail CommitDetail) (CommitDiff, error) {
@@ -455,23 +483,31 @@ func GetCommitDiff(ctx context.Context, repoPath string, detail CommitDetail) (C
 	}
 
 	usedBytes := 0
+	usedLines := 0
 	for i, change := range changes {
 		file := FileDiff{ChangedFile: change}
-		if i >= defaultPatchFileLimit || usedBytes >= defaultPatchByteLimit {
+		if i >= defaultPatchFileLimit || usedBytes >= defaultPatchByteLimit || usedLines >= defaultPatchLineLimit {
 			file.Truncated = true
 			result.Truncated = true
 			result.Files = append(result.Files, file)
 			continue
 		}
 		if !change.Binary {
-			patch, truncated, patchErr := patchForFile(ctx, repoPath, detail, change)
+			remainingBytes := defaultPatchByteLimit - usedBytes
+			byteLimit := min(perFilePatchByteLimit, remainingBytes)
+			patch, byteTruncated, patchErr := patchForFile(ctx, repoPath, detail, change, byteLimit)
 			if patchErr != nil {
 				return CommitDiff{}, fmt.Errorf("read patch for %q: %w", change.Path, patchErr)
 			}
 			usedBytes += len(patch)
-			file.Hunks = parseUnifiedPatch(patch)
-			file.Truncated = truncated
-			if truncated || usedBytes >= defaultPatchByteLimit {
+
+			remainingLines := defaultPatchLineLimit - usedLines
+			lineLimit := min(perFilePatchLineLimit, remainingLines)
+			hunks, renderedLines, lineTruncated := capDiffHunks(parseUnifiedPatch(patch), lineLimit)
+			usedLines += renderedLines
+			file.Hunks = hunks
+			file.Truncated = byteTruncated || lineTruncated
+			if file.Truncated || usedBytes >= defaultPatchByteLimit || usedLines >= defaultPatchLineLimit {
 				result.Truncated = true
 			}
 		}

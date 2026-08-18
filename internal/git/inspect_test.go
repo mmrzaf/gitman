@@ -192,6 +192,20 @@ func TestParseUnifiedPatchTracksLineNumbers(t *testing.T) {
 	}
 }
 
+func TestCapDiffHunksBoundsRenderedRows(t *testing.T) {
+	hunks := []DiffHunk{
+		{Header: "@@ -1,4 +1,4 @@", Lines: []DiffLine{{Text: "1"}, {Text: "2"}, {Text: "3"}, {Text: "4"}}},
+		{Header: "@@ -10,2 +10,2 @@", Lines: []DiffLine{{Text: "5"}, {Text: "6"}}},
+	}
+	got, lines, truncated := capDiffHunks(hunks, 5)
+	if !truncated || lines != 5 || len(got) != 2 || len(got[1].Lines) != 1 {
+		t.Fatalf("cap = hunks:%+v lines:%d truncated:%v", got, lines, truncated)
+	}
+	if len(hunks[1].Lines) != 2 {
+		t.Fatal("capDiffHunks mutated its input")
+	}
+}
+
 func TestStreamBlob(t *testing.T) {
 	repoPath, _ := prepareInspectionRepo(t)
 	var out bytes.Buffer
@@ -320,5 +334,54 @@ func TestBlobHelpersRejectNonBlobPaths(t *testing.T) {
 	var out bytes.Buffer
 	if err := StreamBlob(context.Background(), repoPath, "main", "dir", &out); err == nil {
 		t.Fatal("StreamBlob accepted a tree path")
+	}
+}
+
+func TestGetCommitDiffCapsLargeTextPatches(t *testing.T) {
+	repoPath := setupTestRepo(t)
+	work := t.TempDir()
+	if out, err := exec.Command("git", "clone", repoPath, work).CombinedOutput(); err != nil {
+		t.Fatalf("clone: %v\n%s", err, out)
+	}
+	for _, args := range [][]string{
+		{"config", "user.email", "large@example.com"},
+		{"config", "user.name", "Large Diff"},
+		{"checkout", "-b", "main"},
+	} {
+		if out, err := exec.Command("git", append([]string{"-C", work}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	path := filepath.Join(work, "large.txt")
+	if err := os.WriteFile(path, []byte("base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"add", "large.txt"}, {"commit", "-m", "base"}} {
+		if out, err := exec.Command("git", append([]string{"-C", work}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	if err := os.WriteFile(path, []byte(strings.Repeat("x", perFilePatchByteLimit+64*1024)+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"add", "large.txt"}, {"commit", "-m", "large"}, {"push", "origin", "main"}} {
+		if out, err := exec.Command("git", append([]string{"-C", work}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	commits, err := GetCommits(context.Background(), repoPath, "main", 0, 1)
+	if err != nil || len(commits) != 1 {
+		t.Fatalf("commits: %v len=%d", err, len(commits))
+	}
+	detail, err := GetCommitDetail(context.Background(), repoPath, commits[0].Hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	diff, err := GetCommitDiff(context.Background(), repoPath, detail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(diff.Files) != 1 || !diff.Files[0].Truncated || !diff.Truncated {
+		t.Fatalf("large patch was not capped: %+v", diff)
 	}
 }
