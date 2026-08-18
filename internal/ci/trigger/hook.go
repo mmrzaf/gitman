@@ -96,25 +96,29 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
-func writeExecutableFileAtomic(path, content string) error {
+func writeExecutableFileAtomic(path, content string) (err error) {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".post-receive-*")
 	if err != nil {
 		return err
 	}
 	tmpPath := tmp.Name()
-	defer func() { _ = os.Remove(tmpPath) }()
+	defer func() {
+		if removeErr := os.Remove(tmpPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			err = errors.Join(err, removeErr)
+		}
+	}()
+	closeTemp := func(cause error) error {
+		return errors.Join(cause, tmp.Close())
+	}
 	if err := tmp.Chmod(0o700); err != nil {
-		_ = tmp.Close()
-		return err
+		return closeTemp(err)
 	}
 	if _, err := tmp.WriteString(content); err != nil {
-		_ = tmp.Close()
-		return err
+		return closeTemp(err)
 	}
 	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
+		return closeTemp(err)
 	}
 	if err := tmp.Close(); err != nil {
 		return err
@@ -142,8 +146,13 @@ QUEUE_DIR="$HOOK_DIR/%s"
 SEQUENCE_FILE="$QUEUE_DIR/.sequence"
 umask 077
 
+warn_queue_failure() {
+    printf 'warning: Gitman could not queue CI for %%s/%%s\n' "$GITMAN_OWNER" "$GITMAN_REPO" >&2
+    command -v logger >/dev/null 2>&1 && logger -t gitman-ci-hook -- "cannot persist CI event for $GITMAN_OWNER/$GITMAN_REPO"
+}
+
 if ! mkdir -p "$QUEUE_DIR"; then
-    command -v logger >/dev/null 2>&1 && logger -t gitman-ci-hook -- "cannot create CI queue for $GITMAN_OWNER/$GITMAN_REPO"
+    warn_queue_failure
     exit 0
 fi
 
@@ -154,7 +163,7 @@ while read -r old new ref; do
     if [[ "$new" =~ ^0+$ ]]; then
         continue
     fi
-    tmp="$(mktemp "$QUEUE_DIR/.event.XXXXXXXXXXXX")" || continue
+    tmp="$(mktemp "$QUEUE_DIR/.event.XXXXXXXXXXXX")" || { warn_queue_failure; continue; }
     if printf '%%s\n%%s\n%%s\n' "$old" "$new" "$ref" > "$tmp"; then
         (
             flock -x 9 || exit 1
@@ -184,10 +193,11 @@ while read -r old new ref; do
             mv "$pending" "$final" && sync -f "$QUEUE_DIR"
         ) 9>"$QUEUE_DIR/.sequence.lock"
         if [[ -e "$tmp" ]]; then
-            command -v logger >/dev/null 2>&1 && logger -t gitman-ci-hook -- "cannot persist CI event for $GITMAN_OWNER/$GITMAN_REPO"
+            warn_queue_failure
             rm -f "$tmp"
         fi
     else
+        warn_queue_failure
         rm -f "$tmp"
     fi
 done
