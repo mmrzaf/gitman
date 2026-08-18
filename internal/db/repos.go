@@ -26,7 +26,7 @@ func (db *DB) CreateRepository(ctx context.Context, ownerID, name, description s
 // GetUserRepositories returns all repos belonging to a specific user
 func (db *DB) GetUserRepositories(ctx context.Context, ownerID string) (repos []models.Repository, err error) {
 	query := `SELECT id, owner_id, name, COALESCE(description, ''), is_private, created_at, updated_at
-			  FROM repositories WHERE owner_id = ? ORDER BY created_at DESC`
+			  FROM repositories WHERE owner_id = ? ORDER BY created_at DESC, rowid DESC`
 	rows, err := db.sql.QueryContext(ctx, query, ownerID)
 	if err != nil {
 		return nil, err

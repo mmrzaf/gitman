@@ -47,7 +47,7 @@ func (db *DB) GetSSHKeyByID(ctx context.Context, id string) (*models.SSHKey, err
 // GetUserSSHKeys returns all keys for a specific user
 func (db *DB) GetUserSSHKeys(ctx context.Context, userID string) (keys []models.SSHKey, err error) {
 	rows, err := db.sql.QueryContext(ctx,
-		"SELECT id, user_id, name, public_key, created_at, updated_at FROM ssh_keys WHERE user_id = ? ORDER BY created_at DESC, id ASC",
+		"SELECT id, user_id, name, public_key, created_at, updated_at FROM ssh_keys WHERE user_id = ? ORDER BY created_at DESC, rowid DESC",
 		userID,
 	)
 	if err != nil {

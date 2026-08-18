@@ -198,6 +198,55 @@ func TestCreatePushCIRunDoesNotCancelRunning(t *testing.T) {
 	}
 }
 
+func TestCIRunOrderingUsesInsertionOrderForTimestampTies(t *testing.T) {
+	database := setupTestDB(t)
+	defer database.Close()
+	ctx := context.Background()
+	user, err := database.CreateUser(ctx, "ciorderowner", "CiPass1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoID, err := database.CreateRepository(ctx, user.ID, "ci-order", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ids := make([]string, 0, 3)
+	for i, hash := range []string{"aaaaaaa", "bbbbbbb", "ccccccc"} {
+		id, err := database.CreateCIRun(ctx, repoID, hash, "main", "", models.CIEventManual)
+		if err != nil {
+			t.Fatalf("create run %d: %v", i, err)
+		}
+		ids = append(ids, id)
+	}
+	// created_at intentionally has second precision. Force a tie so ordering
+	// cannot accidentally depend on SQLite's unspecified result order.
+	if _, err := database.sql.ExecContext(ctx, "UPDATE ci_runs SET created_at = ? WHERE repo_id = ?", int64(1_700_000_000), repoID); err != nil {
+		t.Fatal(err)
+	}
+
+	runs, err := database.GetCIRunsByRepo(ctx, repoID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 3 {
+		t.Fatalf("run count = %d, want 3", len(runs))
+	}
+	for i, wantID := range []string{ids[2], ids[1], ids[0]} {
+		if runs[i].ID != wantID {
+			t.Fatalf("newest-first run %d = %s, want %s", i, runs[i].ID, wantID)
+		}
+	}
+
+	claimed, err := database.ClaimNextPendingRun(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed == nil || claimed.ID != ids[0] {
+		t.Fatalf("first claimed run = %+v, want %s", claimed, ids[0])
+	}
+}
+
 func TestRepoCIRefRulesCRUD(t *testing.T) {
 	database := setupTestDB(t)
 	defer database.Close()
@@ -229,12 +278,12 @@ func TestRepoCIRefRulesCRUD(t *testing.T) {
 	if err := database.DeleteRepoCIRefRule(ctx, repoID, "branch", "development"); err != nil {
 		t.Fatal(err)
 	}
-	got, err = database.GetRepoCIRefRule(ctx, repoID, "branch", "development")
-	if err != nil {
-		t.Fatal(err)
+	got, err = database.GetRepoCIRefRule(ctx, repoID, models.CIRefBranch, "development")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleted rule lookup error = %v, want ErrNotFound", err)
 	}
 	if got != nil {
-		t.Fatalf("rule was not deleted: %+v", got)
+		t.Fatalf("deleted rule lookup returned a rule: %+v", got)
 	}
 }
 

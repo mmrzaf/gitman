@@ -243,7 +243,7 @@ func (db *DB) ClaimNextPendingRun(ctx context.Context) (*models.CIRun, error) {
 		WHERE id = (
 			SELECT id FROM ci_runs
 			WHERE status = 'pending'
-			ORDER BY created_at ASC
+			ORDER BY created_at ASC, rowid ASC
 			LIMIT 1
 		)
 		RETURNING `+ciRunColumns, attemptID, now, now))
@@ -350,7 +350,7 @@ func (db *DB) CompleteCIRunWithReason(ctx context.Context, runID, attemptID stri
 // GetCIRunsByRepo returns the most recent CI runs for a repository.
 func (db *DB) GetCIRunsByRepo(ctx context.Context, repoID string, limit int) (runs []models.CIRun, err error) {
 	rows, err := db.sql.QueryContext(ctx, `SELECT `+ciRunColumns+`
-		FROM ci_runs WHERE repo_id = ? ORDER BY created_at DESC LIMIT ?`, repoID, limit)
+		FROM ci_runs WHERE repo_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?`, repoID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -386,7 +386,7 @@ func (db *DB) GetCIRunsByRepoFiltered(ctx context.Context, repoID string, status
 		query += ` AND branch = ?`
 		args = append(args, branch)
 	}
-	query += ` ORDER BY created_at DESC LIMIT ?`
+	query += ` ORDER BY created_at DESC, rowid DESC LIMIT ?`
 	args = append(args, limit)
 
 	rows, err := db.sql.QueryContext(ctx, query, args...)
@@ -444,7 +444,7 @@ func (db *DB) GetCIRunRetryChain(ctx context.Context, repoID, runID string) (run
 		SELECT `+ciRunColumns+`
 		FROM ci_runs
 		WHERE repo_id = ? AND id IN (SELECT id FROM family)
-		ORDER BY created_at ASC, id ASC
+		ORDER BY created_at ASC, rowid ASC
 	`, rootID, repoID, repoID)
 	if err != nil {
 		return nil, err
@@ -495,7 +495,7 @@ func (db *DB) HasActiveCIRuns(ctx context.Context, repoID string) (bool, error) 
 func (db *DB) GetSuccessfulCIRunsByRepo(ctx context.Context, repoID string, limit int) (runs []models.CIRun, err error) {
 	rows, err := db.sql.QueryContext(ctx, `SELECT `+ciRunColumns+`
 		FROM ci_runs WHERE repo_id = ? AND status = 'success'
-		ORDER BY created_at DESC LIMIT ?`, repoID, limit)
+		ORDER BY created_at DESC, rowid DESC LIMIT ?`, repoID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -518,19 +518,19 @@ func (db *DB) GetSuccessfulCIRunsByRepo(ctx context.Context, repoID string, limi
 func (db *DB) GetLatestSuccessfulRunForBranch(ctx context.Context, repoID, branch string) (*models.CIRun, error) {
 	return db.getSingleRun(ctx, `SELECT `+ciRunColumns+`
 		FROM ci_runs WHERE repo_id = ? AND branch = ? AND status = 'success'
-		ORDER BY created_at DESC LIMIT 1`, repoID, branch)
+		ORDER BY created_at DESC, rowid DESC LIMIT 1`, repoID, branch)
 }
 
 func (db *DB) GetSuccessfulRunForTag(ctx context.Context, repoID, tag string) (*models.CIRun, error) {
 	return db.getSingleRun(ctx, `SELECT `+ciRunColumns+`
 		FROM ci_runs WHERE repo_id = ? AND tag = ? AND status = 'success'
-		ORDER BY created_at DESC LIMIT 1`, repoID, tag)
+		ORDER BY created_at DESC, rowid DESC LIMIT 1`, repoID, tag)
 }
 
 func (db *DB) GetSuccessfulRunForCommit(ctx context.Context, repoID, commitHash string) (*models.CIRun, error) {
 	return db.getSingleRun(ctx, `SELECT `+ciRunColumns+`
 		FROM ci_runs WHERE repo_id = ? AND commit_hash = ? AND status = 'success'
-		ORDER BY created_at DESC LIMIT 1`, repoID, commitHash)
+		ORDER BY created_at DESC, rowid DESC LIMIT 1`, repoID, commitHash)
 }
 
 // GetLatestCIRunForCommit returns the newest run for an exact immutable commit,
@@ -539,7 +539,7 @@ func (db *DB) GetSuccessfulRunForCommit(ctx context.Context, repoID, commitHash 
 func (db *DB) GetLatestCIRunForCommit(ctx context.Context, repoID, commitHash string) (*models.CIRun, error) {
 	return db.getSingleRun(ctx, `SELECT `+ciRunColumns+`
 		FROM ci_runs WHERE repo_id = ? AND commit_hash = ?
-		ORDER BY created_at DESC, id DESC LIMIT 1`, repoID, commitHash)
+		ORDER BY created_at DESC, rowid DESC LIMIT 1`, repoID, commitHash)
 }
 
 // GetLatestCIRunsForCommits returns at most one newest run per commit hash.
@@ -571,7 +571,7 @@ func (db *DB) GetLatestCIRunsForCommits(ctx context.Context, repoID string, comm
 	rows, err := db.sql.QueryContext(ctx, `SELECT `+ciRunColumns+`
 		FROM ci_runs
 		WHERE repo_id = ? AND commit_hash IN (`+placeholders+`)
-		ORDER BY created_at DESC, id DESC`, args...)
+		ORDER BY created_at DESC, rowid DESC`, args...)
 	if err != nil {
 		return nil, err
 	}
