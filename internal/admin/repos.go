@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	citrigger "github.com/mmrzaf/gitman/internal/ci/trigger"
 	"github.com/mmrzaf/gitman/internal/config"
 	"github.com/mmrzaf/gitman/internal/db"
 	"github.com/mmrzaf/gitman/internal/git"
@@ -63,6 +64,7 @@ func ConfigureAllRepos(ctx context.Context, database *db.DB, cfg *config.Config)
 	if err != nil {
 		return err
 	}
+	triggerManager := &citrigger.Manager{DB: database, ReposPath: cfg.ReposPath}
 	locations, err := database.ListRepositoryLocations(ctx)
 	if err != nil {
 		return err
@@ -85,7 +87,7 @@ func ConfigureAllRepos(ctx context.Context, database *db.DB, cfg *config.Config)
 		}
 		info, err := os.Lstat(repoAbs)
 		if os.IsNotExist(err) {
-			continue
+			return fmt.Errorf("repository storage is missing for %s/%s", owner, repoName)
 		}
 		if err != nil {
 			return err
@@ -95,6 +97,9 @@ func ConfigureAllRepos(ctx context.Context, database *db.DB, cfg *config.Config)
 		}
 		if err := git.ConfigureReceiveMaxInputSize(ctx, repoAbs, cfg.GitReceiveMaxBytes); err != nil {
 			return err
+		}
+		if err := triggerManager.EnsureHook(ctx, owner, repoName); err != nil {
+			return fmt.Errorf("configure CI hook for %s/%s: %w", owner, repoName, err)
 		}
 	}
 	return nil

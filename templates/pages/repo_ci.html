@@ -15,24 +15,6 @@
       <h3>Run pipeline</h3>
       <p class="muted">Gitman checks out the selected ref and reads <code>.gitman-ci.yml</code> from that exact commit.</p>
     </div>
-    {{if and $.User (eq $.User.ID .Data.Owner.ID)}}
-      {{if .Data.HookExists}}
-      <div class="inline-actions">
-        <span class="chip chip-success">Auto-trigger active</span>
-        <form method="POST" action="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/hook/uninstall" data-confirm="Remove the managed CI auto-trigger hook?">
-          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
-          <button class="danger small" type="submit">Remove hook</button>
-        </form>
-      </div>
-      {{else if eq .Data.HookState "unmanaged"}}
-      <span class="chip">Unmanaged hook present</span>
-      {{else}}
-      <form method="POST" action="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/hook/install">
-        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
-        <button class="secondary small" type="submit">{{if eq .Data.HookState "outdated"}}Upgrade auto-trigger{{else}}Install auto-trigger{{end}}</button>
-      </form>
-      {{end}}
-    {{end}}
   </div>
 
   {{if .Data.CanControl}}

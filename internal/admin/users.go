@@ -12,13 +12,14 @@ import (
 	"github.com/mmrzaf/gitman/internal/db"
 	"github.com/mmrzaf/gitman/internal/repository"
 	sshhandler "github.com/mmrzaf/gitman/internal/ssh"
+	"github.com/mmrzaf/gitman/internal/validate"
 )
 
 func CreateUser(ctx context.Context, cfg *config.Config, database *db.DB, username, password string) (retErr error) {
-	if err := ValidateUsername(username); err != nil {
+	if err := validate.Username(username); err != nil {
 		return err
 	}
-	if err := IsPasswordStrong(password); err != nil {
+	if err := validate.Password(password); err != nil {
 		return err
 	}
 	if cfg == nil {
@@ -44,7 +45,7 @@ func CreateUser(ctx context.Context, cfg *config.Config, database *db.DB, userna
 }
 
 func ResetPassword(ctx context.Context, database *db.DB, username, password string) error {
-	if err := IsPasswordStrong(password); err != nil {
+	if err := validate.Password(password); err != nil {
 		return err
 	}
 	if err := database.UpdateUserPassword(ctx, username, password); err != nil {
@@ -57,7 +58,7 @@ func ResetPassword(ctx context.Context, database *db.DB, username, password stri
 // DeleteUser moves repository data out of the active namespace before deleting
 // the database record. Recreating the username can never adopt stale repos.
 func DeleteUser(ctx context.Context, cfg *config.Config, database *db.DB, username string) (retErr error) {
-	if err := ValidateUsername(username); err != nil {
+	if err := validate.Username(username); err != nil {
 		return err
 	}
 	if cfg == nil {
@@ -127,21 +128,26 @@ func DeleteUser(ctx context.Context, cfg *config.Config, database *db.DB, userna
 		return primary
 	}
 
-	cleanupPaths := []string{
-		quarantinedRepos,
-		filepath.Join(cfg.ArtifactsPath, "logs", username),
-		filepath.Join(cfg.ArtifactsPath, "files", username),
-		filepath.Join(cfg.CacheRoot, username),
+	cleanupPaths := make([]string, 0, 4)
+	if quarantinedRepos != "" {
+		cleanupPaths = append(cleanupPaths, quarantinedRepos)
 	}
-	var cleanupErr error
+	if cfg.ArtifactsPath != "" {
+		cleanupPaths = append(cleanupPaths,
+			filepath.Join(cfg.ArtifactsPath, "logs", username),
+			filepath.Join(cfg.ArtifactsPath, "files", username),
+		)
+	}
+	if cfg.CacheRoot != "" {
+		cleanupPaths = append(cleanupPaths, filepath.Join(cfg.CacheRoot, username))
+	}
+	var cleanupErrs []error
 	for _, path := range cleanupPaths {
-		if path == "" {
-			continue
-		}
-		if err := os.RemoveAll(path); err != nil && cleanupErr == nil {
-			cleanupErr = fmt.Errorf("cleanup failed for %s: %w", path, err)
+		if err := os.RemoveAll(path); err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("cleanup failed for %s: %w", path, err))
 		}
 	}
+	cleanupErr := errors.Join(cleanupErrs...)
 	if err := sshhandler.SyncAuthorizedKeys(ctx, database, cfg); err != nil {
 		syncErr := fmt.Errorf("user deleted, but authorized_keys sync failed: %w", err)
 		if cleanupErr != nil {

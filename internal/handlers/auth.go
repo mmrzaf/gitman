@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -136,7 +137,11 @@ func (app *App) HandleRegisterPOST(w http.ResponseWriter, r *http.Request) {
 		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Registration is temporarily unavailable", err))
 		return
 	}
-	defer releaseNamespaceLock(r, lock)
+	defer func() {
+		if err := lock.Release(); err != nil {
+			slog.Error("release registration namespace lock", "request_id", RequestID(r), "error", err)
+		}
+	}()
 
 	_, err = app.DB.CreateUser(r.Context(), username, password)
 	if err != nil {

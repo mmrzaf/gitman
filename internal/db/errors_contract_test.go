@@ -24,8 +24,6 @@ func TestSingleObjectLookupsUseErrNotFound(t *testing.T) {
 		{"repository by id", func() error { _, err := database.GetRepositoryByID(ctx, "missing"); return err }},
 		{"repository by owner/name", func() error { _, err := database.GetRepositoryByOwnerAndName(ctx, "missing", "repo"); return err }},
 		{"repository access", func() error { _, err := database.GetRepoAccessLevel(ctx, "missing", "missing"); return err }},
-		{"repository by webhook secret", func() error { _, err := database.GetRepositoryByWebhookSecret(ctx, "missing"); return err }},
-		{"webhook secret", func() error { _, err := database.GetWebhookSecret(ctx, "missing"); return err }},
 		{"ssh key", func() error { _, err := database.GetSSHKeyByID(ctx, "missing"); return err }},
 		{"ci run", func() error { _, err := database.GetCIRunByID(ctx, "missing"); return err }},
 		{"latest ci run", func() error { _, err := database.GetLatestCIRunForCommit(ctx, "missing", "deadbeef"); return err }},
@@ -60,7 +58,6 @@ func TestOwnedDeletesUseErrNotFound(t *testing.T) {
 		{"ci ref rule", func() error {
 			return database.DeleteRepoCIRefRule(ctx, "missing", models.CIRefBranch, "main")
 		}},
-		{"webhook secret update", func() error { return database.SetWebhookSecret(ctx, "missing", "secret") }},
 	}
 
 	for _, check := range checks {

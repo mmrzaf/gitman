@@ -41,6 +41,16 @@ func TestInitDBNew(t *testing.T) {
 	if count != len(migrations) {
 		t.Errorf("expected %d applied migrations, got %d", len(migrations), count)
 	}
+
+	var webhookColumns int
+	if err := db.sql.QueryRowContext(context.Background(),
+		"SELECT COUNT(*) FROM pragma_table_info('repositories') WHERE name = 'webhook_secret'",
+	).Scan(&webhookColumns); err != nil {
+		t.Fatal(err)
+	}
+	if webhookColumns != 0 {
+		t.Fatalf("obsolete webhook_secret column still present")
+	}
 }
 
 func TestInitDBReopen(t *testing.T) {
@@ -73,28 +83,6 @@ func TestPing(t *testing.T) {
 	defer db.Close()
 	if err := db.Ping(); err != nil {
 		t.Errorf("ping failed: %v", err)
-	}
-}
-
-func TestRollbackTo(t *testing.T) {
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "test.db")
-	db, err := InitDB(dbPath)
-	if err != nil {
-		t.Fatalf("InitDB failed: %v", err)
-	}
-	defer db.Close()
-
-	if err := db.rollbackTo(context.Background(), gitman.FS, "migrations", 0); err != nil {
-		t.Fatalf("rollbackTo failed: %v", err)
-	}
-
-	var count int
-	if err := db.sql.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM schema_migrations").Scan(&count); err != nil {
-		t.Fatal(err)
-	}
-	if count != 0 {
-		t.Fatalf("expected 0 applied migrations after rollback, got %d", count)
 	}
 }
 
@@ -170,8 +158,8 @@ func TestInitDBConcurrentMigration(t *testing.T) {
 	}
 }
 
-func TestBeta14DataUpgradeAndRollbackPreservesCIRuns(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "beta14.sqlite")
+func TestHistoricalDataUpgradePreservesCIRuns(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "historical.sqlite")
 	raw, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatal(err)
@@ -185,7 +173,7 @@ func TestBeta14DataUpgradeAndRollbackPreservesCIRuns(t *testing.T) {
 			break
 		}
 		if _, err := raw.Exec(migration.up); err != nil {
-			t.Fatalf("apply Beta 14 migration %d: %v", migration.version, err)
+			t.Fatalf("apply historical migration %d: %v", migration.version, err)
 		}
 	}
 	if _, err := raw.Exec(`
@@ -194,7 +182,7 @@ func TestBeta14DataUpgradeAndRollbackPreservesCIRuns(t *testing.T) {
 			applied_at INTEGER DEFAULT (strftime('%s', 'now'))
 		);
 		INSERT INTO schema_migrations (version) VALUES (1), (2), (3);
-		INSERT INTO users (id, username, password_hash) VALUES ('user-1', 'beta14', 'hash');
+		INSERT INTO users (id, username, password_hash) VALUES ('user-1', 'historical_user', 'hash');
 		INSERT INTO repositories (id, owner_id, name, description) VALUES ('repo-1', 'user-1', 'project', 'kept');
 		INSERT INTO ci_runs (
 			id, repo_id, commit_hash, branch, event, status, log_file,
@@ -213,7 +201,7 @@ func TestBeta14DataUpgradeAndRollbackPreservesCIRuns(t *testing.T) {
 
 	database, err := InitDB(dbPath)
 	if err != nil {
-		t.Fatalf("upgrade Beta 14 database: %v", err)
+		t.Fatalf("upgrade historical database: %v", err)
 	}
 	defer database.Close()
 	var commit, status, logFile, attemptID, statusReason, retryOf, triggerKey string
@@ -225,35 +213,50 @@ func TestBeta14DataUpgradeAndRollbackPreservesCIRuns(t *testing.T) {
 	}
 	if commit != "0123456789012345678901234567890123456789" || status != "failed" ||
 		logFile != "/logs/run-1.log" || attemptID != "attempt-1" || statusReason != "" || retryOf != "" || triggerKey != "" {
-		t.Fatalf("Beta 14 CI run changed during upgrade: commit=%q status=%q log=%q attempt=%q reason=%q retry=%q trigger=%q",
+		t.Fatalf("historical CI run changed during upgrade: commit=%q status=%q log=%q attempt=%q reason=%q retry=%q trigger=%q",
 			commit, status, logFile, attemptID, statusReason, retryOf, triggerKey)
 	}
+	var webhookColumns int
+	if err := database.sql.QueryRow(
+		"SELECT COUNT(*) FROM pragma_table_info('repositories') WHERE name = 'webhook_secret'",
+	).Scan(&webhookColumns); err != nil {
+		t.Fatal(err)
+	}
+	if webhookColumns != 0 {
+		t.Fatalf("obsolete webhook_secret column survived historical upgrade")
+	}
+}
 
-	if err := database.rollbackTo(context.Background(), gitman.FS, "migrations", 3); err != nil {
-		t.Fatalf("rollback Beta 15 migrations: %v", err)
-	}
-	var version int
-	if err := database.sql.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil {
+func TestInitDBRejectsNewerSchemaVersion(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "newer.sqlite")
+	database, err := InitDB(dbPath)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if version != 3 {
-		t.Fatalf("schema version after rollback = %d, want 3", version)
-	}
-	if err := database.sql.QueryRow(`
-		SELECT commit_hash, status, log_file, attempt_id FROM ci_runs WHERE id = 'run-1'
-	`).Scan(&commit, &status, &logFile, &attemptID); err != nil {
+	if _, err := database.sql.Exec("INSERT INTO schema_migrations (version) VALUES (999)"); err != nil {
 		t.Fatal(err)
 	}
-	if commit != "0123456789012345678901234567890123456789" || status != "failed" || logFile != "/logs/run-1.log" || attemptID != "attempt-1" {
-		t.Fatalf("CI run changed during rollback: commit=%q status=%q log=%q attempt=%q", commit, status, logFile, attemptID)
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
 	}
-	for _, column := range []string{"status_reason", "retry_of_run_id", "trigger_key"} {
-		var count int
-		if err := database.sql.QueryRow("SELECT COUNT(*) FROM pragma_table_info('ci_runs') WHERE name = ?", column).Scan(&count); err != nil {
-			t.Fatal(err)
-		}
-		if count != 0 {
-			t.Fatalf("column %s remained after rollback", column)
-		}
+	if _, err := InitDB(dbPath); err == nil {
+		t.Fatal("InitDB accepted a database created by a newer schema")
+	}
+}
+
+func TestInitDBRejectsIncompleteMigrationHistory(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "gap.sqlite")
+	database, err := InitDB(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.sql.Exec("DELETE FROM schema_migrations WHERE version = 3"); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InitDB(dbPath); err == nil {
+		t.Fatal("InitDB accepted an incomplete migration history")
 	}
 }

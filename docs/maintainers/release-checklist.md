@@ -3,8 +3,8 @@
 ## Validate
 
 ```bash
-VERSION=v1.0.0-beta.16 make verify
-VERSION=v1.0.0-beta.16 make release-source
+VERSION=vX.Y.Z make verify
+VERSION=vX.Y.Z make release-source
 ```
 
 Exercise at least:
@@ -14,7 +14,7 @@ Exercise at least:
 - `read` and `write` collaborator boundaries.
 - Token creation, one-time display, use, and revoke.
 - SSH-key add/delete and generated `authorized_keys` output when SSH is supported.
-- Manual CI run for the default branch, non-default branch, tag, reachable historical commit, skipped run, failed run, successful run, artifact download/preview, trusted-ref rules, and auto-trigger hook.
+- Manual CI run for the default branch, non-default branch, tag, reachable historical commit, skipped run, failed run, successful run, artifact download/preview, trusted-ref rules, and automatic push-trigger delivery.
 - CI cancellation for both a pending and running job, retry lineage, structured/live incremental logs, UTF-8 log boundaries, search/follow/wrap/raw views, and repository deletion refusal until a cancelled worker has stopped.
 - Durable push triggers while the web process is stopped, including an annotated tag followed by ref deletion before restart.
 - Repository description and visibility updates, owner-only settings access, and quarantined deletion cleanup.
@@ -73,7 +73,7 @@ Document:
 Verify release injection before publishing:
 
 ```bash
-go build -trimpath -ldflags "-X main.version=v1.0.0-beta.16" -o bin/gitman ./cmd/gitman
+go build -trimpath -ldflags "-X main.version=vX.Y.Z" -o bin/gitman ./cmd/gitman
 bin/gitman version
 bin/gitman --version
 ```

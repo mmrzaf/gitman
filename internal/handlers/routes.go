@@ -108,13 +108,6 @@ func SetupRouter(app *App) *chi.Mux {
 			r.Get("/commit/{commit_hash}", app.HandleRepoCommitGET)
 			r.Get("/archive/{format}", app.HandleRepoArchiveGET)
 
-			// Legacy path-based routes remain during the beta transition.
-			r.Get("/tree/{ref}", app.HandleRepoTreeGET)
-			r.Get("/tree/{ref}/*", app.HandleRepoTreeGET)
-			r.Get("/blob/{ref}/*", app.HandleRepoBlobGET)
-			r.Get("/commits/{ref}", app.HandleRepoCommitsGET)
-			r.Get("/archive/*", app.HandleRepoArchiveGET)
-
 			r.Get("/settings", app.HandleRepoSettingsGET)
 			r.Post("/settings", app.HandleRepoSettingsPOST)
 
@@ -138,10 +131,6 @@ func SetupRouter(app *App) *chi.Mux {
 				r.Get("/ci/secrets", app.HandleCISecretsGET)
 				r.Post("/ci/secrets", app.HandleCISecretsAddPOST)
 				r.Post("/ci/secrets/{id}/delete", app.HandleCISecretsDeletePOST)
-
-				// Hook install / uninstall
-				r.Post("/ci/hook/install", app.HandleCIHookInstallPOST)
-				r.Post("/ci/hook/uninstall", app.HandleCIHookUninstallPOST)
 			})
 		})
 	})
@@ -186,9 +175,6 @@ func SetupRouter(app *App) *chi.Mux {
 		})
 
 	})
-
-	// ── Webhook endpoint (must be outside CSRF, uses its own auth) ──
-	r.With(responseSurfaceMiddleware(surfaceAPI), app.recoverer).Post("/repos/{username}/{repo_name}/ci/webhook", app.WebhookAuthMiddleware(http.HandlerFunc(app.HandleCITriggerWebhook)).ServeHTTP)
 
 	return r
 }

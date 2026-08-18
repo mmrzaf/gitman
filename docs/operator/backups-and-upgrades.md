@@ -61,4 +61,4 @@ docker compose exec -T web gitman admin repos backup-all /data/backups/pre-upgra
 docker compose up -d --build
 ```
 
-Database migrations run during Gitman startup.
+Database migrations run forward-only during Gitman startup. Rolling back a Gitman release means restoring the matching database and filesystem backup; Gitman does not attempt reverse schema migrations.

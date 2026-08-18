@@ -55,4 +55,4 @@ gitman admin repos configure-all
 
 See [backups and upgrades](../operator/backups-and-upgrades.md).
 
-`configure-all` applies the configured Git receive-pack input ceiling to existing managed repositories.
+`configure-all` verifies managed repository storage, applies the configured Git receive-pack input ceiling, and reconciles Gitman's managed CI post-receive hook. It refuses to overwrite an operator-owned hook.

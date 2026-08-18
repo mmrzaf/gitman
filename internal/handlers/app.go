@@ -22,7 +22,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/mmrzaf/gitman"
 	"github.com/mmrzaf/gitman/internal/apperr"
 	"github.com/mmrzaf/gitman/internal/config"
@@ -472,45 +471,6 @@ func GetUser(r *http.Request) *models.User {
 		return user
 	}
 	return nil
-}
-
-func (app *App) WebhookAuthMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		secret := r.Header.Get("X-Gitman-Webhook-Secret")
-		if secret == "" {
-			app.respondForSurface(w, r, apperr.New(apperr.KindUnauthenticated, "authentication required"))
-			return
-		}
-		repo, err := app.DB.GetRepositoryByWebhookSecret(r.Context(), secret)
-		if err != nil {
-			if errors.Is(err, db.ErrNotFound) {
-				app.respondForSurface(w, r, apperr.New(apperr.KindUnauthenticated, "authentication required"))
-			} else {
-				app.respondForSurface(w, r, apperr.Wrap(apperr.KindUnavailable, "Gitman is temporarily unavailable", err))
-			}
-			return
-		}
-		if repo.Name != chi.URLParam(r, "repo_name") {
-			app.respondForSurface(w, r, apperr.New(apperr.KindUnauthenticated, "authentication required"))
-			return
-		}
-		owner, err := app.DB.GetUserByUsername(r.Context(), chi.URLParam(r, "username"))
-		if err != nil {
-			if errors.Is(err, db.ErrNotFound) {
-				app.respondForSurface(w, r, apperr.New(apperr.KindUnauthenticated, "authentication required"))
-			} else {
-				app.respondForSurface(w, r, apperr.Wrap(apperr.KindUnavailable, "Gitman is temporarily unavailable", err))
-			}
-			return
-		}
-		if owner.ID != repo.OwnerID {
-			app.respondForSurface(w, r, apperr.New(apperr.KindUnauthenticated, "authentication required"))
-			return
-		}
-		ctx := context.WithValue(r.Context(), repoContextKey, repo)
-		ctx = context.WithValue(ctx, repoOwnerContextKey, owner)
-		next.ServeHTTP(w, r.WithContext(ctx))
-	})
 }
 
 func (app *App) securityHeaders(next http.Handler) http.Handler {

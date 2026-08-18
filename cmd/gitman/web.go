@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	citrigger "github.com/mmrzaf/gitman/internal/ci/trigger"
 	"github.com/mmrzaf/gitman/internal/config"
 	"github.com/mmrzaf/gitman/internal/db"
 	"github.com/mmrzaf/gitman/internal/handlers"
@@ -82,7 +83,11 @@ func runWeb(cfg *config.Config, database *db.DB, args []string) error {
 		slog.Warn("failed to prune expired sessions at startup", "error", err)
 	}
 	go pruneExpiredSessions(runCtx, database)
-	go app.RunCITriggerQueue(runCtx)
+	triggerManager := &citrigger.Manager{DB: database, ReposPath: cfg.ReposPath}
+	if err := triggerManager.ReconcileAll(runCtx); err != nil {
+		slog.Warn("some repository CI hooks could not be reconciled", "error", err)
+	}
+	go triggerManager.Run(runCtx)
 
 	router := handlers.SetupRouter(app)
 

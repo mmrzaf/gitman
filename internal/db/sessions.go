@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"errors"
 	"time"
 
 	"github.com/mmrzaf/gitman/internal/models"
@@ -41,15 +40,6 @@ func (db *DB) CreateSession(ctx context.Context, userID string) (string, error) 
 
 func (db *DB) GetUserBySession(ctx context.Context, token string) (*models.User, error) {
 	user, err := db.getUserBySessionTokenValue(ctx, hashSessionToken(token))
-	if err == nil {
-		return user, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return nil, err
-	}
-
-	// One-release compatibility for sessions created before session-token hashing.
-	user, err = db.getUserBySessionTokenValue(ctx, token)
 	if err != nil {
 		return nil, normalizeNotFound(err)
 	}
@@ -78,13 +68,13 @@ func (db *DB) getUserBySessionTokenValue(ctx context.Context, storedToken string
 }
 
 func (db *DB) DeleteSession(ctx context.Context, token string) error {
-	_, err := db.sql.ExecContext(ctx, "DELETE FROM sessions WHERE token IN (?, ?)", hashSessionToken(token), token)
+	_, err := db.sql.ExecContext(ctx, "DELETE FROM sessions WHERE token = ?", hashSessionToken(token))
 	return err
 }
 
 func (db *DB) ExtendSession(ctx context.Context, token string, duration time.Duration) error {
 	newExpires := time.Now().Add(duration).Unix()
-	_, err := db.sql.ExecContext(ctx, "UPDATE sessions SET expires_at = ? WHERE token IN (?, ?)", newExpires, hashSessionToken(token), token)
+	_, err := db.sql.ExecContext(ctx, "UPDATE sessions SET expires_at = ? WHERE token = ?", newExpires, hashSessionToken(token))
 	return err
 }
 
@@ -94,8 +84,8 @@ func (db *DB) ExtendSessionIfExpiring(ctx context.Context, token string, duratio
 	cutoff := now.Add(threshold).Unix()
 	res, err := db.sql.ExecContext(ctx, `
 		UPDATE sessions SET expires_at = ?
-		WHERE token IN (?, ?) AND expires_at <= ?
-	`, newExpires, hashSessionToken(token), token, cutoff)
+		WHERE token = ? AND expires_at <= ?
+	`, newExpires, hashSessionToken(token), cutoff)
 	if err != nil {
 		return false, err
 	}
