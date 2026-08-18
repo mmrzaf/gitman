@@ -19,6 +19,7 @@ import (
 )
 
 type CommitPageData struct {
+	PageData
 	Owner          *models.User
 	Repository     *models.Repository
 	CurrentRef     string
@@ -147,19 +148,15 @@ func (app *App) HandleRepoCommitGET(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	app.renderPage(w, r, "repo_commit.html", PageData{
+	data.PageData = PageData{
 		Title: repo.Name + " - " + shortString(detail.Hash, 12),
 		User:  GetUser(r),
-		Data:  data,
 		RepoNav: &RepoNavData{
-			Owner:      owner,
-			Repository: repo,
-			CurrentRef: currentRef,
-			Active:     "commits",
-			IsOwner:    GetUser(r) != nil && GetUser(r).ID == repo.OwnerID,
-			CanViewCI:  data.CanViewCI,
+			Owner: owner, Repository: repo, CurrentRef: currentRef, Active: "commits",
+			IsOwner: GetUser(r) != nil && GetUser(r).ID == repo.OwnerID, CanViewCI: data.CanViewCI,
 		},
-	})
+	}
+	app.renderPage(w, r, "repo_commit.html", &data)
 }
 
 func (app *App) HandleRepoBlobRawGET(w http.ResponseWriter, r *http.Request) {

@@ -20,16 +20,9 @@ func (app *App) renderRepoCollaboratorsPage(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	app.renderPage(w, r, "repo_collaborators.html", PageData{
-		Title:   repo.Name + " - Collaborators",
-		User:    currentUser,
-		Error:   errStr,
-		Success: successStr,
-		Data: RepoPageData{
-			Owner:         owner,
-			Repository:    repo,
-			Collaborators: collaborators,
-		},
+	app.renderPage(w, r, "repo_collaborators.html", &RepoPageData{
+		PageData: PageData{Title: repo.Name + " - Access", User: currentUser, Error: errStr, Success: successStr},
+		Owner:    owner, Repository: repo, Collaborators: collaborators,
 	})
 }
 

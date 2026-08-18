@@ -15,6 +15,7 @@ import (
 )
 
 type KeysPageData struct {
+	PageData
 	Keys []models.SSHKey
 }
 
@@ -44,12 +45,9 @@ func (app *App) renderKeysPage(w http.ResponseWriter, r *http.Request, user *mod
 			keys[i].Fingerprint = crypto_ssh.FingerprintSHA256(parsed)
 		}
 	}
-	app.renderPage(w, r, "keys.html", PageData{
-		Title:   "SSH Keys",
-		User:    user,
-		Error:   errStr,
-		Success: successStr,
-		Data:    KeysPageData{Keys: keys},
+	app.renderPage(w, r, "keys.html", &KeysPageData{
+		PageData: PageData{Title: "SSH Keys", User: user, Error: errStr, Success: successStr},
+		Keys:     keys,
 	})
 }
 

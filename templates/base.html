@@ -1,50 +1,43 @@
 {{define "base.html"}}
 <!doctype html>
 <html lang="en" class="no-js">
-  <head>
-    <meta charset="UTF-8" />
-    <title>{{if .Title}}{{.Title}} - {{end}}Gitman</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#F1F5F9" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#020617" media="(prefers-color-scheme: dark)" />
-    <link rel="icon" href="/static/favicon.ico" sizes="any" />
-    <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png" />
-    <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png" />
-    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png" />
-    <link rel="manifest" href="/static/site.webmanifest" />
-    <link rel="stylesheet" href="/static/css/gitman.css" />
-    <script src="/static/js/gitman.js" defer></script>
-  </head>
-
-  <body>
-    <a class="skip-link" href="#content">Skip to content</a>
-    <header class="site-header">
-      <a class="brand" href="/" aria-label="Gitman home">Gitman</a>
-
+<head>
+  <meta charset="UTF-8">
+  <title>{{if .Title}}{{.Title}} · {{end}}Gitman</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f8fafc" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0b0d10" media="(prefers-color-scheme: dark)">
+  <link rel="icon" href="/static/favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png">
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+  <link rel="manifest" href="/static/site.webmanifest">
+  <link rel="stylesheet" href="/static/css/gitman.css">
+  <script src="/static/js/gitman.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#content">Skip to content</a>
+  <header class="site-header">
+    <div class="site-header-inner">
+      <a class="brand" href="{{if .User}}/repos{{else}}/{{end}}">Gitman</a>
       <nav class="site-nav" aria-label="Main navigation">
         {{if .User}}
-          <span class="nav-user">{{.User.Username}}</span>
-          <a href="/repos">Repos</a>
+          <a href="/repos">Repositories</a>
+          <a href="/keys">SSH keys</a>
           <a href="/tokens">Tokens</a>
-          <a href="/keys">SSH Keys</a>
-          <form method="post" action="/logout">
-            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
-            <button class="link-button" type="submit">Logout</button>
-          </form>
+          <span class="nav-user">{{.User.Username}}</span>
+          <form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="link-button" type="submit">Logout</button></form>
         {{else}}
-          {{if .Config.AllowRegister}}<a href="/register">Register</a>{{end}}
           <a href="/login">Login</a>
+          {{if .Config.AllowRegister}}<a href="/register">Register</a>{{end}}
         {{end}}
       </nav>
-    </header>
-
-    <main id="content" class="page-shell">
-      {{if .RepoNav}}
-        {{template "repo_header" .}}
-        {{template "repo_nav" .}}
-      {{end}}
-      {{block "content" .}}{{end}}
-    </main>
-  </body>
+    </div>
+  </header>
+  <main id="content" class="page-shell">
+    {{if .RepoNav}}{{template "repo_header" .}}{{template "repo_nav" .}}{{end}}
+    {{block "content" .}}{{end}}
+  </main>
+</body>
 </html>
 {{end}}

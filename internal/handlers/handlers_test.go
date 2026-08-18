@@ -49,15 +49,15 @@ func setupTestApp(t *testing.T) *App {
 		"register.html": template.Must(template.New("").Parse(`{{define "base.html"}}{{if .Error}}<div class="error">{{.Error}}</div>{{else}}register page{{end}}{{end}}`)),
 		"repos.html": template.Must(template.New("").Parse(`
 			{{define "base.html"}}
-			{{range .Data.Repos}}<span>{{.Name}}</span>{{end}}
+			{{range .Repos}}<span>{{.Name}}</span>{{end}}
 			{{end}}`)),
 		"keys.html": template.Must(template.New("").Parse(`
 			{{define "base.html"}}
-			{{range .Data.Keys}}<span>{{.Name}}</span>{{end}}
+			{{range .Keys}}<span>{{.Name}}</span>{{end}}
 			{{end}}`)),
 		"tokens.html": template.Must(template.New("").Parse(`
 			{{define "base.html"}}
-			{{range .Data.Tokens}}<span>{{.Name}}</span>{{end}}
+			{{range .Tokens}}<span>{{.Name}}</span>{{end}}
 			{{end}}`)),
 	}
 
@@ -494,11 +494,11 @@ func TestServeArtifactNestedAndRejectsTraversal(t *testing.T) {
 	}
 }
 func TestRenderPageBuffersTemplateErrors(t *testing.T) {
-	bad := template.Must(template.New("base.html").Parse(`{{define "base.html"}}prefix{{.Data.Missing}}{{end}}`))
+	bad := template.Must(template.New("base.html").Parse(`{{define "base.html"}}prefix{{.Missing}}{{end}}`))
 	app := &App{Config: &config.Config{}, Templates: map[string]*template.Template{"bad.html": bad}}
 	req := httptest.NewRequest(http.MethodGet, "/bad", nil)
 	w := httptest.NewRecorder()
-	app.renderPage(w, req, "bad.html", PageData{Data: struct{}{}})
+	app.renderPage(w, req, "bad.html", &PageData{})
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d", w.Code)
 	}
@@ -537,12 +537,12 @@ func TestRepoNavRendersCIPageWithoutCurrentRefField(t *testing.T) {
 	ctx = context.WithValue(ctx, repoOwnerContextKey, owner)
 	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()
-	app.renderPage(w, req, "repo_ci.html", PageData{User: owner, Data: CIPageData{Owner: owner, Repository: repo}})
+	app.renderPage(w, req, "repo_ci.html", &CIPageData{PageData: PageData{User: owner}, Owner: owner, Repository: repo})
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 	body := w.Body.String()
-	for _, want := range []string{"/testuser/repo/tree?ref=feature%2fa", "/testuser/repo/commits?ref=feature%2fa", "CI/CD", "Secrets"} {
+	for _, want := range []string{"/testuser/repo/tree?ref=feature%2fa", "/testuser/repo/commits?ref=feature%2fa", ">CI<", ">Settings<"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("navigation missing %q: %s", want, body)
 		}
@@ -582,9 +582,9 @@ func TestCISecretPreservesWhitespace(t *testing.T) {
 		t.Fatal(err)
 	}
 	repo, _ := app.DB.GetRepositoryByID(context.Background(), repoID)
-	app.Templates["repo_ci_secrets.html"] = template.Must(template.New("ci_secrets_panel").Parse(`{{define "ci_secrets_panel"}}ok{{end}}`))
+	app.Templates["repo_ci_settings.html"] = template.Must(template.New("ci_secrets_panel").Parse(`{{define "ci_secrets_panel"}}ok{{end}}`))
 	form := url.Values{"key": {"TOKEN"}, "value": {"  keep spaces  "}}
-	req := httptest.NewRequest(http.MethodPost, "/testuser/repo/ci/secrets", strings.NewReader(form.Encode()))
+	req := httptest.NewRequest(http.MethodPost, "/testuser/repo/settings/ci/secrets", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	ctx := context.WithValue(req.Context(), userContextKey, owner)
 	ctx = context.WithValue(ctx, repoContextKey, repo)

@@ -1,0 +1,10 @@
+{{define "repo_settings_nav"}}
+{{if and .RepoNav .RepoNav.IsOwner}}
+{{$owner := .RepoNav.Owner.Username}} {{$repo := .RepoNav.Repository.Name}} {{$section := .RepoNav.SettingsSection}}
+<nav class="settings-nav" aria-label="Repository settings">
+  <a {{if eq $section "general"}}class="active" aria-current="page"{{end}} href="/{{$owner}}/{{$repo}}/settings">General</a>
+  <a {{if eq $section "access"}}class="active" aria-current="page"{{end}} href="/{{$owner}}/{{$repo}}/settings/access">Access</a>
+  <a {{if eq $section "ci"}}class="active" aria-current="page"{{end}} href="/{{$owner}}/{{$repo}}/settings/ci">CI</a>
+</nav>
+{{end}}
+{{end}}

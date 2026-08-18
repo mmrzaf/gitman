@@ -1,7 +1,23 @@
 {{define "content"}}
-<div class="page-header section-heading">
-  <h2>Collaborators</h2>
-  <p class="muted">Manage who can access this repository.</p>
-</div>
-{{template "collaborators_panel" .}}
+<div class="page-heading"><h1>Settings</h1></div>
+{{template "repo_settings_nav" .}}
+{{template "flash" .}}
+<section class="settings-section">
+  <div class="section-copy"><h2>Access</h2><p>Users who can read or write this repository.</p></div>
+  <div class="section-body">
+    {{if .Collaborators}}
+    <div class="resource-list compact">
+      {{range .Collaborators}}
+      <div class="resource-row"><div><strong>{{.User.Username}}</strong><div class="meta-line">{{.AccessLevel}} access</div></div><form method="POST" action="/{{$.Owner.Username}}/{{$.Repository.Name}}/settings/access/remove?user_id={{.User.ID}}" data-confirm="Remove collaborator {{.User.Username}}?"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="danger-link" type="submit">Remove</button></form></div>
+      {{end}}
+    </div>
+    {{else}}<p class="empty-line">No collaborators.</p>{{end}}
+    <form method="POST" action="/{{.Owner.Username}}/{{.Repository.Name}}/settings/access/add" class="trusted-ref-form collaborator-form">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <label class="grow"><span>Username</span><input type="text" name="username" required></label>
+      <label><span>Access</span><select name="access_level"><option value="read">Read</option><option value="write">Write</option></select></label>
+      <button type="submit">Add collaborator</button>
+    </form>
+  </div>
+</section>
 {{end}}

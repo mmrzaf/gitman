@@ -14,7 +14,7 @@ Usage:
 Commands:
   web             Start web interface and Git smart HTTP server
   serve <keyID>   SSH git handler (invoked as forced command by OpenSSH)
-  worker          Start the CI/CD background worker
+  worker          Start the CI background worker
   admin           Administration commands`)
 	return err
 }

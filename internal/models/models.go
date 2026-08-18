@@ -108,7 +108,7 @@ type SSHKey struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
-// CIRun represents a single CI/CD pipeline execution.
+// CIRun represents a single CI pipeline execution.
 // Status values: pending | running | success | failed | skipped | cancelled
 type CIRun struct {
 	ID           string     `json:"id"`

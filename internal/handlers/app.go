@@ -64,25 +64,37 @@ func (app *App) loginLimiter() *loginLimiter {
 }
 
 type RepoNavData struct {
-	Owner      *models.User
-	Repository *models.Repository
-	CurrentRef string
-	Active     string
-	IsOwner    bool
-	CanViewCI  bool
+	Owner           *models.User
+	Repository      *models.Repository
+	CurrentRef      string
+	Active          string
+	IsOwner         bool
+	CanViewCI       bool
+	SettingsSection string
 }
 
 type PageData struct {
-	Title     string
-	User      *models.User
-	Config    *config.Config
-	Error     string
-	Success   string
-	Data      any
-	CSRFToken string
-	RepoNav   *RepoNavData
-	RequestID string
+	Title      string
+	User       *models.User
+	Config     *config.Config
+	Error      string
+	Success    string
+	CSRFToken  string
+	RepoNav    *RepoNavData
+	RequestID  string
+	StatusCode int
+	ErrorTitle string
+	ErrorHint  string
 }
+
+// pageModel is the deliberately small template boundary. Every page embeds
+// PageData and exposes its concrete fields directly to templates; there is no
+// untyped payload bag at the rendering boundary.
+type pageModel interface {
+	basePage() *PageData
+}
+
+func (p *PageData) basePage() *PageData { return p }
 
 func (app *App) requestIsHTTPS(r *http.Request) bool {
 	if r.TLS != nil {
@@ -148,21 +160,33 @@ func repoNavActive(requestPath string) string {
 	if len(parts) < 3 {
 		return "files"
 	}
-
 	switch parts[2] {
-	case "ci":
-		if len(parts) > 3 && parts[3] == "secrets" {
-			return "secrets"
-		}
-		return "ci"
-	case "collaborators":
-		return "collaborators"
 	case "settings":
 		return "settings"
+	case "ci":
+		return "ci"
 	case "commits", "commit":
 		return "commits"
 	default:
 		return "files"
+	}
+}
+
+func repoSettingsSection(requestPath string) string {
+	parts := strings.Split(strings.Trim(requestPath, "/"), "/")
+	if len(parts) < 3 || parts[2] != "settings" {
+		return ""
+	}
+	if len(parts) == 3 {
+		return "general"
+	}
+	switch parts[3] {
+	case "access":
+		return "access"
+	case "ci":
+		return "ci"
+	default:
+		return "general"
 	}
 }
 
@@ -184,14 +208,7 @@ var templateFuncs = template.FuncMap{
 		}
 		return base + "/" + name
 	},
-	"statusLabel": func(status models.CIStatus) string {
-		label, _ := StatusBadge(status)
-		return label
-	},
-	"statusClass": func(status models.CIStatus) string {
-		_, class := StatusBadge(status)
-		return class
-	},
+	"statusLabel": StatusLabel,
 	"runDuration": func(run any) string {
 		switch v := run.(type) {
 		case *models.CIRun:
@@ -289,10 +306,11 @@ func (app *App) repoNavData(r *http.Request, currentRef string) *RepoNavData {
 		currentRef = requestRef(r)
 	}
 	nav := &RepoNavData{
-		Owner:      owner,
-		Repository: repo,
-		CurrentRef: currentRef,
-		Active:     repoNavActive(r.URL.Path),
+		Owner:           owner,
+		Repository:      repo,
+		CurrentRef:      currentRef,
+		Active:          repoNavActive(r.URL.Path),
+		SettingsSection: repoSettingsSection(r.URL.Path),
 	}
 	user := GetUser(r)
 	if user == nil {
@@ -309,22 +327,23 @@ func (app *App) repoNavData(r *http.Request, currentRef string) *RepoNavData {
 	return nav
 }
 
-func (app *App) preparePageData(r *http.Request, data *PageData) {
-	if data.RequestID == "" {
-		data.RequestID = RequestID(r)
+func (app *App) preparePageData(r *http.Request, data pageModel) {
+	base := data.basePage()
+	if base.RequestID == "" {
+		base.RequestID = RequestID(r)
 	}
-	if data.CSRFToken == "" {
+	if base.CSRFToken == "" {
 		if token, ok := r.Context().Value(csrfTokenKey).(string); ok {
-			data.CSRFToken = token
+			base.CSRFToken = token
 		}
 	}
-	if data.RepoNav == nil {
-		data.RepoNav = app.repoNavData(r, "")
+	if base.RepoNav == nil {
+		base.RepoNav = app.repoNavData(r, "")
 	}
 }
 
-func (app *App) renderTemplateStatus(w http.ResponseWriter, tmplMapKey string, executeName string, data PageData, status int) error {
-	data.Config = app.Config
+func (app *App) renderTemplateStatus(w http.ResponseWriter, tmplMapKey string, executeName string, data pageModel, status int) error {
+	data.basePage().Config = app.Config
 
 	t, ok := app.Templates[tmplMapKey]
 	if !ok {
@@ -348,12 +367,12 @@ func (app *App) renderTemplateStatus(w http.ResponseWriter, tmplMapKey string, e
 	return err
 }
 
-func (app *App) renderTemplate(w http.ResponseWriter, tmplMapKey string, executeName string, data PageData) error {
+func (app *App) renderTemplate(w http.ResponseWriter, tmplMapKey string, executeName string, data pageModel) error {
 	return app.renderTemplateStatus(w, tmplMapKey, executeName, data, http.StatusOK)
 }
 
-func (app *App) renderPageStatus(w http.ResponseWriter, r *http.Request, page string, data PageData, status int) {
-	app.preparePageData(r, &data)
+func (app *App) renderPageStatus(w http.ResponseWriter, r *http.Request, page string, data pageModel, status int) {
+	app.preparePageData(r, data)
 	if err := app.renderTemplateStatus(w, page, "base.html", data, status); err != nil {
 		appErr := apperr.Wrap(apperr.KindInternal, "Gitman could not render this page", err)
 		if responseStarted(w) {
@@ -364,17 +383,19 @@ func (app *App) renderPageStatus(w http.ResponseWriter, r *http.Request, page st
 	}
 }
 
-func (app *App) renderPage(w http.ResponseWriter, r *http.Request, page string, data PageData) {
+func (app *App) renderPage(w http.ResponseWriter, r *http.Request, page string, data pageModel) {
 	app.renderPageStatus(w, r, page, data, http.StatusOK)
 }
 
-func (app *App) renderError(w http.ResponseWriter, r *http.Request, data PageData, msg string, code int) {
-	errData := data
-	errData.Title = "Error"
+func (app *App) renderError(w http.ResponseWriter, r *http.Request, data *PageData, msg string, code int) {
+	errData := *data
+	errData.StatusCode = code
+	errData.ErrorTitle, errData.ErrorHint = webErrorCopy(code)
+	errData.Title = errData.ErrorTitle
 	errData.Error = msg
 	app.preparePageData(r, &errData)
 
-	if err := app.renderTemplateStatus(w, "error.html", "base.html", errData, code); err != nil {
+	if err := app.renderTemplateStatus(w, "error.html", "base.html", &errData, code); err != nil {
 		slog.Error("failed to render error page", "request_id", RequestID(r), "error", err, "status", code)
 		if responseStarted(w) {
 			return

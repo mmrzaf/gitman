@@ -18,7 +18,7 @@ Exercise at least:
 - CI cancellation for both a pending and running job, retry lineage, structured/live incremental logs, UTF-8 log boundaries, search/follow/wrap/raw views, and repository deletion refusal until a cancelled worker has stopped.
 - Durable push triggers while the web process is stopped, including an annotated tag followed by ref deletion before restart.
 - Repository description and visibility updates, owner-only settings access, and quarantined deletion cleanup.
-- Repository home, README rendering, commit/diff pages, exact-revision source links, line/range permalinks, Go to File, keyboard shortcuts, and narrow-screen navigation.
+- Repository home, README preview, commit/diff pages, exact-revision source links, line/range permalinks, Go to File, and narrow-screen navigation.
 - Root/merge/rename/delete/binary commit inspection plus odd Unicode/whitespace filenames and source-rendering limits.
 - `/healthz` liveness and `/readyz` readiness behavior without session cookies.
 - Git HTTP clone and push with a personal access token, and rejection with the account password.

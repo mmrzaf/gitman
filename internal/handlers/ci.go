@@ -32,19 +32,20 @@ import (
 var secretKeyRegex = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 
 type CIPageData struct {
+	PageData
 	Owner         *models.User
 	Repository    *models.Repository
 	Runs          []CIRunView
 	Branches      []string
 	Tags          []string
 	DefaultBranch string
-	RefRules      []models.RepoCIRefRule
 	CanControl    bool
 	StatusFilter  string
 	BranchFilter  string
 }
 
 type CIRunPageData struct {
+	PageData
 	Owner         *models.User
 	Repository    *models.Repository
 	Run           *models.CIRun
@@ -52,7 +53,7 @@ type CIRunPageData struct {
 	LogContent    string
 	LogOffset     int64
 	Log           CILogView
-	Config        CIConfigView
+	Pipeline      CIConfigView
 	Artifacts     []*ArtifactNode
 	ArtifactCount int
 	ArtifactBytes int64
@@ -60,11 +61,13 @@ type CIRunPageData struct {
 	CanControl    bool
 }
 
-type CISecretsPageData struct {
+type RepoCISettingsPageData struct {
+	PageData
 	Owner      *models.User
 	Repository *models.Repository
 	Secrets    []models.RepoSecret
 	NoKey      bool // true when GITMAN_SECRET_KEY is not configured
+	RefRules   []models.RepoCIRefRule
 }
 
 func (app *App) HandleCIGET(w http.ResponseWriter, r *http.Request) {
@@ -123,33 +126,18 @@ func (app *App) HandleCIGET(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	refRules, err := app.DB.ListRepoCIRefRules(ctx, repo.ID)
-	if err != nil {
-		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI settings are temporarily unavailable", err))
-		return
-	}
-
 	runViews, err := loadCIRunViews(ctx, repoPath, runs)
 	if err != nil {
 		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Repository data is temporarily unavailable", err))
 		return
 	}
-	app.renderPage(w, r, "repo_ci.html", PageData{
-		Title: repo.Name + " - CI",
-		User:  GetUser(r),
-		Data: CIPageData{
-			Owner:         owner,
-			Repository:    repo,
-			Runs:          runViews,
-			Branches:      branches,
-			Tags:          tags,
-			DefaultBranch: defaultBranch,
-			RefRules:      refRules,
-			CanControl:    app.canControlCI(r.Context(), GetUser(r), repo),
-			StatusFilter:  string(statusFilter),
-			BranchFilter:  branchFilter,
-		},
-	})
+	data := &CIPageData{
+		PageData: PageData{Title: repo.Name + " - CI", User: GetUser(r)},
+		Owner:    owner, Repository: repo, Runs: runViews, Branches: branches, Tags: tags,
+		DefaultBranch: defaultBranch, CanControl: app.canControlCI(r.Context(), GetUser(r), repo),
+		StatusFilter: string(statusFilter), BranchFilter: branchFilter,
+	}
+	app.renderPage(w, r, "repo_ci.html", data)
 }
 
 func (app *App) canViewCI(ctx context.Context, user *models.User, repo *models.Repository) bool {
@@ -245,7 +233,7 @@ func (app *App) HandleCISettingsRulePOST(w http.ResponseWriter, r *http.Request)
 		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI settings are temporarily unavailable", err))
 		return
 	}
-	http.Redirect(w, r, fmt.Sprintf("/%s/%s/ci?success=ci_rule_saved", owner.Username, repo.Name), http.StatusSeeOther)
+	http.Redirect(w, r, fmt.Sprintf("/%s/%s/settings/ci?message=Trusted+ref+saved", owner.Username, repo.Name), http.StatusSeeOther)
 }
 
 func (app *App) HandleCISettingsRuleDeletePOST(w http.ResponseWriter, r *http.Request) {
@@ -273,7 +261,7 @@ func (app *App) HandleCISettingsRuleDeletePOST(w http.ResponseWriter, r *http.Re
 		}
 		return
 	}
-	http.Redirect(w, r, fmt.Sprintf("/%s/%s/ci?success=ci_rule_deleted", owner.Username, repo.Name), http.StatusSeeOther)
+	http.Redirect(w, r, fmt.Sprintf("/%s/%s/settings/ci?message=Trusted+ref+removed", owner.Username, repo.Name), http.StatusSeeOther)
 }
 
 type triggerRequest struct {
@@ -331,6 +319,18 @@ func decodeTriggerRequest(w http.ResponseWriter, r *http.Request) (triggerReques
 		req.CommitHash = r.FormValue("commit_hash")
 		req.Branch = r.FormValue("branch")
 		req.Tag = r.FormValue("tag")
+		if revision := strings.TrimSpace(r.FormValue("revision")); revision != "" {
+			switch {
+			case strings.HasPrefix(revision, "branch:"):
+				req.Branch = strings.TrimPrefix(revision, "branch:")
+				req.Tag = ""
+			case strings.HasPrefix(revision, "tag:"):
+				req.Tag = strings.TrimPrefix(revision, "tag:")
+				req.Branch = ""
+			default:
+				return req, apperr.New(apperr.KindInvalid, "Invalid CI revision")
+			}
+		}
 		req.Event = models.CIEvent(r.FormValue("event"))
 		return req, nil
 	default:
@@ -703,20 +703,17 @@ func (app *App) HandleCIRunGET(w http.ResponseWriter, r *http.Request) {
 		commit = views[0].Commit
 	}
 
-	app.renderPage(w, r, "repo_ci_run.html", PageData{
-		Title:   fmt.Sprintf("Run %s — CI", shortString(run.ID, 8)),
-		User:    GetUser(r),
-		Success: strings.TrimSpace(r.URL.Query().Get("message")),
-		Error:   strings.TrimSpace(r.URL.Query().Get("error")),
-		RepoNav: app.repoNavData(r, ciRunNavigationRef(run)),
-		Data: CIRunPageData{
-			Owner: owner, Repository: repo, Run: run, Commit: commit,
-			LogContent: logContent, LogOffset: logOffset, Log: logView, Config: configView,
-			Artifacts: artifactTree, ArtifactCount: len(artifactFiles), ArtifactBytes: artifactTreeSize(artifactTree),
-			Attempts:   attemptViews,
-			CanControl: app.canControlCI(r.Context(), GetUser(r), repo),
+	data := &CIRunPageData{
+		PageData: PageData{
+			Title: fmt.Sprintf("Run %s — CI", shortString(run.ID, 8)), User: GetUser(r),
+			Success: strings.TrimSpace(r.URL.Query().Get("message")), Error: strings.TrimSpace(r.URL.Query().Get("error")),
+			RepoNav: app.repoNavData(r, ciRunNavigationRef(run)),
 		},
-	})
+		Owner: owner, Repository: repo, Run: run, Commit: commit, LogContent: logContent, LogOffset: logOffset,
+		Log: logView, Pipeline: configView, Artifacts: artifactTree, ArtifactCount: len(artifactFiles),
+		ArtifactBytes: artifactTreeSize(artifactTree), Attempts: attemptViews, CanControl: app.canControlCI(r.Context(), GetUser(r), repo),
+	}
+	app.renderPage(w, r, "repo_ci_run.html", data)
 }
 
 func writeCILogFragment(w http.ResponseWriter, content string) {
@@ -1076,7 +1073,7 @@ func (app *App) HandleCIRunLogsDownloadGET(w http.ResponseWriter, r *http.Reques
 	}
 }
 
-func (app *App) renderCISecretsPage(w http.ResponseWriter, r *http.Request, errStr, successStr string) {
+func (app *App) renderRepoCISettingsPage(w http.ResponseWriter, r *http.Request, errStr, successStr string) {
 	repo := GetRepo(r)
 	owner := GetRepoOwner(r)
 	currentUser := GetUser(r)
@@ -1085,22 +1082,19 @@ func (app *App) renderCISecretsPage(w http.ResponseWriter, r *http.Request, errS
 		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI secrets are temporarily unavailable", err))
 		return
 	}
+	refRules, err := app.DB.ListRepoCIRefRules(r.Context(), repo.ID)
+	if err != nil {
+		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI settings are temporarily unavailable", err))
+		return
+	}
 
-	app.renderPage(w, r, "repo_ci_secrets.html", PageData{
-		Title:   repo.Name + " - CI Secrets",
-		User:    currentUser,
-		Error:   errStr,
-		Success: successStr,
-		Data: CISecretsPageData{
-			Owner:      owner,
-			Repository: repo,
-			Secrets:    secrets,
-			NoKey:      app.Config.SecretKey == "",
-		},
+	app.renderPage(w, r, "repo_ci_settings.html", &RepoCISettingsPageData{
+		PageData: PageData{Title: repo.Name + " - CI", User: currentUser, Error: errStr, Success: successStr},
+		Owner:    owner, Repository: repo, Secrets: secrets, NoKey: app.Config.SecretKey == "", RefRules: refRules,
 	})
 }
 
-func (app *App) HandleCISecretsGET(w http.ResponseWriter, r *http.Request) {
+func (app *App) HandleRepoCISettingsGET(w http.ResponseWriter, r *http.Request) {
 	repo := GetRepo(r)
 	currentUser := GetUser(r)
 
@@ -1109,7 +1103,7 @@ func (app *App) HandleCISecretsGET(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	app.renderCISecretsPage(w, r, "", "")
+	app.renderRepoCISettingsPage(w, r, "", strings.TrimSpace(r.URL.Query().Get("message")))
 }
 
 func (app *App) HandleCISecretsAddPOST(w http.ResponseWriter, r *http.Request) {
@@ -1117,12 +1111,12 @@ func (app *App) HandleCISecretsAddPOST(w http.ResponseWriter, r *http.Request) {
 	currentUser := GetUser(r)
 
 	if currentUser == nil || currentUser.ID != repo.OwnerID {
-		app.renderCISecretsPage(w, r, "Only the repository owner can manage secrets.", "")
+		app.renderRepoCISettingsPage(w, r, "Only the repository owner can manage secrets.", "")
 		return
 	}
 
 	if app.Config.SecretKey == "" {
-		app.renderCISecretsPage(w, r, "GITMAN_SECRET_KEY is not configured on this server. Secrets cannot be stored.", "")
+		app.renderRepoCISettingsPage(w, r, "GITMAN_SECRET_KEY is not configured on this server. Secrets cannot be stored.", "")
 		return
 	}
 
@@ -1133,12 +1127,12 @@ func (app *App) HandleCISecretsAddPOST(w http.ResponseWriter, r *http.Request) {
 	value := r.FormValue("value")
 
 	if key == "" || value == "" {
-		app.renderCISecretsPage(w, r, "Key and value are required.", "")
+		app.renderRepoCISettingsPage(w, r, "Key and value are required.", "")
 		return
 	}
 
 	if !secretKeyRegex.MatchString(key) {
-		app.renderCISecretsPage(w, r, "Key must be uppercase letters, digits, and underscores, starting with a letter.", "")
+		app.renderRepoCISettingsPage(w, r, "Key must be uppercase letters, digits, and underscores, starting with a letter.", "")
 		return
 	}
 
@@ -1153,7 +1147,7 @@ func (app *App) HandleCISecretsAddPOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	app.renderCISecretsPage(w, r, "", fmt.Sprintf("Secret %q saved.", key))
+	app.renderRepoCISettingsPage(w, r, "", fmt.Sprintf("Secret %q saved.", key))
 }
 
 func (app *App) HandleCISecretsDeletePOST(w http.ResponseWriter, r *http.Request) {
@@ -1162,20 +1156,20 @@ func (app *App) HandleCISecretsDeletePOST(w http.ResponseWriter, r *http.Request
 	secretID := chi.URLParam(r, "id")
 
 	if currentUser == nil || currentUser.ID != repo.OwnerID {
-		app.renderCISecretsPage(w, r, "Forbidden.", "")
+		app.renderRepoCISettingsPage(w, r, "Forbidden.", "")
 		return
 	}
 
 	if err := app.DB.DeleteRepoSecret(r.Context(), secretID, repo.ID); err != nil {
 		if errors.Is(err, db.ErrNotFound) {
-			app.renderCISecretsPage(w, r, "Secret not found.", "")
+			app.renderRepoCISettingsPage(w, r, "Secret not found.", "")
 		} else {
 			app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI secrets are temporarily unavailable", err))
 		}
 		return
 	}
 
-	app.renderCISecretsPage(w, r, "", "Secret deleted.")
+	app.renderRepoCISettingsPage(w, r, "", "Secret deleted.")
 }
 
 // Artifact endpoints use ?ref=<branch-or-tag> and a wildcard artifact path so
@@ -1450,23 +1444,23 @@ func (app *App) serveArtifact(w http.ResponseWriter, r *http.Request, artifactsP
 	http.ServeContent(w, r, filepath.Base(artifact), stat.ModTime(), f)
 }
 
-// StatusBadge returns a short display string and CSS class for a CI run status.
-func StatusBadge(status models.CIStatus) (label, class string) {
+// StatusLabel returns the human-readable label for a CI run status.
+func StatusLabel(status models.CIStatus) string {
 	switch status {
 	case models.CIStatusPending:
-		return "Pending", "badge-pending"
+		return "Pending"
 	case models.CIStatusRunning:
-		return "Running", "badge-running"
+		return "Running"
 	case models.CIStatusSuccess:
-		return "Success", "badge-success"
+		return "Success"
 	case models.CIStatusFailed:
-		return "Failed", "badge-failed"
+		return "Failed"
 	case models.CIStatusSkipped:
-		return "Skipped", "badge-skipped"
+		return "Skipped"
 	case models.CIStatusCancelled:
-		return "Cancelled", "badge-cancelled"
+		return "Cancelled"
 	default:
-		return string(status), "badge-unknown"
+		return string(status)
 	}
 }
 

@@ -1,155 +1,49 @@
 {{define "ci_log_section"}}
 <details class="ci-step ci-step-{{.Kind}} ci-step-{{.Status}}" data-ci-step data-step-kind="{{.Kind}}" data-step-name="{{.Name}}" data-step-status="{{.Status}}" {{if .StartedAt}}data-step-start="{{.StartedAt.Format "2006-01-02T15:04:05Z07:00"}}"{{end}} {{if .Open}}open{{end}}>
-  <summary>
-    <span class="ci-step-status-icon" aria-hidden="true">{{if eq .Status "success"}}✓{{else if eq .Status "failed"}}×{{else if eq .Status "running"}}●{{else if eq .Status "cancelled"}}−{{else}}○{{end}}</span>
-    <span class="ci-step-name">{{.Name}}</span>
-    <span class="ci-step-meta">
-      <span data-step-status-label>{{statusLabel .Status}}</span>
-      {{if .Duration}}<span data-step-duration>{{.Duration}}</span>{{else}}<span data-step-duration></span>{{end}}
-      {{if .ExitCode}}<span data-step-exit>exit {{.ExitCode}}</span>{{else}}<span data-step-exit></span>{{end}}
-    </span>
-  </summary>
+  <summary><span class="ci-step-status-icon" aria-hidden="true">{{if eq .Status "success"}}✓{{else if eq .Status "failed"}}×{{else if eq .Status "running"}}●{{else if eq .Status "cancelled"}}−{{else}}○{{end}}</span><span class="ci-step-name">{{.Name}}</span><span class="ci-step-meta"><span data-step-status-label>{{statusLabel .Status}}</span><span data-step-duration>{{.Duration}}</span>{{if .ExitCode}}<span data-step-exit>exit {{.ExitCode}}</span>{{else}}<span data-step-exit></span>{{end}}</span></summary>
   <pre class="ci-step-output{{if not .Output}} is-empty{{end}}" data-step-output>{{if .Output}}{{.Output}}{{else}}(no output){{end}}</pre>
 </details>
 {{end}}
 
 {{define "content"}}
-<div class="page-header page-header-row ci-run-page-header">
+<header class="ci-run-header">
   <div>
-    <div class="ci-run-kicker">
-      <span class="badge {{statusClass .Data.Run.Status}}" data-ci-status>{{statusLabel .Data.Run.Status}}</span>
-      {{if .Data.Run.Branch}}<span class="chip">{{.Data.Run.Branch}}</span>{{else if .Data.Run.Tag}}<span class="chip">tag {{.Data.Run.Tag}}</span>{{else}}<span class="chip">detached</span>{{end}}
-    </div>
-    <h2 class="ci-run-page-title">{{if .Data.Commit}}{{.Data.Commit.Message}}{{else}}CI run {{short .Data.Run.ID 8}}{{end}}</h2>
-    <p class="muted ci-run-subtitle">
-      {{if .Data.Commit}}{{.Data.Commit.Author}} · {{end}}
-      {{if .Data.Run.CommitHash}}<a class="mono" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/commit/{{.Data.Run.CommitHash}}{{if .Data.Run.Branch}}?ref={{urlquery .Data.Run.Branch}}{{else if .Data.Run.Tag}}?ref={{urlquery .Data.Run.Tag}}{{end}}">{{short .Data.Run.CommitHash 12}}</a>{{end}}
-      · queued <time datetime="{{.Data.Run.CreatedAt.Format "2006-01-02T15:04:05Z07:00"}}" data-relative-time>{{.Data.Run.CreatedAt.Format "2006-01-02 15:04"}}</time>
-    </p>
+    <div class="eyebrow"><span class="status-text status-{{.Run.Status}}" data-ci-status>{{statusLabel .Run.Status}}</span> · {{if .Run.Branch}}{{.Run.Branch}}{{else if .Run.Tag}}tag {{.Run.Tag}}{{else}}detached{{end}}</div>
+    <h1>{{if .Commit}}{{.Commit.Message}}{{else}}CI run {{short .Run.ID 8}}{{end}}</h1>
+    <div class="meta-line">{{if .Commit}}{{.Commit.Author}} · {{end}}{{if .Run.CommitHash}}<a class="mono" href="/{{.Owner.Username}}/{{.Repository.Name}}/commit/{{.Run.CommitHash}}{{if .Run.Branch}}?ref={{urlquery .Run.Branch}}{{else if .Run.Tag}}?ref={{urlquery .Run.Tag}}{{end}}">{{short .Run.CommitHash 12}}</a> · {{end}}queued <time datetime="{{.Run.CreatedAt.Format "2006-01-02T15:04:05Z07:00"}}" data-relative-time>{{.Run.CreatedAt.Format "2006-01-02 15:04"}}</time>{{if .Run.StartedAt}} · {{runDuration .Run}}{{end}}</div>
   </div>
-  <div class="inline-actions">
-    {{if .Data.CanControl}}
-      {{if canCancelRun .Data.Run.Status}}
-      <form method="POST" action="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/{{.Data.Run.ID}}/cancel" data-confirm="Cancel this CI run?">
-        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
-        <button class="danger small" type="submit">Cancel run</button>
-      </form>
-      {{else if canRetryRun .Data.Run.Status}}
-      <form method="POST" action="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/{{.Data.Run.ID}}/retry">
-        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
-        <button class="small" type="submit">Retry run</button>
-      </form>
-      {{end}}
-    {{end}}
-    <a class="button secondary small" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci{{if .Data.Run.Branch}}?branch={{urlquery .Data.Run.Branch}}{{end}}">All runs</a>
-  </div>
-</div>
-
+  <div class="inline-actions">{{if .CanControl}}{{if canCancelRun .Run.Status}}<form method="POST" action="/{{.Owner.Username}}/{{.Repository.Name}}/ci/{{.Run.ID}}/cancel" data-confirm="Cancel this CI run?"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="danger" type="submit">Cancel</button></form>{{else if canRetryRun .Run.Status}}<form method="POST" action="/{{.Owner.Username}}/{{.Repository.Name}}/ci/{{.Run.ID}}/retry"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button type="submit">Retry</button></form>{{end}}{{end}}<a class="button secondary" href="/{{.Owner.Username}}/{{.Repository.Name}}/ci{{if .Run.Branch}}?branch={{urlquery .Run.Branch}}{{end}}">All runs</a></div>
+</header>
 {{template "flash" .}}
+{{if .Run.StatusReason}}<div class="notice {{if eq .Run.Status "failed"}}error{{else if eq .Run.Status "success"}}success{{end}}"><strong>{{statusLabel .Run.Status}}.</strong> {{.Run.StatusReason}}</div>{{end}}
 
-{{if .Data.Run.StatusReason}}
-<div class="run-outcome {{if eq .Data.Run.Status "failed"}}run-outcome-error{{else if eq .Data.Run.Status "success"}}run-outcome-success{{end}}">
-  <div>
-    <strong>{{statusLabel .Data.Run.Status}}</strong>
-    <p>{{.Data.Run.StatusReason}}</p>
-  </div>
-</div>
-{{end}}
-
-<div class="ci-run-summary-grid">
-  <section class="card ci-summary-card">
-    <div class="panel-title"><h3>Run</h3><span class="muted">{{.Data.Run.Event}}</span></div>
-    <dl class="metadata-list">
-      <div><dt>Revision</dt><dd>{{if .Data.Run.Branch}}<span class="chip">{{.Data.Run.Branch}}</span>{{else if .Data.Run.Tag}}<span class="chip">tag {{.Data.Run.Tag}}</span>{{else}}detached commit{{end}}</dd></div>
-      {{if .Data.Run.CommitHash}}<div><dt>Commit</dt><dd class="inline-code-action"><a class="mono" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/commit/{{.Data.Run.CommitHash}}{{if .Data.Run.Branch}}?ref={{urlquery .Data.Run.Branch}}{{else if .Data.Run.Tag}}?ref={{urlquery .Data.Run.Tag}}{{end}}">{{.Data.Run.CommitHash}}</a><button class="copy-icon" type="button" data-copy-text="{{.Data.Run.CommitHash}}" data-copy-label="Copy SHA" aria-label="Copy commit SHA">Copy</button></dd></div>{{end}}
-      <div><dt>Queue time</dt><dd>{{queueDuration .Data.Run}}</dd></div>
-      {{if .Data.Run.StartedAt}}<div><dt>Run time</dt><dd>{{runDuration .Data.Run}}</dd></div>{{end}}
-      <div><dt>Run ID</dt><dd class="inline-code-action"><code>{{.Data.Run.ID}}</code><button class="copy-icon" type="button" data-copy-text="{{.Data.Run.ID}}" data-copy-label="Copy run ID" aria-label="Copy run ID">Copy</button></dd></div>
-    </dl>
-  </section>
-
-  <section class="card ci-summary-card">
-    <div class="panel-title"><h3>Pipeline</h3>{{if .Data.Config.Found}}{{if .Data.Config.Valid}}<span class="chip chip-success">valid config</span>{{else}}<span class="chip chip-danger">invalid config</span>{{end}}{{else}}<span class="chip">no config</span>{{end}}</div>
-    {{if .Data.Config.Valid}}
-    <dl class="metadata-list">
-      <div><dt>Image</dt><dd><code>{{.Data.Config.Image}}</code></dd></div>
-      <div><dt>Steps</dt><dd>{{len .Data.Config.Steps}}</dd></div>
-      <div><dt>Environment</dt><dd>{{.Data.Config.EnvCount}} variable(s){{if .Data.Config.SecretCount}}, {{.Data.Config.SecretCount}} secret-backed{{end}}</dd></div>
-      <div><dt>Docker socket</dt><dd>{{if .Data.Config.Docker}}requested{{else}}no{{end}}</dd></div>
-    </dl>
-    <a class="button secondary small mt-1" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/blob?ref={{urlquery .Data.Run.CommitHash}}&amp;path=.gitman-ci.yml">View exact config</a>
-    {{else if .Data.Config.Found}}
-    <p class="muted">{{.Data.Config.Error}}</p>
-    <a class="button secondary small" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/blob?ref={{urlquery .Data.Run.CommitHash}}&amp;path=.gitman-ci.yml">View invalid config</a>
-    {{else}}
-    <p class="muted">This revision does not contain <code>.gitman-ci.yml</code>.</p>
-    {{end}}
-  </section>
+<div class="run-meta-strip">
+  <span><strong>Run</strong> <code>{{short .Run.ID 12}}</code></span>
+  <span>{{.Run.Event}}</span>
+  <span>queue {{queueDuration .Run}}</span>
+  {{if .Run.StartedAt}}<span>runtime {{runDuration .Run}}</span>{{end}}
+  <button class="copy-link js-only" type="button" data-copy-text="{{.Run.ID}}" data-copy-label="Copy ID">Copy ID</button>
 </div>
 
-{{if gt (len .Data.Attempts) 1}}
-<section class="card">
-  <div class="panel-title"><div><h3>Attempts</h3><p class="muted">Retries keep the exact same source revision.</p></div><span class="muted">{{len .Data.Attempts}} total</span></div>
-  <div class="attempt-timeline">
-    {{range $index, $attempt := .Data.Attempts}}
-    <a class="attempt-item {{if $attempt.IsCurrent}}active{{end}}" href="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/ci/{{$attempt.Run.ID}}" {{if $attempt.IsCurrent}}aria-current="page"{{end}}>
-      <span class="ci-status-icon status-{{$attempt.Run.Status}}" aria-hidden="true">{{if eq $attempt.Run.Status "success"}}✓{{else if eq $attempt.Run.Status "failed"}}×{{else if eq $attempt.Run.Status "running"}}●{{else if eq $attempt.Run.Status "cancelled"}}−{{else}}○{{end}}</span>
-      <span><strong>Attempt {{$attempt.AttemptNumber}}</strong></span>
-      <span class="badge {{statusClass $attempt.Run.Status}}">{{statusLabel $attempt.Run.Status}}</span>
-      <span class="muted">{{if $attempt.Run.StartedAt}}{{runDuration $attempt.Run}}{{else}}{{queueDuration $attempt.Run}}{{end}}</span>
-      <code>{{short $attempt.Run.ID 8}}</code>
-    </a>
-    {{end}}
+<details class="pipeline-details">
+  <summary>Pipeline{{if .Pipeline.Valid}} · <code>{{.Pipeline.Image}}</code> · {{len .Pipeline.Steps}} steps{{else if .Pipeline.Found}} · invalid config{{else}} · no config{{end}}</summary>
+  <div class="pipeline-details-body">
+    {{if .Pipeline.Valid}}<dl class="metadata-list"><div><dt>Image</dt><dd><code>{{.Pipeline.Image}}</code></dd></div><div><dt>Environment</dt><dd>{{.Pipeline.EnvCount}} variables{{if .Pipeline.SecretCount}}, {{.Pipeline.SecretCount}} secret-backed{{end}}</dd></div><div><dt>Docker socket</dt><dd>{{if .Pipeline.Docker}}requested{{else}}no{{end}}</dd></div></dl><a href="/{{.Owner.Username}}/{{.Repository.Name}}/blob?ref={{urlquery .Run.CommitHash}}&amp;path=.gitman-ci.yml">View exact config</a>
+    {{else if .Pipeline.Found}}<p>{{.Pipeline.Error}}</p><a href="/{{.Owner.Username}}/{{.Repository.Name}}/blob?ref={{urlquery .Run.CommitHash}}&amp;path=.gitman-ci.yml">View config</a>
+    {{else}}<p>This revision does not contain <code>.gitman-ci.yml</code>.</p>{{end}}
   </div>
-</section>
-{{end}}
+</details>
 
-{{if .Data.Artifacts}}
-<section class="card">
-  <div class="panel-title">
-    <div><h3>Artifacts</h3><p class="muted">Files published by this exact attempt.</p></div>
-    <span class="muted">{{.Data.ArtifactCount}} file(s) · {{humanSize .Data.ArtifactBytes}}</span>
-  </div>
-  {{template "artifact_nodes" .Data.Artifacts}}
-</section>
-{{end}}
+{{if gt (len .Attempts) 1}}<section class="attempts"><h2>Attempts</h2><div class="attempt-list">{{range .Attempts}}<a class="attempt-row {{if .IsCurrent}}active{{end}}" href="/{{$.Owner.Username}}/{{$.Repository.Name}}/ci/{{.Run.ID}}" {{if .IsCurrent}}aria-current="page"{{end}}><span class="status-mark status-{{.Run.Status}}">{{if eq .Run.Status "success"}}✓{{else if eq .Run.Status "failed"}}×{{else if eq .Run.Status "running"}}●{{else}}○{{end}}</span><strong>Attempt {{.AttemptNumber}}</strong><span>{{statusLabel .Run.Status}}</span><span class="mono">{{short .Run.ID 8}}</span><span>{{if .Run.StartedAt}}{{runDuration .Run}}{{else}}{{queueDuration .Run}}{{end}}</span></a>{{end}}</div></section>{{end}}
 
-<section class="ci-log-card" data-ci-log-root data-log-url="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/{{.Data.Run.ID}}/log" data-log-offset="{{.Data.LogOffset}}" data-refresh-ms="1500" data-run-status="{{.Data.Run.Status}}">
-  <div class="ci-log-header">
-    <div>
-      <h3>Build log</h3>
-      <p class="muted">Structured by pipeline step. Raw output is always available.</p>
-    </div>
-    <div class="ci-log-view-tabs" role="group" aria-label="Log view">
-      <button class="secondary small active" type="button" data-log-view-button="steps" aria-pressed="true">Steps</button>
-      <button class="secondary small" type="button" data-log-view-button="raw" aria-pressed="false">Raw</button>
-    </div>
-  </div>
+{{if .Artifacts}}<section class="artifact-section"><div class="section-title-line"><h2>Artifacts</h2><span>{{.ArtifactCount}} files · {{humanSize .ArtifactBytes}}</span></div>{{template "artifact_nodes" .Artifacts}}</section>{{end}}
 
-  <div class="ci-log-toolbar" aria-label="Log controls">
-    <button class="secondary small active" type="button" data-log-follow aria-pressed="true">Follow</button>
-    <button class="secondary small active" type="button" data-log-wrap aria-pressed="true">Wrap</button>
-    <div class="ci-log-search">
-      <label class="sr-only" for="ci-log-search">Search logs</label>
-      <input id="ci-log-search" type="search" placeholder="Search logs…" data-log-search autocomplete="off">
-      <span class="ci-search-count" data-log-search-count aria-live="polite"></span>
-      <button class="secondary small" type="button" data-log-search-prev aria-label="Previous log match">↑</button>
-      <button class="secondary small" type="button" data-log-search-next aria-label="Next log match">↓</button>
-    </div>
-    <a class="button secondary small" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/{{.Data.Run.ID}}/logs/download" download="{{.Data.Repository.Name}}-{{short .Data.Run.ID 8}}-ci-logs.log">Download</a>
-  </div>
-
-  <div data-log-view="steps" class="ci-steps-view">
-    {{template "ci_log_section" .Data.Log.Setup}}
-    {{range .Data.Log.Steps}}{{template "ci_log_section" .}}{{end}}
-    {{template "ci_log_section" .Data.Log.Finalize}}
-  </div>
-
-  <div data-log-view="raw" class="ci-raw-view" hidden>
-    <pre id="build-log" class="log-box" data-raw-log tabindex="0">{{if .Data.LogContent}}{{.Data.LogContent}}{{else if or (eq .Data.Run.Status "running") (eq .Data.Run.Status "pending")}}Waiting for the worker…{{else}}(no log output){{end}}</pre>
-  </div>
-
+<section class="ci-log-root" data-ci-log-root data-log-url="/{{.Owner.Username}}/{{.Repository.Name}}/ci/{{.Run.ID}}/log" data-log-offset="{{.LogOffset}}" data-refresh-ms="1500" data-run-status="{{.Run.Status}}">
+  <header class="ci-log-header"><h2>Log</h2><div class="ci-log-view-tabs" role="group" aria-label="Log view"><button class="secondary small active" type="button" data-log-view-button="steps" aria-pressed="true">Steps</button><button class="secondary small" type="button" data-log-view-button="raw" aria-pressed="false">Raw</button></div></header>
+  <div class="ci-log-toolbar"><button class="secondary small active" type="button" data-log-follow aria-pressed="true">Follow</button><button class="secondary small active" type="button" data-log-wrap aria-pressed="true">Wrap</button><div class="ci-log-search"><label class="sr-only" for="ci-log-search">Search logs</label><input id="ci-log-search" type="search" placeholder="Search" data-log-search autocomplete="off"><span data-log-search-count aria-live="polite"></span><button class="secondary tiny" type="button" data-log-search-prev aria-label="Previous match">↑</button><button class="secondary tiny" type="button" data-log-search-next aria-label="Next match">↓</button></div><a class="button secondary small" href="/{{.Owner.Username}}/{{.Repository.Name}}/ci/{{.Run.ID}}/logs/download">Download</a></div>
+  <div data-log-view="steps" class="ci-steps-view">{{template "ci_log_section" .Log.Setup}}{{range .Log.Steps}}{{template "ci_log_section" .}}{{end}}{{template "ci_log_section" .Log.Finalize}}</div>
+  <div data-log-view="raw" hidden><pre id="build-log" class="log-box" data-raw-log tabindex="0">{{if .LogContent}}{{.LogContent}}{{else if or (eq .Run.Status "running") (eq .Run.Status "pending")}}Waiting for the worker…{{else}}(no log output){{end}}</pre></div>
   <button class="ci-new-output" type="button" data-log-new-output hidden>↓ New output</button>
-  {{if or (eq .Data.Run.Status "running") (eq .Data.Run.Status "pending")}}<p class="note" data-log-live-note>Live log · updates incrementally while this page is open.</p>{{end}}
+  {{if or (eq .Run.Status "running") (eq .Run.Status "pending")}}<p class="live-note" data-log-live-note>Live · updates while this page is open.</p>{{end}}
 </section>
 {{end}}

@@ -16,6 +16,20 @@ import (
 
 const sessionDuration = 24 * time.Hour
 
+type AuthPageData struct {
+	PageData
+	Username string
+}
+
+func (app *App) renderAuthPage(w http.ResponseWriter, r *http.Request, page, title, username, message string, status int) {
+	data := &AuthPageData{PageData: PageData{Title: title, Error: message}, Username: username}
+	if status != 0 && status != http.StatusOK {
+		app.renderPageStatus(w, r, page, data, status)
+		return
+	}
+	app.renderPage(w, r, page, data)
+}
+
 func (app *App) setSessionCookie(w http.ResponseWriter, r *http.Request, token string, expires time.Time) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     "session_token",
@@ -35,9 +49,7 @@ func (app *App) HandleLoginGET(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	app.renderPage(w, r, "login.html", PageData{
-		Title: "Login",
-	})
+	app.renderAuthPage(w, r, "login.html", "Login", "", "", http.StatusOK)
 }
 
 func (app *App) HandleLoginPOST(w http.ResponseWriter, r *http.Request) {
@@ -50,10 +62,7 @@ func (app *App) HandleLoginPOST(w http.ResponseWriter, r *http.Request) {
 	clientIP := app.clientIP(r)
 	if ok, retryAfter := app.loginLimiter().allow(username, clientIP); !ok {
 		w.Header().Set("Retry-After", fmt.Sprintf("%.0f", retryAfter.Seconds()))
-		app.renderPageStatus(w, r, "login.html", PageData{
-			Title: "Login",
-			Error: "Too many login attempts. Please try again later.",
-		}, http.StatusTooManyRequests)
+		app.renderAuthPage(w, r, "login.html", "Login", username, "Too many login attempts. Please try again later.", http.StatusTooManyRequests)
 		return
 	}
 
@@ -61,7 +70,7 @@ func (app *App) HandleLoginPOST(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			app.loginLimiter().recordFailure(username, clientIP)
-			app.renderPage(w, r, "login.html", PageData{Title: "Login", Error: "Invalid username or password"})
+			app.renderAuthPage(w, r, "login.html", "Login", username, "Invalid username or password", http.StatusOK)
 			return
 		}
 		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Login is temporarily unavailable", err))
@@ -74,7 +83,7 @@ func (app *App) HandleLoginPOST(w http.ResponseWriter, r *http.Request) {
 	}
 	if !passwordOK {
 		app.loginLimiter().recordFailure(username, clientIP)
-		app.renderPage(w, r, "login.html", PageData{Title: "Login", Error: "Invalid username or password"})
+		app.renderAuthPage(w, r, "login.html", "Login", username, "Invalid username or password", http.StatusOK)
 		return
 	}
 	app.loginLimiter().recordSuccess(username)
@@ -100,9 +109,7 @@ func (app *App) HandleRegisterGET(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	app.renderPage(w, r, "register.html", PageData{
-		Title: "Register",
-	})
+	app.renderAuthPage(w, r, "register.html", "Register", "", "", http.StatusOK)
 }
 
 func (app *App) HandleRegisterPOST(w http.ResponseWriter, r *http.Request) {
@@ -118,18 +125,12 @@ func (app *App) HandleRegisterPOST(w http.ResponseWriter, r *http.Request) {
 	password := r.FormValue("password")
 
 	if err := validate.Username(username); err != nil {
-		app.renderPage(w, r, "register.html", PageData{
-			Title: "Register",
-			Error: err.Error() + ".",
-		})
+		app.renderAuthPage(w, r, "register.html", "Register", username, err.Error()+".", http.StatusOK)
 		return
 	}
 
 	if err := validate.Password(password); err != nil {
-		app.renderPage(w, r, "register.html", PageData{
-			Title: "Register",
-			Error: err.Error(),
-		})
+		app.renderAuthPage(w, r, "register.html", "Register", username, err.Error(), http.StatusOK)
 		return
 	}
 	lock, err := repository.LockNamespace(r.Context(), app.Config.ReposPath, username)
@@ -146,7 +147,7 @@ func (app *App) HandleRegisterPOST(w http.ResponseWriter, r *http.Request) {
 	_, err = app.DB.CreateUser(r.Context(), username, password)
 	if err != nil {
 		if errors.Is(err, db.ErrAlreadyExists) {
-			app.renderPage(w, r, "register.html", PageData{Title: "Register", Error: "Username is already taken."})
+			app.renderAuthPage(w, r, "register.html", "Register", username, "Username is already taken.", http.StatusOK)
 			return
 		}
 		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Registration is temporarily unavailable", err))
