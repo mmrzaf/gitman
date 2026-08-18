@@ -1,0 +1,145 @@
+{{define "content"}}
+<div class="page-header page-header-row">
+  <div>
+    <h2 class="repo-title">
+      <a href="/{{.Data.Owner.Username}}">{{.Data.Owner.Username}}</a>
+      /
+      <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}">{{.Data.Repository.Name}}</a>
+    </h2>
+    <p class="muted"><a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/commits?ref={{urlquery .Data.CurrentRef}}">Commits</a> / <code>{{short .Data.Commit.Hash 12}}</code></p>
+  </div>
+  <div class="inline-actions">
+    <a class="button secondary small" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/tree?ref={{urlquery .Data.Commit.Hash}}">Browse files</a>
+    {{if .Data.CanControlCI}}
+    <form method="POST" action="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/trigger">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <input type="hidden" name="commit_hash" value="{{.Data.Commit.Hash}}">
+      {{if eq .Data.CurrentRefKind "branch"}}<input type="hidden" name="branch" value="{{.Data.CurrentRef}}">{{end}}
+      {{if eq .Data.CurrentRefKind "tag"}}<input type="hidden" name="tag" value="{{.Data.CurrentRef}}">{{end}}
+      <button class="small" type="submit">Run CI on this commit</button>
+    </form>
+    {{end}}
+  </div>
+</div>
+
+{{template "repo_nav" .}}
+
+<section class="commit-hero card">
+  <div class="commit-hero-heading">
+    <div>
+      <h1>{{.Data.Commit.Subject}}</h1>
+      {{if .Data.Commit.Body}}<div class="commit-body">{{.Data.Commit.Body}}</div>{{end}}
+    </div>
+    {{if .Data.LatestCI}}
+    <a class="badge {{statusClass .Data.LatestCI.Status}} commit-ci-badge" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/{{.Data.LatestCI.ID}}">CI {{statusLabel .Data.LatestCI.Status}}</a>
+    {{end}}
+  </div>
+
+  <div class="commit-detail-meta">
+    <div><strong>{{.Data.Commit.Author}}</strong> <span class="muted">&lt;{{.Data.Commit.Email}}&gt;</span></div>
+    <div class="muted"><time datetime="{{.Data.Commit.Date.Format "2006-01-02T15:04:05Z07:00"}}" data-relative-time>{{.Data.Commit.Date.Format "2006-01-02 15:04:05"}}</time></div>
+  </div>
+
+  <div class="commit-reference-grid">
+    <div>
+      <span class="muted">Commit</span>
+      <span class="inline-code-action"><code>{{.Data.Commit.Hash}}</code><button class="copy-icon" type="button" data-copy-text="{{.Data.Commit.Hash}}" data-copy-label="Copy" aria-label="Copy commit SHA">Copy</button></span>
+    </div>
+    {{if .Data.Commit.Parents}}
+    <div>
+      <span class="muted">{{if gt (len .Data.Commit.Parents) 1}}Parents{{else}}Parent{{end}}</span>
+      <span class="commit-parent-links">
+        {{range .Data.Commit.Parents}}<a class="mono" href="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/commit/{{.}}?ref={{urlquery $.Data.CurrentRef}}">{{short . 8}}</a>{{end}}
+      </span>
+    </div>
+    {{else}}
+    <div><span class="muted">Parent</span><span>Initial commit</span></div>
+    {{end}}
+    {{if or .Data.Commit.Branches .Data.Commit.Tags}}
+    <div>
+      <span class="muted">Refs</span>
+      <span class="inline-actions commit-ref-list">
+        {{range .Data.Commit.Branches}}<a class="chip" href="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/tree?ref={{urlquery .}}">{{.}}</a>{{end}}
+        {{range .Data.Commit.Tags}}<a class="chip" href="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/tree?ref={{urlquery .}}">tag {{.}}</a>{{end}}
+      </span>
+    </div>
+    {{end}}
+  </div>
+</section>
+
+<section class="diff-overview">
+  <div class="diff-overview-heading">
+    <div>
+      <h3>{{.Data.Diff.TotalFiles}} file{{if ne .Data.Diff.TotalFiles 1}}s{{end}} changed</h3>
+      <p class="muted">{{if gt (len .Data.Commit.Parents) 1}}Compared with the first parent of this merge commit.{{else if not .Data.Commit.Parents}}Initial commit compared with an empty tree.{{else}}Unified diff against the parent commit.{{end}}</p>
+    </div>
+    <div class="inline-actions diff-overview-actions">
+      <div class="diff-stat-total"><span class="diff-add">+{{.Data.Diff.Additions}}</span><span class="diff-del">−{{.Data.Diff.Deletions}}</span></div>
+      {{if .Data.Diff.Files}}<button class="secondary small" type="button" data-diff-expand>Expand all</button><button class="secondary small" type="button" data-diff-collapse>Collapse all</button>{{end}}
+    </div>
+  </div>
+
+  {{if .Data.Diff.Truncated}}
+  <div class="note diff-limit-note">This commit is large. Gitman capped rendered files or patch bytes to keep the page responsive; file statistics still describe the full commit.</div>
+  {{end}}
+
+  {{if .Data.Diff.Files}}
+  <nav class="diff-file-index card" aria-label="Changed files">
+    {{range $index, $file := .Data.Diff.Files}}
+    <a href="#diff-{{$index}}">
+      <span class="diff-file-status diff-status-{{$file.StatusCode}}">{{$file.Status}}</span>
+      <span class="diff-file-path">{{if $file.OldPath}}{{if ne $file.OldPath $file.Path}}{{$file.OldPath}} → {{end}}{{end}}{{$file.Path}}</span>
+      <span class="diff-file-stats">{{if not $file.Binary}}<span class="diff-add">+{{$file.Additions}}</span> <span class="diff-del">−{{$file.Deletions}}</span>{{else}}binary{{end}}</span>
+    </a>
+    {{end}}
+  </nav>
+  {{end}}
+</section>
+
+<div class="diff-files">
+  {{range $index, $file := .Data.Diff.Files}}
+  <details id="diff-{{$index}}" class="diff-file" {{if lt $index 12}}open{{end}}>
+    <summary class="diff-file-header">
+      <span class="diff-file-status diff-status-{{$file.StatusCode}}">{{$file.Status}}</span>
+      <span class="diff-file-title">
+        {{if and $file.OldPath (ne $file.OldPath $file.Path)}}<span class="muted">{{$file.OldPath}} →</span> {{end}}{{$file.Path}}
+        {{if $file.Similarity}}<span class="muted">{{$file.Similarity}}% similar</span>{{end}}
+      </span>
+      <span class="diff-file-actions">
+        {{if not $file.Binary}}<span class="diff-add">+{{$file.Additions}}</span><span class="diff-del">−{{$file.Deletions}}</span>{{end}}
+        {{if ne $file.StatusCode "D"}}<a class="button secondary tiny" href="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/blob?ref={{urlquery $.Data.Commit.Hash}}&amp;path={{urlquery $file.Path}}" onclick="event.stopPropagation()">View file</a>{{end}}
+      </span>
+    </summary>
+
+    {{if $file.Binary}}
+    <div class="diff-file-empty">Binary file changed. Gitman reports the change without trying to render binary patch data.</div>
+    {{else if $file.Hunks}}
+    <div class="diff-hunks">
+      {{range $hunk := $file.Hunks}}
+      <div class="diff-hunk">
+        <div class="diff-hunk-header"><code>{{$hunk.Header}}</code></div>
+        <table class="diff-table">
+          <tbody>
+            {{range $line := $hunk.Lines}}
+            <tr class="diff-line diff-line-{{$line.Kind}}">
+              <td class="diff-line-number">{{if $line.OldLine}}{{$line.OldLine}}{{end}}</td>
+              <td class="diff-line-number">{{if $line.NewLine}}{{if ne $file.StatusCode "D"}}<a href="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/blob?ref={{urlquery $.Data.Commit.Hash}}&amp;path={{urlquery $file.Path}}#L{{$line.NewLine}}">{{$line.NewLine}}</a>{{else}}{{$line.NewLine}}{{end}}{{end}}</td>
+              <td class="diff-line-sign">{{if eq $line.Kind "add"}}+{{else if eq $line.Kind "delete"}}−{{else if eq $line.Kind "context"}}&nbsp;{{else}}↳{{end}}</td>
+              <td class="diff-line-code"><pre><code>{{$line.Text}}</code></pre></td>
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+      </div>
+      {{end}}
+      {{if $file.Truncated}}<div class="diff-file-empty">Patch output was capped for this file.</div>{{end}}
+    </div>
+    {{else if $file.Truncated}}
+    <div class="diff-file-empty">Patch rendering was capped for this file. Open the file at this commit to inspect the source directly.</div>
+    {{else}}
+    <div class="diff-file-empty">No textual hunk to display.</div>
+    {{end}}
+  </details>
+  {{end}}
+</div>
+{{end}}

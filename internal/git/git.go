@@ -598,7 +598,7 @@ func GetCommits(ctx context.Context, repoPath, ref string, skip, limit int) ([]C
 	if err != nil {
 		slog.Error("failed to read commits",
 			"repo", repoPath,
-			"ref", resolvedRef,
+			"ref", ref,
 			"error", err,
 		)
 		return nil, fmt.Errorf("failed to read commits for ref %q: %w", resolvedRef, err)
@@ -674,7 +674,7 @@ func GetTree(ctx context.Context, repoPath, ref, path string) ([]TreeEntry, erro
 	if err != nil {
 		slog.Error("failed to read tree",
 			"repo", repoPath,
-			"ref", resolvedRef,
+			"ref", ref,
 			"path", path,
 			"error", err,
 		)
@@ -777,24 +777,41 @@ func BlobExists(ctx context.Context, repoPath, ref, path string) (bool, error) {
 	return true, nil
 }
 
+func resolveBlobSpec(ctx context.Context, repoPath, ref, path string) (string, error) {
+	if err := ensureNotEmpty(ctx, repoPath); err != nil {
+		return "", err
+	}
+	resolvedRef, err := ResolveRef(ctx, repoPath, ref)
+	if err != nil {
+		return "", err
+	}
+	path = strings.TrimPrefix(path, "/")
+	if path == "" || strings.ContainsRune(path, '\x00') {
+		return "", fmt.Errorf("invalid blob path")
+	}
+	treeish := fmt.Sprintf("%s:%s", resolvedRef, path)
+	typeOut, err := run(ctx, repoPath, "cat-file", "-t", treeish)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(string(typeOut)) != "blob" {
+		return "", fmt.Errorf("path does not resolve to a blob")
+	}
+	return treeish, nil
+}
+
 // GetBlob returns the content of a file (blob) at path for the given ref.
 func GetBlob(ctx context.Context, repoPath, ref, path string) ([]byte, error) {
-	if err := ensureNotEmpty(ctx, repoPath); err != nil {
-		return nil, err
-	}
-
-	resolvedRef, err := ResolveRef(ctx, repoPath, ref)
+	treeish, err := resolveBlobSpec(ctx, repoPath, ref, path)
 	if err != nil {
 		return nil, err
 	}
-
-	treeish := fmt.Sprintf("%s:%s", resolvedRef, strings.TrimPrefix(path, "/"))
 
 	out, err := run(ctx, repoPath, "cat-file", "-p", treeish)
 	if err != nil {
 		slog.Error("failed to read blob",
 			"repo", repoPath,
-			"ref", resolvedRef,
+			"ref", ref,
 			"path", path,
 			"error", err,
 		)
@@ -806,22 +823,16 @@ func GetBlob(ctx context.Context, repoPath, ref, path string) ([]byte, error) {
 
 // GetBlobSize returns the size of a file (blob) at path for the given ref.
 func GetBlobSize(ctx context.Context, repoPath, ref, path string) (int64, error) {
-	if err := ensureNotEmpty(ctx, repoPath); err != nil {
-		return 0, err
-	}
-
-	resolvedRef, err := ResolveRef(ctx, repoPath, ref)
+	treeish, err := resolveBlobSpec(ctx, repoPath, ref, path)
 	if err != nil {
 		return 0, err
 	}
-
-	treeish := fmt.Sprintf("%s:%s", resolvedRef, strings.TrimPrefix(path, "/"))
 
 	out, err := run(ctx, repoPath, "cat-file", "-s", treeish)
 	if err != nil {
 		slog.Error("failed to read blob size",
 			"repo", repoPath,
-			"ref", resolvedRef,
+			"ref", ref,
 			"path", path,
 			"error", err,
 		)

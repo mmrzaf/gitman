@@ -545,6 +545,61 @@ func (db *DB) GetSuccessfulRunForCommit(ctx context.Context, repoID, commitHash 
 		ORDER BY created_at DESC LIMIT 1`, repoID, commitHash)
 }
 
+// GetLatestCIRunForCommit returns the newest run for an exact immutable commit,
+// regardless of status. Source pages use it to surface current CI state without
+// exposing logs or artifacts.
+func (db *DB) GetLatestCIRunForCommit(ctx context.Context, repoID, commitHash string) (*models.CIRun, error) {
+	return db.getSingleRun(ctx, `SELECT `+ciRunColumns+`
+		FROM ci_runs WHERE repo_id = ? AND commit_hash = ?
+		ORDER BY created_at DESC, id DESC LIMIT 1`, repoID, commitHash)
+}
+
+// GetLatestCIRunsForCommits returns at most one newest run per commit hash.
+// Empty/malformed hash strings are ignored by the caller-facing contract.
+func (db *DB) GetLatestCIRunsForCommits(ctx context.Context, repoID string, commitHashes []string) (map[string]models.CIRun, error) {
+	result := make(map[string]models.CIRun)
+	seen := make(map[string]struct{}, len(commitHashes))
+	values := make([]string, 0, len(commitHashes))
+	for _, hash := range commitHashes {
+		hash = strings.TrimSpace(hash)
+		if hash == "" {
+			continue
+		}
+		if _, ok := seen[hash]; ok {
+			continue
+		}
+		seen[hash] = struct{}{}
+		values = append(values, hash)
+	}
+	if len(values) == 0 {
+		return result, nil
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(values)), ",")
+	args := make([]any, 0, len(values)+1)
+	args = append(args, repoID)
+	for _, hash := range values {
+		args = append(args, hash)
+	}
+	rows, err := db.QueryContext(ctx, `SELECT `+ciRunColumns+`
+		FROM ci_runs
+		WHERE repo_id = ? AND commit_hash IN (`+placeholders+`)
+		ORDER BY created_at DESC, id DESC`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		run, err := scanCIRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		if _, exists := result[run.CommitHash]; !exists {
+			result[run.CommitHash] = *run
+		}
+	}
+	return result, rows.Err()
+}
+
 func (db *DB) getSingleRun(ctx context.Context, query string, args ...any) (*models.CIRun, error) {
 	r, err := scanCIRun(db.QueryRowContext(ctx, query, args...))
 	if errors.Is(err, sql.ErrNoRows) {

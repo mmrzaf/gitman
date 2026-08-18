@@ -148,7 +148,7 @@ func repoNavActive(path string) string {
 		return "collaborators"
 	case strings.Contains(path, "/settings"):
 		return "settings"
-	case strings.Contains(path, "/commits"):
+	case strings.Contains(path, "/commits"), strings.Contains(path, "/commit/"):
 		return "commits"
 	case strings.Contains(path, "/tree"), strings.Contains(path, "/blob"):
 		return "files"
@@ -161,6 +161,20 @@ var templateFuncs = template.FuncMap{
 	"short":      shortString,
 	"pathEscape": escapePath,
 	"humanSize":  humanBytes,
+	"sub1": func(value int) int {
+		return value - 1
+	},
+	"joinPath": func(base, name string) string {
+		base = strings.Trim(base, "/")
+		name = strings.Trim(name, "/")
+		if base == "" {
+			return name
+		}
+		if name == "" {
+			return base
+		}
+		return base + "/" + name
+	},
 	"statusLabel": func(status string) string {
 		label, _ := StatusBadge(status)
 		return label

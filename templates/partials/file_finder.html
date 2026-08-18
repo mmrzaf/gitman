@@ -1,0 +1,18 @@
+{{define "file_finder"}}
+<button class="button secondary small" type="button" data-file-finder-open>Go to file <kbd>t</kbd></button>
+<dialog class="file-finder" data-file-finder data-search-url="/{{.Owner.Username}}/{{.Repository.Name}}/files/search?ref={{urlquery .CurrentRef}}">
+  <div class="file-finder-shell">
+    <div class="file-finder-header">
+      <div>
+        <strong>Go to file</strong>
+        <span class="muted">{{.CurrentRef}}</span>
+      </div>
+      <button class="icon-button" type="button" data-file-finder-close aria-label="Close file finder">×</button>
+    </div>
+    <label class="sr-only" for="gitman-file-finder-input">Search files</label>
+    <input id="gitman-file-finder-input" class="file-finder-input" type="search" placeholder="Search files…" autocomplete="off" data-file-finder-input>
+    <div class="file-finder-results" data-file-finder-results role="listbox" aria-label="Repository files"></div>
+    <div class="file-finder-footer muted"><span>↑↓ navigate</span><span>Enter open</span><span>Esc close</span></div>
+  </div>
+</dialog>
+{{end}}

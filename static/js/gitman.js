@@ -45,11 +45,16 @@
 
   function installCopyActions() {
     document.addEventListener("click", async (event) => {
-      const button = event.target.closest("[data-copy-text]");
+      const button = event.target.closest("[data-copy-text], [data-copy-url]");
       if (!(button instanceof HTMLElement)) return;
       const rawText = button.dataset.copyText || button.dataset.copyUrl || "";
       if (!rawText) return;
-      const text = button.dataset.copyUrl ? new URL(rawText, window.location.href).href : rawText;
+      let text = rawText;
+      if (button.dataset.copyUrl) {
+        const copyURL = new URL(rawText, window.location.href);
+        if (button.hasAttribute("data-copy-current-hash")) copyURL.hash = window.location.hash;
+        text = copyURL.href;
+      }
       const normal = button.dataset.copyLabel || button.textContent || "Copy";
       try {
         await copyText(text);
@@ -459,11 +464,195 @@
     document.querySelectorAll("[data-ci-log-root]").forEach(setupLogViewer);
   }
 
+  function installSourceViewer() {
+    const root = document.querySelector("[data-source-view]");
+    if (!root) return;
+    let rangeAnchor = 0;
+
+    function parseLineHash() {
+      const match = window.location.hash.match(/^#L(\d+)(?:-L?(\d+))?$/);
+      if (!match) return null;
+      const start = Number(match[1]);
+      const end = Number(match[2] || match[1]);
+      if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+      return { start: Math.min(start, end), end: Math.max(start, end) };
+    }
+
+    function applySelection(scroll = false) {
+      const range = parseLineHash();
+      root.querySelectorAll("[data-source-line].is-selected").forEach((row) => row.classList.remove("is-selected"));
+      if (!range) return;
+      for (let line = range.start; line <= range.end; line++) {
+        root.querySelector(`[data-source-line="${line}"]`)?.classList.add("is-selected");
+      }
+      rangeAnchor = range.start;
+      if (scroll) root.querySelector(`[data-source-line="${range.start}"]`)?.scrollIntoView({ block: "center" });
+    }
+
+    root.addEventListener("click", (event) => {
+      const link = event.target.closest("[data-source-line-link]");
+      if (!(link instanceof HTMLElement)) return;
+      const line = Number(link.dataset.sourceLineLink || "0");
+      if (!line) return;
+      event.preventDefault();
+      let hash = `#L${line}`;
+      if (event.shiftKey && rangeAnchor) {
+        const start = Math.min(rangeAnchor, line);
+        const end = Math.max(rangeAnchor, line);
+        hash = start === end ? `#L${start}` : `#L${start}-L${end}`;
+      } else {
+        rangeAnchor = line;
+      }
+      history.replaceState(null, "", hash);
+      applySelection(false);
+    });
+
+    window.addEventListener("hashchange", () => applySelection(true));
+    applySelection(Boolean(window.location.hash));
+  }
+
+  function installSourceCopy() {
+    document.addEventListener("click", async (event) => {
+      const button = event.target.closest("[data-copy-source-lines]");
+      if (!(button instanceof HTMLElement)) return;
+      const source = document.querySelector("[data-source-raw]");
+      if (!(source instanceof HTMLTextAreaElement)) return;
+      const normal = button.dataset.copyLabel || "Copy file";
+      try {
+        await copyText(source.value);
+        button.textContent = "Copied";
+        window.setTimeout(() => { button.textContent = normal; }, 1200);
+      } catch (_) {
+        button.textContent = "Copy failed";
+        window.setTimeout(() => { button.textContent = normal; }, 1600);
+      }
+    });
+  }
+
+  function installDiffControls() {
+    const files = Array.from(document.querySelectorAll("details.diff-file"));
+    if (!files.length) return;
+    document.querySelector("[data-diff-expand]")?.addEventListener("click", () => files.forEach((file) => { file.open = true; }));
+    document.querySelector("[data-diff-collapse]")?.addEventListener("click", () => files.forEach((file) => { file.open = false; }));
+  }
+
+  function installFileFinder() {
+    const dialog = document.querySelector("[data-file-finder]");
+    if (!(dialog instanceof HTMLDialogElement)) return;
+    const input = dialog.querySelector("[data-file-finder-input]");
+    const results = dialog.querySelector("[data-file-finder-results]");
+    const searchURL = dialog.dataset.searchUrl || "";
+    let items = [];
+    let activeIndex = 0;
+    let timer = 0;
+    let controller = null;
+
+    function render(message = "") {
+      if (!results) return;
+      results.replaceChildren();
+      if (message) {
+        const empty = document.createElement("div");
+        empty.className = "file-finder-empty";
+        empty.textContent = message;
+        results.appendChild(empty);
+        return;
+      }
+      items.forEach((item, index) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = `file-finder-result${index === activeIndex ? " active" : ""}`;
+        button.dataset.fileURL = item.url;
+        button.dataset.fileIndex = String(index);
+        button.setAttribute("role", "option");
+        button.setAttribute("aria-selected", String(index === activeIndex));
+        button.textContent = item.path;
+        results.appendChild(button);
+      });
+      results.querySelector(".file-finder-result.active")?.scrollIntoView({ block: "nearest" });
+    }
+
+    function setActive(next) {
+      if (!items.length) return;
+      activeIndex = (next + items.length) % items.length;
+      render();
+    }
+
+    async function search() {
+      if (!searchURL || !(input instanceof HTMLInputElement)) return;
+      controller?.abort();
+      controller = new AbortController();
+      try {
+        const endpoint = new URL(searchURL, window.location.href);
+        endpoint.searchParams.set("q", input.value.trim());
+        const response = await fetch(endpoint, { credentials: "same-origin", cache: "no-store", signal: controller.signal });
+        if (!response.ok) throw new Error(`file search failed: ${response.status}`);
+        const payload = await response.json();
+        items = Array.isArray(payload.results) ? payload.results : [];
+        activeIndex = 0;
+        render(items.length ? "" : "No matching files");
+      } catch (error) {
+        if (error?.name === "AbortError") return;
+        items = [];
+        render("Could not load repository files");
+      }
+    }
+
+    function queueSearch() {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(search, 110);
+    }
+
+    function openFinder() {
+      if (!dialog.open) dialog.showModal();
+      if (input instanceof HTMLInputElement) {
+        input.focus();
+        input.select();
+      }
+      search();
+    }
+
+    document.querySelectorAll("[data-file-finder-open]").forEach((button) => button.addEventListener("click", openFinder));
+    dialog.querySelector("[data-file-finder-close]")?.addEventListener("click", () => dialog.close());
+    input?.addEventListener("input", queueSearch);
+    input?.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setActive(activeIndex + 1);
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setActive(activeIndex - 1);
+      } else if (event.key === "Enter" && items[activeIndex]) {
+        event.preventDefault();
+        window.location.href = items[activeIndex].url;
+      } else if (event.key === "Escape") {
+        dialog.close();
+      }
+    });
+    results?.addEventListener("click", (event) => {
+      const item = event.target.closest("[data-file-url]");
+      if (!(item instanceof HTMLElement) || !item.dataset.fileUrl) return;
+      window.location.href = item.dataset.fileUrl;
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+      if (event.key.toLowerCase() !== "t") return;
+      const target = event.target;
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target?.isContentEditable) return;
+      event.preventDefault();
+      openFinder();
+    });
+  }
+
   function start() {
     installConfirmForms();
     installCopyActions();
     installRelativeTimes();
     installLogViewers();
+    installSourceViewer();
+    installSourceCopy();
+    installDiffControls();
+    installFileFinder();
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);

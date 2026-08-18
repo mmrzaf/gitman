@@ -23,7 +23,7 @@
     <h2 class="ci-run-page-title">{{if .Data.Commit}}{{.Data.Commit.Message}}{{else}}CI run {{short .Data.Run.ID 8}}{{end}}</h2>
     <p class="muted ci-run-subtitle">
       {{if .Data.Commit}}{{.Data.Commit.Author}} · {{end}}
-      {{if .Data.Run.CommitHash}}<code>{{short .Data.Run.CommitHash 12}}</code>{{end}}
+      {{if .Data.Run.CommitHash}}<a class="mono" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/commit/{{.Data.Run.CommitHash}}{{if .Data.Run.Branch}}?ref={{urlquery .Data.Run.Branch}}{{else if .Data.Run.Tag}}?ref={{urlquery .Data.Run.Tag}}{{end}}">{{short .Data.Run.CommitHash 12}}</a>{{end}}
       · queued <time datetime="{{.Data.Run.CreatedAt.Format "2006-01-02T15:04:05Z07:00"}}" data-relative-time>{{.Data.Run.CreatedAt.Format "2006-01-02 15:04"}}</time>
     </p>
   </div>
@@ -62,7 +62,7 @@
     <div class="panel-title"><h3>Run</h3><span class="muted">{{.Data.Run.Event}}</span></div>
     <dl class="metadata-list">
       <div><dt>Revision</dt><dd>{{if .Data.Run.Branch}}<span class="chip">{{.Data.Run.Branch}}</span>{{else if .Data.Run.Tag}}<span class="chip">tag {{.Data.Run.Tag}}</span>{{else}}detached commit{{end}}</dd></div>
-      {{if .Data.Run.CommitHash}}<div><dt>Commit</dt><dd class="inline-code-action"><code>{{.Data.Run.CommitHash}}</code><button class="copy-icon" type="button" data-copy-text="{{.Data.Run.CommitHash}}" data-copy-label="Copy SHA" aria-label="Copy commit SHA">Copy</button></dd></div>{{end}}
+      {{if .Data.Run.CommitHash}}<div><dt>Commit</dt><dd class="inline-code-action"><a class="mono" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/commit/{{.Data.Run.CommitHash}}{{if .Data.Run.Branch}}?ref={{urlquery .Data.Run.Branch}}{{else if .Data.Run.Tag}}?ref={{urlquery .Data.Run.Tag}}{{end}}">{{.Data.Run.CommitHash}}</a><button class="copy-icon" type="button" data-copy-text="{{.Data.Run.CommitHash}}" data-copy-label="Copy SHA" aria-label="Copy commit SHA">Copy</button></dd></div>{{end}}
       <div><dt>Queue time</dt><dd>{{queueDuration .Data.Run}}</dd></div>
       {{if .Data.Run.StartedAt}}<div><dt>Run time</dt><dd>{{runDuration .Data.Run}}</dd></div>{{end}}
       <div><dt>Run ID</dt><dd class="inline-code-action"><code>{{.Data.Run.ID}}</code><button class="copy-icon" type="button" data-copy-text="{{.Data.Run.ID}}" data-copy-label="Copy run ID" aria-label="Copy run ID">Copy</button></dd></div>
