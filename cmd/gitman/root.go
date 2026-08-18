@@ -8,6 +8,7 @@ import (
 
 	"github.com/mmrzaf/gitman/internal/config"
 	"github.com/mmrzaf/gitman/internal/db"
+	"github.com/mmrzaf/gitman/internal/state"
 )
 
 type Command struct {
@@ -51,6 +52,22 @@ func Execute(args []string) error {
 			return fmt.Errorf("git executable not found in PATH: %w", err)
 		}
 	}
+
+	var stateLock *state.Lock
+	if isBackupCommand(args) {
+		stateLock, err = state.AcquireExclusive(cfg.DBPath)
+	} else {
+		stateLock, err = state.AcquireShared(cfg.DBPath)
+	}
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if releaseErr := stateLock.Release(); releaseErr != nil {
+			slog.Warn("failed to release state lock", "error", releaseErr)
+		}
+	}()
+
 	database, err := db.InitDB(cfg.DBPath)
 	if err != nil {
 		return err
@@ -74,4 +91,8 @@ func initLogger(cfg *config.Config) {
 	)
 
 	slog.SetDefault(logger)
+}
+
+func isBackupCommand(args []string) bool {
+	return len(args) >= 4 && args[1] == "admin" && args[2] == "repos" && (args[3] == "backup" || args[3] == "backup-all")
 }

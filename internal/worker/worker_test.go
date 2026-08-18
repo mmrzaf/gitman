@@ -48,8 +48,14 @@ func TestResolveRepo(t *testing.T) {
 	defer database.Close()
 	ctx := context.Background()
 	// Create user and repo
-	user, _ := database.CreateUser(ctx, "owner", "OwnerPass1")
-	repoID, _ := database.CreateRepository(ctx, user.ID, "testrepo", "", false)
+	user, err := database.CreateUser(ctx, "owner", "OwnerPass1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoID, err := database.CreateRepository(ctx, user.ID, "testrepo", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	info, ownerName, err := resolveRepo(ctx, database, repoID)
 	if err != nil {
@@ -422,7 +428,69 @@ func runGitTest(t *testing.T, dir string, args ...string) string {
 
 func TestCIFailureSummaryIncludesExitCode(t *testing.T) {
 	err := exec.Command("sh", "-c", "exit 7").Run()
-	if got := ciFailureSummary(context.Background(), err, &CIConfig{}); got != "Pipeline exited with code 7" {
+	if got := ciFailureSummary(context.Background(), err); got != "Pipeline exited with code 7" {
 		t.Fatalf("unexpected summary: %q", got)
 	}
+}
+
+func TestCIFailureSummaryUsesTypedDockerImageError(t *testing.T) {
+	got := ciFailureSummary(context.Background(), fmt.Errorf("%w: alpine:test", errDockerImageUnavailable))
+	if got != "Runner image is unavailable or invalid on the worker" {
+		t.Fatalf("summary = %q", got)
+	}
+}
+
+func TestWaitForPollReturnsImmediatelyWhenCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	start := time.Now()
+	if waitForPoll(ctx) {
+		t.Fatal("cancelled poll wait reported success")
+	}
+	if time.Since(start) > 100*time.Millisecond {
+		t.Fatal("cancelled poll wait did not return promptly")
+	}
+}
+
+func TestLimitedWriterTruncatesOnceAndReportsInputConsumed(t *testing.T) {
+	var out bytes.Buffer
+	lw := &limitedWriter{w: &out, max: 4}
+
+	if n, err := lw.Write([]byte("abcdef")); err != nil || n != 6 {
+		t.Fatalf("first write = (%d, %v), want (6, nil)", n, err)
+	}
+	if n, err := lw.Write([]byte("gh")); err != nil || n != 2 {
+		t.Fatalf("second write = (%d, %v), want (2, nil)", n, err)
+	}
+	got := out.String()
+	if !strings.HasPrefix(got, "abcd") {
+		t.Fatalf("output prefix = %q, want %q", got, "abcd")
+	}
+	if strings.Count(got, "log limit reached") != 1 {
+		t.Fatalf("limit notice count = %d, output %q", strings.Count(got, "log limit reached"), got)
+	}
+}
+
+func TestLimitedWriterPropagatesNoticeWriteFailure(t *testing.T) {
+	w := &failAfterWriter{remaining: 4}
+	lw := &limitedWriter{w: w, max: 4}
+	if n, err := lw.Write([]byte("abcdef")); err == nil || n != 4 {
+		t.Fatalf("write = (%d, %v), want 4 and an error", n, err)
+	}
+}
+
+type failAfterWriter struct {
+	remaining int
+}
+
+func (w *failAfterWriter) Write(p []byte) (int, error) {
+	if w.remaining <= 0 {
+		return 0, fmt.Errorf("storage unavailable")
+	}
+	if len(p) > w.remaining {
+		p = p[:w.remaining]
+	}
+	n := len(p)
+	w.remaining -= n
+	return n, nil
 }

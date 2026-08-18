@@ -24,6 +24,7 @@ Gitman builds one binary with four top-level commands:
 | `internal/markdown` | Safe server-side README subset renderer |
 | `internal/repository` | Repository namespace locking and database/filesystem lifecycle coordination |
 | `internal/ssh` | Managed `authorized_keys` generation and SSH command authorization |
+| `internal/state` | Shared process-state lock and exclusive backup consistency boundary |
 | `internal/worker` | CI config validation, leases, workspaces, Docker containers, caches, logs, redaction, and artifacts |
 | `internal/admin` | Operator user lifecycle, repository maintenance, and backups |
 

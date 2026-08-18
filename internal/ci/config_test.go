@@ -40,3 +40,22 @@ func TestParseConfigBytesRejectsMultipleDocuments(t *testing.T) {
 		t.Fatalf("expected multiple document error, got %v", err)
 	}
 }
+
+func TestParseConfigBytesLeavesDockerImageGrammarToDocker(t *testing.T) {
+	for _, image := range []string{
+		"registry.example:5000/team/image:tag",
+		"registry.example/team/image@sha256:0123456789abcdef",
+	} {
+		_, err := ParseConfigBytes([]byte("image: " + image + "\nsteps:\n- name: test\n  run: echo ok\n"))
+		if err != nil {
+			t.Fatalf("image %q should be accepted for Docker to validate: %v", image, err)
+		}
+	}
+}
+
+func TestParseConfigBytesRejectsOptionLikeImage(t *testing.T) {
+	_, err := ParseConfigBytes([]byte("image: --privileged\nsteps:\n- name: test\n  run: echo ok\n"))
+	if err == nil {
+		t.Fatal("expected option-like image rejection")
+	}
+}

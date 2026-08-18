@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -24,9 +25,9 @@ func BackupRepos(reposPath, destination string) error {
 	})
 }
 
-// BackupAll creates a coherent SQLite snapshot and filesystem copy. Repository
-// and artifact files are copied live; operators should use a maintenance window
-// or filesystem snapshot when strict point-in-time consistency is required.
+// BackupAll creates the database/filesystem snapshot while the command owns Gitman's
+// exclusive state lock. The command boundary acquires that lock before opening
+// the database, so web, worker, SSH, and other mutating commands cannot overlap.
 func BackupAll(ctx context.Context, database *db.DB, cfg *config.Config, destination string) error {
 	if err := rejectNestedDestination(destination, cfg.ReposPath, cfg.ArtifactsPath); err != nil {
 		return err
@@ -48,9 +49,6 @@ func BackupAll(ctx context.Context, database *db.DB, cfg *config.Config, destina
 		}
 		if err := copyDir(cfg.ArtifactsPath, filepath.Join(staging, "artifacts")); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("backup artifacts: %w", err)
-		}
-		if err := copyFile(cfg.AuthKeysPath, filepath.Join(staging, "authorized_keys")); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("backup authorized_keys: %w", err)
 		}
 		return nil
 	})
@@ -130,8 +128,8 @@ func rejectSymlinkPath(base, candidate string) error {
 	return nil
 }
 
-func withAtomicDestination(destination string, populate func(staging string) error) error {
-	destination, err := filepath.Abs(destination)
+func withAtomicDestination(destination string, populate func(staging string) error) (err error) {
+	destination, err = filepath.Abs(destination)
 	if err != nil {
 		return err
 	}
@@ -161,7 +159,11 @@ func withAtomicDestination(destination string, populate func(staging string) err
 	if err != nil {
 		return err
 	}
-	defer func() { _ = os.RemoveAll(staging) }()
+	defer func() {
+		if cleanupErr := os.RemoveAll(staging); cleanupErr != nil {
+			err = errors.Join(err, fmt.Errorf("remove partial backup staging directory: %w", cleanupErr))
+		}
+	}()
 	if err := os.Chmod(staging, 0o700); err != nil {
 		return err
 	}
@@ -247,7 +249,7 @@ func copyDir(src, dst string) error {
 			return err
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
-			continue
+			return fmt.Errorf("refusing to create an incomplete backup from symlink %s", srcPath)
 		}
 		if entry.IsDir() {
 			if err := copyDir(srcPath, dstPath); err != nil {
@@ -255,10 +257,11 @@ func copyDir(src, dst string) error {
 			}
 			continue
 		}
-		if info.Mode().IsRegular() {
-			if err := copyFile(srcPath, dstPath); err != nil {
-				return err
-			}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("refusing to create an incomplete backup from non-regular file %s", srcPath)
+		}
+		if err := copyFile(srcPath, dstPath); err != nil {
+			return err
 		}
 	}
 	return nil

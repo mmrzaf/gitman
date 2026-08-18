@@ -106,7 +106,7 @@ gitman admin repos configure-all
 gitman version
 ```
 
-Backup destinations must be absent or empty, and must not be inside the repository or artifact trees. Repository and artifact files are copied live. Use a maintenance window or filesystem snapshots when strict point-in-time consistency is required.
+Backup commands require Gitman's exclusive state lock. Stop the web and worker processes first; Gitman refuses the backup while another Gitman process is using mutable state. The destination must be absent or empty and must not be inside the repository or artifact trees.
 
 ## Configuration
 

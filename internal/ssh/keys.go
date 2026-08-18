@@ -13,10 +13,14 @@ import (
 
 	"github.com/mmrzaf/gitman/internal/config"
 	"github.com/mmrzaf/gitman/internal/db"
+	"github.com/mmrzaf/gitman/internal/models"
 	crypto_ssh "golang.org/x/crypto/ssh"
 )
 
-const authorizedKeysLockPollInterval = 25 * time.Millisecond
+const (
+	authorizedKeysLockPollInterval = 25 * time.Millisecond
+	authorizedKeysRecoveryTimeout  = 5 * time.Second
+)
 
 // SyncAuthorizedKeys atomically regenerates the authorized_keys file from the
 // database. A persistent flock serializes the complete DB-snapshot-to-publish
@@ -57,14 +61,20 @@ func SyncAuthorizedKeys(ctx context.Context, database *db.DB, cfg *config.Config
 		return err
 	}
 	tmpPath := tmp.Name()
-	defer func() { _ = os.Remove(tmpPath) }()
+	tmpClosed := false
+	defer func() {
+		if !tmpClosed {
+			err = errors.Join(err, tmp.Close())
+		}
+		if removeErr := os.Remove(tmpPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			err = errors.Join(err, fmt.Errorf("remove authorized_keys staging file: %w", removeErr))
+		}
+	}()
 
 	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
 		return err
 	}
 	if _, err := tmp.WriteString("# Managed by Gitman. Do not edit manually.\n"); err != nil {
-		_ = tmp.Close()
 		return err
 	}
 
@@ -72,12 +82,10 @@ func SyncAuthorizedKeys(ctx context.Context, database *db.DB, cfg *config.Config
 	for _, key := range keys {
 		parsed, _, _, _, err := crypto_ssh.ParseAuthorizedKey([]byte(strings.TrimSpace(key.PublicKey)))
 		if err != nil {
-			_ = tmp.Close()
 			return fmt.Errorf("SSH key %s is invalid: %w", key.ID, err)
 		}
 		fingerprint := crypto_ssh.FingerprintSHA256(parsed)
 		if existingID, exists := seenFingerprints[fingerprint]; exists {
-			_ = tmp.Close()
 			return fmt.Errorf("SSH keys %s and %s have the same fingerprint %s", existingID, key.ID, fingerprint)
 		}
 		seenFingerprints[fingerprint] = key.ID
@@ -89,18 +97,17 @@ func SyncAuthorizedKeys(ctx context.Context, database *db.DB, cfg *config.Config
 			forcedCommand,
 		)
 		if _, err := fmt.Fprintf(tmp, "%s %s\n", options, pubKey); err != nil {
-			_ = tmp.Close()
 			return err
 		}
 	}
 
 	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Close(); err != nil {
 		return err
 	}
+	tmpClosed = true
 	if err := os.Rename(tmpPath, cfg.AuthKeysPath); err != nil {
 		return err
 	}
@@ -157,4 +164,48 @@ func releaseAuthorizedKeysLock(file *os.File) error {
 		return nil
 	}
 	return errors.Join(syscall.Flock(int(file.Fd()), syscall.LOCK_UN), file.Close())
+}
+
+var ErrAuthorizedKeysStateUncertain = errors.New("authorized_keys state could not be restored")
+
+// AddKey persists an SSH key and publishes the derived authorized_keys file as
+// one application-level operation. If publication fails, Gitman restores the
+// previous database state before returning whenever possible.
+func AddKey(ctx context.Context, database *db.DB, cfg *config.Config, userID, name, publicKey string) error {
+	if err := database.AddSSHKey(ctx, userID, name, publicKey); err != nil {
+		return err
+	}
+	if err := SyncAuthorizedKeys(ctx, database, cfg); err != nil {
+		recoveryCtx, cancel := context.WithTimeout(context.Background(), authorizedKeysRecoveryTimeout)
+		defer cancel()
+		rollbackErr := database.DeleteSSHKeyByPublicKey(recoveryCtx, userID, publicKey)
+		resyncErr := SyncAuthorizedKeys(recoveryCtx, database, cfg)
+		if rollbackErr != nil {
+			return errors.Join(ErrAuthorizedKeysStateUncertain, err, rollbackErr, resyncErr)
+		}
+		return fmt.Errorf("publish authorized_keys: %w", errors.Join(err, resyncErr))
+	}
+	return nil
+}
+
+// DeleteKey removes an SSH key and republishes authorized_keys. The supplied
+// key is the immutable snapshot used to restore the row if publication fails.
+func DeleteKey(ctx context.Context, database *db.DB, cfg *config.Config, key *models.SSHKey) error {
+	if key == nil {
+		return fmt.Errorf("SSH key is required")
+	}
+	if err := database.DeleteSSHKey(ctx, key.ID, key.UserID); err != nil {
+		return err
+	}
+	if err := SyncAuthorizedKeys(ctx, database, cfg); err != nil {
+		recoveryCtx, cancel := context.WithTimeout(context.Background(), authorizedKeysRecoveryTimeout)
+		defer cancel()
+		restoreErr := database.RestoreSSHKey(recoveryCtx, key)
+		resyncErr := SyncAuthorizedKeys(recoveryCtx, database, cfg)
+		if restoreErr != nil {
+			return errors.Join(ErrAuthorizedKeysStateUncertain, err, restoreErr, resyncErr)
+		}
+		return fmt.Errorf("publish authorized_keys: %w", errors.Join(err, resyncErr))
+	}
+	return nil
 }
