@@ -13,23 +13,20 @@ var ErrSSHKeyExists = errors.New("SSH key already exists")
 // AddSSHKey inserts a new SSH key for a user
 func (db *DB) AddSSHKey(ctx context.Context, userID, name, publicKey string) error {
 	id := uuid.New().String()
-	res, err := db.sql.ExecContext(ctx, `
-		INSERT INTO ssh_keys (id, user_id, name, public_key)
-		SELECT ?, ?, ?, ?
-		WHERE NOT EXISTS (SELECT 1 FROM ssh_keys WHERE public_key = ?)
-	`, id, userID, name, publicKey, publicKey,
+	_, err := db.sql.ExecContext(ctx,
+		"INSERT INTO ssh_keys (id, user_id, name, public_key) VALUES (?, ?, ?, ?)",
+		id, userID, name, publicKey,
 	)
-	if err != nil {
-		return err
+	if err == nil {
+		return nil
 	}
-	rows, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if rows == 0 {
+	// Keep the database constraint as the source of truth without coupling the
+	// persistence package to a SQLite-driver-specific error type.
+	var one int
+	if lookupErr := db.sql.QueryRowContext(ctx, "SELECT 1 FROM ssh_keys WHERE public_key = ?", publicKey).Scan(&one); lookupErr == nil {
 		return ErrSSHKeyExists
 	}
-	return nil
+	return err
 }
 
 func (db *DB) GetSSHKeyByID(ctx context.Context, id string) (*models.SSHKey, error) {
@@ -125,4 +122,18 @@ func (db *DB) DeleteSSHKeyByPublicKey(ctx context.Context, userID, publicKey str
 		return ErrNotFound
 	}
 	return nil
+}
+
+// RestoreSSHKey reinstates an exact previously-read key row during
+// authorized_keys publication rollback. It is intentionally narrow: normal key
+// creation must use AddSSHKey so callers cannot choose persistent IDs.
+func (db *DB) RestoreSSHKey(ctx context.Context, key *models.SSHKey) error {
+	if key == nil || key.ID == "" || key.UserID == "" {
+		return errors.New("SSH key snapshot is incomplete")
+	}
+	_, err := db.sql.ExecContext(ctx, `
+		INSERT INTO ssh_keys (id, user_id, name, public_key, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, key.ID, key.UserID, key.Name, key.PublicKey, key.CreatedAt.Unix(), key.UpdatedAt.Unix())
+	return err
 }

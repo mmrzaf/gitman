@@ -20,10 +20,6 @@ const MaxConfigBytes = 256 * 1024
 var secretRefRe = regexp.MustCompile(`^\$\{\{\s*secrets\.([A-Z][A-Z0-9_]*)\s*\}\}$`)
 var envKeyRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 
-// Keep the image parser intentionally conservative. Docker supports more, but
-// CI config is repository-controlled input; rejecting edge cases is safer.
-var imageRefRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._/-]*(?::[a-zA-Z0-9._-]+)?(?:@[A-Za-z0-9_+.-]+:[A-Fa-f0-9]+)?$`)
-
 // Config is the validated representation of .gitman-ci.yml shared by the
 // worker and web UI. Keeping one parser prevents the execution and presentation
 // paths from disagreeing about what a pipeline means.
@@ -102,7 +98,7 @@ func ParseConfigBytes(data []byte) (*Config, error) {
 	if image == "" {
 		return nil, fmt.Errorf("'image' is required")
 	}
-	if strings.HasPrefix(image, "-") || strings.ContainsAny(image, " \t\r\n") || !imageRefRe.MatchString(image) {
+	if len(image) > 512 || strings.HasPrefix(image, "-") || strings.ContainsAny(image, "\x00\r\n\t ") {
 		return nil, fmt.Errorf("invalid image reference")
 	}
 	if len(raw.Steps) == 0 {

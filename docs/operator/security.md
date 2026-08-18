@@ -53,7 +53,7 @@ Keep `GITMAN_SECRET_KEY` outside the data directory in a secret manager. Back it
 
 ## Backups are sensitive
 
-Full backups contain the SQLite database, repositories, artifacts, and generated `authorized_keys` when present. Protect backups as production data. CI caches and temporary workspaces are intentionally excluded.
+Full backups contain the SQLite database, repositories, and artifacts. Protect backups as production data. Generated `authorized_keys`, CI caches, and temporary workspaces are intentionally excluded; `authorized_keys` is rebuilt from the database on web startup.
 
 ## Release hygiene
 
