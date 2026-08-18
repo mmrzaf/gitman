@@ -1,29 +1,14 @@
 {{define "content"}}
-<div class="page-header">
-  <h2 class="repo-title">
-    <a href="/{{.Data.Owner.Username}}">{{.Data.Owner.Username}}</a>
-    /
-    <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}">{{.Data.Repository.Name}}</a>
-  </h2>
-  <p class="muted">History for {{if .Data.CurrentRef}}<code>{{.Data.CurrentRef}}</code>{{else}}this repository{{end}}.</p>
+<div class="page-header page-header-row section-heading">
+  <div><h2>Commits</h2><p class="muted">History for {{if .Data.CurrentRef}}<code>{{.Data.CurrentRef}}</code>{{else}}this repository{{end}}.</p></div>
+  {{if .Data.ResolvedCommit}}<a class="button secondary small" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/tree?ref={{urlquery .Data.CurrentRef}}">Browse files</a>{{end}}
 </div>
 
-{{template "repo_nav" .}}
-
 {{if .Data.IsEmpty}}
-<div class="card">
-  <h3>Quick setup</h3>
-  <p class="muted">This repository is empty. Push an existing repository from the command line.</p>
-
-  <h4>SSH</h4>
-  <pre><code>git remote add origin {{$.Config.SSHUser}}@{{$.Config.ServerHost}}:{{.Data.Owner.Username}}/{{.Data.Repository.Name}}.git
-git branch -M main
-git push -u origin main</code></pre>
-
-  <h4 class="mt-1">HTTP</h4>
-  <pre><code>git remote add origin {{$.Config.PublicURL}}/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}.git
-git branch -M main
-git push -u origin main</code></pre>
+<div class="empty-state">
+  <h3>No commits yet</h3>
+  <p>Push the first commit to start repository history.</p>
+  <a class="button secondary small" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}">View setup instructions</a>
 </div>
 {{else}}
 <div class="selector-bar source-selector-bar">

@@ -1,11 +1,7 @@
 {{define "content"}}
-<div class="page-header page-header-row">
+<div class="page-header page-header-row commit-page-context">
   <div>
-    <h2 class="repo-title">
-      <a href="/{{.Data.Owner.Username}}">{{.Data.Owner.Username}}</a>
-      /
-      <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}">{{.Data.Repository.Name}}</a>
-    </h2>
+    <h2>Commit</h2>
     <p class="muted"><a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/commits?ref={{urlquery .Data.CurrentRef}}">Commits</a> / <code>{{short .Data.Commit.Hash 12}}</code></p>
   </div>
   <div class="inline-actions">
@@ -21,8 +17,6 @@
     {{end}}
   </div>
 </div>
-
-{{template "repo_nav" .}}
 
 <section class="commit-hero card">
   <div class="commit-hero-heading">

@@ -1,17 +1,12 @@
 {{define "content"}}
-<div class="page-header page-header-row">
+<div class="page-header page-header-row section-heading">
   <div>
-    <h2 class="repo-title">
-      <a href="/{{.Data.Owner.Username}}">{{.Data.Owner.Username}}</a>
-      /
-      <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}">{{.Data.Repository.Name}}</a>
-    </h2>
+    <h2>CI/CD</h2>
     <p class="muted">Pipelines for every pushed or manually selected revision.</p>
   </div>
   {{if .Data.CanControl}}<a class="button secondary small" href="#run-pipeline">Run pipeline</a>{{end}}
 </div>
 
-{{template "repo_nav" .}}
 {{template "flash" .}}
 
 <div id="run-pipeline" class="card ci-control-card">

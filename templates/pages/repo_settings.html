@@ -1,14 +1,8 @@
 {{define "content"}}
-<div class="page-header">
-  <h2 class="repo-title">
-    <a href="/{{.Data.Owner.Username}}">{{.Data.Owner.Username}}</a>
-    /
-    <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}">{{.Data.Repository.Name}}</a>
-  </h2>
-  <p class="muted">Repository settings</p>
+<div class="page-header section-heading">
+  <h2>Settings</h2>
+  <p class="muted">Repository visibility, description, and destructive actions.</p>
 </div>
-
-{{template "repo_nav" .}}
 {{template "flash" .}}
 
 <div class="content-grid">

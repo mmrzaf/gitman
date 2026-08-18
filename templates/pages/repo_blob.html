@@ -1,15 +1,4 @@
 {{define "content"}}
-<div class="page-header">
-  <h2 class="repo-title">
-    <a href="/{{.Data.Owner.Username}}">{{.Data.Owner.Username}}</a>
-    /
-    <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}">{{.Data.Repository.Name}}</a>
-  </h2>
-  <p class="muted">{{if .Data.Repository.Description}}{{.Data.Repository.Description}}{{else}}No description provided.{{end}}</p>
-</div>
-
-{{template "repo_nav" .}}
-
 <div class="source-file-header">
   <div class="source-file-context">
     <nav class="source-breadcrumbs" aria-label="File path">
@@ -31,7 +20,6 @@
     </div>
   </div>
   <div class="source-file-actions">
-    {{template "file_finder" .Data}}
     {{if and (not .Data.IsTooBig) (not .Data.BlobBinary)}}<button class="button secondary small" type="button" data-copy-source-lines data-copy-label="Copy file">Copy file</button>{{end}}
     <a class="button secondary small" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/raw?ref={{urlquery .Data.CurrentRef}}&amp;path={{urlquery .Data.CurrentPath}}">Raw</a>
     <a class="button secondary small" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/download?ref={{urlquery .Data.CurrentRef}}&amp;path={{urlquery .Data.CurrentPath}}">Download</a>

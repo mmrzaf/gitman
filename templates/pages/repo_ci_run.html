@@ -41,11 +41,10 @@
       </form>
       {{end}}
     {{end}}
-    <a class="button secondary small" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci">All runs</a>
+    <a class="button secondary small" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci{{if .Data.Run.Branch}}?branch={{urlquery .Data.Run.Branch}}{{end}}">All runs</a>
   </div>
 </div>
 
-{{template "repo_nav" .}}
 {{template "flash" .}}
 
 {{if .Data.Run.StatusReason}}

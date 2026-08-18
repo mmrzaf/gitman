@@ -603,6 +603,8 @@
     }
 
     function openFinder() {
+      const shortcuts = document.querySelector("[data-shortcuts-dialog][open]");
+      if (shortcuts instanceof HTMLDialogElement) shortcuts.close();
       if (!dialog.open) dialog.showModal();
       if (input instanceof HTMLInputElement) {
         input.focus();
@@ -644,6 +646,90 @@
     });
   }
 
+
+
+  function installRepoShortcuts() {
+    const root = document.querySelector("[data-repo-shortcuts]");
+    const dialog = document.querySelector("[data-shortcuts-dialog]");
+    if (!(root instanceof HTMLElement) || !(dialog instanceof HTMLDialogElement)) return;
+    let chord = "";
+    let chordTimer = 0;
+
+    function isEditable(target) {
+      return target instanceof HTMLInputElement
+        || target instanceof HTMLTextAreaElement
+        || target instanceof HTMLSelectElement
+        || target?.isContentEditable;
+    }
+
+    function resetChord() {
+      chord = "";
+      window.clearTimeout(chordTimer);
+    }
+
+    function openHelp() {
+      const finder = document.querySelector("[data-file-finder][open]");
+      if (finder instanceof HTMLDialogElement) finder.close();
+      if (!dialog.open) dialog.showModal();
+    }
+
+    document.querySelectorAll("[data-shortcuts-open]").forEach((button) => button.addEventListener("click", openHelp));
+    dialog.querySelector("[data-shortcuts-close]")?.addEventListener("click", () => dialog.close());
+
+    document.addEventListener("keydown", (event) => {
+      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (isEditable(event.target)) return;
+      if (event.key === "?") {
+        event.preventDefault();
+        resetChord();
+        openHelp();
+        return;
+      }
+      if (dialog.open) return;
+
+      const key = event.key.toLowerCase();
+      if (key === "g" && !event.shiftKey) {
+        event.preventDefault();
+        chord = "g";
+        window.clearTimeout(chordTimer);
+        chordTimer = window.setTimeout(resetChord, 1200);
+        return;
+      }
+      if (chord !== "g") return;
+      resetChord();
+      const targetURL = key === "f"
+        ? root.dataset.filesUrl
+        : key === "c"
+          ? root.dataset.commitsUrl
+          : key === "i"
+            ? root.dataset.ciUrl
+            : "";
+      if (!targetURL) return;
+      event.preventDefault();
+      window.location.href = targetURL;
+    });
+  }
+
+
+
+  function installDisclosureMenus() {
+    const menus = Array.from(document.querySelectorAll("details.clone-menu, details.archive-menu"));
+    if (!menus.length) return;
+    menus.forEach((menu) => menu.addEventListener("toggle", () => {
+      if (!menu.open) return;
+      menus.forEach((other) => { if (other !== menu) other.open = false; });
+    }));
+    document.addEventListener("click", (event) => {
+      menus.forEach((menu) => {
+        if (menu.open && !menu.contains(event.target)) menu.open = false;
+      });
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      menus.forEach((menu) => { menu.open = false; });
+    });
+  }
+
   function start() {
     installConfirmForms();
     installCopyActions();
@@ -653,6 +739,8 @@
     installSourceCopy();
     installDiffControls();
     installFileFinder();
+    installRepoShortcuts();
+    installDisclosureMenus();
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);

@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html/template"
 	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/mmrzaf/gitman/internal/git"
+	readmemarkdown "github.com/mmrzaf/gitman/internal/markdown"
 	"github.com/mmrzaf/gitman/internal/models"
 )
 
@@ -21,6 +23,7 @@ type RepoPageData struct {
 	ResolvedCommit string
 	CurrentPath    string
 	Breadcrumbs    []RepoBreadcrumb
+	ParentPath     string
 	Branches       []string
 	Tags           []string
 	IsEmpty        bool
@@ -36,6 +39,11 @@ type RepoPageData struct {
 	IsTooBig       bool
 	CanViewCI      bool
 	CanControlCI   bool
+	LatestCommit   *git.Commit
+	LatestCI       *models.CIRun
+	ReadmePath     string
+	ReadmeHTML     template.HTML
+	ReadmeTooBig   bool
 	Collaborators  []models.Collaborator
 }
 
@@ -129,6 +137,59 @@ func requestRepoPath(r *http.Request) string {
 	return strings.TrimPrefix(chi.URLParam(r, "*"), "/")
 }
 
+const maxReadmeRenderBytes int64 = 512 * 1024
+
+func readmeCandidate(tree []git.TreeEntry) string {
+	preferred := []string{"readme.md", "readme.markdown", "readme", "readme.txt"}
+	for _, want := range preferred {
+		for _, entry := range tree {
+			if entry.Type == "blob" && strings.EqualFold(entry.Name, want) {
+				return entry.Name
+			}
+		}
+	}
+	return ""
+}
+
+func (app *App) loadRepoRootOverview(ctx context.Context, repoPath string, data *RepoPageData) {
+	if data == nil || data.Repository == nil || data.Owner == nil || data.CurrentPath != "" || data.CurrentRef == "" {
+		return
+	}
+	if commits, err := git.GetCommits(ctx, repoPath, data.CurrentRef, 0, 1); err == nil && len(commits) == 1 {
+		commit := commits[0]
+		data.LatestCommit = &commit
+		if data.CanViewCI {
+			if run, runErr := app.DB.GetLatestCIRunForCommit(ctx, data.Repository.ID, commit.Hash); runErr == nil {
+				data.LatestCI = run
+			}
+		}
+	}
+
+	readmePath := readmeCandidate(data.Tree)
+	if readmePath == "" {
+		return
+	}
+	data.ReadmePath = readmePath
+	size, err := git.GetBlobSize(ctx, repoPath, data.CurrentRef, readmePath)
+	if err != nil {
+		return
+	}
+	if size > maxReadmeRenderBytes {
+		data.ReadmeTooBig = true
+		return
+	}
+	content, err := git.GetBlob(ctx, repoPath, data.CurrentRef, readmePath)
+	if err != nil || !isTextBlob(content) {
+		return
+	}
+	data.ReadmeHTML = readmemarkdown.Render(string(content), readmemarkdown.Options{
+		Owner:      data.Owner.Username,
+		Repository: data.Repository.Name,
+		Ref:        data.CurrentRef,
+		ReadmePath: readmePath,
+	})
+}
+
 // HandleRepoTreeGET renders the repository's file tree view.
 func (app *App) HandleRepoTreeGET(w http.ResponseWriter, r *http.Request) {
 	repo := GetRepo(r)
@@ -137,8 +198,10 @@ func (app *App) HandleRepoTreeGET(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	data := RepoPageData{
-		Owner:      owner,
-		Repository: repo,
+		Owner:        owner,
+		Repository:   repo,
+		CanViewCI:    app.canViewCI(ctx, GetUser(r), repo),
+		CanControlCI: app.canControlCI(ctx, GetUser(r), repo),
 	}
 
 	// 1. Handle empty repository case.
@@ -165,6 +228,9 @@ func (app *App) HandleRepoTreeGET(w http.ResponseWriter, r *http.Request) {
 	data.CurrentRef = ref
 	data.CurrentPath = requestRepoPath(r)
 	data.Breadcrumbs = repoBreadcrumbs(data.CurrentPath)
+	if len(data.Breadcrumbs) > 1 {
+		data.ParentPath = data.Breadcrumbs[len(data.Breadcrumbs)-2].Path
+	}
 	data.ResolvedCommit, _ = git.ResolveRevisionCommitHash(ctx, repoPath, ref)
 	loadRefsIntoData(ctx, repoPath, &data)
 	data.CurrentRefKind = classifyRepoRef(data.CurrentRef, data.Branches, data.Tags)
@@ -185,11 +251,13 @@ func (app *App) HandleRepoTreeGET(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data.Tree = tree
+	app.loadRepoRootOverview(ctx, repoPath, &data)
 
 	app.renderPage(w, r, "repo_view.html", PageData{
-		Title: repo.Name,
-		User:  GetUser(r),
-		Data:  data,
+		Title:   repo.Name,
+		User:    GetUser(r),
+		Data:    data,
+		RepoNav: app.repoNavData(r, data.CurrentRef),
 	})
 }
 
@@ -280,9 +348,10 @@ func (app *App) HandleRepoBlobGET(w http.ResponseWriter, r *http.Request) {
 	}
 
 	app.renderPage(w, r, "repo_blob.html", PageData{
-		Title: repo.Name + " - " + path,
-		User:  GetUser(r),
-		Data:  data,
+		Title:   repo.Name + " - " + path,
+		User:    GetUser(r),
+		Data:    data,
+		RepoNav: app.repoNavData(r, data.CurrentRef),
 	})
 }
 
@@ -375,9 +444,10 @@ func (app *App) HandleRepoCommitsGET(w http.ResponseWriter, r *http.Request) {
 	}
 
 	app.renderPage(w, r, "repo_commits.html", PageData{
-		Title: repo.Name + " Commits",
-		User:  GetUser(r),
-		Data:  data,
+		Title:   repo.Name + " Commits",
+		User:    GetUser(r),
+		Data:    data,
+		RepoNav: app.repoNavData(r, data.CurrentRef),
 	})
 }
 

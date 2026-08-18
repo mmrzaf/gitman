@@ -1,0 +1,54 @@
+{{define "repo_header"}}
+{{if .RepoNav}}
+<header class="repo-masthead" data-repo-shortcuts
+  data-files-url="/{{.RepoNav.Owner.Username}}/{{.RepoNav.Repository.Name}}/tree{{if .RepoNav.CurrentRef}}?ref={{urlquery .RepoNav.CurrentRef}}{{end}}"
+  data-commits-url="/{{.RepoNav.Owner.Username}}/{{.RepoNav.Repository.Name}}/commits{{if .RepoNav.CurrentRef}}?ref={{urlquery .RepoNav.CurrentRef}}{{end}}"
+  {{if .RepoNav.CanViewCI}}data-ci-url="/{{.RepoNav.Owner.Username}}/{{.RepoNav.Repository.Name}}/ci"{{end}}>
+  <div class="repo-masthead-main">
+    <div class="repo-masthead-title-row">
+      <a class="repo-masthead-title" href="/{{.RepoNav.Owner.Username}}/{{.RepoNav.Repository.Name}}{{if .RepoNav.CurrentRef}}?ref={{urlquery .RepoNav.CurrentRef}}{{end}}">
+        <span class="repo-owner">{{.RepoNav.Owner.Username}}</span><span class="repo-slash" aria-hidden="true">/</span><strong>{{.RepoNav.Repository.Name}}</strong>
+      </a>
+      {{if .RepoNav.Repository.IsPrivate}}<span class="chip">Private</span>{{else}}<span class="chip">Public</span>{{end}}
+      {{if .RepoNav.CurrentRef}}<span class="repo-context-ref mono" title="Current source context">{{.RepoNav.CurrentRef}}</span>{{end}}
+    </div>
+    {{if .RepoNav.Repository.Description}}<p class="repo-masthead-description">{{.RepoNav.Repository.Description}}</p>{{end}}
+  </div>
+  <div class="repo-masthead-actions">
+    <button class="secondary small" type="button" data-file-finder-open>Go to file <kbd>t</kbd></button>
+    <button class="repo-shortcuts-button secondary small" type="button" data-shortcuts-open aria-haspopup="dialog" title="Keyboard shortcuts (?)">Shortcuts <kbd>?</kbd></button>
+  </div>
+</header>
+
+<dialog class="file-finder" data-file-finder data-search-url="/{{.RepoNav.Owner.Username}}/{{.RepoNav.Repository.Name}}/files/search{{if .RepoNav.CurrentRef}}?ref={{urlquery .RepoNav.CurrentRef}}{{end}}">
+  <div class="file-finder-shell">
+    <div class="file-finder-header">
+      <div><strong>Go to file</strong>{{if .RepoNav.CurrentRef}}<span class="muted">{{.RepoNav.CurrentRef}}</span>{{end}}</div>
+      <button class="icon-button" type="button" data-file-finder-close aria-label="Close file finder">×</button>
+    </div>
+    <label class="sr-only" for="gitman-file-finder-input">Search files</label>
+    <input id="gitman-file-finder-input" class="file-finder-input" type="search" placeholder="Search files…" autocomplete="off" data-file-finder-input>
+    <div class="file-finder-results" data-file-finder-results role="listbox" aria-label="Repository files"></div>
+    <div class="file-finder-footer muted"><span>↑↓ navigate</span><span>Enter open</span><span>Esc close</span></div>
+  </div>
+</dialog>
+
+<dialog class="shortcut-dialog" data-shortcuts-dialog aria-labelledby="repo-shortcuts-title">
+  <div class="shortcut-dialog-header">
+    <div>
+      <h2 id="repo-shortcuts-title">Repository shortcuts</h2>
+      <p class="muted">Fast navigation, without turning Gitman into a keyboard puzzle.</p>
+    </div>
+    <button class="secondary small" type="button" data-shortcuts-close aria-label="Close shortcuts">Close</button>
+  </div>
+  <div class="shortcut-list">
+    <div><span>Go to file</span><kbd>t</kbd></div>
+    <div><span>Files</span><span><kbd>g</kbd> <kbd>f</kbd></span></div>
+    <div><span>Commits</span><span><kbd>g</kbd> <kbd>c</kbd></span></div>
+    {{if .RepoNav.CanViewCI}}<div><span>CI/CD</span><span><kbd>g</kbd> <kbd>i</kbd></span></div>{{end}}
+    <div><span>Show this help</span><kbd>?</kbd></div>
+    <div><span>Close dialog</span><kbd>Esc</kbd></div>
+  </div>
+</dialog>
+{{end}}
+{{end}}
