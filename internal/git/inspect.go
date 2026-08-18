@@ -3,10 +3,8 @@ package git
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
-	"os/exec"
 	"regexp"
 	"sort"
 	"strconv"
@@ -82,16 +80,16 @@ type CommitDiff struct {
 }
 
 func ResolveRevisionCommitHash(ctx context.Context, repoPath, ref string) (string, error) {
-	if err := ensureNotEmpty(ctx, repoPath); err != nil {
-		return "", err
-	}
-	resolved, err := ResolveRef(ctx, repoPath, ref)
+	resolved, err := resolveRef(ctx, repoPath, ref)
 	if err != nil {
 		return "", err
 	}
-	out, err := run(ctx, repoPath, "rev-parse", "--verify", resolved+"^{commit}")
+	out, err := run(ctx, repoPath, "rev-parse", "--verify", "--quiet", resolved.spec+"^{commit}")
 	if err != nil {
-		return "", ErrRefNotFound
+		if code, ok := commandExitCode(err); ok && code == 1 {
+			return "", ErrRefNotFound
+		}
+		return "", fmt.Errorf("resolve revision commit: %w", err)
 	}
 	hash := strings.TrimSpace(string(out))
 	if !canonicalGitHashRegex.MatchString(hash) {
@@ -129,20 +127,26 @@ func GetCommitDetail(ctx context.Context, repoPath, hash string) (CommitDetail, 
 	if parentText := strings.TrimSpace(string(parts[1])); parentText != "" {
 		detail.Parents = strings.Fields(parentText)
 	}
-	detail.Branches, detail.Tags = refsPointingAt(ctx, repoPath, detail.Hash)
+	detail.Branches, detail.Tags, err = refsPointingAt(ctx, repoPath, detail.Hash)
+	if err != nil {
+		return CommitDetail{}, err
+	}
 	return detail, nil
 }
 
-func refsPointingAt(ctx context.Context, repoPath, hash string) ([]string, []string) {
+func refsPointingAt(ctx context.Context, repoPath, hash string) ([]string, []string, error) {
 	out, err := run(ctx, repoPath, "for-each-ref", "--format=%(refname)%00%(objectname)%00%(*objectname)", "refs/heads", "refs/tags")
 	if err != nil {
-		return nil, nil
+		return nil, nil, fmt.Errorf("list refs pointing at commit: %w", err)
 	}
 	var branches, tags []string
 	for _, line := range bytes.Split(bytes.TrimSpace(out), []byte{'\n'}) {
+		if len(line) == 0 {
+			continue
+		}
 		parts := bytes.SplitN(line, []byte{0}, 3)
 		if len(parts) != 3 {
-			continue
+			return nil, nil, fmt.Errorf("malformed ref metadata")
 		}
 		refName := string(parts[0])
 		object := string(parts[1])
@@ -159,7 +163,7 @@ func refsPointingAt(ctx context.Context, repoPath, hash string) ([]string, []str
 	}
 	sort.Strings(branches)
 	sort.Strings(tags)
-	return branches, tags
+	return branches, tags, nil
 }
 
 func commitDiffArgs(detail CommitDetail, args ...string) []string {
@@ -228,7 +232,11 @@ func parseNameStatusZ(out []byte) ([]ChangedFile, error) {
 		code := statusToken[:1]
 		change := ChangedFile{StatusCode: code, Status: statusLabel(code)}
 		if (code == "R" || code == "C") && len(statusToken) > 1 {
-			change.Similarity, _ = strconv.Atoi(statusToken[1:])
+			similarity, err := strconv.Atoi(statusToken[1:])
+			if err != nil {
+				return nil, fmt.Errorf("malformed rename/copy similarity %q: %w", statusToken[1:], err)
+			}
+			change.Similarity = similarity
 		}
 		if i >= len(records) || len(records[i]) == 0 {
 			return nil, fmt.Errorf("malformed changed path record")
@@ -275,8 +283,16 @@ func parseNumstatZ(out []byte) (map[string]diffStat, error) {
 		if string(fields[0]) == "-" || string(fields[1]) == "-" {
 			stat.Binary = true
 		} else {
-			stat.Additions, _ = strconv.Atoi(string(fields[0]))
-			stat.Deletions, _ = strconv.Atoi(string(fields[1]))
+			additions, err := strconv.Atoi(string(fields[0]))
+			if err != nil {
+				return nil, fmt.Errorf("malformed numstat additions %q: %w", fields[0], err)
+			}
+			deletions, err := strconv.Atoi(string(fields[1]))
+			if err != nil {
+				return nil, fmt.Errorf("malformed numstat deletions %q: %w", fields[1], err)
+			}
+			stat.Additions = additions
+			stat.Deletions = deletions
 		}
 		path := string(fields[2])
 		i++
@@ -343,14 +359,9 @@ func (w *cappedWriter) Write(p []byte) (int, error) {
 }
 
 func runLimited(ctx context.Context, repoPath string, limit int, args ...string) ([]byte, bool, error) {
-	cmdArgs := append([]string{"-C", repoPath}, args...)
-	cmd := exec.CommandContext(ctx, "git", cmdArgs...)
 	out := &cappedWriter{limit: limit}
-	var stderr bytes.Buffer
-	cmd.Stdout = out
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return nil, out.truncated, fmt.Errorf("git command failed: %w (%s)", err, strings.TrimSpace(stderr.String()))
+	if err := runTo(ctx, repoPath, out, args...); err != nil {
+		return nil, out.truncated, err
 	}
 	return out.buf.Bytes(), out.truncated, nil
 }
@@ -473,14 +484,11 @@ func GetCommitDiff(ctx context.Context, repoPath string, detail CommitDetail) (C
 // so Go to File never routes a commit object through the blob viewer. The
 // output is NUL-delimited so unusual filenames survive intact.
 func ListFiles(ctx context.Context, repoPath, ref string) ([]string, error) {
-	if err := ensureNotEmpty(ctx, repoPath); err != nil {
-		return nil, err
-	}
-	resolved, err := ResolveRef(ctx, repoPath, ref)
+	resolved, err := resolveRef(ctx, repoPath, ref)
 	if err != nil {
 		return nil, err
 	}
-	out, err := run(ctx, repoPath, "ls-tree", "-r", "-z", resolved)
+	out, err := run(ctx, repoPath, "ls-tree", "-r", "-z", resolved.spec)
 	if err != nil {
 		return nil, fmt.Errorf("list repository files: %w", err)
 	}
@@ -492,10 +500,13 @@ func ListFiles(ctx context.Context, repoPath, ref string) ([]string, error) {
 		}
 		tab := bytes.IndexByte(record, '\t')
 		if tab < 0 {
-			continue
+			return nil, fmt.Errorf("malformed tree record")
 		}
 		meta := bytes.Fields(record[:tab])
-		if len(meta) < 2 || string(meta[1]) != "blob" {
+		if len(meta) < 3 {
+			return nil, fmt.Errorf("malformed tree metadata")
+		}
+		if string(meta[1]) != "blob" {
 			continue
 		}
 		files = append(files, string(record[tab+1:]))
@@ -511,15 +522,7 @@ func StreamBlob(ctx context.Context, repoPath, ref, path string, w io.Writer) er
 	if err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "cat-file", "-p", spec)
-	var stderr bytes.Buffer
-	cmd.Stdout = w
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return fmt.Errorf("stream blob: %w (%s)", err, strings.TrimSpace(stderr.String()))
-		}
+	if err := runTo(ctx, repoPath, w, "cat-file", "-p", spec); err != nil {
 		return fmt.Errorf("stream blob: %w", err)
 	}
 	return nil

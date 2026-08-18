@@ -3,7 +3,9 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -33,7 +35,7 @@ type CIRunView struct {
 type CILogSection struct {
 	Name        string
 	Kind        string
-	Status      string
+	Status      models.CIStatus
 	Output      string
 	Duration    string
 	ExitCode    int
@@ -89,7 +91,7 @@ func newCIRunView(run models.CIRun, commit *git.Commit) CIRunView {
 	return view
 }
 
-func loadCIRunViews(ctx context.Context, repoPath string, runs []models.CIRun) []CIRunView {
+func loadCIRunViews(ctx context.Context, repoPath string, runs []models.CIRun) ([]CIRunView, error) {
 	hashes := make([]string, 0, len(runs))
 	for _, run := range runs {
 		if run.CommitHash != "" {
@@ -98,9 +100,9 @@ func loadCIRunViews(ctx context.Context, repoPath string, runs []models.CIRun) [
 	}
 	commits, err := git.GetCommitsByHashes(ctx, repoPath, hashes)
 	if err != nil {
-		// A stale/unreachable run revision should not erase metadata for every
-		// other run on the page. Fall back per hash only when the fast batch
-		// lookup fails.
+		// A pruned historical run revision is a normal presentation gap. Fall
+		// back per hash so one stale commit does not erase metadata for all runs,
+		// while genuine Git failures still propagate to the request boundary.
 		commits = map[string]git.Commit{}
 		seen := make(map[string]struct{}, len(hashes))
 		for _, hash := range hashes {
@@ -109,7 +111,13 @@ func loadCIRunViews(ctx context.Context, repoPath string, runs []models.CIRun) [
 			}
 			seen[hash] = struct{}{}
 			items, itemErr := git.GetCommits(ctx, repoPath, hash, 0, 1)
-			if itemErr == nil && len(items) == 1 {
+			if itemErr != nil {
+				if errors.Is(itemErr, git.ErrRefNotFound) {
+					continue
+				}
+				return nil, fmt.Errorf("load CI commit metadata for %s: %w", hash, itemErr)
+			}
+			if len(items) == 1 {
 				commits[items[0].Hash] = items[0]
 			}
 		}
@@ -123,27 +131,36 @@ func loadCIRunViews(ctx context.Context, repoPath string, runs []models.CIRun) [
 		}
 		views = append(views, newCIRunView(run, commit))
 	}
-	return views
+	return views, nil
 }
 
-func loadCIConfigView(ctx context.Context, repoPath, commitHash string) (*cipipeline.Config, CIConfigView) {
+func loadCIConfigView(ctx context.Context, repoPath, commitHash string) (*cipipeline.Config, CIConfigView, error) {
 	view := CIConfigView{}
 	if commitHash == "" {
-		return nil, view
+		return nil, view, nil
 	}
 	exists, err := git.BlobExists(ctx, repoPath, commitHash, cipipeline.ConfigFile)
-	if err != nil || !exists {
-		return nil, view
+	if err != nil {
+		if errors.Is(err, git.ErrRefNotFound) {
+			return nil, view, nil
+		}
+		return nil, view, fmt.Errorf("inspect CI config: %w", err)
+	}
+	if !exists {
+		return nil, view, nil
 	}
 	data, err := git.GetBlob(ctx, repoPath, commitHash, cipipeline.ConfigFile)
 	if err != nil {
-		return nil, view
+		if errors.Is(err, git.ErrPathNotFound) || errors.Is(err, git.ErrRefNotFound) {
+			return nil, view, nil
+		}
+		return nil, view, fmt.Errorf("read CI config: %w", err)
 	}
 	view.Found = true
 	cfg, err := cipipeline.ParseConfigBytes(data)
 	if err != nil {
 		view.Error = err.Error()
-		return nil, view
+		return nil, view, nil
 	}
 	view.Valid = true
 	view.Image = cfg.Image
@@ -155,7 +172,7 @@ func loadCIConfigView(ctx context.Context, repoPath, commitHash string) (*cipipe
 		}
 	}
 	view.Steps = append([]cipipeline.Step(nil), cfg.Steps...)
-	return cfg, view
+	return cfg, view, nil
 }
 
 var logTimestampRe = regexp.MustCompile(`^\[?(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\]?\s+(.*)$`)
@@ -212,13 +229,13 @@ func compactDuration(d time.Duration) string {
 
 func parseCILog(content string, run *models.CIRun, cfg *cipipeline.Config) CILogView {
 	view := CILogView{
-		Setup:    CILogSection{Name: "Setup", Kind: "setup", Status: "pending", Open: false},
-		Finalize: CILogSection{Name: "Finalize", Kind: "finalize", Status: "pending", Open: false},
+		Setup:    CILogSection{Name: "Setup", Kind: "setup", Status: models.CIStatusPending, Open: false},
+		Finalize: CILogSection{Name: "Finalize", Kind: "finalize", Status: models.CIStatusPending, Open: false},
 	}
 	if cfg != nil {
 		view.Steps = make([]CILogSection, len(cfg.Steps))
 		for i, step := range cfg.Steps {
-			view.Steps[i] = CILogSection{Name: step.Name, Kind: "step", Status: "pending"}
+			view.Steps[i] = CILogSection{Name: step.Name, Kind: "step", Status: models.CIStatusPending}
 		}
 	}
 
@@ -240,7 +257,7 @@ func parseCILog(content string, run *models.CIRun, cfg *cipipeline.Config) CILog
 		if active >= 0 && active < len(view.Steps) {
 			name := view.Steps[active].Name
 			if message == "--- Step: "+name+": SUCCESS ---" {
-				view.Steps[active].Status = "success"
+				view.Steps[active].Status = models.CIStatusSuccess
 				if hasTS {
 					t := ts
 					view.Steps[active].CompletedAt = &t
@@ -254,7 +271,7 @@ func parseCILog(content string, run *models.CIRun, cfg *cipipeline.Config) CILog
 			if strings.HasPrefix(message, failedPrefix) && strings.HasSuffix(message, ") ---") {
 				exitText := strings.TrimSuffix(strings.TrimPrefix(message, failedPrefix), ") ---")
 				exitCode, _ := strconv.Atoi(exitText)
-				view.Steps[active].Status = "failed"
+				view.Steps[active].Status = models.CIStatusFailed
 				view.Steps[active].ExitCode = exitCode
 				if hasTS {
 					t := ts
@@ -274,7 +291,7 @@ func parseCILog(content string, run *models.CIRun, cfg *cipipeline.Config) CILog
 				active = next
 				next++
 				startedAny = true
-				view.Steps[active].Status = "running"
+				view.Steps[active].Status = models.CIStatusRunning
 				if hasTS {
 					t := ts
 					view.Steps[active].StartedAt = &t
@@ -287,7 +304,7 @@ func parseCILog(content string, run *models.CIRun, cfg *cipipeline.Config) CILog
 		if cfg == nil {
 			if active >= 0 {
 				if match := fallbackStepSuccessRe.FindStringSubmatch(message); match != nil && match[1] == view.Steps[active].Name {
-					view.Steps[active].Status = "success"
+					view.Steps[active].Status = models.CIStatusSuccess
 					if hasTS {
 						t := ts
 						view.Steps[active].CompletedAt = &t
@@ -298,7 +315,7 @@ func parseCILog(content string, run *models.CIRun, cfg *cipipeline.Config) CILog
 					continue
 				}
 				if match := fallbackStepFailedRe.FindStringSubmatch(message); match != nil && match[1] == view.Steps[active].Name {
-					view.Steps[active].Status = "failed"
+					view.Steps[active].Status = models.CIStatusFailed
 					view.Steps[active].ExitCode, _ = strconv.Atoi(match[2])
 					if hasTS {
 						t := ts
@@ -313,7 +330,7 @@ func parseCILog(content string, run *models.CIRun, cfg *cipipeline.Config) CILog
 			}
 			if active == -1 {
 				if match := fallbackStepStartRe.FindStringSubmatch(message); match != nil {
-					view.Steps = append(view.Steps, CILogSection{Name: match[1], Kind: "step", Status: "running"})
+					view.Steps = append(view.Steps, CILogSection{Name: match[1], Kind: "step", Status: models.CIStatusRunning})
 					stepOut = append(stepOut, strings.Builder{})
 					active = len(view.Steps) - 1
 					startedAny = true
@@ -346,25 +363,25 @@ func parseCILog(content string, run *models.CIRun, cfg *cipipeline.Config) CILog
 		}
 	}
 
-	terminal := run != nil && isTerminalCIStatus(run.Status)
+	terminal := run != nil && run.Status.Terminal()
 	if startedAny {
-		view.Setup.Status = "success"
+		view.Setup.Status = models.CIStatusSuccess
 	} else if run != nil {
 		switch run.Status {
-		case "running":
-			view.Setup.Status = "running"
-		case "pending":
-			view.Setup.Status = "pending"
+		case models.CIStatusRunning:
+			view.Setup.Status = models.CIStatusRunning
+		case models.CIStatusPending:
+			view.Setup.Status = models.CIStatusPending
 		default:
 			view.Setup.Status = run.Status
 		}
 	}
 	if active >= 0 && terminal {
 		switch run.Status {
-		case "cancelled":
-			view.Steps[active].Status = "cancelled"
-		case "failed":
-			view.Steps[active].Status = "failed"
+		case models.CIStatusCancelled:
+			view.Steps[active].Status = models.CIStatusCancelled
+		case models.CIStatusFailed:
+			view.Steps[active].Status = models.CIStatusFailed
 		default:
 			view.Steps[active].Status = run.Status
 		}
@@ -374,38 +391,32 @@ func parseCILog(content string, run *models.CIRun, cfg *cipipeline.Config) CILog
 		if terminal && finalizeStarted {
 			view.Finalize.Status = run.Status
 		} else if !terminal && finalizeStarted {
-			view.Finalize.Status = "running"
+			view.Finalize.Status = models.CIStatusRunning
 		}
 	}
 
 	for i := range view.Steps {
-		view.Steps[i].Open = view.Steps[i].Status == "failed" || view.Steps[i].Status == "running" || view.Steps[i].Status == "cancelled"
+		view.Steps[i].Open = view.Steps[i].Status == models.CIStatusFailed || view.Steps[i].Status == models.CIStatusRunning || view.Steps[i].Status == models.CIStatusCancelled
 	}
-	view.Setup.Open = view.Setup.Status == "failed" || view.Setup.Status == "running" || view.Setup.Status == "cancelled" || (len(view.Steps) == 0 && strings.TrimSpace(view.Setup.Output) != "")
-	view.Finalize.Open = view.Finalize.Status == "failed" || view.Finalize.Status == "running" || view.Finalize.Status == "cancelled"
+	view.Setup.Open = view.Setup.Status == models.CIStatusFailed || view.Setup.Status == models.CIStatusRunning || view.Setup.Status == models.CIStatusCancelled || (len(view.Steps) == 0 && strings.TrimSpace(view.Setup.Output) != "")
+	view.Finalize.Open = view.Finalize.Status == models.CIStatusFailed || view.Finalize.Status == models.CIStatusRunning || view.Finalize.Status == models.CIStatusCancelled
 	return view
 }
 
-func isTerminalCIStatus(status string) bool {
-	switch status {
-	case "success", "failed", "skipped", "cancelled":
-		return true
-	default:
-		return false
-	}
-}
-
-func readCILog(path string) (string, int64) {
+func readCILog(path string) (string, int64, error) {
 	if path == "" {
-		return "", 0
+		return "", 0, nil
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", 0
+		if errors.Is(err, os.ErrNotExist) {
+			return "", 0, nil
+		}
+		return "", 0, err
 	}
 	consume := completeCILogPrefixLen(data)
 	data = data[:consume]
-	return stripANSI(data), int64(consume)
+	return stripANSI(data), int64(consume), nil
 }
 
 func buildArtifactTree(files []artifactFile) []*ArtifactNode {
@@ -454,10 +465,29 @@ func buildArtifactTree(files []artifactFile) []*ArtifactNode {
 	return root.Children
 }
 
-func listArtifactFiles(root string) []artifactFile {
+func listArtifactFiles(root string) ([]artifactFile, error) {
+	info, err := os.Lstat(root)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return nil, fmt.Errorf("artifact root is not a directory: %s", root)
+	}
+
 	var files []artifactFile
-	_ = filepath.WalkDir(root, func(current string, entry os.DirEntry, err error) error {
-		if err != nil || current == root {
+	err = filepath.WalkDir(root, func(current string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if errors.Is(walkErr, os.ErrNotExist) && current != root {
+				// Artifacts can be published while a run page is open. A child that
+				// disappeared between directory reads is simply absent from this view.
+				return nil
+			}
+			return walkErr
+		}
+		if current == root {
 			return nil
 		}
 		if entry.Type()&os.ModeSymlink != 0 {
@@ -470,41 +500,63 @@ func listArtifactFiles(root string) []artifactFile {
 			return nil
 		}
 		info, err := entry.Info()
-		if err != nil || !info.Mode().IsRegular() {
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil
+			}
+			return err
+		}
+		if !info.Mode().IsRegular() {
 			return nil
 		}
 		rel, err := filepath.Rel(root, current)
 		if err != nil {
-			return nil
+			return err
+		}
+		previewable, err := artifactLooksPreviewable(current, info.Size())
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil
+			}
+			return err
 		}
 		files = append(files, artifactFile{
 			Path:        filepath.ToSlash(rel),
 			Size:        info.Size(),
-			Previewable: artifactLooksPreviewable(current, info.Size()),
+			Previewable: previewable,
 		})
 		return nil
 	})
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
 	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
-	return files
+	return files, nil
 }
 
-func artifactLooksPreviewable(path string, size int64) bool {
+func artifactLooksPreviewable(path string, size int64) (bool, error) {
 	if size < 0 || size > maxArtifactPreviewBytes {
-		return false
+		return false, nil
 	}
 	file, err := os.Open(path)
 	if err != nil {
-		return false
+		return false, err
 	}
 	defer file.Close()
 	buf := make([]byte, 4096)
-	n, _ := file.Read(buf)
+	n, err := file.Read(buf)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false, err
+	}
 	buf = buf[:n]
 	if bytes.IndexByte(buf, 0) >= 0 || !validUTF8Sample(buf, size > int64(n)) {
-		return false
+		return false, nil
 	}
 	contentType := http.DetectContentType(buf)
-	return strings.HasPrefix(contentType, "text/") || contentType == "application/json" || contentType == "application/xml"
+	return strings.HasPrefix(contentType, "text/") || contentType == "application/json" || contentType == "application/xml", nil
 }
 
 func validUTF8Sample(sample []byte, truncated bool) bool {

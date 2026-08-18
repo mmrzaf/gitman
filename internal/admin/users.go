@@ -1,59 +1,81 @@
 package admin
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/mmrzaf/gitman/internal/config"
 	"github.com/mmrzaf/gitman/internal/db"
+	"github.com/mmrzaf/gitman/internal/repository"
 	sshhandler "github.com/mmrzaf/gitman/internal/ssh"
 )
 
-func CreateUser(database *db.DB, username, password string) error {
+func CreateUser(ctx context.Context, cfg *config.Config, database *db.DB, username, password string) (retErr error) {
 	if err := ValidateUsername(username); err != nil {
 		return err
 	}
 	if err := IsPasswordStrong(password); err != nil {
 		return err
 	}
+	if cfg == nil {
+		return fmt.Errorf("configuration is required")
+	}
 
-	ctx := contextBackground()
-	_, err := database.CreateUser(ctx, username, password)
+	lock, err := repository.LockNamespace(ctx, cfg.ReposPath, username)
+	if err != nil {
+		return fmt.Errorf("lock user namespace: %w", err)
+	}
+	defer func() {
+		if releaseErr := lock.Release(); releaseErr != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("release user namespace lock: %w", releaseErr))
+		}
+	}()
+
+	_, err = database.CreateUser(ctx, username, password)
 	if err != nil {
 		return fmt.Errorf("failed to create user: %w", err)
 	}
 
-	fmt.Printf("User %q created successfully.\n", username)
 	return nil
 }
 
-func ResetPassword(database *db.DB, username, password string) error {
+func ResetPassword(ctx context.Context, database *db.DB, username, password string) error {
 	if err := IsPasswordStrong(password); err != nil {
 		return err
 	}
-	ctx := contextBackground()
 	if err := database.UpdateUserPassword(ctx, username, password); err != nil {
 		return fmt.Errorf("failed to reset password: %w", err)
 	}
 
-	fmt.Printf("Password for %q reset successfully.\n", username)
 	return nil
 }
 
 // DeleteUser moves repository data out of the active namespace before deleting
 // the database record. Recreating the username can never adopt stale repos.
-func DeleteUser(cfg *config.Config, database *db.DB, username string) error {
+func DeleteUser(ctx context.Context, cfg *config.Config, database *db.DB, username string) (retErr error) {
 	if err := ValidateUsername(username); err != nil {
 		return err
 	}
-	ctx := contextBackground()
+	if cfg == nil {
+		return fmt.Errorf("configuration is required")
+	}
+	lock, err := repository.LockNamespace(ctx, cfg.ReposPath, username)
+	if err != nil {
+		return fmt.Errorf("lock user namespace: %w", err)
+	}
+	defer func() {
+		if releaseErr := lock.Release(); releaseErr != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("release user namespace lock: %w", releaseErr))
+		}
+	}()
+
 	user, err := database.GetUserByUsername(ctx, username)
 	if err != nil {
 		return fmt.Errorf("look up user: %w", err)
-	}
-	if user == nil {
-		return fmt.Errorf("user not found")
 	}
 
 	activeRepos := filepath.Join(cfg.ReposPath, username)
@@ -62,11 +84,47 @@ func DeleteUser(cfg *config.Config, database *db.DB, username string) error {
 		return fmt.Errorf("quarantine user repositories: %w", err)
 	}
 
-	if err := database.DeleteUserByUsername(ctx, username); err != nil {
-		if restoreErr := restoreQuarantinedDirectory(quarantinedRepos, activeRepos); restoreErr != nil {
-			return fmt.Errorf("delete user: %v (repository restore failed: %v)", err, restoreErr)
+	if err := database.DeleteUserByID(ctx, user.ID); err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			// Another deletion already removed this exact user. Never restore the
+			// old quarantined directory: the username may already belong to a new
+			// account, and restoring would resurrect orphaned repository storage.
+			if quarantinedRepos != "" {
+				if cleanupErr := os.RemoveAll(quarantinedRepos); cleanupErr != nil {
+					return fmt.Errorf("user was already deleted, but quarantined repositories could not be removed: %w", cleanupErr)
+				}
+			}
+			if syncErr := sshhandler.SyncAuthorizedKeys(ctx, database, cfg); syncErr != nil {
+				return fmt.Errorf("user was already deleted, but authorized_keys sync failed: %w", syncErr)
+			}
+			return nil
 		}
-		return fmt.Errorf("delete user: %w", err)
+		primary := fmt.Errorf("delete user: %w", err)
+
+		// A failed DELETE does not prove that this user still exists: another
+		// Gitman process may have deleted the same immutable user ID immediately
+		// afterward. Recovery gets a short independent context so cancellation of
+		// the CLI request cannot force us to guess whether restoring old repository
+		// storage would resurrect an orphaned username namespace.
+		recoveryCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_, stateErr := database.GetUserByID(recoveryCtx, user.ID)
+		cancel()
+		switch {
+		case stateErr == nil:
+			if restoreErr := restoreQuarantinedDirectory(quarantinedRepos, activeRepos); restoreErr != nil {
+				return errors.Join(primary, fmt.Errorf("restore quarantined repositories: %w", restoreErr))
+			}
+		case errors.Is(stateErr, db.ErrNotFound):
+			if quarantinedRepos != "" {
+				if cleanupErr := os.RemoveAll(quarantinedRepos); cleanupErr != nil {
+					return errors.Join(primary, fmt.Errorf("user was concurrently deleted, but quarantined repositories could not be removed: %w", cleanupErr))
+				}
+			}
+			return nil
+		default:
+			return errors.Join(primary, fmt.Errorf("determine user deletion state: %w", stateErr))
+		}
+		return primary
 	}
 
 	cleanupPaths := []string{
@@ -85,16 +143,16 @@ func DeleteUser(cfg *config.Config, database *db.DB, username string) error {
 		}
 	}
 	if err := sshhandler.SyncAuthorizedKeys(ctx, database, cfg); err != nil {
+		syncErr := fmt.Errorf("user deleted, but authorized_keys sync failed: %w", err)
 		if cleanupErr != nil {
-			return fmt.Errorf("user deleted, but %v; authorized_keys sync also failed: %w", cleanupErr, err)
+			return errors.Join(cleanupErr, syncErr)
 		}
-		return fmt.Errorf("user deleted, but authorized_keys sync failed: %w", err)
+		return syncErr
 	}
 	if cleanupErr != nil {
 		return fmt.Errorf("user deleted, but %w", cleanupErr)
 	}
 
-	fmt.Printf("User %q deleted.\n", username)
 	return nil
 }
 

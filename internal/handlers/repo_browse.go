@@ -10,9 +10,12 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/mmrzaf/gitman/internal/apperr"
+	"github.com/mmrzaf/gitman/internal/db"
 	"github.com/mmrzaf/gitman/internal/git"
 	readmemarkdown "github.com/mmrzaf/gitman/internal/markdown"
 	"github.com/mmrzaf/gitman/internal/models"
+	"github.com/mmrzaf/gitman/internal/repository"
 )
 
 type RepoPageData struct {
@@ -48,80 +51,93 @@ type RepoPageData struct {
 	Collaborators  []models.Collaborator
 }
 
-// RepoAccessMiddleware ensures the repository exists and is accessible.
+// RepoAccessMiddleware resolves the repository and establishes source-read and
+// member authorization once for the rest of the request. Database failures are
+// never translated into a fake 404.
 func (app *App) RepoAccessMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		username := chi.URLParam(r, "username")
 		repoName := chi.URLParam(r, "repo_name")
 
 		owner, err := app.DB.GetUserByUsername(r.Context(), username)
-		if err != nil || owner == nil {
-			app.renderError(w, r, PageData{User: GetUser(r)}, "Repository not found", http.StatusNotFound)
+		if err != nil {
+			if errors.Is(err, db.ErrNotFound) {
+				app.respondForSurface(w, r, apperr.New(apperr.KindNotFound, "Repository not found"))
+			} else {
+				app.respondForSurface(w, r, apperr.Wrap(apperr.KindUnavailable, "Gitman is temporarily unavailable", err))
+			}
 			return
 		}
 
 		repo, err := app.DB.GetRepositoryByOwnerAndName(r.Context(), owner.ID, repoName)
-		if err != nil || repo == nil {
-			app.renderError(w, r, PageData{User: GetUser(r)}, "Repository not found", http.StatusNotFound)
+		if err != nil {
+			if errors.Is(err, db.ErrNotFound) {
+				app.respondForSurface(w, r, apperr.New(apperr.KindNotFound, "Repository not found"))
+			} else {
+				app.respondForSurface(w, r, apperr.Wrap(apperr.KindUnavailable, "Gitman is temporarily unavailable", err))
+			}
 			return
 		}
 
 		currentUser := GetUser(r)
-
-		if repo.IsPrivate {
-			hasAccess := currentUser != nil && currentUser.ID == repo.OwnerID
-			if currentUser != nil && !hasAccess {
-				hasAccess, _ = app.DB.HasRepoAccess(r.Context(), repo.ID, currentUser.ID, "read")
-			}
-
-			if !hasAccess {
-				app.renderError(w, r, PageData{User: currentUser}, "Repository not found", http.StatusNotFound)
-				return
-			}
+		access, err := repository.ResolveAccess(r.Context(), app.DB, currentUser, repo)
+		if err != nil {
+			app.respondForSurface(w, r, apperr.Wrap(apperr.KindUnavailable, "Gitman is temporarily unavailable", err))
+			return
+		}
+		if !access.CanRead {
+			// Private repositories deliberately remain indistinguishable from missing ones.
+			app.respondForSurface(w, r, apperr.New(apperr.KindNotFound, "Repository not found"))
+			return
 		}
 
 		repoPath, err := git.SecureRepoPath(app.Config.ReposPath, username, repoName)
 		if err != nil {
-			app.renderError(w, r, PageData{User: currentUser}, "Invalid repository path", http.StatusInternalServerError)
+			app.respondForSurface(w, r, apperr.Wrap(apperr.KindInternal, "Gitman could not resolve this repository", err))
 			return
 		}
 
 		ctx := context.WithValue(r.Context(), repoContextKey, repo)
 		ctx = context.WithValue(ctx, repoPathContextKey, repoPath)
 		ctx = context.WithValue(ctx, repoOwnerContextKey, owner)
-
+		ctx = context.WithValue(ctx, repoMemberContextKey, access.IsMember)
+		ctx = context.WithValue(ctx, repoWriteContextKey, access.CanWrite)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
 // RequireRepoMember restricts sensitive repository surfaces such as CI logs
-// and artifacts to the owner or an explicit collaborator. Public source code
-// remains browseable without exposing CI output.
+// and artifacts to the owner or an explicit collaborator. RepoAccessMiddleware
+// already performed the database-backed membership lookup.
 func (app *App) RequireRepoMember(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		repo := GetRepo(r)
-		user := GetUser(r)
-		if repo == nil || user == nil {
-			http.NotFound(w, r)
-			return
-		}
-		if user.ID == repo.OwnerID {
-			next.ServeHTTP(w, r)
-			return
-		}
-		hasAccess, err := app.DB.HasRepoAccess(r.Context(), repo.ID, user.ID, "read")
-		if err != nil || !hasAccess {
-			http.NotFound(w, r)
+		member, ok := r.Context().Value(repoMemberContextKey).(bool)
+		if !ok || !member {
+			message := "Repository not found"
+			if requestSurface(r) == surfaceAPI {
+				message = "repository not found"
+			}
+			app.respondForSurface(w, r, apperr.New(apperr.KindNotFound, message))
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
 }
 
-// loadRefsIntoData populates Branches and Tags on an existing RepoPageData.
-func loadRefsIntoData(ctx context.Context, repoPath string, data *RepoPageData) {
-	data.Branches, _ = git.GetBranches(ctx, repoPath)
-	data.Tags, _ = git.GetTags(ctx, repoPath)
+// loadRefsIntoData populates Branches and Tags without turning a Git failure
+// into an apparently empty repository navigation state.
+func loadRefsIntoData(ctx context.Context, repoPath string, data *RepoPageData) error {
+	branches, err := git.GetBranches(ctx, repoPath)
+	if err != nil {
+		return err
+	}
+	tags, err := git.GetTags(ctx, repoPath)
+	if err != nil {
+		return err
+	}
+	data.Branches = branches
+	data.Tags = tags
+	return nil
 }
 
 func requestRef(r *http.Request) string {
@@ -152,36 +168,50 @@ func readmeCandidate(tree []git.TreeEntry) string {
 	return ""
 }
 
-func (app *App) loadRepoRootOverview(ctx context.Context, repoPath string, data *RepoPageData) {
+func (app *App) loadRepoRootOverview(ctx context.Context, repoPath string, data *RepoPageData) error {
 	if data == nil || data.Repository == nil || data.Owner == nil || data.CurrentPath != "" || data.CurrentRef == "" {
-		return
+		return nil
 	}
-	if commits, err := git.GetCommits(ctx, repoPath, data.CurrentRef, 0, 1); err == nil && len(commits) == 1 {
+
+	commits, err := git.GetCommits(ctx, repoPath, data.CurrentRef, 0, 1)
+	if err != nil {
+		return fmt.Errorf("load repository overview commit: %w", err)
+	}
+	if len(commits) == 1 {
 		commit := commits[0]
 		data.LatestCommit = &commit
 		if data.CanViewCI {
-			if run, runErr := app.DB.GetLatestCIRunForCommit(ctx, data.Repository.ID, commit.Hash); runErr == nil {
+			run, runErr := app.DB.GetLatestCIRunForCommit(ctx, data.Repository.ID, commit.Hash)
+			switch {
+			case runErr == nil:
 				data.LatestCI = run
+			case errors.Is(runErr, db.ErrNotFound):
+				// No CI run for this commit is a normal empty state.
+			default:
+				return fmt.Errorf("load repository overview CI state: %w", runErr)
 			}
 		}
 	}
 
 	readmePath := readmeCandidate(data.Tree)
 	if readmePath == "" {
-		return
+		return nil
 	}
 	data.ReadmePath = readmePath
 	size, err := git.GetBlobSize(ctx, repoPath, data.CurrentRef, readmePath)
 	if err != nil {
-		return
+		return fmt.Errorf("read README size: %w", err)
 	}
 	if size > maxReadmeRenderBytes {
 		data.ReadmeTooBig = true
-		return
+		return nil
 	}
 	content, err := git.GetBlob(ctx, repoPath, data.CurrentRef, readmePath)
-	if err != nil || !isTextBlob(content) {
-		return
+	if err != nil {
+		return fmt.Errorf("read README: %w", err)
+	}
+	if !isTextBlob(content) {
+		return nil
 	}
 	data.ReadmeHTML = readmemarkdown.Render(string(content), readmemarkdown.Options{
 		Owner:      data.Owner.Username,
@@ -189,6 +219,7 @@ func (app *App) loadRepoRootOverview(ctx context.Context, repoPath string, data 
 		Ref:        data.CurrentRef,
 		ReadmePath: readmePath,
 	})
+	return nil
 }
 
 // HandleRepoTreeGET renders the repository's file tree view.
@@ -206,7 +237,12 @@ func (app *App) HandleRepoTreeGET(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 1. Handle empty repository case.
-	if git.IsEmpty(ctx, repoPath) {
+	isEmpty, err := git.IsEmpty(ctx, repoPath)
+	if err != nil {
+		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Repository data is temporarily unavailable", err))
+		return
+	}
+	if isEmpty {
 		data.IsEmpty = true
 		app.renderPage(w, r, "repo_view.html", PageData{
 			Title: repo.Name,
@@ -216,12 +252,11 @@ func (app *App) HandleRepoTreeGET(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. Resolve the reference (branch, tag, commit hash, or fallback).
+	// 2. Resolve the requested revision exactly; missing/broken HEAD is not substituted.
 	refParam := requestRef(r)
 	ref, err := git.ResolveRef(ctx, repoPath, refParam)
 	if err != nil {
-		slog.Error("Failed to resolve ref for tree", "repoPath", repoPath, "refParam", refParam, "error", err)
-		app.renderError(w, r, PageData{User: GetUser(r)}, "Invalid reference", http.StatusBadRequest)
+		app.respondWebError(w, r, repositoryGitError(err, "Path not found"))
 		return
 	}
 
@@ -232,27 +267,28 @@ func (app *App) HandleRepoTreeGET(w http.ResponseWriter, r *http.Request) {
 	if len(data.Breadcrumbs) > 1 {
 		data.ParentPath = data.Breadcrumbs[len(data.Breadcrumbs)-2].Path
 	}
-	data.ResolvedCommit, _ = git.ResolveRevisionCommitHash(ctx, repoPath, ref)
-	loadRefsIntoData(ctx, repoPath, &data)
+	data.ResolvedCommit, err = git.ResolveRevisionCommitHash(ctx, repoPath, ref)
+	if err != nil {
+		app.respondWebError(w, r, repositoryGitError(err, "Revision not found"))
+		return
+	}
+	if err := loadRefsIntoData(ctx, repoPath, &data); err != nil {
+		app.respondWebError(w, r, repositoryGitError(err, "Revision not found"))
+		return
+	}
 	data.CurrentRefKind = classifyRepoRef(data.CurrentRef, data.Branches, data.Tags)
 
 	// 4. Fetch tree.
 	tree, err := git.GetTree(ctx, repoPath, ref, data.CurrentPath)
 	if err != nil {
-		if errors.Is(err, git.ErrRepoEmpty) {
-			data.IsEmpty = true
-			app.renderPage(w, r, "repo_view.html", PageData{
-				Title: repo.Name,
-				User:  GetUser(r),
-				Data:  data,
-			})
-			return
-		}
-		app.renderError(w, r, PageData{User: GetUser(r)}, "Failed to read repository tree", http.StatusInternalServerError)
+		app.respondWebError(w, r, repositoryGitError(err, "Path not found"))
 		return
 	}
 	data.Tree = tree
-	app.loadRepoRootOverview(ctx, repoPath, &data)
+	if err := app.loadRepoRootOverview(ctx, repoPath, &data); err != nil {
+		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Repository data is temporarily unavailable", err))
+		return
+	}
 
 	app.renderPage(w, r, "repo_view.html", PageData{
 		Title:   repo.Name,
@@ -278,45 +314,41 @@ func (app *App) HandleRepoBlobGET(w http.ResponseWriter, r *http.Request) {
 		CurrentPath: path,
 	}
 
-	if git.IsEmpty(ctx, repoPath) {
-		app.renderError(w, r, PageData{User: GetUser(r)}, "Repository is empty", http.StatusNotFound)
+	isEmpty, err := git.IsEmpty(ctx, repoPath)
+	if err != nil {
+		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Repository data is temporarily unavailable", err))
+		return
+	}
+	if isEmpty {
+		app.respondWebError(w, r, apperr.New(apperr.KindNotFound, "Repository is empty"))
 		return
 	}
 
 	ref, err := git.ResolveRef(ctx, repoPath, refParam)
 	if err != nil {
-		if errors.Is(err, git.ErrRepoEmpty) {
-			app.renderError(w, r, PageData{User: GetUser(r)}, "Repository is empty", http.StatusNotFound)
-			return
-		}
-
-		slog.Error("Failed to resolve ref for blob",
-			"repoPath", repoPath,
-			"refParam", refParam,
-			"error", err,
-		)
-		app.renderError(w, r, PageData{User: GetUser(r)}, "Invalid reference", http.StatusBadRequest)
+		app.respondWebError(w, r, repositoryGitError(err, "File not found"))
 		return
 	}
 	data.CurrentRef = ref
-	data.ResolvedCommit, _ = git.ResolveRevisionCommitHash(ctx, repoPath, ref)
+	data.ResolvedCommit, err = git.ResolveRevisionCommitHash(ctx, repoPath, ref)
+	if err != nil {
+		app.respondWebError(w, r, repositoryGitError(err, "Revision not found"))
+		return
+	}
 	data.Breadcrumbs = repoBreadcrumbs(path)
 	language := detectSourceLanguage(path)
 	data.BlobLanguage = language.Label
 	data.BlobLanguageID = language.ID
 
-	loadRefsIntoData(ctx, repoPath, &data)
+	if err := loadRefsIntoData(ctx, repoPath, &data); err != nil {
+		app.respondWebError(w, r, repositoryGitError(err, "Revision not found"))
+		return
+	}
 	data.CurrentRefKind = classifyRepoRef(data.CurrentRef, data.Branches, data.Tags)
 
 	size, err := git.GetBlobSize(ctx, repoPath, ref, path)
 	if err != nil {
-		slog.Error("Failed to get blob size",
-			"repoPath", repoPath,
-			"ref", ref,
-			"path", path,
-			"error", err,
-		)
-		app.renderError(w, r, PageData{User: GetUser(r)}, "File not found", http.StatusNotFound)
+		app.respondWebError(w, r, repositoryGitError(err, "File not found"))
 		return
 	}
 	data.BlobSize = size
@@ -327,18 +359,7 @@ func (app *App) HandleRepoBlobGET(w http.ResponseWriter, r *http.Request) {
 	} else {
 		content, err := git.GetBlob(ctx, repoPath, ref, path)
 		if err != nil {
-			if errors.Is(err, git.ErrRepoEmpty) {
-				app.renderError(w, r, PageData{User: GetUser(r)}, "Repository is empty", http.StatusNotFound)
-				return
-			}
-
-			slog.Error("Failed to read blob content",
-				"repoPath", repoPath,
-				"ref", ref,
-				"path", path,
-				"error", err,
-			)
-			app.renderError(w, r, PageData{User: GetUser(r)}, "Failed to read file", http.StatusInternalServerError)
+			app.respondWebError(w, r, repositoryGitError(err, "File not found"))
 			return
 		}
 		data.BlobContent = string(content)
@@ -374,9 +395,17 @@ func (app *App) HandleRepoCommitsGET(w http.ResponseWriter, r *http.Request) {
 		Repository: repo,
 	}
 
-	if git.IsEmpty(ctx, repoPath) {
+	isEmpty, err := git.IsEmpty(ctx, repoPath)
+	if err != nil {
+		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Repository data is temporarily unavailable", err))
+		return
+	}
+	if isEmpty {
 		data.IsEmpty = true
-		loadRefsIntoData(ctx, repoPath, &data)
+		if err := loadRefsIntoData(ctx, repoPath, &data); err != nil {
+			app.respondWebError(w, r, repositoryGitError(err, "Revision not found"))
+			return
+		}
 		app.renderPage(w, r, "repo_commits.html", PageData{
 			Title: repo.Name + " Commits",
 			User:  GetUser(r),
@@ -388,45 +417,28 @@ func (app *App) HandleRepoCommitsGET(w http.ResponseWriter, r *http.Request) {
 	refParam := requestRef(r)
 	ref, err := git.ResolveRef(ctx, repoPath, refParam)
 	if err != nil {
-		if errors.Is(err, git.ErrRepoEmpty) {
-			data.IsEmpty = true
-			app.renderPage(w, r, "repo_commits.html", PageData{
-				Title: repo.Name + " Commits",
-				User:  GetUser(r),
-				Data:  data,
-			})
-			return
-		}
-
-		slog.Error("Failed to resolve ref for commits",
-			"repoPath", repoPath,
-			"refParam", refParam,
-			"error", err,
-		)
-		app.renderError(w, r, PageData{User: GetUser(r)}, "Invalid reference", http.StatusBadRequest)
+		app.respondWebError(w, r, repositoryGitError(err, "Revision not found"))
 		return
 	}
 	data.CurrentRef = ref
-	data.ResolvedCommit, _ = git.ResolveRevisionCommitHash(ctx, repoPath, ref)
+	data.ResolvedCommit, err = git.ResolveRevisionCommitHash(ctx, repoPath, ref)
+	if err != nil {
+		app.respondWebError(w, r, repositoryGitError(err, "Revision not found"))
+		return
+	}
 	data.CanViewCI = app.canViewCI(ctx, GetUser(r), repo)
 	data.CanControlCI = app.canControlCI(ctx, GetUser(r), repo)
 
-	loadRefsIntoData(ctx, repoPath, &data)
+	if err := loadRefsIntoData(ctx, repoPath, &data); err != nil {
+		app.respondWebError(w, r, repositoryGitError(err, "Revision not found"))
+		return
+	}
 	data.CurrentRefKind = classifyRepoRef(data.CurrentRef, data.Branches, data.Tags)
 
 	commits, err := git.GetCommits(ctx, repoPath, ref, 0, 50)
 	if err != nil {
-		if errors.Is(err, git.ErrRepoEmpty) {
-			data.IsEmpty = true
-		} else {
-			slog.Error("Failed to fetch commits",
-				"repoPath", repoPath,
-				"ref", ref,
-				"error", err,
-			)
-			app.renderError(w, r, PageData{User: GetUser(r)}, "Failed to fetch commits", http.StatusInternalServerError)
-			return
-		}
+		app.respondWebError(w, r, repositoryGitError(err, "Revision not found"))
+		return
 	} else {
 		data.Commits = commits
 		latestRuns := map[string]models.CIRun{}
@@ -435,9 +447,12 @@ func (app *App) HandleRepoCommitsGET(w http.ResponseWriter, r *http.Request) {
 			for _, commit := range commits {
 				hashes = append(hashes, commit.Hash)
 			}
-			if runs, runErr := app.DB.GetLatestCIRunsForCommits(ctx, repo.ID, hashes); runErr == nil {
-				latestRuns = runs
+			runs, runErr := app.DB.GetLatestCIRunsForCommits(ctx, repo.ID, hashes)
+			if runErr != nil {
+				app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI data is temporarily unavailable", runErr))
+				return
 			}
+			latestRuns = runs
 		}
 		data.CommitViews = make([]CommitListItem, 0, len(commits))
 		for _, commit := range commits {
@@ -468,8 +483,13 @@ func (app *App) HandleRepoArchiveGET(w http.ResponseWriter, r *http.Request) {
 	repoPath := GetRepoPath(r)
 	ctx := r.Context()
 
-	if git.IsEmpty(ctx, repoPath) {
-		app.renderError(w, r, PageData{User: GetUser(r)}, "Repository is empty", http.StatusNotFound)
+	isEmpty, err := git.IsEmpty(ctx, repoPath)
+	if err != nil {
+		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Repository data is temporarily unavailable", err))
+		return
+	}
+	if isEmpty {
+		app.respondWebError(w, r, apperr.New(apperr.KindNotFound, "Repository is empty"))
 		return
 	}
 
@@ -485,7 +505,7 @@ func (app *App) HandleRepoArchiveGET(w http.ResponseWriter, r *http.Request) {
 		case "zip":
 			contentType = "application/zip"
 		default:
-			app.renderError(w, r, PageData{User: GetUser(r)}, "Unsupported archive format", http.StatusBadRequest)
+			app.respondWebError(w, r, apperr.New(apperr.KindInvalid, "Unsupported archive format"))
 			return
 		}
 	} else {
@@ -501,24 +521,19 @@ func (app *App) HandleRepoArchiveGET(w http.ResponseWriter, r *http.Request) {
 			format, contentType = "zip", "application/zip"
 			refPart = strings.TrimSuffix(archivePath, ".zip")
 		default:
-			app.renderError(w, r, PageData{User: GetUser(r)}, "Unsupported archive format", http.StatusBadRequest)
+			app.respondWebError(w, r, apperr.New(apperr.KindInvalid, "Unsupported archive format"))
 			return
 		}
 	}
 
 	if refPart == "" {
-		app.renderError(w, r, PageData{User: GetUser(r)}, "Missing ref in archive name", http.StatusBadRequest)
+		app.respondWebError(w, r, apperr.New(apperr.KindInvalid, "Missing ref in archive name"))
 		return
 	}
 
 	ref, err := git.ResolveRef(ctx, repoPath, refPart)
 	if err != nil {
-		slog.Error("Failed to resolve ref for archive",
-			"repoPath", repoPath,
-			"refPart", refPart,
-			"error", err,
-		)
-		app.renderError(w, r, PageData{User: GetUser(r)}, "Invalid reference", http.StatusBadRequest)
+		app.respondWebError(w, r, repositoryGitError(err, "Revision not found"))
 		return
 	}
 
@@ -530,7 +545,8 @@ func (app *App) HandleRepoArchiveGET(w http.ResponseWriter, r *http.Request) {
 
 	if err := git.StreamArchive(ctx, repoPath, ref, format, w); err != nil {
 		// Headers are already sent at this point; log and bail.
-		slog.Error("Failed to stream archive",
+		slog.Error("failed to stream repository archive",
+			"request_id", RequestID(r),
 			"repo", repo.Name,
 			"ref", ref,
 			"format", format,

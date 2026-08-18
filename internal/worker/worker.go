@@ -176,11 +176,17 @@ func processNext(claimCtx, jobParentCtx context.Context, cfg *config.Config, dat
 
 	repo, owner, err := resolveRepo(jobCtx, database, run.RepoID)
 	if err != nil {
-		slog.Error("cannot resolve repo for run", "run_id", run.ID, "attempt_id", run.AttemptID, "error", err)
-		if completeErr := completeCIRunReliably(database, run.ID, run.AttemptID, "failed", "Repository could not be resolved"); completeErr != nil && !errors.Is(completeErr, db.ErrCIRunLeaseInactive) {
-			return fmt.Errorf("record unresolved repository failure: %w", completeErr)
+		if errors.Is(err, db.ErrNotFound) {
+			slog.Warn("CI repository metadata disappeared", "run_id", run.ID, "attempt_id", run.AttemptID, "error", err)
+			if completeErr := completeCIRunReliably(database, run.ID, run.AttemptID, models.CIStatusFailed, "Repository is no longer available"); completeErr != nil && !errors.Is(completeErr, db.ErrCIRunLeaseInactive) {
+				return fmt.Errorf("record missing repository failure: %w", completeErr)
+			}
+			return nil
 		}
-		return nil
+		// A persistence outage is not evidence that the repository disappeared.
+		// Leave the claimed run for lease recovery/requeue instead of recording a
+		// false terminal result.
+		return fmt.Errorf("load CI repository metadata: %w", err)
 	}
 
 	j := &job{
@@ -193,8 +199,8 @@ func processNext(claimCtx, jobParentCtx context.Context, cfg *config.Config, dat
 
 	if err := j.execute(jobCtx); err != nil {
 		current, readErr := database.GetCIRunByID(context.Background(), run.ID)
-		if readErr == nil && current != nil && current.Status != "running" {
-			if current.Status == "cancelled" {
+		if readErr == nil && current != nil && current.Status != models.CIStatusRunning {
+			if current.Status == models.CIStatusCancelled {
 				if ackErr := acknowledgeCancelledRun(database, run.ID, run.AttemptID); ackErr != nil && !errors.Is(ackErr, db.ErrCIRunLeaseInactive) {
 					return fmt.Errorf("acknowledge cancelled CI run: %w", ackErr)
 				}
@@ -214,7 +220,7 @@ func processNext(claimCtx, jobParentCtx context.Context, cfg *config.Config, dat
 				slog.Error("CI run fatal error", "run_id", run.ID, "attempt_id", run.AttemptID, "error", err)
 			}
 		}
-		if completeErr := completeCIRunReliably(database, run.ID, run.AttemptID, "failed", "Worker failed before recording a final result"); completeErr != nil && !errors.Is(completeErr, db.ErrCIRunLeaseInactive) {
+		if completeErr := completeCIRunReliably(database, run.ID, run.AttemptID, models.CIStatusFailed, "Worker failed before recording a final result"); completeErr != nil && !errors.Is(completeErr, db.ErrCIRunLeaseInactive) {
 			return fmt.Errorf("record fallback CI failure: %w", completeErr)
 		}
 	}
@@ -227,7 +233,7 @@ func acknowledgeCancelledRun(database *db.DB, runID, attemptID string) error {
 	return database.AcknowledgeCancelledCIRun(ctx, runID, attemptID)
 }
 
-func completeCIRunReliably(database *db.DB, runID, attemptID, status, reason string) error {
+func completeCIRunReliably(database *db.DB, runID, attemptID string, status models.CIStatus, reason string) error {
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -349,19 +355,19 @@ func (j *job) execute(ctx context.Context) error {
 	j.checkout = filepath.Join(j.workspace, "src")
 	if err := j.clone(ctx); err != nil {
 		j.logRunnerFailure(ctx, err, nil)
-		return j.complete(ctx, "failed", "Repository checkout failed")
+		return j.complete(ctx, models.CIStatusFailed, "Repository checkout failed")
 	}
 
 	configPath := filepath.Join(j.checkout, ciConfigFile)
 	if _, statErr := os.Stat(configPath); os.IsNotExist(statErr) {
 		j.logf("No %s found; marking run as skipped.", ciConfigFile)
-		return j.complete(ctx, "skipped", "No .gitman-ci.yml found in this commit")
+		return j.complete(ctx, models.CIStatusSkipped, "No .gitman-ci.yml found in this commit")
 	}
 
 	ciCfg, err := parseCIConfig(configPath)
 	if err != nil {
 		j.logf("ERROR: failed to parse %s: %v", ciConfigFile, err)
-		return j.complete(ctx, "failed", "Invalid .gitman-ci.yml")
+		return j.complete(ctx, models.CIStatusFailed, "Invalid .gitman-ci.yml")
 	}
 
 	j.logf("Image  : %s", ciCfg.Image)
@@ -377,7 +383,7 @@ func (j *job) execute(ctx context.Context) error {
 	)
 	if err != nil {
 		j.logf("ERROR: CI ref policy is unavailable for this run; failing closed: %v", err)
-		return j.complete(ctx, "failed", "CI ref policy could not be resolved")
+		return j.complete(ctx, models.CIStatusFailed, "CI ref policy could not be resolved")
 	}
 	j.refPolicy = policy
 	j.logf("Ref policy : %s", j.refPolicySummary())
@@ -386,7 +392,7 @@ func (j *job) execute(ctx context.Context) error {
 	envFile, err := j.resolveEnvFile(ctx, ciCfg)
 	if err != nil {
 		j.logRunnerFailure(ctx, err, ciCfg)
-		return j.complete(ctx, "failed", ciFailureSummary(ctx, err, ciCfg))
+		return j.complete(ctx, models.CIStatusFailed, ciFailureSummary(ctx, err, ciCfg))
 	}
 	j.enableSecretMasking()
 	defer j.flushSecretMasking()
@@ -398,28 +404,28 @@ func (j *job) execute(ctx context.Context) error {
 	runnerPath := filepath.Join(j.workspace, ".gitman-runner.sh")
 	if err := writeNewFile(runnerPath, []byte(j.generateRunnerScript(ciCfg)), 0o600); err != nil {
 		j.logf("ERROR: failed to write runner script: %v", err)
-		return j.complete(ctx, "failed", "Runner setup failed")
+		return j.complete(ctx, models.CIStatusFailed, "Runner setup failed")
 	}
 
 	j.artifactsStagingDir = filepath.Join(j.workspace, "gitman-artifacts")
 	if err := os.MkdirAll(j.artifactsStagingDir, 0o700); err != nil {
 		j.logf("ERROR: failed to create artifacts staging dir: %v", err)
-		return j.complete(ctx, "failed", "Artifact staging could not be prepared")
+		return j.complete(ctx, models.CIStatusFailed, "Artifact staging could not be prepared")
 	}
 
 	dockerErr := j.runDocker(ctx, ciCfg, envFile, runnerPath)
 	j.collectArtifacts()
 
-	finalStatus := "success"
+	finalStatus := models.CIStatusSuccess
 	statusReason := ""
 	if dockerErr != nil {
-		finalStatus = "failed"
+		finalStatus = models.CIStatusFailed
 		statusReason = ciFailureSummary(ctx, dockerErr, ciCfg)
 		j.logRunnerFailure(ctx, dockerErr, ciCfg)
 	}
 
 	j.logf("")
-	j.logf("=== Run %s: %s ===", j.run.ID, strings.ToUpper(finalStatus))
+	j.logf("=== Run %s: %s ===", j.run.ID, strings.ToUpper(string(finalStatus)))
 	return j.complete(ctx, finalStatus, statusReason)
 }
 
@@ -521,7 +527,7 @@ func ciFailureSummary(ctx context.Context, err error, cfg *CIConfig) string {
 	}
 }
 
-func (j *job) complete(_ context.Context, status, reason string) error {
+func (j *job) complete(_ context.Context, status models.CIStatus, reason string) error {
 	return completeCIRunReliably(j.database, j.run.ID, j.run.AttemptID, status, reason)
 }
 
@@ -637,7 +643,7 @@ func (j *job) resolveEnvFile(ctx context.Context, cfg *CIConfig) (string, error)
 		"GITMAN_COMMIT": j.run.CommitHash,
 		"GITMAN_BRANCH": j.run.Branch,
 		"GITMAN_TAG":    j.run.Tag,
-		"GITMAN_EVENT":  j.run.Event,
+		"GITMAN_EVENT":  string(j.run.Event),
 		"GITMAN_RUN_ID": j.run.ID,
 	}
 	lines := make([]string, 0, len(baseValues)+len(cfg.Env))
@@ -1082,12 +1088,18 @@ type repoInfo struct {
 
 func resolveRepo(ctx context.Context, database *db.DB, repoID string) (*repoInfo, string, error) {
 	repo, err := database.GetRepositoryByID(ctx, repoID)
-	if err != nil || repo == nil {
-		return nil, "", fmt.Errorf("repo %s not found", repoID)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			return nil, "", fmt.Errorf("repository %s: %w", repoID, db.ErrNotFound)
+		}
+		return nil, "", fmt.Errorf("load repository %s: %w", repoID, err)
 	}
 	owner, err := database.GetUserByID(ctx, repo.OwnerID)
-	if err != nil || owner == nil {
-		return nil, "", fmt.Errorf("owner for repo %s not found", repoID)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			return nil, "", fmt.Errorf("owner for repository %s: %w", repoID, db.ErrNotFound)
+		}
+		return nil, "", fmt.Errorf("load owner for repository %s: %w", repoID, err)
 	}
 	return &repoInfo{id: repo.ID, name: repo.Name}, owner.Username, nil
 }
@@ -1529,13 +1541,8 @@ func validateWorkerConfig(cfg *config.Config) error {
 			return fmt.Errorf("%s must not be empty", name)
 		}
 	}
-	userParts := strings.Split(strings.TrimSpace(cfg.CIContainerUser), ":")
-	if len(userParts) != 2 {
-		return fmt.Errorf("GITMAN_CI_CONTAINER_USER must be a numeric non-root UID:GID")
-	}
-	uid, uidErr := strconv.Atoi(userParts[0])
-	gid, gidErr := strconv.Atoi(userParts[1])
-	if uidErr != nil || gidErr != nil || uid <= 0 || gid <= 0 {
+	uid, gid, err := config.ParseCIContainerUser(cfg.CIContainerUser)
+	if err != nil || uid == 0 || gid == 0 {
 		return fmt.Errorf("GITMAN_CI_CONTAINER_USER must be a numeric non-root UID:GID")
 	}
 	workerPrefix := strings.TrimSpace(cfg.CIWorkerPathPrefix)

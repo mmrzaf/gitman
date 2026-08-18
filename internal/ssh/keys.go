@@ -8,25 +8,23 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
+	"syscall"
+	"time"
 
 	"github.com/mmrzaf/gitman/internal/config"
 	"github.com/mmrzaf/gitman/internal/db"
 	crypto_ssh "golang.org/x/crypto/ssh"
 )
 
-var authorizedKeysMu sync.Mutex
+const authorizedKeysLockPollInterval = 25 * time.Millisecond
 
 // SyncAuthorizedKeys atomically regenerates the authorized_keys file from the
-// database. Readers either observe the old complete file or the new complete
-// file; they never observe a truncated intermediate file.
+// database. A persistent flock serializes the complete DB-snapshot-to-publish
+// operation across Gitman processes, so a slower writer cannot publish an older
+// key set after a newer writer has already completed.
 func SyncAuthorizedKeys(ctx context.Context, database *db.DB, cfg *config.Config) (err error) {
-	authorizedKeysMu.Lock()
-	defer authorizedKeysMu.Unlock()
-
-	keys, err := database.GetAllSSHKeys(ctx)
-	if err != nil {
-		return err
+	if ctx == nil || database == nil || cfg == nil || strings.TrimSpace(cfg.AuthKeysPath) == "" {
+		return fmt.Errorf("authorized_keys synchronization is not configured")
 	}
 
 	dir := filepath.Dir(cfg.AuthKeysPath)
@@ -37,6 +35,21 @@ func SyncAuthorizedKeys(ctx context.Context, database *db.DB, cfg *config.Config
 		if err := os.Chmod(dir, 0o700); err != nil {
 			return err
 		}
+	}
+
+	lock, err := acquireAuthorizedKeysLock(ctx, cfg.AuthKeysPath+".lock")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		err = errors.Join(err, releaseAuthorizedKeysLock(lock))
+	}()
+
+	// Query only after owning the publication lock. If another Gitman process
+	// committed a key mutation while we were waiting, this snapshot includes it.
+	keys, err := database.GetAllSSHKeys(ctx)
+	if err != nil {
+		return err
 	}
 
 	tmp, err := os.CreateTemp(dir, ".authorized_keys-*")
@@ -102,4 +115,46 @@ func SyncAuthorizedKeys(ctx context.Context, database *db.DB, cfg *config.Config
 		}
 	}()
 	return dirFile.Sync()
+}
+
+func acquireAuthorizedKeysLock(ctx context.Context, lockPath string) (*os.File, error) {
+	if info, err := os.Lstat(lockPath); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("authorized_keys lock path is not a regular file: %s", lockPath)
+		}
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
+
+	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := file.Chmod(0o600); err != nil {
+		return nil, errors.Join(err, file.Close())
+	}
+
+	ticker := time.NewTicker(authorizedKeysLockPollInterval)
+	defer ticker.Stop()
+	for {
+		err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			return file, nil
+		}
+		if err != syscall.EWOULDBLOCK && err != syscall.EAGAIN {
+			return nil, errors.Join(fmt.Errorf("lock authorized_keys: %w", err), file.Close())
+		}
+		select {
+		case <-ctx.Done():
+			return nil, errors.Join(fmt.Errorf("lock authorized_keys: %w", ctx.Err()), file.Close())
+		case <-ticker.C:
+		}
+	}
+}
+
+func releaseAuthorizedKeysLock(file *os.File) error {
+	if file == nil {
+		return nil
+	}
+	return errors.Join(syscall.Flock(int(file.Fd()), syscall.LOCK_UN), file.Close())
 }

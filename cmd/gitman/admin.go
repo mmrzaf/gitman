@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/mmrzaf/gitman/internal/admin"
 	"github.com/mmrzaf/gitman/internal/config"
@@ -17,20 +19,23 @@ func init() {
 }
 
 func runAdmin(cfg *config.Config, database *db.DB, args []string) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	if len(args) == 0 {
 		return fmt.Errorf("usage: gitman admin <users|repos>")
 	}
 	switch args[0] {
 	case "users":
-		return runAdminUsers(cfg, database, args[1:])
+		return runAdminUsers(ctx, cfg, database, args[1:])
 	case "repos":
-		return runAdminRepos(cfg, database, args[1:])
+		return runAdminRepos(ctx, cfg, database, args[1:])
 	default:
 		return fmt.Errorf("unknown admin entity: %s", args[0])
 	}
 }
 
-func runAdminUsers(cfg *config.Config, database *db.DB, args []string) error {
+func runAdminUsers(ctx context.Context, cfg *config.Config, database *db.DB, args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: gitman admin users <create|reset-password|delete>")
 	}
@@ -44,7 +49,11 @@ func runAdminUsers(cfg *config.Config, database *db.DB, args []string) error {
 		if err != nil {
 			return err
 		}
-		return admin.CreateUser(database, args[1], password)
+		if err := admin.CreateUser(ctx, cfg, database, args[1], password); err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(os.Stdout, "User %q created successfully.\n", args[1])
+		return err
 	case "reset-password":
 		if len(args) != 2 {
 			return fmt.Errorf("usage: printf 'password\\n' | gitman admin users reset-password <username>")
@@ -53,12 +62,20 @@ func runAdminUsers(cfg *config.Config, database *db.DB, args []string) error {
 		if err != nil {
 			return err
 		}
-		return admin.ResetPassword(database, args[1], password)
+		if err := admin.ResetPassword(ctx, database, args[1], password); err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(os.Stdout, "Password for %q reset successfully.\n", args[1])
+		return err
 	case "delete":
 		if len(args) != 2 {
 			return fmt.Errorf("usage: gitman admin users delete <username>")
 		}
-		return admin.DeleteUser(cfg, database, args[1])
+		if err := admin.DeleteUser(ctx, cfg, database, args[1]); err != nil {
+			return err
+		}
+		_, err := fmt.Fprintf(os.Stdout, "User %q deleted.\n", args[1])
+		return err
 	default:
 		return fmt.Errorf("unknown users action: %s", args[0])
 	}
@@ -86,7 +103,7 @@ func readPasswordFromStdin() (string, error) {
 	return password, nil
 }
 
-func runAdminRepos(cfg *config.Config, database *db.DB, args []string) error {
+func runAdminRepos(ctx context.Context, cfg *config.Config, database *db.DB, args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: gitman admin repos <backup|backup-all|configure-all>")
 	}
@@ -100,12 +117,12 @@ func runAdminRepos(cfg *config.Config, database *db.DB, args []string) error {
 		if len(args) != 2 {
 			return fmt.Errorf("usage: gitman admin repos backup-all <destination>")
 		}
-		return admin.BackupAll(context.Background(), database, cfg, args[1])
+		return admin.BackupAll(ctx, database, cfg, args[1])
 	case "configure-all":
 		if len(args) != 1 {
 			return fmt.Errorf("usage: gitman admin repos configure-all")
 		}
-		return admin.ConfigureAllRepos(context.Background(), database, cfg)
+		return admin.ConfigureAllRepos(ctx, database, cfg)
 	default:
 		return fmt.Errorf("unknown repos action: %s", args[0])
 	}

@@ -19,7 +19,7 @@ func TestGetCIRunsByRepoFiltered(t *testing.T) {
 	}
 	mainID, _ := database.CreateCIRun(ctx, repoID, "aaaaaaa", "main", "", "manual")
 	_, _ = database.CreateCIRun(ctx, repoID, "bbbbbbb", "develop", "", "manual")
-	if _, err := database.ExecContext(ctx, "UPDATE ci_runs SET status = 'failed' WHERE id = ?", mainID); err != nil {
+	if _, err := database.sql.ExecContext(ctx, "UPDATE ci_runs SET status = 'failed' WHERE id = ?", mainID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -42,7 +42,7 @@ func TestGetCIRunRetryChainIncludesSiblingRetries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.ExecContext(ctx, "UPDATE ci_runs SET status = 'failed' WHERE id = ?", rootID); err != nil {
+	if _, err := database.sql.ExecContext(ctx, "UPDATE ci_runs SET status = 'failed' WHERE id = ?", rootID); err != nil {
 		t.Fatal(err)
 	}
 	firstRetry, err := database.RetryCIRun(ctx, repoID, rootID)

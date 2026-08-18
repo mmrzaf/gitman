@@ -47,7 +47,7 @@ func TestExpiredSession(t *testing.T) {
 
 	user, _ := db.CreateUser(ctx, "exp", "Pass1")
 	id := "expired-token"
-	_, err := db.ExecContext(ctx,
+	_, err := db.sql.ExecContext(ctx,
 		"INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)",
 		id, user.ID, time.Now().Add(-1*time.Hour).Unix())
 	if err != nil {

@@ -37,7 +37,14 @@ func TestHandleCIRunLogGETSupportsIncrementalOffsets(t *testing.T) {
 	if err := os.WriteFile(logPath, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := app.DB.ExecContext(ctx, "UPDATE ci_runs SET status = 'running', log_file = ? WHERE id = ?", logPath, runID); err != nil {
+	claimed, err := app.DB.ClaimNextPendingRun(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed == nil || claimed.ID != runID {
+		t.Fatalf("claimed run = %+v, want %s", claimed, runID)
+	}
+	if err := app.DB.UpdateCIRunLogFile(ctx, runID, claimed.AttemptID, logPath); err != nil {
 		t.Fatal(err)
 	}
 
@@ -102,5 +109,14 @@ func TestCIRunNavigationRefPrefersImmutableCommit(t *testing.T) {
 	}
 	if got := ciRunNavigationRef(&models.CIRun{Tag: "v1.0.0"}); got != "v1.0.0" {
 		t.Fatalf("tag fallback = %q", got)
+	}
+}
+
+func TestCILogUnavailableTextDistinguishesPreparingFromTerminalRun(t *testing.T) {
+	if got := ciLogUnavailableText(&models.CIRun{Status: models.CIStatusRunning}); got != "log not yet available — worker is preparing the workspace" {
+		t.Fatalf("running message = %q", got)
+	}
+	if got := ciLogUnavailableText(&models.CIRun{Status: models.CIStatusFailed}); got != "no build log is available for this run" {
+		t.Fatalf("terminal message = %q", got)
 	}
 }

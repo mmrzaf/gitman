@@ -14,6 +14,7 @@ import (
 	"time"
 
 	cipolicy "github.com/mmrzaf/gitman/internal/ci"
+	"github.com/mmrzaf/gitman/internal/db"
 	"github.com/mmrzaf/gitman/internal/git"
 	"github.com/mmrzaf/gitman/internal/models"
 	"golang.org/x/sys/unix"
@@ -62,8 +63,12 @@ func (app *App) drainCITriggerQueues(ctx context.Context) {
 			return
 		}
 		owner, err := app.DB.GetUserByID(ctx, repos[i].OwnerID)
-		if err != nil || owner == nil {
-			slog.Warn("failed to resolve CI queue repository owner", "repo", repos[i].ID, "error", err)
+		if err != nil {
+			if errors.Is(err, db.ErrNotFound) {
+				slog.Error("CI queue repository has no owner", "repo", repos[i].ID, "owner_id", repos[i].OwnerID)
+			} else {
+				slog.Warn("failed to load CI queue repository owner", "repo", repos[i].ID, "owner_id", repos[i].OwnerID, "error", err)
+			}
 			continue
 		}
 		app.drainRepoCITriggerQueue(ctx, owner, &repos[i])
@@ -73,6 +78,7 @@ func (app *App) drainCITriggerQueues(ctx context.Context) {
 func (app *App) drainRepoCITriggerQueue(ctx context.Context, owner *models.User, repo *models.Repository) {
 	repoPath, err := git.SecureRepoPath(app.Config.ReposPath, owner.Username, repo.Name)
 	if err != nil {
+		slog.Error("failed to resolve repository path for CI trigger queue", "repo", repo.ID, "error", err)
 		return
 	}
 	queueDir := filepath.Join(repoPath, "hooks", ciHookQueueDirName)
@@ -363,13 +369,13 @@ func tryLockCITriggerQueueFile(path string) (unlock func(), acquired bool, err e
 func (app *App) processQueuedCITrigger(ctx context.Context, owner *models.User, repo *models.Repository, eventName, eventPath string) (bool, error) {
 	event, err := readQueuedCITrigger(eventPath)
 	if err != nil {
-		return false, fmt.Errorf("%w: %v", errMalformedQueuedCITrigger, err)
+		return false, errors.Join(errMalformedQueuedCITrigger, err)
 	}
 	if isZeroGitObjectID(event.newCommit) {
 		return true, nil
 	}
 
-	req := triggerRequest{CommitHash: event.newCommit, Event: "push"}
+	req := triggerRequest{CommitHash: event.newCommit, Event: models.CIEventPush}
 	switch {
 	case strings.HasPrefix(event.ref, "refs/heads/"):
 		req.Branch = strings.TrimPrefix(event.ref, "refs/heads/")
@@ -411,7 +417,7 @@ func normalizeQueuedCITrigger(ctx context.Context, reposPath string, owner *mode
 	req.CommitHash = strings.TrimSpace(req.CommitHash)
 	req.Branch = strings.TrimSpace(req.Branch)
 	req.Tag = strings.TrimSpace(req.Tag)
-	req.Event = "push"
+	req.Event = models.CIEventPush
 	if req.Branch == "" && req.Tag == "" {
 		return req, fmt.Errorf("queued push requires a branch or tag")
 	}
@@ -422,7 +428,7 @@ func normalizeQueuedCITrigger(ctx context.Context, reposPath string, owner *mode
 	if refName == "" {
 		refName = req.Tag
 	}
-	if err := git.ValidateRefName(refName); err != nil {
+	if err := git.ValidateRefNameContext(ctx, refName); err != nil {
 		return req, fmt.Errorf("invalid queued ref: %w", err)
 	}
 	repoPath, err := git.SecureRepoPath(reposPath, owner.Username, repo.Name)

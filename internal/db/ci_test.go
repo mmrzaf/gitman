@@ -82,7 +82,7 @@ func TestCreateAndClaimCIRun(t *testing.T) {
 
 	// Verify the update happened with a raw query
 	var status string
-	err = db.QueryRowContext(ctx, "SELECT status FROM ci_runs WHERE id = ?", runID).Scan(&status)
+	err = db.sql.QueryRowContext(ctx, "SELECT status FROM ci_runs WHERE id = ?", runID).Scan(&status)
 	if err != nil {
 		t.Fatalf("failed to query completed run: %v", err)
 	}
@@ -305,7 +305,7 @@ func TestRequeueStaleCIRuns(t *testing.T) {
 		t.Fatal(err)
 	}
 	oldAttempt := claimed.AttemptID
-	if _, err := database.ExecContext(ctx, "UPDATE ci_runs SET heartbeat_at = ? WHERE id = ?", time.Now().Add(-10*time.Minute).Unix(), runID); err != nil {
+	if _, err := database.sql.ExecContext(ctx, "UPDATE ci_runs SET heartbeat_at = ? WHERE id = ?", time.Now().Add(-10*time.Minute).Unix(), runID); err != nil {
 		t.Fatal(err)
 	}
 	count, err := database.RequeueStaleCIRuns(ctx, time.Now().Add(-2*time.Minute))
@@ -528,7 +528,7 @@ func TestReleaseStaleCancelledCIRuns(t *testing.T) {
 	if cancelled, err := database.CancelCIRun(ctx, repoID, runID, "test"); err != nil || !cancelled {
 		t.Fatalf("cancelled=%v err=%v", cancelled, err)
 	}
-	if _, err := database.ExecContext(ctx, "UPDATE ci_runs SET completed_at = ? WHERE id = ?", time.Now().Add(-10*time.Minute).Unix(), runID); err != nil {
+	if _, err := database.sql.ExecContext(ctx, "UPDATE ci_runs SET completed_at = ? WHERE id = ?", time.Now().Add(-10*time.Minute).Unix(), runID); err != nil {
 		t.Fatal(err)
 	}
 	released, err := database.ReleaseStaleCancelledCIRuns(ctx, time.Now().Add(-2*time.Minute))

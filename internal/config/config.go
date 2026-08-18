@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"log"
 	"log/slog"
 	"math"
 	"net/url"
@@ -54,21 +53,24 @@ type Config struct {
 
 var dockerMemoryLimitRegex = regexp.MustCompile(`^[1-9][0-9]*(?:[bkmgBKMG])?$`)
 
-func LoadConfig() *Config {
+func LoadConfig() (*Config, error) {
+	if err := ValidateEnvironment(); err != nil {
+		return nil, err
+	}
 	exePath, err := os.Executable()
 	if err != nil {
-		log.Fatalf("Failed to detect executable path: %v", err)
+		return nil, fmt.Errorf("detect executable path: %w", err)
 	}
 	exePath, err = filepath.Abs(exePath)
 	if err != nil {
-		log.Fatalf("Failed to resolve absolute executable path: %v", err)
+		return nil, fmt.Errorf("resolve executable path: %w", err)
 	}
 
 	port := getEnv("GITMAN_PORT", "8080")
 	serverHost := getEnv("GITMAN_SERVER_HOST", "localhost")
 	publicURL := strings.TrimRight(getEnv("GITMAN_PUBLIC_URL", "http://"+serverHost+":"+port), "/")
 
-	return &Config{
+	cfg := &Config{
 		Port:               port,
 		DBPath:             getEnv("GITMAN_DB", ".data/db/gitman.sqlite"),
 		ReposPath:          getEnv("GITMAN_REPOS", ".data/repos"),
@@ -99,12 +101,16 @@ func LoadConfig() *Config {
 		CIWorkspaceRoot:     getEnv("GITMAN_CI_WORKSPACE_ROOT", ".data/ci/workspaces"),
 		CIWorkspaceMaxBytes: getEnvInt64("GITMAN_CI_WORKSPACE_MAX_BYTES", 1024*1024*1024),
 		CICacheMaxBytes:     getEnvInt64("GITMAN_CI_CACHE_MAX_BYTES", 1024*1024*1024),
-		CIContainerUser:     getEnvNonEmpty("GITMAN_CI_CONTAINER_USER", defaultCIContainerUser()),
+		CIContainerUser:     getEnv("GITMAN_CI_CONTAINER_USER", defaultCIContainerUser()),
 		CIAllowDockerSocket: getEnvBool("GITMAN_CI_ALLOW_DOCKER_SOCKET", false),
 		CIDockerSocketPath:  getEnv("GITMAN_CI_DOCKER_SOCKET_PATH", "/var/run/docker.sock"),
 		CIWorkerPathPrefix:  cleanOptionalPathPrefix(getEnv("GITMAN_CI_WORKER_PATH_PREFIX", "")),
 		CIHostPathPrefix:    cleanOptionalPathPrefix(getEnv("GITMAN_CI_HOST_PATH_PREFIX", "")),
 	}
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	return cfg, nil
 }
 
 // ValidateEnvironment rejects explicitly configured values that would
@@ -228,12 +234,32 @@ func (c *Config) Validate() error {
 	if strings.ContainsAny(c.CINetwork, "\x00\r\n\t ") {
 		return fmt.Errorf("GITMAN_CI_NETWORK cannot contain whitespace or control characters")
 	}
+	if _, _, err := ParseCIContainerUser(c.CIContainerUser); err != nil {
+		return err
+	}
 	switch c.LogLevel {
 	case "debug", "info", "warn", "error":
 	default:
 		return fmt.Errorf("GITMAN_LOG_LEVEL must be debug, info, warn, or error")
 	}
 	return nil
+}
+
+// ParseCIContainerUser validates and parses the configured container identity.
+// Numeric syntax is a configuration invariant shared by every command. The
+// worker separately requires both IDs to be non-root because web/admin may be
+// run by root even when the worker runs elsewhere with an explicit identity.
+func ParseCIContainerUser(value string) (uid, gid int, err error) {
+	parts := strings.Split(strings.TrimSpace(value), ":")
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("GITMAN_CI_CONTAINER_USER must be a numeric UID:GID")
+	}
+	uid, uidErr := strconv.Atoi(parts[0])
+	gid, gidErr := strconv.Atoi(parts[1])
+	if uidErr != nil || gidErr != nil || uid < 0 || gid < 0 {
+		return 0, 0, fmt.Errorf("GITMAN_CI_CONTAINER_USER must be a numeric UID:GID")
+	}
+	return uid, gid, nil
 }
 
 func defaultCIContainerUser() string {
@@ -250,13 +276,6 @@ func cleanOptionalPathPrefix(value string) string {
 
 func getEnv(key, fallback string) string {
 	if value, exists := os.LookupEnv(key); exists {
-		return value
-	}
-	return fallback
-}
-
-func getEnvNonEmpty(key, fallback string) string {
-	if value, exists := os.LookupEnv(key); exists && strings.TrimSpace(value) != "" {
 		return value
 	}
 	return fallback
@@ -283,10 +302,9 @@ func getEnvInt64(key string, fallback int64) int64 {
 func getEnvRequiredPositiveInt64(key string, fallback int64) int64 {
 	if val, ok := os.LookupEnv(key); ok {
 		n, err := strconv.ParseInt(val, 10, 64)
-		if err != nil || n <= 0 {
-			log.Fatalf("%s must be a positive integer", key)
+		if err == nil && n > 0 {
+			return n
 		}
-		return n
 	}
 	return fallback
 }

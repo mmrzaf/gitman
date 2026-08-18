@@ -17,7 +17,7 @@
     <form method="POST" action="/repos" class="form-stack">
       <label class="field">
         <span>Name</span>
-        <input id="repo-name" type="text" name="name" required pattern="^[a-zA-Z0-9_-]+$" title="Only letters, numbers, dashes, and underscores." />
+        <input id="repo-name" type="text" name="name" required maxlength="100" pattern="^[a-zA-Z0-9_-]+$" title="Only letters, numbers, dashes, and underscores." />
       </label>
       <label class="field">
         <span>Description</span>

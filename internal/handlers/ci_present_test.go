@@ -1,12 +1,14 @@
 package handlers
 
 import (
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/mmrzaf/gitman/internal/apperr"
 	cipipeline "github.com/mmrzaf/gitman/internal/ci"
 	"github.com/mmrzaf/gitman/internal/models"
 )
@@ -66,7 +68,10 @@ func TestArtifactTreePreservesNestedFiles(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "coverage", "assets", "data.json"), []byte(`{"ok":true}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	files := listArtifactFiles(root)
+	files, err := listArtifactFiles(root)
+	if err != nil {
+		t.Fatalf("list artifact files: %v", err)
+	}
 	if len(files) != 2 {
 		t.Fatalf("files = %d, want 2: %+v", len(files), files)
 	}
@@ -90,5 +95,45 @@ func TestValidUTF8SampleAllowsOnlyTrailingPartialRune(t *testing.T) {
 	invalid := append([]byte("text "), 0xff)
 	if validUTF8Sample(invalid, true) {
 		t.Fatal("invalid UTF-8 byte must not be accepted as a truncation boundary")
+	}
+}
+
+func TestListArtifactFilesTreatsMissingRootAsEmpty(t *testing.T) {
+	files, err := listArtifactFiles(filepath.Join(t.TempDir(), "missing"))
+	if err != nil {
+		t.Fatalf("missing artifact root: %v", err)
+	}
+	if len(files) != 0 {
+		t.Fatalf("files = %+v, want empty", files)
+	}
+}
+
+func TestListArtifactFilesRejectsNonDirectoryRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "artifacts")
+	if err := os.WriteFile(root, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := listArtifactFiles(root); err == nil {
+		t.Fatal("expected non-directory artifact root to fail")
+	}
+}
+
+func TestReadCILogDistinguishesMissingFromUnreadableShape(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing.log")
+	content, offset, err := readCILog(missing)
+	if err != nil || content != "" || offset != 0 {
+		t.Fatalf("missing log = (%q, %d, %v), want empty normal state", content, offset, err)
+	}
+
+	dir := t.TempDir()
+	if _, _, err := readCILog(dir); err == nil {
+		t.Fatal("directory used as log path must be reported as storage failure")
+	}
+}
+
+func TestCITriggerDecodeErrorPreservesTooLargeKind(t *testing.T) {
+	err := ciTriggerDecodeError(&http.MaxBytesError{Limit: 64 * 1024})
+	if got := apperr.KindOf(err); got != apperr.KindTooLarge {
+		t.Fatalf("KindOf(ciTriggerDecodeError) = %v; want %v", got, apperr.KindTooLarge)
 	}
 }

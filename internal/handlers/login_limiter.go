@@ -109,7 +109,14 @@ func (l *loginLimiter) dropOldestLocked() {
 }
 
 func normalizeLoginUsername(username string) string {
-	return strings.ToLower(strings.TrimSpace(username))
+	username = strings.ToLower(strings.TrimSpace(username))
+	// Registered usernames are at most 32 ASCII characters. Bound untrusted
+	// login input before using it as an in-memory limiter key so an oversized
+	// credential cannot turn the limiter into an oversized allocation store.
+	if len(username) > 64 {
+		username = username[:64]
+	}
+	return username
 }
 
 func (app *App) clientIP(r *http.Request) string {
@@ -134,19 +141,31 @@ func (app *App) clientIP(r *http.Request) string {
 	return "unknown"
 }
 
-func firstForwardedFor(value string) string {
-	for _, part := range strings.Split(value, ";") {
-		part = strings.TrimSpace(part)
-		if !strings.HasPrefix(strings.ToLower(part), "for=") {
+func forwardedParam(value, name string) string {
+	first, _, _ := strings.Cut(value, ",")
+	for _, part := range strings.Split(first, ";") {
+		key, raw, ok := strings.Cut(part, "=")
+		if !ok || !strings.EqualFold(strings.TrimSpace(key), name) {
 			continue
 		}
-		raw := strings.Trim(strings.TrimSpace(part[4:]), `"`)
-		if strings.HasPrefix(raw, "[") {
-			if host, _, err := net.SplitHostPort(raw); err == nil {
-				raw = strings.Trim(host, "[]")
-			}
-		}
-		return parseIPOnly(raw)
+		return strings.Trim(strings.TrimSpace(raw), `"`)
+	}
+	return ""
+}
+
+func firstForwardedFor(value string) string {
+	raw := forwardedParam(value, "for")
+	if raw == "" {
+		return ""
+	}
+	if ip := parseIPOnly(raw); ip != "" {
+		return ip
+	}
+	if host, _, err := net.SplitHostPort(raw); err == nil {
+		return parseIPOnly(strings.Trim(host, "[]"))
+	}
+	if strings.HasPrefix(raw, "[") && strings.HasSuffix(raw, "]") {
+		return parseIPOnly(strings.Trim(raw, "[]"))
 	}
 	return ""
 }

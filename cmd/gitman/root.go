@@ -11,8 +11,9 @@ import (
 )
 
 type Command struct {
-	Name string
-	Run  func(*config.Config, *db.DB, []string) error
+	Name     string
+	NeedsGit bool
+	Run      func(*config.Config, *db.DB, []string) error
 }
 
 var version = "dev"
@@ -32,20 +33,23 @@ func Execute(args []string) error {
 		_, err := fmt.Fprintln(os.Stdout, versionString())
 		return err
 	}
-	if err := config.ValidateEnvironment(); err != nil {
-		return err
-	}
-	cfg := config.LoadConfig()
-	if err := cfg.Validate(); err != nil {
-		return err
-	}
-	initLogger(cfg)
-
 	if len(args) < 2 {
 		return help(os.Stdout)
 	}
-	if _, err := exec.LookPath("git"); err != nil {
-		return fmt.Errorf("git executable not found in PATH: %w", err)
+	cmd, ok := commands[args[1]]
+	if !ok {
+		return fmt.Errorf("unknown command: %s", args[1])
+	}
+
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		return err
+	}
+	initLogger(cfg)
+	if cmd.NeedsGit {
+		if _, err := exec.LookPath("git"); err != nil {
+			return fmt.Errorf("git executable not found in PATH: %w", err)
+		}
 	}
 	database, err := db.InitDB(cfg.DBPath)
 	if err != nil {
@@ -57,11 +61,6 @@ func Execute(args []string) error {
 		}
 	}()
 
-	cmd, ok := commands[args[1]]
-	if !ok {
-		return fmt.Errorf("unknown command: %s", args[1])
-	}
-
 	return cmd.Run(cfg, database, args[2:])
 }
 
@@ -69,7 +68,7 @@ func initLogger(cfg *config.Config) {
 	level := config.ParseLogLevel(cfg.LogLevel)
 
 	logger := slog.New(
-		slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 			Level: level,
 		}),
 	)
