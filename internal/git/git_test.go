@@ -445,7 +445,8 @@ func TestSanitizeRefForFilename(t *testing.T) {
 
 func TestCommandErrorCapturesStderr(t *testing.T) {
 	ctx := context.Background()
-	_, err := runGit(ctx, "rev-parse", "--definitely-not-a-real-option")
+	repoPath := setupTestRepo(t)
+	_, err := run(ctx, repoPath, "rev-parse", "--verify", "refs/heads/definitely-missing^{commit}")
 	if err == nil {
 		t.Fatal("expected git command failure")
 	}
