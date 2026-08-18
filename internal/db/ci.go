@@ -385,6 +385,97 @@ func (db *DB) GetCIRunsByRepo(ctx context.Context, repoID string, limit int) (ru
 	return runs, rows.Err()
 }
 
+// GetCIRunsByRepoFiltered returns the most recent CI runs matching the optional
+// status and branch filters. Empty filters match every run.
+func (db *DB) GetCIRunsByRepoFiltered(ctx context.Context, repoID, status, branch string, limit int) (runs []models.CIRun, err error) {
+	query := `SELECT ` + ciRunColumns + ` FROM ci_runs WHERE repo_id = ?`
+	args := []any{repoID}
+	if status != "" {
+		query += ` AND status = ?`
+		args = append(args, status)
+	}
+	if branch != "" {
+		query += ` AND branch = ?`
+		args = append(args, branch)
+	}
+	query += ` ORDER BY created_at DESC LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	for rows.Next() {
+		run, scanErr := scanCIRun(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		runs = append(runs, *run)
+	}
+	return runs, rows.Err()
+}
+
+// GetCIRunRetryChain returns the complete retry family containing runID in
+// chronological order. A run can be retried more than once, so the result is a
+// family rather than assuming a strictly linear linked list.
+func (db *DB) GetCIRunRetryChain(ctx context.Context, repoID, runID string) (runs []models.CIRun, err error) {
+	var rootID string
+	err = db.QueryRowContext(ctx, `
+		WITH RECURSIVE ancestors(id, retry_of_run_id, depth) AS (
+			SELECT id, retry_of_run_id, 0
+			FROM ci_runs WHERE id = ? AND repo_id = ?
+			UNION ALL
+			SELECT parent.id, parent.retry_of_run_id, ancestors.depth + 1
+			FROM ci_runs parent
+			JOIN ancestors ON parent.id = ancestors.retry_of_run_id
+			WHERE parent.repo_id = ? AND ancestors.depth < 100
+		)
+		SELECT id FROM ancestors ORDER BY depth DESC LIMIT 1
+	`, runID, repoID, repoID).Scan(&rootID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return []models.CIRun{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := db.QueryContext(ctx, `
+		WITH RECURSIVE family(id, depth) AS (
+			SELECT ?, 0
+			UNION ALL
+			SELECT child.id, family.depth + 1
+			FROM ci_runs child
+			JOIN family ON child.retry_of_run_id = family.id
+			WHERE child.repo_id = ? AND family.depth < 100
+		)
+		SELECT `+ciRunColumns+`
+		FROM ci_runs
+		WHERE repo_id = ? AND id IN (SELECT id FROM family)
+		ORDER BY created_at ASC, id ASC
+	`, rootID, repoID, repoID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	for rows.Next() {
+		run, scanErr := scanCIRun(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		runs = append(runs, *run)
+	}
+	return runs, rows.Err()
+}
+
 // GetCIRunByID fetches a single run by its UUID.
 func (db *DB) GetCIRunByID(ctx context.Context, id string) (*models.CIRun, error) {
 	r, err := scanCIRun(db.QueryRowContext(ctx,

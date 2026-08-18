@@ -520,6 +520,57 @@ func SanitizeRefForFilename(ref string) string {
 	return sb.String()
 }
 
+// GetCommitsByHashes loads commit metadata for a set of canonical commit hashes
+// in one git invocation. Unknown or malformed hashes are ignored so callers can
+// enrich best-effort presentation data without turning a missing commit into a
+// repository-wide failure.
+func GetCommitsByHashes(ctx context.Context, repoPath string, hashes []string) (map[string]Commit, error) {
+	if err := ensureNotEmpty(ctx, repoPath); err != nil {
+		return nil, err
+	}
+	seen := make(map[string]struct{}, len(hashes))
+	args := []string{"log", "--no-walk=unsorted", "--format=%H%x00%an%x00%ae%x00%cI%x00%s"}
+	for _, hash := range hashes {
+		hash = strings.TrimSpace(hash)
+		if !canonicalGitHashRegex.MatchString(hash) {
+			continue
+		}
+		if _, ok := seen[hash]; ok {
+			continue
+		}
+		seen[hash] = struct{}{}
+		args = append(args, hash)
+	}
+	if len(seen) == 0 {
+		return map[string]Commit{}, nil
+	}
+
+	out, err := run(ctx, repoPath, args...)
+	if err != nil {
+		return nil, fmt.Errorf("load commit metadata: %w", err)
+	}
+	result := make(map[string]Commit, len(seen))
+	for _, line := range bytes.Split(bytes.TrimSpace(out), []byte{'\n'}) {
+		if len(line) == 0 {
+			continue
+		}
+		parts := bytes.SplitN(line, []byte{0}, 5)
+		if len(parts) != 5 {
+			continue
+		}
+		date, _ := time.Parse(time.RFC3339, string(parts[3]))
+		commit := Commit{
+			Hash:    string(parts[0]),
+			Author:  string(parts[1]),
+			Email:   string(parts[2]),
+			Date:    date,
+			Message: string(parts[4]),
+		}
+		result[commit.Hash] = commit
+	}
+	return result, nil
+}
+
 // GetCommits returns commits for the given ref (branch name or HEAD), with pagination.
 func GetCommits(ctx context.Context, repoPath, ref string, skip, limit int) ([]Commit, error) {
 	if err := ensureNotEmpty(ctx, repoPath); err != nil {
@@ -697,6 +748,33 @@ func GetTree(ctx context.Context, repoPath, ref, path string) ([]TreeEntry, erro
 	)
 
 	return entries, nil
+}
+
+// BlobExists reports whether path resolves to a blob at ref without logging a
+// missing file as an operational error. It is useful for optional repository
+// metadata such as .gitman-ci.yml and README files.
+func BlobExists(ctx context.Context, repoPath, ref, path string) (bool, error) {
+	if err := ensureNotEmpty(ctx, repoPath); err != nil {
+		return false, err
+	}
+	resolvedRef, err := ResolveRef(ctx, repoPath, ref)
+	if err != nil {
+		return false, err
+	}
+	path = strings.TrimPrefix(path, "/")
+	if path == "" || strings.ContainsRune(path, '\x00') {
+		return false, nil
+	}
+	treeish := fmt.Sprintf("%s:%s", resolvedRef, path)
+	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "cat-file", "-e", treeish)
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return false, nil
+		}
+		return false, fmt.Errorf("inspect blob: %w", err)
+	}
+	return true, nil
 }
 
 // GetBlob returns the content of a file (blob) at path for the given ref.
