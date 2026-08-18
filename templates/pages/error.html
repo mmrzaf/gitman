@@ -1,6 +1,13 @@
 {{define "content"}}
-<div class="card">
-  <h2>Something went wrong</h2>
-  <p class="muted">{{.Error}}</p>
-</div>
+<section class="error-page">
+  {{if .StatusCode}}<div class="error-code">{{.StatusCode}}</div>{{end}}
+  <h1>{{if .ErrorTitle}}{{.ErrorTitle}}{{else}}Request failed{{end}}</h1>
+  {{if .Error}}<p class="error-message">{{.Error}}</p>{{end}}
+  {{if .ErrorHint}}<p class="muted">{{.ErrorHint}}</p>{{end}}
+  <div class="error-actions">
+    {{if .User}}<a href="/repos">Repositories</a>{{else}}<a href="/">Home</a>{{end}}
+    <button class="link-button js-only" type="button" data-history-back>Go back</button>
+  </div>
+  {{if .RequestID}}<p class="request-id">Request <code>{{.RequestID}}</code></p>{{end}}
+</section>
 {{end}}

@@ -23,3 +23,11 @@ func TestVersionStringDefault(t *testing.T) {
 		t.Fatal("version string is empty")
 	}
 }
+
+func TestUnknownCommandDoesNotRequireConfiguration(t *testing.T) {
+	t.Setenv("GITMAN_SECRET_KEY", "")
+	err := Execute([]string{"gitman", "definitely-not-a-command"})
+	if err == nil || !strings.Contains(err.Error(), "unknown command") {
+		t.Fatalf("Execute unknown command error = %v; want unknown command", err)
+	}
+}

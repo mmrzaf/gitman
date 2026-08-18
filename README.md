@@ -6,18 +6,18 @@ Gitman is aimed at small teams and private infrastructure. It is not a multi-ten
 
 ## Features
 
-- Browser UI for repositories, branches, tags, commits, files, collaborators, SSH keys, and personal access tokens.
+- Browser UI for repositories, branches, tags, commit diffs, exact source with line permalinks, root README preview, collaborators, SSH keys, and personal access tokens.
 - Git smart HTTP with personal access token authentication.
 - Optional SSH Git transport through the host OpenSSH server and generated `authorized_keys` forced commands.
 - Private and public repositories with read and write collaborators.
 - Built-in CI jobs defined in `.gitman-ci.yml`.
 - CI secrets encrypted at rest when `GITMAN_SECRET_KEY` is configured.
-- Durable push-triggered CI, cancellation and exact-commit retries, live logs, outcome reasons, and nested artifacts.
+- Durable push-triggered CI, cancellation and exact-commit retries, structured incremental live logs, retry lineage, exact pipeline visibility, outcome reasons, and nested artifacts.
 - Repository settings and guarded deletion, repository archives, backups, and an admin CLI.
 
 ## Requirements
 
-- Go `1.26` to build from source.
+- Go `1.26.6` to build from source.
 - `git` available in `PATH` at runtime.
 - Docker only when the built-in CI worker is enabled.
 - OpenSSH only when SSH Git transport is enabled.
@@ -43,7 +43,7 @@ Operational probes are available at `/healthz` for liveness and `/readyz` for re
 Start the CI worker separately when CI is needed. Pull approved job images on the runner first: Gitman starts CI containers with `--pull never` so repository-controlled jobs cannot grow Docker storage by pulling arbitrary images.
 
 ```bash
-docker pull golang:1.26-bookworm
+docker pull golang:1.26.6-bookworm
 ./bin/gitman worker
 ```
 
@@ -66,7 +66,7 @@ Open `http://localhost:8080`. See [DOCKER_SETUP.md](DOCKER_SETUP.md) before expo
 Add `.gitman-ci.yml` at the repository root:
 
 ```yaml
-image: golang:1.26-bookworm
+image: golang:1.26.6-bookworm
 env:
   APP_ENV: test
   GOMODCACHE: /gitman/cache/go/pkg/mod
@@ -106,7 +106,7 @@ gitman admin repos configure-all
 gitman version
 ```
 
-Backup destinations must be absent or empty, and must not be inside the repository or artifact trees. Repository and artifact files are copied live. Use a maintenance window or filesystem snapshots when strict point-in-time consistency is required.
+Backup commands require Gitman's exclusive state lock. Stop the web and worker processes first; Gitman refuses the backup while another Gitman process is using mutable state. The destination must be absent or empty and must not be inside the repository or artifact trees.
 
 ## Configuration
 

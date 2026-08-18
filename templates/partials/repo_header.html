@@ -1,0 +1,26 @@
+{{define "repo_header"}}
+{{if .RepoNav}}
+<header class="repo-header">
+  <div class="repo-identity">
+    <a class="repo-name" href="/{{.RepoNav.Owner.Username}}/{{.RepoNav.Repository.Name}}"><span>{{.RepoNav.Owner.Username}}</span><span aria-hidden="true">/</span><strong>{{.RepoNav.Repository.Name}}</strong></a>
+    <span class="visibility">{{if .RepoNav.Repository.IsPrivate}}Private{{else}}Public{{end}}</span>
+  </div>
+  {{if .RepoNav.Repository.Description}}<p class="repo-description">{{.RepoNav.Repository.Description}}</p>{{end}}
+</header>
+
+{{if ne .RepoNav.Active "settings"}}
+<dialog id="gitman-file-finder" class="file-finder" data-file-finder data-search-url="/{{.RepoNav.Owner.Username}}/{{.RepoNav.Repository.Name}}/files/search{{if .RepoNav.CurrentRef}}?ref={{urlquery .RepoNav.CurrentRef}}{{end}}">
+  <div class="file-finder-shell">
+    <header class="dialog-header">
+      <div><strong>Go to file</strong>{{if .RepoNav.CurrentRef}}<span class="muted mono">{{.RepoNav.CurrentRef}}</span>{{end}}</div>
+      <button class="icon-button" type="button" data-file-finder-close aria-label="Close">×</button>
+    </header>
+    <label class="sr-only" for="gitman-file-finder-input">Search files</label>
+    <input id="gitman-file-finder-input" class="file-finder-input" type="search" placeholder="Search files" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="gitman-file-finder-results" aria-expanded="false" data-file-finder-input>
+    <div id="gitman-file-finder-results" class="file-finder-results" data-file-finder-results role="listbox" aria-label="Repository files"></div>
+    <footer class="dialog-footer muted">↑↓ navigate · Enter open · Esc close</footer>
+  </div>
+</dialog>
+{{end}}
+{{end}}
+{{end}}

@@ -4,15 +4,18 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"log/slog"
+	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/mmrzaf/gitman/internal/apperr"
+	"github.com/mmrzaf/gitman/internal/db"
 	"github.com/mmrzaf/gitman/internal/models"
 )
 
 type TokensPageData struct {
+	PageData
 	Tokens   []models.AccessToken
 	NewToken string
 }
@@ -25,24 +28,15 @@ func generateSecureToken() (string, error) {
 	return "gm_" + hex.EncodeToString(b), nil
 }
 
-func (app *App) getTokensForUser(r *http.Request, userID string) []models.AccessToken {
-	tokens, err := app.DB.GetUserAccessTokens(r.Context(), userID)
-	if err != nil {
-		return nil
-	}
-	return tokens
-}
-
 func (app *App) renderTokensPage(w http.ResponseWriter, r *http.Request, user *models.User, errStr, successStr, newToken string) {
-	app.renderPage(w, r, "tokens.html", PageData{
-		Title:   "Access Tokens",
-		User:    user,
-		Error:   errStr,
-		Success: successStr,
-		Data: TokensPageData{
-			Tokens:   app.getTokensForUser(r, user.ID),
-			NewToken: newToken,
-		},
+	tokens, err := app.DB.GetUserAccessTokens(r.Context(), user.ID)
+	if err != nil {
+		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Token data is temporarily unavailable", err))
+		return
+	}
+	app.renderPage(w, r, "tokens.html", &TokensPageData{
+		PageData: PageData{Title: "Access Tokens", User: user, Error: errStr, Success: successStr},
+		Tokens:   tokens, NewToken: newToken,
 	})
 }
 
@@ -51,6 +45,9 @@ func (app *App) HandleTokensGET(w http.ResponseWriter, r *http.Request) {
 }
 
 func (app *App) HandleTokensPOST(w http.ResponseWriter, r *http.Request) {
+	if !app.parseWebForm(w, r) {
+		return
+	}
 	user := GetUser(r)
 	name := strings.TrimSpace(r.FormValue("name"))
 
@@ -61,8 +58,7 @@ func (app *App) HandleTokensPOST(w http.ResponseWriter, r *http.Request) {
 
 	plainToken, err := generateSecureToken()
 	if err != nil {
-		slog.Error("failed to generate token", "user_id", user.ID, "error", err)
-		app.renderTokensPage(w, r, user, "Failed to create token.", "", "")
+		app.respondWebError(w, r, apperr.Wrap(apperr.KindInternal, "Gitman could not create a token", err))
 		return
 	}
 
@@ -71,7 +67,7 @@ func (app *App) HandleTokensPOST(w http.ResponseWriter, r *http.Request) {
 
 	err = app.DB.CreateAccessToken(r.Context(), user.ID, name, tokenHash)
 	if err != nil {
-		app.renderTokensPage(w, r, user, "Failed to create token.", "", "")
+		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Token storage is temporarily unavailable", err))
 		return
 	}
 
@@ -89,7 +85,11 @@ func (app *App) HandleTokenDeletePOST(w http.ResponseWriter, r *http.Request) {
 
 	err := app.DB.DeleteAccessToken(r.Context(), tokenID, user.ID)
 	if err != nil {
-		app.renderTokensPage(w, r, user, "Failed to delete token.", "", "")
+		if errors.Is(err, db.ErrNotFound) {
+			app.renderTokensPage(w, r, user, "Token not found.", "", "")
+		} else {
+			app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Token storage is temporarily unavailable", err))
+		}
 		return
 	}
 

@@ -2,10 +2,11 @@ package db
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/mmrzaf/gitman/internal/models"
 )
 
 func TestCreateRepository(t *testing.T) {
@@ -82,13 +83,9 @@ func TestCollaborators(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	has, err := db.HasRepoAccess(ctx, repoID, collab.ID, "write")
-	if err != nil || !has {
-		t.Errorf("expected write access")
-	}
-	has, err = db.HasRepoAccess(ctx, repoID, collab.ID, "read")
-	if err != nil || !has {
-		t.Errorf("expected read access (write implies read)")
+	level, err := db.GetRepoAccessLevel(ctx, repoID, collab.ID)
+	if err != nil || level != models.AccessWrite {
+		t.Fatalf("expected write access, got %q, %v", level, err)
 	}
 
 	colls, err := db.GetCollaborators(ctx, repoID)
@@ -103,9 +100,8 @@ func TestCollaborators(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	has, _ = db.HasRepoAccess(ctx, repoID, collab.ID, "read")
-	if has {
-		t.Error("access not removed")
+	if _, err := db.GetRepoAccessLevel(ctx, repoID, collab.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected collaborator access to be removed, got %v", err)
 	}
 }
 
@@ -161,8 +157,8 @@ func TestUpdateRepositorySettings(t *testing.T) {
 	other, _ := database.CreateUser(ctx, "settings-other", "OtherPass1")
 	repoID, _ := database.CreateRepository(ctx, owner.ID, "settings", "before", false)
 
-	if err := database.UpdateRepositorySettings(ctx, repoID, other.ID, "forbidden", true); !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("non-owner update error = %v, want sql.ErrNoRows", err)
+	if err := database.UpdateRepositorySettings(ctx, repoID, other.ID, "forbidden", true); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("non-owner update error = %v, want ErrNotFound", err)
 	}
 	if err := database.UpdateRepositorySettings(ctx, repoID, owner.ID, "after", true); err != nil {
 		t.Fatalf("UpdateRepositorySettings: %v", err)

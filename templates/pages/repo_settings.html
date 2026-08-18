@@ -1,44 +1,20 @@
 {{define "content"}}
-<div class="page-header">
-  <h2 class="repo-title">
-    <a href="/{{.Data.Owner.Username}}">{{.Data.Owner.Username}}</a>
-    /
-    <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}">{{.Data.Repository.Name}}</a>
-  </h2>
-  <p class="muted">Repository settings</p>
-</div>
-
-{{template "repo_nav" .}}
+<div class="page-heading"><h1>Settings</h1></div>
+{{template "repo_settings_nav" .}}
 {{template "flash" .}}
-
-<div class="content-grid">
-  <section class="form-card">
-    <h3>General</h3>
-    <form method="POST" action="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/settings" class="form-stack">
-      <label class="field">
-        <span>Name</span>
-        <input type="text" value="{{.Data.Repository.Name}}" readonly />
-      </label>
-      <label class="field">
-        <span>Description</span>
-        <textarea name="description" rows="4" maxlength="500">{{.Data.Repository.Description}}</textarea>
-      </label>
-      <label class="checkbox-row">
-        <input type="checkbox" name="is_private" {{if .Data.Repository.IsPrivate}}checked{{end}} />
-        Private repository
-      </label>
-      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
-      <button type="submit">Save settings</button>
+<section class="settings-section">
+  <div class="section-copy"><h2>General</h2><p>Repository description and visibility.</p></div>
+  <div class="section-body">
+    <form method="POST" action="/{{.Owner.Username}}/{{.Repository.Name}}/settings" class="settings-form narrow-form">
+      <div class="static-field"><span>Name</span><code>{{.Repository.Name}}</code></div>
+      <label><span>Description</span><textarea name="description" rows="4" maxlength="500">{{.Repository.Description}}</textarea></label>
+      <label class="check"><input type="checkbox" name="is_private" {{if .Repository.IsPrivate}}checked{{end}}> Private repository</label>
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><div><button type="submit">Save changes</button></div>
     </form>
-  </section>
-
-  <aside class="form-card side-panel danger-zone">
-    <h3>Delete repository</h3>
-    <p class="muted">Permanently removes the repository, CI history, logs, artifacts and cache.</p>
-    <form method="POST" action="/repos/{{.Data.Repository.ID}}/delete" data-confirm="Delete repository {{.Data.Repository.Name}}? This cannot be undone.">
-      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
-      <button type="submit" class="danger">Delete repository</button>
-    </form>
-  </aside>
-</div>
+  </div>
+</section>
+<section class="settings-section danger-section">
+  <div class="section-copy"><h2>Delete repository</h2><p>Permanently removes Git data, CI history, logs, artifacts, and cache.</p></div>
+  <div class="section-body"><form method="POST" action="/repos/{{.Repository.ID}}/delete" data-confirm="Delete repository {{.Repository.Name}}? This cannot be undone."><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button type="submit" class="danger">Delete repository</button></form></div>
+</section>
 {{end}}

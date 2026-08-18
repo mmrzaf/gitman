@@ -48,7 +48,6 @@ Gitman is configured with environment variables.
 
 Explicitly configured booleans, positive integers, byte limits, and durations are validated before startup. Invalid values fail with the exact environment-variable name instead of silently changing behavior. Gitman also validates URLs, paths, log level, and the relationship between heartbeat and lease durations.
 
-`GITMAN_INTERNAL_URL` is no longer used in Beta 15 because managed hooks deliver through the repository-local durable queue. It may be removed from existing deployments; if left present, Gitman ignores it.
 
 ## Health probes
 
@@ -66,7 +65,7 @@ New repositories receive the configured Git `receive.maxInputSize` limit. After 
 gitman admin repos configure-all
 ```
 
-The command walks repository records, keeps paths contained under `GITMAN_REPOS`, refuses symlinked repository paths, and applies the receive-pack limit.
+The command walks repository records, keeps paths contained under `GITMAN_REPOS`, refuses missing or symlinked repository paths, applies the receive-pack limit, and reconciles Gitman's managed CI post-receive hook without overwriting an operator-owned hook.
 
 ## Docker Compose naming adapter
 

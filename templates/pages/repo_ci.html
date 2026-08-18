@@ -1,171 +1,75 @@
 {{define "content"}}
-<div class="page-header">
-  <h2 class="repo-title">
-    <a href="/{{.Data.Owner.Username}}">{{.Data.Owner.Username}}</a>
-    /
-    <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}">{{.Data.Repository.Name}}</a>
-  </h2>
-  <p class="muted">{{if .Data.Repository.Description}}{{.Data.Repository.Description}}{{else}}No description provided.{{end}}</p>
+<div class="page-heading page-heading-actions">
+  <div>
+    <h1>CI</h1>
+    <p>Runs for pushed and manually selected revisions.</p>
+  </div>
+  {{if .CanControl}}
+  <form method="POST" action="/{{.Owner.Username}}/{{.Repository.Name}}/ci/trigger" class="inline-form ci-run-form">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <label class="sr-only" for="ci-revision">Revision</label>
+    <select id="ci-revision" name="revision" aria-label="Revision">
+      <option value="">{{if .DefaultBranch}}{{.DefaultBranch}} (default){{else}}Default revision{{end}}</option>
+      {{if .Branches}}<optgroup label="Branches">{{range .Branches}}<option value="branch:{{.}}">{{.}}</option>{{end}}</optgroup>{{end}}
+      {{if .Tags}}<optgroup label="Tags">{{range .Tags}}<option value="tag:{{.}}">{{.}}</option>{{end}}</optgroup>{{end}}
+    </select>
+    <button type="submit">Run CI</button>
+  </form>
+  {{end}}
 </div>
 
-{{template "repo_nav" .}}
 {{template "flash" .}}
 
-<div class="card">
-  <div class="panel-title">
-    <div>
-      <h3>Run pipeline</h3>
-      <p class="muted">Gitman checks out the selected ref and reads <code>.gitman-ci.yml</code> from that commit.</p>
-    </div>
-    {{if and $.User (eq $.User.ID .Data.Owner.ID)}}
-      {{if .Data.HookExists}}
-      <div class="inline-actions">
-        <span class="chip">Auto-trigger active</span>
-        <form method="POST" action="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/hook/uninstall">
-          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
-          <button class="danger small" type="submit">Remove hook</button>
-        </form>
-      </div>
-      {{else if eq .Data.HookState "unmanaged"}}
-      <span class="chip">Unmanaged hook present</span>
-      {{else}}
-      <details>
-        <summary><strong>{{if eq .Data.HookState "outdated"}}Upgrade auto-trigger hook{{else}}Install auto-trigger hook{{end}}</strong></summary>
-        <div class="card tight mt-1">
-          <p class="muted">Installs the durable managed hook. Push events remain queued during web restarts.</p>
-          <form method="POST" action="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/hook/install">
-            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
-            <button type="submit">Install hook</button>
-          </form>
-        </div>
-      </details>
-      {{end}}
-    {{end}}
-  </div>
-
-  {{if .Data.CanControl}}
-<form method="POST" action="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/trigger" class="form-row">
-  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-
-  <label class="field">
-    <span>Branch</span>
-    <select id="ci-branch" name="branch" onchange="if (this.value) document.getElementById('ci-tag').value = ''">
-      <option value="">Use default branch, tag, or commit</option>
-      {{range .Data.Branches}}
-      <option value="{{.}}" {{if eq . $.Data.DefaultBranch}}selected{{end}}>{{.}}</option>
-      {{end}}
+<div class="toolbar ci-toolbar">
+  <nav class="filter-tabs" aria-label="CI status">
+    <a {{if not .StatusFilter}}class="active" aria-current="page"{{end}} href="/{{.Owner.Username}}/{{.Repository.Name}}/ci{{if .BranchFilter}}?branch={{urlquery .BranchFilter}}{{end}}">All</a>
+    <a {{if eq .StatusFilter "running"}}class="active" aria-current="page"{{end}} href="/{{.Owner.Username}}/{{.Repository.Name}}/ci?status=running{{if .BranchFilter}}&amp;branch={{urlquery .BranchFilter}}{{end}}">Running</a>
+    <a {{if eq .StatusFilter "failed"}}class="active" aria-current="page"{{end}} href="/{{.Owner.Username}}/{{.Repository.Name}}/ci?status=failed{{if .BranchFilter}}&amp;branch={{urlquery .BranchFilter}}{{end}}">Failed</a>
+    <a {{if eq .StatusFilter "success"}}class="active" aria-current="page"{{end}} href="/{{.Owner.Username}}/{{.Repository.Name}}/ci?status=success{{if .BranchFilter}}&amp;branch={{urlquery .BranchFilter}}{{end}}">Success</a>
+    <a {{if eq .StatusFilter "pending"}}class="active" aria-current="page"{{end}} href="/{{.Owner.Username}}/{{.Repository.Name}}/ci?status=pending{{if .BranchFilter}}&amp;branch={{urlquery .BranchFilter}}{{end}}">Queued</a>
+  </nav>
+  <form method="GET" action="/{{.Owner.Username}}/{{.Repository.Name}}/ci" class="inline-form">
+    {{if .StatusFilter}}<input type="hidden" name="status" value="{{.StatusFilter}}">{{end}}
+    <label class="sr-only" for="ci-branch-filter">Branch</label>
+    <select id="ci-branch-filter" name="branch" data-submit-select>
+      <option value="">All branches</option>
+      {{range .Branches}}<option value="{{.}}" {{if eq . $.BranchFilter}}selected{{end}}>{{.}}</option>{{end}}
     </select>
-  </label>
-
-  <label class="field">
-    <span>Tag</span>
-    <select id="ci-tag" name="tag" onchange="if (this.value) document.getElementById('ci-branch').value = ''">
-      <option value="">No tag</option>
-      {{range .Data.Tags}}<option value="{{.}}">{{.}}</option>{{end}}
-    </select>
-  </label>
-
-  <button type="submit">Run CI</button>
-</form>
-  {{end}}
-</div>
-
-{{if and $.User (eq $.User.ID .Data.Owner.ID)}}
-<details class="card">
-  <summary><strong>CI ref trust rules</strong></summary>
-  <p class="muted">Rules decide which refs may auto-run, use secrets, or receive Docker socket access. Exact rules win over glob patterns. Use <code>tag v*</code> for release tags or <code>branch release/*</code> for release branches.</p>
-
-  {{if .Data.RefRules}}
-  <div class="table-wrap">
-    <table class="data-table">
-      <thead>
-        <tr><th>Type</th><th>Ref or pattern</th><th>Auto-run</th><th>Secrets</th><th>Docker socket</th><th></th></tr>
-      </thead>
-      <tbody>
-        {{range .Data.RefRules}}
-        <tr>
-          <td>{{.RefType}}</td>
-          <td><code>{{.RefName}}</code></td>
-          <td>{{if .AutoRun}}yes{{else}}no{{end}}</td>
-          <td>{{if .AllowSecrets}}yes{{else}}no{{end}}</td>
-          <td>{{if .AllowDockerSocket}}yes{{else}}no{{end}}</td>
-          <td>
-            <form method="POST" action="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/ci/rules/delete" class="inline-actions">
-              <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-              <input type="hidden" name="ref_type" value="{{.RefType}}">
-              <input type="hidden" name="ref_name" value="{{.RefName}}">
-              <button class="danger small" type="submit">Delete</button>
-            </form>
-          </td>
-        </tr>
-        {{end}}
-      </tbody>
-    </table>
-  </div>
-  {{else}}
-  <div class="empty-state">
-    <p>No trust rules yet.</p>
-    <p class="muted">The default branch can auto-run and use secrets. Docker socket access always requires a rule.</p>
-  </div>
-  {{end}}
-
-  <form method="POST" action="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/rules" class="form-row mt-1">
-    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-    <label class="field"><span>Type</span><select name="ref_type"><option value="branch">branch</option><option value="tag">tag</option></select></label>
-    <label class="field"><span>Ref or pattern</span><input name="ref_name" required placeholder="main, v*, release/*" class="code-input"></label>
-    <label class="checkbox-row"><input type="checkbox" name="auto_run"> Auto-run</label>
-    <label class="checkbox-row"><input type="checkbox" name="allow_secrets"> Secrets</label>
-    <label class="checkbox-row"><input type="checkbox" name="allow_docker_socket"> Docker socket</label>
-    <button type="submit">Save rule</button>
+    <button class="secondary small no-js-only" type="submit">Apply</button>
   </form>
-</details>
-{{end}}
-
-<div class="panel-title">
-  <h3>Runs</h3>
 </div>
 
-{{if .Data.Runs}}
-<div class="list-card">
-  {{range .Data.Runs}}
-  <div class="ci-run-row">
-    <span class="badge {{statusClass .Status}}">{{statusLabel .Status}}</span>
+{{if .Runs}}
+<div class="ci-run-list">
+  {{range .Runs}}
+  <article class="ci-run-row">
+    <div class="status-mark status-{{.Run.Status}}" aria-hidden="true">{{if eq .Run.Status "success"}}✓{{else if eq .Run.Status "failed"}}×{{else if eq .Run.Status "running"}}●{{else if eq .Run.Status "cancelled"}}−{{else}}○{{end}}</div>
     <div class="ci-run-main">
-      <div class="mono">
-        {{if .Branch}}<span class="chip">{{.Branch}}</span>{{end}}
-        {{if .Tag}}<span class="chip">tag {{.Tag}}</span>{{end}}
-        {{if .CommitHash}}<span class="muted">{{short .CommitHash 7}}</span>{{end}}
+      <div class="ci-run-line">
+        <a class="ci-run-title" href="/{{$.Owner.Username}}/{{$.Repository.Name}}/ci/{{.Run.ID}}">{{if .Commit}}{{.Commit.Message}}{{else}}CI run {{short .Run.ID 8}}{{end}}</a>
+        <span class="status-text status-{{.Run.Status}}">{{statusLabel .Run.Status}}</span>
       </div>
-      <div class="ci-run-meta">
-        {{.Event}} · queued {{.CreatedAt.Format "2006-01-02 15:04:05"}}
-        {{if .StartedAt}} · ran {{runDuration .}}{{else}} · waiting {{queueDuration .}}{{end}}
+      <div class="meta-line">
+        <span>{{if eq .RefKind "tag"}}tag {{end}}{{.RefLabel}}</span>
+        {{if .Run.CommitHash}}<a class="mono" href="/{{$.Owner.Username}}/{{$.Repository.Name}}/commit/{{.Run.CommitHash}}{{if .Run.Branch}}?ref={{urlquery .Run.Branch}}{{else if .Run.Tag}}?ref={{urlquery .Run.Tag}}{{end}}">{{short .Run.CommitHash 7}}</a>{{end}}
+        <span>{{.Run.Event}}</span>
+        <time datetime="{{.Run.CreatedAt.Format "2006-01-02T15:04:05Z07:00"}}" data-relative-time>{{.Run.CreatedAt.Format "2006-01-02 15:04"}}</time>
+        {{if .Run.StartedAt}}<span>{{if eq .Run.Status "running"}}running{{else}}ran{{end}} {{runDuration .Run}}</span>{{else}}<span>waiting {{queueDuration .Run}}</span>{{end}}
       </div>
-      {{if .RetryOfRunID}}<div class="ci-run-meta">Retry of <a href="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/ci/{{.RetryOfRunID}}"><code>{{short .RetryOfRunID 8}}</code></a></div>{{end}}
-      {{if .StatusReason}}<div class="ci-run-meta ci-run-reason">{{.StatusReason}}</div>{{end}}
+      {{if .Run.StatusReason}}<div class="ci-run-reason">{{.Run.StatusReason}}</div>{{end}}
     </div>
-    <div class="ci-run-actions">
-      {{if $.Data.CanControl}}
-        {{if canCancelRun .Status}}
-        <form method="POST" action="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/ci/{{.ID}}/cancel" data-confirm="Cancel this CI run?">
-          <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-          <button class="danger small" type="submit">Cancel</button>
-        </form>
-        {{else if canRetryRun .Status}}
-        <form method="POST" action="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/ci/{{.ID}}/retry">
-          <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-          <button class="small" type="submit">Retry</button>
-        </form>
-        {{end}}
+    <div class="row-actions">
+      {{if $.CanControl}}
+        {{if canCancelRun .Run.Status}}<form method="POST" action="/{{$.Owner.Username}}/{{$.Repository.Name}}/ci/{{.Run.ID}}/cancel" data-confirm="Cancel this CI run?"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="danger-link" type="submit">Cancel</button></form>
+        {{else if or (eq .Run.Status "failed") (eq .Run.Status "cancelled")}}<form method="POST" action="/{{$.Owner.Username}}/{{$.Repository.Name}}/ci/{{.Run.ID}}/retry"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="link-button" type="submit">Retry</button></form>{{end}}
       {{end}}
-      <a class="button secondary small" href="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/ci/{{.ID}}">Open</a>
     </div>
-  </div>
+  </article>
   {{end}}
 </div>
 {{else}}
-<div class="empty-state">
-  <p>No CI runs yet.</p>
-  <p class="muted">Run CI manually or push a commit with a <code>.gitman-ci.yml</code> file.</p>
+<div class="empty-line">
+  {{if or .StatusFilter .BranchFilter}}No runs match these filters. <a href="/{{.Owner.Username}}/{{.Repository.Name}}/ci">Clear filters</a>.{{else}}No CI runs yet.{{end}}
 </div>
 {{end}}
 {{end}}

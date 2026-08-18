@@ -55,14 +55,10 @@ func TestBackupAll(t *testing.T) {
 	os.MkdirAll(filepath.Join(artifactsPath, "logs"), 0755)
 	os.WriteFile(filepath.Join(artifactsPath, "logs", "run.log"), []byte("log"), 0644)
 
-	authKeysPath := filepath.Join(baseDir, "authorized_keys")
-	os.WriteFile(authKeysPath, []byte("ssh-rsa AAA..."), 0600)
-
 	cfg := &config.Config{
 		DBPath:        dbPath,
 		ReposPath:     reposPath,
 		ArtifactsPath: artifactsPath,
-		AuthKeysPath:  authKeysPath,
 	}
 
 	database, err := db.InitDB(dbPath)
@@ -96,15 +92,6 @@ func TestBackupAll(t *testing.T) {
 	artFile := filepath.Join(destDir, "artifacts", "logs", "run.log")
 	if _, err := os.Stat(artFile); os.IsNotExist(err) {
 		t.Error("artifacts not copied")
-	}
-
-	// Auth keys copy
-	authFile := filepath.Join(destDir, "authorized_keys")
-	data, err = os.ReadFile(authFile)
-	if err != nil {
-		t.Error("authorized_keys not copied")
-	} else if string(data) != "ssh-rsa AAA..." {
-		t.Error("auth content mismatch")
 	}
 }
 
@@ -169,5 +156,19 @@ func TestBackupAllRejectsSymlinkedArtifactsDestination(t *testing.T) {
 	cfg := &config.Config{ReposPath: filepath.Join(base, "repos"), ArtifactsPath: artifacts}
 	if err := rejectNestedDestination(filepath.Join(link, "backup"), cfg.ReposPath, cfg.ArtifactsPath); err == nil {
 		t.Fatal("expected symlinked artifacts destination rejection")
+	}
+}
+
+func TestBackupRejectsSymlinkInSourceTree(t *testing.T) {
+	src := t.TempDir()
+	target := filepath.Join(src, "target")
+	if err := os.WriteFile(target, []byte("data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(src, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := BackupRepos(src, filepath.Join(t.TempDir(), "backup")); err == nil {
+		t.Fatal("expected backup to reject a symlink instead of silently omitting it")
 	}
 }

@@ -4,14 +4,12 @@ BINARY_NAME=gitman
 BUILD_DIR=bin
 GO=go
 VERSION ?= dev
-GOVULNCHECK_VERSION ?= v1.6.0
-GO_IMAGE ?= golang:1.26-bookworm
+GO_IMAGE ?= golang:1.26.6-bookworm
 RUNTIME_IMAGE ?= debian:bookworm-slim
 DEBIAN_MIRROR ?= http://linux-mirror.liara.ir/repository/debian
 DEBIAN_SECURITY_MIRROR ?= http://linux-mirror.liara.ir/repository/debian-security
 GOPROXY ?= https://mirror.abrha.net/repository/go/,direct
 LDFLAGS=-s -w -X main.version=$(VERSION)
-DOCKER_BUILD_ARGS=--build-arg GO_IMAGE="$(GO_IMAGE)" --build-arg RUNTIME_IMAGE="$(RUNTIME_IMAGE)" --build-arg DEBIAN_MIRROR="$(DEBIAN_MIRROR)" --build-arg DEBIAN_SECURITY_MIRROR="$(DEBIAN_SECURITY_MIRROR)" --build-arg GOPROXY="$(GOPROXY)" --build-arg VERSION="$(VERSION)"
 
 # Default target
 .DEFAULT_GOAL := help
@@ -34,13 +32,10 @@ verify: ## Run release verification checks
 	$(GO) test ./...
 	$(GO) vet ./...
 	golangci-lint run
-	$(GO) run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 	@mkdir -p $(BUILD_DIR)
 	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/gitman
 	test "$$($(BUILD_DIR)/$(BINARY_NAME) version)" = "$(VERSION)"
 	test "$$($(BUILD_DIR)/$(BINARY_NAME) --version)" = "$(VERSION)"
-	docker build $(DOCKER_BUILD_ARGS) -t gitman:verify .
-	test "$$(docker run --rm gitman:verify gitman version)" = "$(VERSION)"
 
 release-source: ## Create tracked-files-only source archive
 	scripts/release-source-archive.sh $${VERSION:?set VERSION}

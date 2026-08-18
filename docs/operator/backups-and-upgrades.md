@@ -14,10 +14,12 @@ This copies the repository tree only.
 gitman admin repos backup-all /srv/backups/gitman-$(date +%F)
 ```
 
-With Docker Compose:
+Backups require the exclusive Gitman state lock, so stop the long-running processes first. With Docker Compose:
 
 ```bash
-docker compose exec -T web gitman admin repos backup-all /data/backups/gitman-$(date +%F)
+docker compose stop web worker
+docker compose run --rm --no-deps web gitman admin repos backup-all /data/backups/gitman-$(date +%F)
+docker compose start web worker
 ```
 
 A full backup contains:
@@ -26,11 +28,10 @@ A full backup contains:
 <destination>/
 ├── db/<sqlite-file-name>
 ├── repos/
-├── artifacts/          # when present
-└── authorized_keys     # when present
+└── artifacts/          # when present
 ```
 
-The database is copied coherently with SQLite `VACUUM INTO`. Repository and artifact files are copied live. Use a maintenance window or filesystem snapshot for strict point-in-time consistency.
+Gitman acquires an exclusive state lock before opening the database for a backup. Web, worker, SSH, and other mutating Gitman commands hold shared locks, so the backup refuses to run while any of them are active. With the exclusive lock held, SQLite, repositories, and artifacts are copied as one offline-consistent Gitman snapshot. `authorized_keys` is derived from the database and is regenerated on web startup.
 
 The destination must be absent or empty and must not be inside the repository or artifact trees.
 
@@ -46,7 +47,7 @@ Gitman does not currently provide a restore command. For a standard Compose depl
 
 1. Stop `web` and `worker`.
 2. Create an empty replacement data directory with restrictive permissions.
-3. Copy the backup `db/`, `repos/`, `artifacts/`, and `authorized_keys` entries into that directory when present.
+3. Copy the backup `db/`, `repos/`, and `artifacts/` entries into that directory when present.
 4. Restore the same externally managed `GITMAN_SECRET_KEY` value.
 5. Ensure ownership matches the configured `GIT_UID`.
 6. Start `web`, verify `/health`, then start `worker`.
@@ -57,8 +58,9 @@ Gitman does not currently provide a restore command. For a standard Compose depl
 Back up first, then rebuild:
 
 ```bash
-docker compose exec -T web gitman admin repos backup-all /data/backups/pre-upgrade-$(date +%F-%H%M%S)
+docker compose stop web worker
+docker compose run --rm --no-deps web gitman admin repos backup-all /data/backups/pre-upgrade-$(date +%F-%H%M%S)
 docker compose up -d --build
 ```
 
-Database migrations run during Gitman startup.
+Database migrations run forward-only during Gitman startup. Rolling back a Gitman release means restoring the matching database and filesystem backup; Gitman does not attempt reverse schema migrations.

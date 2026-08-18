@@ -1,25 +1,12 @@
 {{define "content"}}
-<div class="card auth-card">
-  <div class="page-header">
-    <h2>Register</h2>
-    <p class="muted">Create an account to host Git repositories.</p>
-  </div>
-
+<section class="auth-page">
+  <h1>Register</h1>
   {{template "flash" .}}
-
-  <form method="POST" action="/register" class="form-stack">
-    <label class="field">
-      <span>Username</span>
-      <input id="username" type="text" name="username" required autocomplete="username" />
-    </label>
-    <label class="field">
-      <span>Password</span>
-      <input id="password" type="password" name="password" required autocomplete="new-password" />
-    </label>
-    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
-    <button type="submit">Register</button>
+  <form method="POST" action="/register" class="settings-form">
+    <label><span>Username</span><input type="text" name="username" value="{{.Username}}" required autocomplete="username" autofocus></label>
+    <label><span>Password</span><input type="password" name="password" required autocomplete="new-password"></label>
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button type="submit">Create account</button>
   </form>
-
-  <p class="muted mt-1">Already have an account? <a href="/login">Login</a>.</p>
-</div>
+  <p class="auth-switch">Already have an account? <a href="/login">Login</a>.</p>
+</section>
 {{end}}

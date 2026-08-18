@@ -16,7 +16,7 @@ import (
 )
 
 type DB struct {
-	*sql.DB
+	sql *sql.DB
 }
 
 // InitDB opens the SQLite database, applies connection-local safety pragmas,
@@ -39,26 +39,34 @@ func InitDB(dbPath string) (*DB, error) {
 	conn.SetMaxIdleConns(1)
 
 	if err := applyConnectionPragmas(context.Background(), conn); err != nil {
-		_ = conn.Close()
-		return nil, err
+		return nil, errors.Join(err, conn.Close())
 	}
 	if err := conn.Ping(); err != nil {
-		_ = conn.Close()
-		return nil, fmt.Errorf("failed to ping database: %w", err)
+		return nil, errors.Join(fmt.Errorf("failed to ping database: %w", err), conn.Close())
 	}
 	if !isDSN {
 		if err := os.Chmod(dbPath, 0o600); err != nil {
-			_ = conn.Close()
-			return nil, fmt.Errorf("failed to secure database file: %w", err)
+			return nil, errors.Join(fmt.Errorf("failed to secure database file: %w", err), conn.Close())
 		}
 	}
 
-	database := &DB{conn}
+	database := &DB{sql: conn}
 	if err := database.runMigrations(context.Background(), gitman.FS, "migrations"); err != nil {
-		_ = database.Close()
-		return nil, fmt.Errorf("migrations failed: %w", err)
+		return nil, errors.Join(fmt.Errorf("migrations failed: %w", err), database.Close())
 	}
 	return database, nil
+}
+
+func (db *DB) Close() error {
+	return db.sql.Close()
+}
+
+func (db *DB) PingContext(ctx context.Context) error {
+	return db.sql.PingContext(ctx)
+}
+
+func (db *DB) Ping() error {
+	return db.sql.Ping()
 }
 
 func applyConnectionPragmas(ctx context.Context, conn *sql.DB) error {
@@ -101,6 +109,15 @@ func execPragmaWithBusyRetry(ctx context.Context, conn *sql.DB, pragma string) e
 	}
 }
 
+func isSQLiteUniqueConstraint(err error) bool {
+	var sqliteErr *sqlite.Error
+	if !errors.As(err, &sqliteErr) {
+		return false
+	}
+	code := sqliteErr.Code()
+	return code == sqlite3.SQLITE_CONSTRAINT_UNIQUE || code == sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY
+}
+
 func isSQLiteBusy(err error) bool {
 	var sqliteErr *sqlite.Error
 	if !errors.As(err, &sqliteErr) {
@@ -122,4 +139,17 @@ func ensureDatabaseParent(dbPath string) error {
 		return fmt.Errorf("failed to secure db directory: %w", err)
 	}
 	return nil
+}
+
+// BackupTo creates a SQLite snapshot at destination using VACUUM INTO.
+// The destination must not already exist.
+func (db *DB) BackupTo(ctx context.Context, destination string) error {
+	if _, err := os.Stat(destination); err == nil {
+		return fmt.Errorf("destination database already exists: %s", destination)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	literal := "'" + strings.ReplaceAll(destination, "'", "''") + "'"
+	_, err := db.sql.ExecContext(ctx, "VACUUM INTO "+literal)
+	return err
 }

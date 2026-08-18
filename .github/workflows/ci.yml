@@ -15,7 +15,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GO_VERSION: '1.26'
+  GO_VERSION: '1.26.6'
+  GOLANGCI_LINT_VERSION: 'v2.12'
+  GOVULNCHECK_VERSION: 'v1.6.0'
 
 jobs:
   verify:
@@ -50,6 +52,15 @@ jobs:
 
       - name: Vet
         run: go vet ./...
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+          args: --timeout=5m
+
+      - name: Vulnerability scan
+        run: go run golang.org/x/vuln/cmd/govulncheck@${{ env.GOVULNCHECK_VERSION }} ./...
 
       - name: Build
         run: go build ./cmd/gitman
