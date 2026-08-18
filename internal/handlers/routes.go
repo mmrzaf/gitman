@@ -121,6 +121,7 @@ func SetupRouter(app *App) *chi.Mux {
 				r.Post("/ci/{run_id}/retry", app.HandleCIRunRetryPOST)
 				r.Get("/ci/{run_id}/log", app.HandleCIRunLogGET)
 				r.Get("/ci/{run_id}/logs/download", app.HandleCIRunLogsDownloadGET)
+				r.Get("/ci/{run_id}/artifacts/preview/*", app.HandleCIRunArtifactPreviewGET)
 
 				// Secrets
 				r.Get("/ci/secrets", app.HandleCISecretsGET)

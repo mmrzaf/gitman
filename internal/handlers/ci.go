@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,7 +31,7 @@ var secretKeyRegex = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 type CIPageData struct {
 	Owner         *models.User
 	Repository    *models.Repository
-	Runs          []models.CIRun
+	Runs          []CIRunView
 	HookExists    bool
 	HookState     string
 	Branches      []string
@@ -38,15 +39,24 @@ type CIPageData struct {
 	DefaultBranch string
 	RefRules      []models.RepoCIRefRule
 	CanControl    bool
+	StatusFilter  string
+	BranchFilter  string
 }
 
 type CIRunPageData struct {
-	Owner      *models.User
-	Repository *models.Repository
-	Run        *models.CIRun
-	LogContent string
-	Artifacts  []string
-	CanControl bool
+	Owner         *models.User
+	Repository    *models.Repository
+	Run           *models.CIRun
+	Commit        *git.Commit
+	LogContent    string
+	LogOffset     int64
+	Log           CILogView
+	Config        CIConfigView
+	Artifacts     []*ArtifactNode
+	ArtifactCount int
+	ArtifactBytes int64
+	Attempts      []CIRunView
+	CanControl    bool
 }
 
 type CISecretsPageData struct {
@@ -61,7 +71,20 @@ func (app *App) HandleCIGET(w http.ResponseWriter, r *http.Request) {
 	owner := GetRepoOwner(r)
 	ctx := r.Context()
 
-	runs, err := app.DB.GetCIRunsByRepo(ctx, repo.ID, 50)
+	statusFilter := strings.TrimSpace(r.URL.Query().Get("status"))
+	if statusFilter != "" {
+		switch statusFilter {
+		case "pending", "running", "success", "failed", "skipped", "cancelled":
+		default:
+			statusFilter = ""
+		}
+	}
+	branchFilter := strings.TrimSpace(r.URL.Query().Get("branch"))
+	if branchFilter != "" && git.ValidateRefName(branchFilter) != nil {
+		branchFilter = ""
+	}
+
+	runs, err := app.DB.GetCIRunsByRepoFiltered(ctx, repo.ID, statusFilter, branchFilter, 100)
 	if err != nil {
 		slog.Error("failed to list CI runs", "repo", repo.ID, "error", err)
 		runs = []models.CIRun{}
@@ -84,6 +107,7 @@ func (app *App) HandleCIGET(w http.ResponseWriter, r *http.Request) {
 			defaultBranch = ""
 		}
 	}
+	runViews := loadCIRunViews(ctx, repoPath, runs)
 	refRules, err := app.DB.ListRepoCIRefRules(ctx, repo.ID)
 	if err != nil {
 		slog.Warn("failed to list CI ref rules", "repo", repo.ID, "error", err)
@@ -96,7 +120,7 @@ func (app *App) HandleCIGET(w http.ResponseWriter, r *http.Request) {
 		Data: CIPageData{
 			Owner:         owner,
 			Repository:    repo,
-			Runs:          runs,
+			Runs:          runViews,
 			HookExists:    hookExists,
 			HookState:     string(hookState),
 			Branches:      branches,
@@ -104,6 +128,8 @@ func (app *App) HandleCIGET(w http.ResponseWriter, r *http.Request) {
 			DefaultBranch: defaultBranch,
 			RefRules:      refRules,
 			CanControl:    app.canControlCI(r.Context(), GetUser(r), repo),
+			StatusFilter:  statusFilter,
+			BranchFilter:  branchFilter,
 		},
 	})
 }
@@ -392,7 +418,7 @@ func (app *App) HandleCITriggerPOST(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"run_id": runID})
 		return
 	}
-	http.Redirect(w, r, fmt.Sprintf("/%s/%s/ci", owner.Username, repo.Name), http.StatusSeeOther)
+	redirectCIRun(w, r, owner.Username, repo.Name, runID, "Run queued.", "")
 }
 
 func ciRunURL(owner, repo, runID string) string {
@@ -557,13 +583,32 @@ func (app *App) HandleCIRunGET(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logContent := ""
-	if run.LogFile != "" {
-		if data, err := os.ReadFile(run.LogFile); err == nil {
-			logContent = ansiEscapeRegex.ReplaceAllString(string(data), "")
-		}
+	repoPath := GetRepoPath(r)
+	logContent, logOffset := readCILog(run.LogFile)
+	cfg, configView := loadCIConfigView(r.Context(), repoPath, run.CommitHash)
+	logView := parseCILog(logContent, run, cfg)
+
+	artifactFiles := listArtifactFiles(artifactRunDir(app.Config.ArtifactsPath, owner.Username, repo.Name, run.ID, run.AttemptID))
+	artifactTree := buildArtifactTree(artifactFiles)
+	decorateArtifactTreeURLs(artifactTree, owner.Username, repo.Name, run.ID)
+
+	attemptRuns, err := app.DB.GetCIRunRetryChain(r.Context(), repo.ID, run.ID)
+	if err != nil {
+		slog.Warn("failed to load CI retry chain", "run_id", run.ID, "error", err)
+		attemptRuns = []models.CIRun{*run}
 	}
-	artifacts := listArtifacts(artifactRunDir(app.Config.ArtifactsPath, owner.Username, repo.Name, run.ID, run.AttemptID))
+	attemptViews := loadCIRunViews(r.Context(), repoPath, attemptRuns)
+	for i := range attemptViews {
+		attemptViews[i].IsCurrent = attemptViews[i].Run.ID == run.ID
+		attemptViews[i].AttemptNumber = i + 1
+	}
+
+	var commit *git.Commit
+	views := loadCIRunViews(r.Context(), repoPath, []models.CIRun{*run})
+	if len(views) == 1 {
+		commit = views[0].Commit
+	}
+
 	app.renderPage(w, r, "repo_ci_run.html", PageData{
 		Title:   fmt.Sprintf("Run %s — CI", shortString(run.ID, 8)),
 		User:    GetUser(r),
@@ -571,8 +616,10 @@ func (app *App) HandleCIRunGET(w http.ResponseWriter, r *http.Request) {
 		Error:   strings.TrimSpace(r.URL.Query().Get("error")),
 		RepoNav: app.repoNavData(r, ciRunNavigationRef(run)),
 		Data: CIRunPageData{
-			Owner: owner, Repository: repo, Run: run,
-			LogContent: logContent, Artifacts: artifacts,
+			Owner: owner, Repository: repo, Run: run, Commit: commit,
+			LogContent: logContent, LogOffset: logOffset, Log: logView, Config: configView,
+			Artifacts: artifactTree, ArtifactCount: len(artifactFiles), ArtifactBytes: artifactTreeSize(artifactTree),
+			Attempts:   attemptViews,
 			CanControl: app.canControlCI(r.Context(), GetUser(r), repo),
 		},
 	})
@@ -596,15 +643,65 @@ func (app *App) HandleCIRunLogGET(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("X-Gitman-CI-Status", run.Status)
 	w.Header().Set("X-Gitman-CI-Reason", run.StatusReason)
+
+	offsetValue, incremental := r.URL.Query()["offset"]
+	if !incremental {
+		if run.LogFile == "" {
+			writeCILogFragment(w, "(log not yet available — worker is preparing the workspace)")
+			return
+		}
+		data, err := os.ReadFile(run.LogFile)
+		if err != nil {
+			writeCILogFragment(w, "(log file not readable)")
+			return
+		}
+		w.Header().Set("X-Gitman-Log-Offset", strconv.FormatInt(int64(len(data)), 10))
+		writeCILogFragment(w, ansiEscapeRegex.ReplaceAllString(string(data), ""))
+		return
+	}
+
+	offset := int64(0)
+	if len(offsetValue) > 0 && strings.TrimSpace(offsetValue[0]) != "" {
+		parsed, parseErr := strconv.ParseInt(strings.TrimSpace(offsetValue[0]), 10, 64)
+		if parseErr != nil || parsed < 0 {
+			http.Error(w, "invalid log offset", http.StatusBadRequest)
+			return
+		}
+		offset = parsed
+	}
 	if run.LogFile == "" {
-		writeCILogFragment(w, "(log not yet available — worker is preparing the workspace)")
+		w.Header().Set("X-Gitman-Log-Offset", "0")
+		w.Header().Set("X-Gitman-Log-Pending", "true")
+		writeCILogFragment(w, "")
 		return
 	}
-	data, err := os.ReadFile(run.LogFile)
+	file, err := os.Open(run.LogFile)
 	if err != nil {
-		writeCILogFragment(w, "(log file not readable)")
+		w.Header().Set("X-Gitman-Log-Offset", strconv.FormatInt(offset, 10))
+		writeCILogFragment(w, "")
 		return
 	}
+	defer file.Close()
+	stat, err := file.Stat()
+	if err != nil {
+		http.Error(w, "log unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if offset > stat.Size() {
+		offset = 0
+		w.Header().Set("X-Gitman-Log-Reset", "true")
+	}
+	if _, err := file.Seek(offset, io.SeekStart); err != nil {
+		http.Error(w, "log unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	data, err := io.ReadAll(file)
+	if err != nil {
+		http.Error(w, "log unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	nextOffset := offset + int64(len(data))
+	w.Header().Set("X-Gitman-Log-Offset", strconv.FormatInt(nextOffset, 10))
 	writeCILogFragment(w, ansiEscapeRegex.ReplaceAllString(string(data), ""))
 }
 
@@ -1161,6 +1258,68 @@ func (app *App) HandleArtifactByRunID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	serveArtifact(w, r, app.Config.ArtifactsPath, owner.Username, repo.Name, runID, run.AttemptID, artifactPathParam(r))
+}
+
+func (app *App) HandleCIRunArtifactPreviewGET(w http.ResponseWriter, r *http.Request) {
+	repo, owner := GetRepo(r), GetRepoOwner(r)
+	runID := chi.URLParam(r, "run_id")
+	run, err := app.DB.GetCIRunByID(r.Context(), runID)
+	if err != nil || run == nil || run.RepoID != repo.ID {
+		http.Error(w, "Run not found", http.StatusNotFound)
+		return
+	}
+	artifact := filepath.Clean(filepath.FromSlash(strings.TrimPrefix(artifactPathParam(r), "/")))
+	if artifact == "." || artifact == "" || filepath.IsAbs(artifact) || artifact == ".." || strings.HasPrefix(artifact, ".."+string(filepath.Separator)) {
+		http.Error(w, "Invalid artifact path", http.StatusBadRequest)
+		return
+	}
+	baseDir := artifactRunDir(app.Config.ArtifactsPath, owner.Username, repo.Name, run.ID, run.AttemptID)
+	baseAbs, err := filepath.Abs(baseDir)
+	if err != nil {
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+	requestedAbs, err := filepath.Abs(filepath.Join(baseDir, artifact))
+	if err != nil {
+		http.Error(w, "Invalid artifact path", http.StatusBadRequest)
+		return
+	}
+	rel, err := filepath.Rel(baseAbs, requestedAbs)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+	current := baseAbs
+	for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err != nil {
+			http.Error(w, "Artifact not found", http.StatusNotFound)
+			return
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+	}
+	info, err := os.Stat(requestedAbs)
+	if err != nil || !info.Mode().IsRegular() {
+		http.Error(w, "Artifact not found", http.StatusNotFound)
+		return
+	}
+	if !artifactLooksPreviewable(requestedAbs, info.Size()) {
+		http.Error(w, "Artifact is not previewable as text", http.StatusUnsupportedMediaType)
+		return
+	}
+	data, err := os.ReadFile(requestedAbs)
+	if err != nil {
+		http.Error(w, "Artifact not found", http.StatusNotFound)
+		return
+	}
+	noStore(w)
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", "inline")
+	_, _ = w.Write(data)
 }
 
 func artifactRunDir(artifactsPath, owner, repo, runID, attemptID string) string {

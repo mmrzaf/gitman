@@ -1,13 +1,13 @@
 {{define "repo_nav"}}
 {{if .RepoNav}}
 <nav class="repo-nav" aria-label="Repository navigation">
-  {{$owner := .RepoNav.Owner.Username}} {{$repo := .RepoNav.Repository.Name}}
-  <a href="/{{$owner}}/{{$repo}}/tree{{if .RepoNav.CurrentRef}}?ref={{.RepoNav.CurrentRef}}{{end}}">Files</a>
-  <a href="/{{$owner}}/{{$repo}}/commits{{if .RepoNav.CurrentRef}}?ref={{.RepoNav.CurrentRef}}{{end}}">Commits</a>
-  {{if .RepoNav.IsOwner}}<a href="/{{$owner}}/{{$repo}}/collaborators">Collaborators</a>{{end}}
-  {{if .RepoNav.CanViewCI}}<a href="/{{$owner}}/{{$repo}}/ci">CI/CD</a>{{end}}
-  {{if .RepoNav.IsOwner}}<a href="/{{$owner}}/{{$repo}}/ci/secrets">Secrets</a>{{end}}
-  {{if .RepoNav.IsOwner}}<a href="/{{$owner}}/{{$repo}}/settings">Settings</a>{{end}}
+  {{$owner := .RepoNav.Owner.Username}} {{$repo := .RepoNav.Repository.Name}} {{$active := .RepoNav.Active}}
+  <a {{if eq $active "files"}}class="active" aria-current="page"{{end}} href="/{{$owner}}/{{$repo}}/tree{{if .RepoNav.CurrentRef}}?ref={{urlquery .RepoNav.CurrentRef}}{{end}}">Files</a>
+  <a {{if eq $active "commits"}}class="active" aria-current="page"{{end}} href="/{{$owner}}/{{$repo}}/commits{{if .RepoNav.CurrentRef}}?ref={{urlquery .RepoNav.CurrentRef}}{{end}}">Commits</a>
+  {{if .RepoNav.IsOwner}}<a {{if eq $active "collaborators"}}class="active" aria-current="page"{{end}} href="/{{$owner}}/{{$repo}}/collaborators">Collaborators</a>{{end}}
+  {{if .RepoNav.CanViewCI}}<a {{if eq $active "ci"}}class="active" aria-current="page"{{end}} href="/{{$owner}}/{{$repo}}/ci">CI/CD</a>{{end}}
+  {{if .RepoNav.IsOwner}}<a {{if eq $active "secrets"}}class="active" aria-current="page"{{end}} href="/{{$owner}}/{{$repo}}/ci/secrets">Secrets</a>{{end}}
+  {{if .RepoNav.IsOwner}}<a {{if eq $active "settings"}}class="active" aria-current="page"{{end}} href="/{{$owner}}/{{$repo}}/settings">Settings</a>{{end}}
 </nav>
 {{end}}
 {{end}}

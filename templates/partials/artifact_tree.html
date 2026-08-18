@@ -1,0 +1,27 @@
+{{define "artifact_nodes"}}
+<ul class="artifact-tree">
+  {{range .}}
+  <li class="artifact-node {{if .IsDir}}artifact-dir{{else}}artifact-file{{end}}">
+    {{if .IsDir}}
+      <details open>
+        <summary><span class="artifact-kind" aria-hidden="true">▾</span><strong>{{.Name}}</strong></summary>
+        {{template "artifact_nodes" .Children}}
+      </details>
+    {{else}}
+      <div class="artifact-file-row">
+        <div class="artifact-file-main">
+          <span class="artifact-kind" aria-hidden="true">·</span>
+          <span class="mono artifact-name">{{.Name}}</span>
+          <span class="muted artifact-size">{{humanSize .Size}}</span>
+        </div>
+        <div class="inline-actions artifact-actions">
+          {{if .Previewable}}<a class="button secondary small" href="{{.PreviewURL}}" target="_blank" rel="noopener">View</a>{{end}}
+          <a class="button secondary small" href="{{.DownloadURL}}" download="{{.Name}}">Download</a>
+          <button class="secondary small" type="button" data-copy-url="{{.DownloadURL}}" data-copy-label="Copy URL">Copy URL</button>
+        </div>
+      </div>
+    {{end}}
+  </li>
+  {{end}}
+</ul>
+{{end}}

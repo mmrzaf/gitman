@@ -309,3 +309,46 @@ func TestSecureRepoPathAllowsCurrentDirectoryRoot(t *testing.T) {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
 }
+
+func TestGetCommitsByHashes(t *testing.T) {
+	ctx := context.Background()
+	repoPath := setupTestRepo(t)
+	prepareRepoWithCommit(t, repoPath)
+	commits, err := GetCommits(ctx, repoPath, "main", 0, 1)
+	if err != nil || len(commits) != 1 {
+		t.Fatalf("load seed commit: commits=%d err=%v", len(commits), err)
+	}
+
+	byHash, err := GetCommitsByHashes(ctx, repoPath, []string{commits[0].Hash, commits[0].Hash, "not-a-hash"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := byHash[commits[0].Hash]
+	if !ok {
+		t.Fatalf("commit %s missing from batch result: %+v", commits[0].Hash, byHash)
+	}
+	if got.Message != "initial commit" || got.Author != "Test User" {
+		t.Fatalf("unexpected commit metadata: %+v", got)
+	}
+}
+
+func TestBlobExists(t *testing.T) {
+	ctx := context.Background()
+	repoPath := setupTestRepo(t)
+	prepareRepoWithCommit(t, repoPath)
+
+	exists, err := BlobExists(ctx, repoPath, "main", "README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists {
+		t.Fatal("README.md should exist")
+	}
+	exists, err = BlobExists(ctx, repoPath, "main", ".gitman-ci.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exists {
+		t.Fatal("missing CI config reported as existing")
+	}
+}

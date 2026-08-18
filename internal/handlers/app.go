@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"io/fs"
 	"log/slog"
@@ -61,6 +62,7 @@ type RepoNavData struct {
 	Owner      *models.User
 	Repository *models.Repository
 	CurrentRef string
+	Active     string
 	IsOwner    bool
 	CanViewCI  bool
 }
@@ -120,9 +122,45 @@ func escapePath(s string) string {
 	return strings.ReplaceAll(url.PathEscape(s), "%2F", "/")
 }
 
+func humanBytes(size int64) string {
+	if size < 0 {
+		return ""
+	}
+	const unit = int64(1024)
+	if size < unit {
+		return fmt.Sprintf("%d B", size)
+	}
+	div, exp := unit, 0
+	for n := size / unit; n >= unit && exp < 4; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(size)/float64(div), "KMGTPE"[exp])
+}
+
+func repoNavActive(path string) string {
+	switch {
+	case strings.Contains(path, "/ci/secrets"):
+		return "secrets"
+	case strings.Contains(path, "/ci"):
+		return "ci"
+	case strings.Contains(path, "/collaborators"):
+		return "collaborators"
+	case strings.Contains(path, "/settings"):
+		return "settings"
+	case strings.Contains(path, "/commits"):
+		return "commits"
+	case strings.Contains(path, "/tree"), strings.Contains(path, "/blob"):
+		return "files"
+	default:
+		return "files"
+	}
+}
+
 var templateFuncs = template.FuncMap{
 	"short":      shortString,
 	"pathEscape": escapePath,
+	"humanSize":  humanBytes,
 	"statusLabel": func(status string) string {
 		label, _ := StatusBadge(status)
 		return label
@@ -236,6 +274,7 @@ func (app *App) repoNavData(r *http.Request, currentRef string) *RepoNavData {
 		Owner:      owner,
 		Repository: repo,
 		CurrentRef: currentRef,
+		Active:     repoNavActive(r.URL.Path),
 	}
 	user := GetUser(r)
 	if user == nil {
