@@ -36,18 +36,20 @@ func acquire(dbPath string, mode int) (*Lock, error) {
 		return nil, fmt.Errorf("open state lock: %w", err)
 	}
 	if err := file.Chmod(0o600); err != nil {
-		_ = file.Close()
-		return nil, fmt.Errorf("secure state lock: %w", err)
+		return nil, errors.Join(fmt.Errorf("secure state lock: %w", err), file.Close())
 	}
 	if err := syscall.Flock(int(file.Fd()), mode|syscall.LOCK_NB); err != nil {
-		_ = file.Close()
+		closeErr := file.Close()
 		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
-			if mode == syscall.LOCK_EX {
-				return nil, fmt.Errorf("Gitman state is in use; stop web/worker and other Gitman processes before creating a backup")
+			if closeErr != nil {
+				return nil, closeErr
 			}
-			return nil, fmt.Errorf("Gitman state is locked for backup")
+			if mode == syscall.LOCK_EX {
+				return nil, errors.New("gitman state is in use; stop web/worker and other Gitman processes before creating a backup")
+			}
+			return nil, errors.New("gitman state is locked for backup")
 		}
-		return nil, fmt.Errorf("lock Gitman state: %w", err)
+		return nil, errors.Join(fmt.Errorf("lock Gitman state: %w", err), closeErr)
 	}
 	return &Lock{file: file}, nil
 }
@@ -69,7 +71,7 @@ func stateLockPath(dbPath string) (string, error) {
 	// bypass backup exclusion by addressing the same SQLite file through a
 	// symlink. The database itself may not exist yet on first startup, in which
 	// case resolving the already-created parent is sufficient.
-	canonical := abs
+	var canonical string
 	if resolved, resolveErr := filepath.EvalSymlinks(abs); resolveErr == nil {
 		canonical = resolved
 	} else if os.IsNotExist(resolveErr) {
