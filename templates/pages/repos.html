@@ -1,33 +1,30 @@
 {{define "content"}}
-<div class="page-header page-header-row">
-  <div>
-    <h2>Repositories</h2>
-    <p class="muted">Manage Git repositories hosted on this server.</p>
-  </div>
-</div>
-
-<div class="content-grid">
-  <section>
-    {{template "repos_panel" .}}
+<div class="page-heading"><h1>Repositories</h1></div>
+{{template "flash" .}}
+<div class="split-layout">
+  <section class="primary-column">
+    {{if .Repos}}
+    <div class="resource-list">
+      {{range .Repos}}
+      <article class="resource-row">
+        <div class="resource-main">
+          <div class="resource-title"><a href="/{{$.User.Username}}/{{.Name}}"><strong>{{.Name}}</strong></a><span class="visibility">{{if .IsPrivate}}Private{{else}}Public{{end}}</span></div>
+          {{if .Description}}<p>{{.Description}}</p>{{end}}
+          <div class="meta-line mono">{{$.Config.SSHUser}}@{{$.Config.ServerHost}}:{{$.User.Username}}/{{.Name}}.git</div>
+        </div>
+        <form method="POST" action="/repos/{{.ID}}/delete" data-confirm="Delete repository {{.Name}}? This cannot be undone."><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="danger-link" type="submit">Delete</button></form>
+      </article>
+      {{end}}
+    </div>
+    {{else}}<p class="empty-line">No repositories yet.</p>{{end}}
   </section>
-
-  <aside class="form-card side-panel">
-    <h3>Create repository</h3>
-    <p class="muted">Names may contain letters, numbers, dashes, and underscores.</p>
-    <form method="POST" action="/repos" class="form-stack">
-      <label class="field">
-        <span>Name</span>
-        <input id="repo-name" type="text" name="name" required maxlength="100" pattern="^[a-zA-Z0-9_-]+$" title="Only letters, numbers, dashes, and underscores." />
-      </label>
-      <label class="field">
-        <span>Description</span>
-        <input id="repo-description" type="text" name="description" maxlength="500" />
-      </label>
-      <label class="checkbox-row">
-        <input type="checkbox" name="is_private" checked />
-        Private repository
-      </label>
-      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
+  <aside class="side-form">
+    <h2>Create repository</h2>
+    <form method="POST" action="/repos" class="settings-form">
+      <label><span>Name</span><input id="repo-name" type="text" name="name" required maxlength="100" pattern="^[a-zA-Z0-9_-]+$"></label>
+      <label><span>Description <em>optional</em></span><input id="repo-description" type="text" name="description" maxlength="500"></label>
+      <label class="check"><input type="checkbox" name="is_private" checked> Private</label>
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <button type="submit">Create repository</button>
     </form>
   </aside>

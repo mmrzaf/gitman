@@ -21,7 +21,6 @@ Gitman builds one binary with four top-level commands:
 | `internal/db` | SQLite initialization, migrations, and persistence |
 | `internal/git` | Safe Git repository paths, Git subprocess calls, commits, diffs, browsing, refs, and archives |
 | `internal/handlers` | Router, auth, CSRF, repository UI, Git smart HTTP, live CI logs, and artifact serving |
-| `internal/markdown` | Safe server-side README subset renderer |
 | `internal/repository` | Repository namespace locking and database/filesystem lifecycle coordination |
 | `internal/ssh` | Managed `authorized_keys` generation and SSH command authorization |
 | `internal/state` | Shared process-state lock and exclusive backup consistency boundary |

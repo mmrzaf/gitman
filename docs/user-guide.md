@@ -52,9 +52,9 @@ Add RSA, ECDSA, Ed25519, or OpenSSH security keys from **SSH Keys** after the op
 Repository pages provide:
 
 - Branch, tag, and immutable commit browsing with source context preserved between pages.
-- File trees, breadcrumbs, syntax-highlighted blobs, line/range permalinks, Raw/Download/Copy actions, and keyboard-driven Go to File.
+- File trees, breadcrumbs, exact source blobs, line/range permalinks, Raw/Download/Copy actions, and keyboard-driven Go to File.
 - Commit history, commit detail pages, unified diffs, rename/delete/binary handling, and CI status linked to the exact commit.
-- Safe rendered root READMEs with repository-relative links.
+- A bounded root README source preview with a direct link to the full file.
 - ZIP and TAR.GZ source downloads.
 - Clone commands for HTTP and SSH.
 - A small repository shortcut set: `t`, `g f`, `g c`, `g i`, and `?`.

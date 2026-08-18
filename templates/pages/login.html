@@ -1,29 +1,12 @@
 {{define "content"}}
-<div class="card auth-card">
-  <div class="page-header">
-    <h2>Login</h2>
-    <p class="muted">Sign in to manage repositories and keys.</p>
-  </div>
-
+<section class="auth-page">
+  <h1>Login</h1>
   {{template "flash" .}}
-
-  <form method="POST" action="/login" class="form-stack">
-    <label class="field">
-      <span>Username</span>
-      <input id="username" type="text" name="username" required autocomplete="username" />
-    </label>
-    <label class="field">
-      <span>Password</span>
-      <input id="password" type="password" name="password" required autocomplete="current-password" />
-    </label>
-    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
-    <button type="submit">Login</button>
+  <form method="POST" action="/login" class="settings-form">
+    <label><span>Username</span><input type="text" name="username" value="{{.Username}}" required autocomplete="username" autofocus></label>
+    <label><span>Password</span><input type="password" name="password" required autocomplete="current-password"></label>
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button type="submit">Login</button>
   </form>
-
-  {{if .Config.AllowRegister}}
-  <p class="muted mt-1">Need an account? <a href="/register">Register</a>.</p>
-  {{else}}
-  <p class="muted mt-1">Registration is disabled on this server.</p>
-  {{end}}
-</div>
+  {{if .Config.AllowRegister}}<p class="auth-switch">No account? <a href="/register">Register</a>.</p>{{end}}
+</section>
 {{end}}

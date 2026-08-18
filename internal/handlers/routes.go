@@ -110,10 +110,9 @@ func SetupRouter(app *App) *chi.Mux {
 
 			r.Get("/settings", app.HandleRepoSettingsGET)
 			r.Post("/settings", app.HandleRepoSettingsPOST)
-
-			r.Get("/collaborators", app.HandleRepoCollaboratorsGET)
-			r.Post("/collaborators/add", app.HandleRepoCollaboratorsAddPOST)
-			r.Post("/collaborators/remove", app.HandleRepoCollaboratorsRemovePOST)
+			r.Get("/settings/access", app.HandleRepoCollaboratorsGET)
+			r.Post("/settings/access/add", app.HandleRepoCollaboratorsAddPOST)
+			r.Post("/settings/access/remove", app.HandleRepoCollaboratorsRemovePOST)
 
 			// CI output and artifacts may contain sensitive build data. Public source
 			// browsing does not imply public CI visibility.
@@ -121,16 +120,16 @@ func SetupRouter(app *App) *chi.Mux {
 				r.Use(app.RequireRepoMember)
 				r.Get("/ci", app.HandleCIGET)
 				r.Post("/ci/trigger", app.HandleCITriggerPOST)
-				r.Post("/ci/rules", app.HandleCISettingsRulePOST)
-				r.Post("/ci/rules/delete", app.HandleCISettingsRuleDeletePOST)
 				r.Get("/ci/{run_id}", app.HandleCIRunGET)
 				r.Post("/ci/{run_id}/cancel", app.HandleCIRunCancelPOST)
 				r.Post("/ci/{run_id}/retry", app.HandleCIRunRetryPOST)
 
-				// Secrets
-				r.Get("/ci/secrets", app.HandleCISecretsGET)
-				r.Post("/ci/secrets", app.HandleCISecretsAddPOST)
-				r.Post("/ci/secrets/{id}/delete", app.HandleCISecretsDeletePOST)
+				// Repository CI settings live under Settings; CI itself remains run history/execution.
+				r.Get("/settings/ci", app.HandleRepoCISettingsGET)
+				r.Post("/settings/ci/secrets", app.HandleCISecretsAddPOST)
+				r.Post("/settings/ci/secrets/{id}/delete", app.HandleCISecretsDeletePOST)
+				r.Post("/settings/ci/rules", app.HandleCISettingsRulePOST)
+				r.Post("/settings/ci/rules/delete", app.HandleCISettingsRuleDeletePOST)
 			})
 		})
 	})
@@ -145,10 +144,11 @@ func SetupRouter(app *App) *chi.Mux {
 
 		// Public pages (login, register, home)
 		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-			app.renderPage(w, r, "home.html", PageData{
-				User: GetUser(r),
-				Data: struct{ Page string }{Page: "home"},
-			})
+			if GetUser(r) != nil {
+				http.Redirect(w, r, "/repos", http.StatusFound)
+				return
+			}
+			app.renderPage(w, r, "home.html", &PageData{})
 		})
 		r.Get("/login", app.HandleLoginGET)
 		r.Post("/login", app.HandleLoginPOST)

@@ -96,6 +96,31 @@ func (app *App) accessLogMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+func webErrorCopy(status int) (string, string) {
+	switch status {
+	case http.StatusBadRequest:
+		return "Bad request", "Check the request and try again."
+	case http.StatusUnauthorized:
+		return "Authentication required", "Sign in and try the request again."
+	case http.StatusForbidden:
+		return "Access denied", "Your account does not have permission to do that."
+	case http.StatusNotFound:
+		return "Not found", "The resource may have moved, been deleted, or may not be visible to you."
+	case http.StatusConflict:
+		return "Conflict", "Gitman could not apply the change because the current state has changed."
+	case http.StatusRequestEntityTooLarge:
+		return "Request too large", "Reduce the request size and try again."
+	case http.StatusUnsupportedMediaType:
+		return "Unsupported request", "Use a supported request format and try again."
+	case http.StatusServiceUnavailable:
+		return "Temporarily unavailable", "Try again in a moment. If this continues, check the Gitman server logs."
+	case http.StatusMethodNotAllowed:
+		return "Method not allowed", "This endpoint does not support that operation."
+	default:
+		return "Gitman could not complete this request", "Try again. If this continues, use the request ID when checking the server logs."
+	}
+}
+
 func httpStatusForError(err error) int {
 	switch apperr.KindOf(err) {
 	case apperr.KindInvalid:
@@ -139,7 +164,7 @@ func (app *App) logRequestError(r *http.Request, err error, status int) {
 
 func (app *App) writeWebError(w http.ResponseWriter, r *http.Request, err error) {
 	status := httpStatusForError(err)
-	app.renderError(w, r, PageData{User: GetUser(r)}, apperr.PublicMessage(err), status)
+	app.renderError(w, r, &PageData{User: GetUser(r)}, apperr.PublicMessage(err), status)
 }
 
 func (app *App) respondWebError(w http.ResponseWriter, r *http.Request, err error) {

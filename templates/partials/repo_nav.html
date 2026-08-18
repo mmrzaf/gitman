@@ -1,19 +1,14 @@
 {{define "repo_nav"}}
 {{if .RepoNav}}
+{{$owner := .RepoNav.Owner.Username}} {{$repo := .RepoNav.Repository.Name}} {{$active := .RepoNav.Active}}
 <nav class="repo-nav" aria-label="Repository navigation">
-  {{$owner := .RepoNav.Owner.Username}} {{$repo := .RepoNav.Repository.Name}} {{$active := .RepoNav.Active}}
-  <div class="repo-nav-primary">
+  <div class="repo-nav-links">
     <a {{if eq $active "files"}}class="active" aria-current="page"{{end}} href="/{{$owner}}/{{$repo}}/tree{{if .RepoNav.CurrentRef}}?ref={{urlquery .RepoNav.CurrentRef}}{{end}}">Files</a>
     <a {{if eq $active "commits"}}class="active" aria-current="page"{{end}} href="/{{$owner}}/{{$repo}}/commits{{if .RepoNav.CurrentRef}}?ref={{urlquery .RepoNav.CurrentRef}}{{end}}">Commits</a>
-    {{if .RepoNav.CanViewCI}}<a {{if eq $active "ci"}}class="active" aria-current="page"{{end}} href="/{{$owner}}/{{$repo}}/ci">CI/CD</a>{{end}}
+    {{if .RepoNav.CanViewCI}}<a {{if eq $active "ci"}}class="active" aria-current="page"{{end}} href="/{{$owner}}/{{$repo}}/ci">CI</a>{{end}}
+    {{if .RepoNav.IsOwner}}<a {{if eq $active "settings"}}class="active" aria-current="page"{{end}} href="/{{$owner}}/{{$repo}}/settings">Settings</a>{{end}}
   </div>
-  {{if .RepoNav.IsOwner}}
-  <div class="repo-nav-admin" aria-label="Repository administration">
-    <a {{if eq $active "collaborators"}}class="active" aria-current="page"{{end}} href="/{{$owner}}/{{$repo}}/collaborators">Collaborators</a>
-    <a {{if eq $active "secrets"}}class="active" aria-current="page"{{end}} href="/{{$owner}}/{{$repo}}/ci/secrets">Secrets</a>
-    <a {{if eq $active "settings"}}class="active" aria-current="page"{{end}} href="/{{$owner}}/{{$repo}}/settings">Settings</a>
-  </div>
-  {{end}}
+  {{if ne $active "settings"}}<button class="repo-file-finder-link js-only" type="button" data-file-finder-open>Go to file <kbd>t</kbd></button>{{end}}
 </nav>
 {{end}}
 {{end}}

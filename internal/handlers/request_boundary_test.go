@@ -22,6 +22,36 @@ func TestDecodeTriggerRequestAcceptsJSONMediaTypeParameters(t *testing.T) {
 	}
 }
 
+func TestDecodeTriggerRequestAcceptsUnifiedRevisionSelector(t *testing.T) {
+	for _, tt := range []struct {
+		form   string
+		branch string
+		tag    string
+	}{
+		{"revision=branch%3Amain", "main", ""},
+		{"revision=tag%3Av1.0.0", "", "v1.0.0"},
+	} {
+		req := httptest.NewRequest("POST", "/repo/ci/trigger", strings.NewReader(tt.form))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		got, err := decodeTriggerRequest(httptest.NewRecorder(), req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Branch != tt.branch || got.Tag != tt.tag {
+			t.Fatalf("decoded branch=%q tag=%q, want branch=%q tag=%q", got.Branch, got.Tag, tt.branch, tt.tag)
+		}
+	}
+}
+
+func TestDecodeTriggerRequestRejectsUnknownRevisionSelector(t *testing.T) {
+	req := httptest.NewRequest("POST", "/repo/ci/trigger", strings.NewReader("revision=commit%3Adeadbeef"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	_, err := decodeTriggerRequest(httptest.NewRecorder(), req)
+	if err == nil || !apperr.Is(err, apperr.KindInvalid) {
+		t.Fatalf("error = %v, want invalid", err)
+	}
+}
+
 func TestDecodeTriggerRequestRejectsUnsupportedContentType(t *testing.T) {
 	req := httptest.NewRequest("POST", "/repo/ci/trigger", strings.NewReader("branch=main"))
 	req.Header.Set("Content-Type", "text/plain")
@@ -41,7 +71,7 @@ func TestRequestMediaTypeRejectsMalformedHeader(t *testing.T) {
 }
 
 func TestCIStatusTemplateHelpersAcceptTypedStatus(t *testing.T) {
-	tmpl, err := template.New("status").Funcs(templateFuncs).Parse(`{{statusLabel .}}|{{statusClass .}}|{{if canCancelRun .}}cancel{{else if canRetryRun .}}retry{{else}}none{{end}}`)
+	tmpl, err := template.New("status").Funcs(templateFuncs).Parse(`{{statusLabel .}}|{{if canCancelRun .}}cancel{{else if canRetryRun .}}retry{{else}}none{{end}}`)
 	if err != nil {
 		t.Fatalf("parse template: %v", err)
 	}
@@ -49,12 +79,12 @@ func TestCIStatusTemplateHelpersAcceptTypedStatus(t *testing.T) {
 		status models.CIStatus
 		want   string
 	}{
-		{models.CIStatusPending, "Pending|badge-pending|cancel"},
-		{models.CIStatusRunning, "Running|badge-running|cancel"},
-		{models.CIStatusSuccess, "Success|badge-success|retry"},
-		{models.CIStatusFailed, "Failed|badge-failed|retry"},
-		{models.CIStatusSkipped, "Skipped|badge-skipped|retry"},
-		{models.CIStatusCancelled, "Cancelled|badge-cancelled|retry"},
+		{models.CIStatusPending, "Pending|cancel"},
+		{models.CIStatusRunning, "Running|cancel"},
+		{models.CIStatusSuccess, "Success|retry"},
+		{models.CIStatusFailed, "Failed|retry"},
+		{models.CIStatusSkipped, "Skipped|retry"},
+		{models.CIStatusCancelled, "Cancelled|retry"},
 	} {
 		var out strings.Builder
 		if err := tmpl.Execute(&out, tt.status); err != nil {

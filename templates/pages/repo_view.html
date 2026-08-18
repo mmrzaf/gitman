@@ -1,147 +1,69 @@
 {{define "content"}}
-{{if .Data.IsEmpty}}
-<section class="empty-repo card">
-  <div class="empty-repo-heading">
-    <div>
-      <h2>Start this repository</h2>
-      <p class="muted">Push an existing Git repository. Gitman will pick up the default branch as soon as the first commit lands.</p>
-    </div>
-  </div>
-
-  <div class="setup-command">
-    <div><strong>SSH</strong><span class="muted">Recommended when your SSH key is already in Gitman.</span></div>
-    <pre><code>git remote add origin {{$.Config.SSHUser}}@{{$.Config.ServerHost}}:{{.Data.Owner.Username}}/{{.Data.Repository.Name}}.git
+{{if .IsEmpty}}
+<section class="empty-repo">
+  <h1>Empty repository</h1>
+  <p>Push the first commit to start <strong>{{.Repository.Name}}</strong>.</p>
+  <div class="setup-block">
+    <header><strong>SSH</strong><button class="secondary small js-only" type="button" data-copy-text="git remote add origin {{$.Config.SSHUser}}@{{$.Config.ServerHost}}:{{.Owner.Username}}/{{.Repository.Name}}.git&#10;git branch -M main&#10;git push -u origin main" data-copy-label="Copy">Copy</button></header>
+    <pre><code>git remote add origin {{$.Config.SSHUser}}@{{$.Config.ServerHost}}:{{.Owner.Username}}/{{.Repository.Name}}.git
 git branch -M main
 git push -u origin main</code></pre>
-    <button class="secondary small" type="button" data-copy-text="git remote add origin {{$.Config.SSHUser}}@{{$.Config.ServerHost}}:{{.Data.Owner.Username}}/{{.Data.Repository.Name}}.git&#10;git branch -M main&#10;git push -u origin main" data-copy-label="Copy commands">Copy commands</button>
   </div>
-
-  <div class="setup-command">
-    <div><strong>HTTP</strong><span class="muted">Useful for token-based Git access.</span></div>
-    <pre><code>git remote add origin {{$.Config.PublicURL}}/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}.git
+  <div class="setup-block">
+    <header><strong>HTTP</strong><button class="secondary small js-only" type="button" data-copy-text="git remote add origin {{$.Config.PublicURL}}/{{.Owner.Username}}/{{.Repository.Name}}.git&#10;git branch -M main&#10;git push -u origin main" data-copy-label="Copy">Copy</button></header>
+    <pre><code>git remote add origin {{$.Config.PublicURL}}/{{.Owner.Username}}/{{.Repository.Name}}.git
 git branch -M main
 git push -u origin main</code></pre>
-    <button class="secondary small" type="button" data-copy-text="git remote add origin {{$.Config.PublicURL}}/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}.git&#10;git branch -M main&#10;git push -u origin main" data-copy-label="Copy commands">Copy commands</button>
   </div>
 </section>
 {{else}}
-<div class="selector-bar source-selector-bar repo-source-toolbar">
-  <form class="selector-group" method="GET" action="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/tree">
-    <label class="sr-only" for="repo-ref-select">Select ref</label>
-    <select id="repo-ref-select" name="ref" data-submit-select class="code-input" aria-label="Select ref">
-      {{if eq .Data.CurrentRefKind "commit"}}<option selected value="{{.Data.CurrentRef}}">Revision {{short .Data.ResolvedCommit 8}}</option>{{end}}
-      {{if .Data.Branches}}
-      <optgroup label="Branches">
-        {{range .Data.Branches}}
-        <option value="{{.}}" {{if eq . $.Data.CurrentRef}}selected{{end}}>{{.}}</option>
-        {{end}}
-      </optgroup>
-      {{end}}
-      {{if .Data.Tags}}
-      <optgroup label="Tags">
-        {{range .Data.Tags}}
-        <option value="{{.}}" {{if eq . $.Data.CurrentRef}}selected{{end}}>tag: {{.}}</option>
-        {{end}}
-      </optgroup>
-      {{end}}
+<div class="source-toolbar toolbar">
+  <form method="GET" action="/{{.Owner.Username}}/{{.Repository.Name}}/tree" class="inline-form">
+    <label class="sr-only" for="repo-ref-select">Revision</label>
+    <select id="repo-ref-select" name="ref" data-submit-select class="mono">
+      {{if eq .CurrentRefKind "commit"}}<option selected value="{{.CurrentRef}}">{{short .ResolvedCommit 8}} (commit)</option>{{end}}
+      {{if .Branches}}<optgroup label="Branches">{{range .Branches}}<option value="{{.}}" {{if eq . $.CurrentRef}}selected{{end}}>{{.}}</option>{{end}}</optgroup>{{end}}
+      {{if .Tags}}<optgroup label="Tags">{{range .Tags}}<option value="{{.}}" {{if eq . $.CurrentRef}}selected{{end}}>{{.}}</option>{{end}}</optgroup>{{end}}
     </select>
-    {{if .Data.CurrentPath}}<input type="hidden" name="path" value="{{.Data.CurrentPath}}">{{end}}
-    <button class="secondary small ref-switch-fallback" type="submit">Switch</button>
-    {{if .Data.ResolvedCommit}}<a class="chip mono" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/commit/{{.Data.ResolvedCommit}}?ref={{urlquery .Data.CurrentRef}}" title="Open this exact commit">{{short .Data.ResolvedCommit 8}}</a>{{end}}
+    {{if .CurrentPath}}<input type="hidden" name="path" value="{{.CurrentPath}}">{{end}}
+    <button class="secondary small no-js-only" type="submit">Switch</button>
+    {{if .ResolvedCommit}}<a class="mono quiet-link" href="/{{.Owner.Username}}/{{.Repository.Name}}/commit/{{.ResolvedCommit}}?ref={{urlquery .CurrentRef}}">{{short .ResolvedCommit 8}}</a>{{end}}
   </form>
-  <div class="inline-actions">
-    {{if not .Data.CurrentPath}}
-    <details class="clone-menu">
-      <summary class="button secondary small">Clone</summary>
-      <div class="clone-popover">
-        <label>SSH</label>
-        <div class="clone-copy-row"><code>{{$.Config.SSHUser}}@{{$.Config.ServerHost}}:{{.Data.Owner.Username}}/{{.Data.Repository.Name}}.git</code><button class="secondary tiny" type="button" data-copy-text="{{$.Config.SSHUser}}@{{$.Config.ServerHost}}:{{.Data.Owner.Username}}/{{.Data.Repository.Name}}.git" data-copy-label="Copy">Copy</button></div>
-        <label>HTTP</label>
-        <div class="clone-copy-row"><code>{{$.Config.PublicURL}}/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}.git</code><button class="secondary tiny" type="button" data-copy-text="{{$.Config.PublicURL}}/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}.git" data-copy-label="Copy">Copy</button></div>
-      </div>
-    </details>
+  <div class="toolbar-actions">
+    {{if not .CurrentPath}}
+    <details class="menu clone-menu"><summary>Clone</summary><div class="menu-popover">
+      <label>SSH</label><div class="copy-row"><code>{{$.Config.SSHUser}}@{{$.Config.ServerHost}}:{{.Owner.Username}}/{{.Repository.Name}}.git</code><button class="secondary tiny js-only" type="button" data-copy-text="{{$.Config.SSHUser}}@{{$.Config.ServerHost}}:{{.Owner.Username}}/{{.Repository.Name}}.git" data-copy-label="Copy">Copy</button></div>
+      <label>HTTP</label><div class="copy-row"><code>{{$.Config.PublicURL}}/{{.Owner.Username}}/{{.Repository.Name}}.git</code><button class="secondary tiny js-only" type="button" data-copy-text="{{$.Config.PublicURL}}/{{.Owner.Username}}/{{.Repository.Name}}.git" data-copy-label="Copy">Copy</button></div>
+    </div></details>
     {{end}}
-    <details class="archive-menu">
-      <summary class="button secondary small">Download</summary>
-      <div class="archive-popover">
-        <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/archive/zip?ref={{urlquery .Data.CurrentRef}}" download="{{.Data.Repository.Name}}-{{.Data.CurrentRef}}.zip">ZIP archive</a>
-        <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/archive/tar.gz?ref={{urlquery .Data.CurrentRef}}" download="{{.Data.Repository.Name}}-{{.Data.CurrentRef}}.tar.gz">TAR.GZ archive</a>
-      </div>
-    </details>
+    <details class="menu archive-menu"><summary>Download</summary><div class="menu-popover menu-links"><a href="/{{.Owner.Username}}/{{.Repository.Name}}/archive/zip?ref={{urlquery .CurrentRef}}">ZIP</a><a href="/{{.Owner.Username}}/{{.Repository.Name}}/archive/tar.gz?ref={{urlquery .CurrentRef}}">TAR.GZ</a></div></details>
   </div>
 </div>
 
-{{if not .Data.CurrentPath}}
-{{if .Data.LatestCommit}}
-<section class="repo-tip card tight">
-  <div class="repo-tip-main">
-    <div class="repo-tip-icon" aria-hidden="true">↳</div>
-    <div class="repo-tip-copy">
-      <a class="repo-tip-message" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/commit/{{.Data.LatestCommit.Hash}}?ref={{urlquery .Data.CurrentRef}}"><strong>{{.Data.LatestCommit.Message}}</strong></a>
-      <div class="muted repo-tip-meta"><strong>{{.Data.LatestCommit.Author}}</strong> committed <time datetime="{{.Data.LatestCommit.Date.Format "2006-01-02T15:04:05Z07:00"}}" data-relative-time>{{.Data.LatestCommit.Date.Format "2006-01-02 15:04"}}</time></div>
-    </div>
-  </div>
-  <div class="repo-tip-actions">
-    {{if .Data.LatestCI}}<a class="badge {{statusClass .Data.LatestCI.Status}}" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/{{.Data.LatestCI.ID}}">CI {{statusLabel .Data.LatestCI.Status}}</a>{{end}}
-    <a class="button secondary small mono" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/commit/{{.Data.LatestCommit.Hash}}?ref={{urlquery .Data.CurrentRef}}">{{short .Data.LatestCommit.Hash 8}}</a>
-  </div>
-</section>
-{{end}}
-{{else}}
-<nav class="source-breadcrumbs source-directory-breadcrumbs" aria-label="Repository path">
-  <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/tree?ref={{urlquery .Data.CurrentRef}}">{{.Data.Repository.Name}}</a>
-  {{range $index, $crumb := .Data.Breadcrumbs}}
-    <span aria-hidden="true">/</span>
-    {{if eq $index (sub1 (len $.Data.Breadcrumbs))}}<strong>{{$crumb.Name}}</strong>{{else}}<a href="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/tree?ref={{urlquery $.Data.CurrentRef}}&amp;path={{urlquery $crumb.Path}}">{{$crumb.Name}}</a>{{end}}
-  {{end}}
-</nav>
+{{if .CurrentPath}}
+<nav class="breadcrumbs" aria-label="Repository path"><a href="/{{.Owner.Username}}/{{.Repository.Name}}/tree?ref={{urlquery .CurrentRef}}">{{.Repository.Name}}</a>{{range $index, $crumb := .Breadcrumbs}}<span>/</span>{{if eq $index (sub1 (len $.Breadcrumbs))}}<strong>{{$crumb.Name}}</strong>{{else}}<a href="/{{$.Owner.Username}}/{{$.Repository.Name}}/tree?ref={{urlquery $.CurrentRef}}&amp;path={{urlquery $crumb.Path}}">{{$crumb.Name}}</a>{{end}}{{end}}</nav>
+{{else if .LatestCommit}}
+<div class="latest-commit-line">
+  <div><a href="/{{.Owner.Username}}/{{.Repository.Name}}/commit/{{.LatestCommit.Hash}}?ref={{urlquery .CurrentRef}}"><strong>{{.LatestCommit.Message}}</strong></a><span class="meta-line">{{.LatestCommit.Author}} · <time datetime="{{.LatestCommit.Date.Format "2006-01-02T15:04:05Z07:00"}}" data-relative-time>{{.LatestCommit.Date.Format "2006-01-02 15:04"}}</time></span></div>
+  <div class="inline-meta">{{if .LatestCI}}<a class="status-text status-{{.LatestCI.Status}}" href="/{{.Owner.Username}}/{{.Repository.Name}}/ci/{{.LatestCI.ID}}">CI {{statusLabel .LatestCI.Status}}</a>{{end}}<a class="mono" href="/{{.Owner.Username}}/{{.Repository.Name}}/commit/{{.LatestCommit.Hash}}?ref={{urlquery .CurrentRef}}">{{short .LatestCommit.Hash 8}}</a></div>
+</div>
 {{end}}
 
-<section class="list-card source-tree-card" aria-label="Files">
-  <table class="data-table file-table">
-    <tbody>
-      {{if .Data.CurrentPath}}
-      <tr class="file-parent-row">
-        <td><span class="file-kind" aria-hidden="true">up</span><a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/tree?ref={{urlquery .Data.CurrentRef}}{{if .Data.ParentPath}}&amp;path={{urlquery .Data.ParentPath}}{{end}}">..</a></td>
-        <td></td>
-      </tr>
-      {{end}}
-      {{range .Data.Tree}}
-      <tr>
-        <td>
-          {{if eq .Type "tree"}}
-          <span class="file-kind file-kind-dir" aria-hidden="true">DIR</span>
-          <a href="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/tree?ref={{urlquery $.Data.CurrentRef}}&amp;path={{urlquery (joinPath $.Data.CurrentPath .Name)}}"><strong>{{.Name}}</strong></a>
-          {{else if eq .Type "blob"}}
-          <span class="file-kind" aria-hidden="true">FILE</span>
-          <a href="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/blob?ref={{urlquery $.Data.CurrentRef}}&amp;path={{urlquery (joinPath $.Data.CurrentPath .Name)}}">{{.Name}}</a>
-          {{else}}
-          <span class="file-kind" aria-hidden="true">SUB</span>
-          <strong>{{.Name}}</strong> <code>{{short .Hash 8}}</code>
-          {{end}}
-        </td>
-        <td class="muted mono text-right">{{if eq .Type "blob"}}{{humanSize .Size}}{{else}}—{{end}}</td>
-      </tr>
-      {{else}}
-      <tr><td colspan="2"><div class="empty-state compact"><p>No files at this path.</p></div></td></tr>
-      {{end}}
-    </tbody>
-  </table>
-</section>
+<div class="file-tree-wrap">
+<table class="file-tree" aria-label="Files"><tbody>
+  {{if .CurrentPath}}<tr><td class="file-type">↑</td><td><a href="/{{.Owner.Username}}/{{.Repository.Name}}/tree?ref={{urlquery .CurrentRef}}{{if .ParentPath}}&amp;path={{urlquery .ParentPath}}{{end}}">..</a></td><td></td></tr>{{end}}
+  {{range .Tree}}<tr>
+    <td class="file-type">{{if eq .Type "tree"}}dir{{else if eq .Type "blob"}}file{{else}}sub{{end}}</td>
+    <td>{{if eq .Type "tree"}}<a href="/{{$.Owner.Username}}/{{$.Repository.Name}}/tree?ref={{urlquery $.CurrentRef}}&amp;path={{urlquery (joinPath $.CurrentPath .Name)}}"><strong>{{.Name}}</strong></a>{{else if eq .Type "blob"}}<a href="/{{$.Owner.Username}}/{{$.Repository.Name}}/blob?ref={{urlquery $.CurrentRef}}&amp;path={{urlquery (joinPath $.CurrentPath .Name)}}">{{.Name}}</a>{{else}}<strong>{{.Name}}</strong> <span class="mono muted">{{short .Hash 8}}</span>{{end}}</td>
+    <td class="file-size">{{if eq .Type "blob"}}{{humanSize .Size}}{{end}}</td>
+  </tr>{{else}}<tr><td colspan="3" class="empty-line">No files at this path.</td></tr>{{end}}
+</tbody></table>
+</div>
 
-{{if and (not .Data.CurrentPath) .Data.ReadmePath}}
-<section class="readme-card card flush">
-  <header class="readme-header">
-    <div><strong>{{.Data.ReadmePath}}</strong><span class="muted">Repository overview</span></div>
-    <a class="button secondary small" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/blob?ref={{urlquery .Data.CurrentRef}}&amp;path={{urlquery .Data.ReadmePath}}">View file</a>
-  </header>
-  {{if .Data.ReadmeTooBig}}
-  <div class="empty-state"><h3>README is too large to render here</h3><p class="muted">Open the file directly to inspect it without slowing down the repository page.</p></div>
-  {{else if .Data.ReadmeHTML}}
-  <article class="readme-body">{{.Data.ReadmeHTML}}</article>
-  {{else}}
-  <div class="empty-state"><p class="muted">README preview is unavailable for this file.</p></div>
-  {{end}}
+{{if and (not .CurrentPath) .ReadmePath}}
+<section class="readme-section">
+  <header><strong>{{.ReadmePath}}</strong><a href="/{{.Owner.Username}}/{{.Repository.Name}}/blob?ref={{urlquery .CurrentRef}}&amp;path={{urlquery .ReadmePath}}">Open file</a></header>
+  {{if .ReadmeTooBig}}<p class="empty-line">README is too large for the repository overview.</p>{{else if .ReadmeContent}}<pre class="readme-source"><code>{{.ReadmeContent}}</code></pre>{{else}}<p class="empty-line">README preview unavailable.</p>{{end}}
 </section>
 {{end}}
 {{end}}

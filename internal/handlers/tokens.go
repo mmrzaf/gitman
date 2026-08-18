@@ -15,6 +15,7 @@ import (
 )
 
 type TokensPageData struct {
+	PageData
 	Tokens   []models.AccessToken
 	NewToken string
 }
@@ -33,15 +34,9 @@ func (app *App) renderTokensPage(w http.ResponseWriter, r *http.Request, user *m
 		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Token data is temporarily unavailable", err))
 		return
 	}
-	app.renderPage(w, r, "tokens.html", PageData{
-		Title:   "Access Tokens",
-		User:    user,
-		Error:   errStr,
-		Success: successStr,
-		Data: TokensPageData{
-			Tokens:   tokens,
-			NewToken: newToken,
-		},
+	app.renderPage(w, r, "tokens.html", &TokensPageData{
+		PageData: PageData{Title: "Access Tokens", User: user, Error: errStr, Success: successStr},
+		Tokens:   tokens, NewToken: newToken,
 	})
 }
 

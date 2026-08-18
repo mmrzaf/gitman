@@ -1,38 +1,10 @@
 {{define "content"}}
-<div class="page-header page-header-row">
-  <div>
-    <h2>Dashboard</h2>
-    <p class="muted">A small Git server for repositories, CI runs, SSH keys, and HTTP access tokens.</p>
-  </div>
-  {{if .User}}<a href="/repos" class="button">View repositories</a>{{end}}
-</div>
-
-{{template "flash" .}}
-
-{{if not .User}}
-<div class="card auth-card">
-  <h3>Get started</h3>
-  <p class="muted">Sign in to manage repositories hosted on this Gitman server.</p>
-  <div class="page-actions">
+<section class="home-hero">
+  <h1>Gitman</h1>
+  <p>A small self-hosted Git server with CI.</p>
+  <div class="home-actions">
     <a class="button" href="/login">Login</a>
     {{if .Config.AllowRegister}}<a class="button secondary" href="/register">Register</a>{{end}}
   </div>
-</div>
-{{else}}
-<div class="content-grid">
-  <section class="card">
-    <h3>Repositories</h3>
-    <p class="muted">Create repositories, browse files, manage collaborators, and run CI pipelines.</p>
-    <a class="button secondary" href="/repos">Open repositories</a>
-  </section>
-  <aside class="card side-panel">
-    <h3>First-time setup</h3>
-    <p class="muted">Add an SSH key before pushing over SSH. Use access tokens for Git over HTTP.</p>
-    <div class="form-stack">
-      <a class="button secondary" href="/keys">Manage SSH keys</a>
-      <a class="button secondary" href="/tokens">Manage tokens</a>
-    </div>
-  </aside>
-</div>
-{{end}}
+</section>
 {{end}}

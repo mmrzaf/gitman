@@ -1,62 +1,19 @@
 {{define "content"}}
-<div class="source-file-header">
-  <div class="source-file-context">
-    <nav class="source-breadcrumbs" aria-label="File path">
-      <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/tree?ref={{urlquery .Data.CurrentRef}}">{{.Data.Repository.Name}}</a>
-      {{range $index, $crumb := .Data.Breadcrumbs}}
-        <span aria-hidden="true">/</span>
-        {{if eq $index (sub1 (len $.Data.Breadcrumbs))}}
-          <strong>{{$crumb.Name}}</strong>
-        {{else}}
-          <a href="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/tree?ref={{urlquery $.Data.CurrentRef}}&amp;path={{urlquery $crumb.Path}}">{{$crumb.Name}}</a>
-        {{end}}
-      {{end}}
-    </nav>
-    <div class="source-file-meta muted">
-      <span class="chip">{{.Data.CurrentRef}}</span>
-      {{if .Data.ResolvedCommit}}<a class="mono" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/commit/{{.Data.ResolvedCommit}}?ref={{urlquery .Data.CurrentRef}}">{{short .Data.ResolvedCommit 8}}</a>{{end}}
-      <span>{{.Data.BlobLanguage}}</span>
-      <span>{{humanSize .Data.BlobSize}}</span>
-    </div>
+<div class="source-header">
+  <div>
+    <nav class="breadcrumbs" aria-label="File path"><a href="/{{.Owner.Username}}/{{.Repository.Name}}/tree?ref={{urlquery .CurrentRef}}">{{.Repository.Name}}</a>{{range $index, $crumb := .Breadcrumbs}}<span>/</span>{{if eq $index (sub1 (len $.Breadcrumbs))}}<strong>{{$crumb.Name}}</strong>{{else}}<a href="/{{$.Owner.Username}}/{{$.Repository.Name}}/tree?ref={{urlquery $.CurrentRef}}&amp;path={{urlquery $crumb.Path}}">{{$crumb.Name}}</a>{{end}}{{end}}</nav>
+    <div class="meta-line"><span class="mono">{{.CurrentRef}}</span>{{if .ResolvedCommit}}<a class="mono" href="/{{.Owner.Username}}/{{.Repository.Name}}/commit/{{.ResolvedCommit}}?ref={{urlquery .CurrentRef}}">{{short .ResolvedCommit 8}}</a>{{end}}<span>{{.BlobLanguage}}</span><span>{{humanSize .BlobSize}}</span></div>
   </div>
-  <div class="source-file-actions">
-    {{if and (not .Data.IsTooBig) (not .Data.BlobBinary)}}<button class="button secondary small" type="button" data-copy-source-lines data-copy-label="Copy file">Copy file</button>{{end}}
-    <a class="button secondary small" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/raw?ref={{urlquery .Data.CurrentRef}}&amp;path={{urlquery .Data.CurrentPath}}">Raw</a>
-    <a class="button secondary small" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/download?ref={{urlquery .Data.CurrentRef}}&amp;path={{urlquery .Data.CurrentPath}}">Download</a>
-    {{if .Data.ResolvedCommit}}
-    <button class="button secondary small" type="button" data-copy-url="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/blob?ref={{urlquery .Data.ResolvedCommit}}&amp;path={{urlquery .Data.CurrentPath}}" data-copy-current-hash data-copy-label="Permalink">Permalink</button>
-    {{end}}
+  <div class="inline-actions">
+    {{if and (not .IsTooBig) (not .BlobBinary)}}<button class="secondary small js-only" type="button" data-copy-source-lines data-copy-label="Copy file">Copy</button>{{end}}
+    <a class="button secondary small" href="/{{.Owner.Username}}/{{.Repository.Name}}/raw?ref={{urlquery .CurrentRef}}&amp;path={{urlquery .CurrentPath}}">Raw</a>
+    <a class="button secondary small" href="/{{.Owner.Username}}/{{.Repository.Name}}/download?ref={{urlquery .CurrentRef}}&amp;path={{urlquery .CurrentPath}}">Download</a>
+    {{if .ResolvedCommit}}<button class="secondary small js-only" type="button" data-copy-url="/{{.Owner.Username}}/{{.Repository.Name}}/blob?ref={{urlquery .ResolvedCommit}}&amp;path={{urlquery .CurrentPath}}" data-copy-current-hash data-copy-label="Permalink">Permalink</button>{{end}}
   </div>
 </div>
-
-{{if and (not .Data.IsTooBig) (not .Data.BlobBinary)}}<textarea hidden data-source-raw>{{.Data.BlobContent}}</textarea>{{end}}
-
-{{if .Data.IsTooBig}}
-<div class="empty-state source-empty-state">
-  <h3>File too large for the interactive viewer</h3>
-  <p class="muted">{{if .Data.BlobRenderNote}}{{.Data.BlobRenderNote}}{{else}}{{humanSize .Data.BlobSize}}. Raw and Download remain available.{{end}}</p>
-</div>
-{{else if .Data.BlobBinary}}
-<div class="empty-state source-empty-state">
-  <h3>Binary file</h3>
-  <p class="muted">Gitman won't reinterpret binary contents. Use Raw or Download to inspect the exact blob.</p>
-</div>
-{{else if not .Data.BlobLines}}
-<div class="empty-state source-empty-state">
-  <p>This file is empty.</p>
-</div>
-{{else}}
-<div class="source-view" data-source-view data-source-path="{{.Data.CurrentPath}}">
-  <table class="source-table" aria-label="Source code">
-    <tbody>
-      {{range .Data.BlobLines}}
-      <tr id="L{{.Number}}" data-source-line="{{.Number}}">
-        <td class="source-line-number"><a href="#L{{.Number}}" data-source-line-link="{{.Number}}" aria-label="Line {{.Number}}">{{.Number}}</a></td>
-        <td class="source-line-code"><pre><code>{{.Highlighted}}</code></pre></td>
-      </tr>
-      {{end}}
-    </tbody>
-  </table>
-</div>
-{{end}}
+{{if and (not .IsTooBig) (not .BlobBinary)}}<textarea hidden data-source-raw>{{.BlobContent}}</textarea>{{end}}
+{{if .IsTooBig}}<p class="empty-line">{{if .BlobRenderNote}}{{.BlobRenderNote}}{{else}}This file is too large for the source viewer.{{end}}</p>
+{{else if .BlobBinary}}<p class="empty-line">Binary file. Use Raw or Download.</p>
+{{else if not .BlobLines}}<p class="empty-line">This file is empty.</p>
+{{else}}<div class="source-view" data-source-view data-source-path="{{.CurrentPath}}"><table class="source-table" aria-label="Source code"><tbody>{{range .BlobLines}}<tr id="L{{.Number}}" data-source-line="{{.Number}}"><td class="source-line-number"><a href="#L{{.Number}}" data-source-line-link="{{.Number}}">{{.Number}}</a></td><td class="source-line-code"><pre><code>{{.Text}}</code></pre></td></tr>{{end}}</tbody></table></div>{{end}}
 {{end}}

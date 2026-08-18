@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"html/template"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -13,12 +12,12 @@ import (
 	"github.com/mmrzaf/gitman/internal/apperr"
 	"github.com/mmrzaf/gitman/internal/db"
 	"github.com/mmrzaf/gitman/internal/git"
-	readmemarkdown "github.com/mmrzaf/gitman/internal/markdown"
 	"github.com/mmrzaf/gitman/internal/models"
 	"github.com/mmrzaf/gitman/internal/repository"
 )
 
 type RepoPageData struct {
+	PageData
 	Owner          *models.User
 	Repository     *models.Repository
 	CurrentRef     string
@@ -37,7 +36,6 @@ type RepoPageData struct {
 	BlobLines      []SourceLine
 	BlobSize       int64
 	BlobLanguage   string
-	BlobLanguageID string
 	BlobBinary     bool
 	IsTooBig       bool
 	BlobRenderNote string
@@ -46,7 +44,7 @@ type RepoPageData struct {
 	LatestCommit   *git.Commit
 	LatestCI       *models.CIRun
 	ReadmePath     string
-	ReadmeHTML     template.HTML
+	ReadmeContent  string
 	ReadmeTooBig   bool
 	Collaborators  []models.Collaborator
 }
@@ -207,12 +205,7 @@ func (app *App) loadRepoRootOverview(ctx context.Context, repoPath string, data 
 	if !isTextBlob(content) {
 		return nil
 	}
-	data.ReadmeHTML = readmemarkdown.Render(string(content), readmemarkdown.Options{
-		Owner:      data.Owner.Username,
-		Repository: data.Repository.Name,
-		Ref:        data.CurrentRef,
-		ReadmePath: readmePath,
-	})
+	data.ReadmeContent = string(content)
 	return nil
 }
 
@@ -238,11 +231,8 @@ func (app *App) HandleRepoTreeGET(w http.ResponseWriter, r *http.Request) {
 	}
 	if isEmpty {
 		data.IsEmpty = true
-		app.renderPage(w, r, "repo_view.html", PageData{
-			Title: repo.Name,
-			User:  GetUser(r),
-			Data:  data,
-		})
+		data.PageData = PageData{Title: repo.Name, User: GetUser(r)}
+		app.renderPage(w, r, "repo_view.html", &data)
 		return
 	}
 
@@ -284,12 +274,8 @@ func (app *App) HandleRepoTreeGET(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	app.renderPage(w, r, "repo_view.html", PageData{
-		Title:   repo.Name,
-		User:    GetUser(r),
-		Data:    data,
-		RepoNav: app.repoNavData(r, data.CurrentRef),
-	})
+	data.PageData = PageData{Title: repo.Name, User: GetUser(r), RepoNav: app.repoNavData(r, data.CurrentRef)}
+	app.renderPage(w, r, "repo_view.html", &data)
 }
 
 // HandleRepoBlobGET renders the content of a specific file (blob).
@@ -330,9 +316,7 @@ func (app *App) HandleRepoBlobGET(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data.Breadcrumbs = repoBreadcrumbs(path)
-	language := detectSourceLanguage(path)
-	data.BlobLanguage = language.Label
-	data.BlobLanguageID = language.ID
+	data.BlobLanguage = sourceLanguageLabel(path)
 
 	if err := loadRefsIntoData(ctx, repoPath, &data); err != nil {
 		app.respondWebError(w, r, repositoryGitError(err, "Revision not found"))
@@ -362,19 +346,15 @@ func (app *App) HandleRepoBlobGET(w http.ResponseWriter, r *http.Request) {
 				data.IsTooBig = true
 				data.BlobRenderNote = note
 			} else {
-				data.BlobLines = sourceLines(content, language)
+				data.BlobLines = sourceLines(content)
 			}
 		} else {
 			data.BlobBinary = true
 		}
 	}
 
-	app.renderPage(w, r, "repo_blob.html", PageData{
-		Title:   repo.Name + " - " + path,
-		User:    GetUser(r),
-		Data:    data,
-		RepoNav: app.repoNavData(r, data.CurrentRef),
-	})
+	data.PageData = PageData{Title: repo.Name + " - " + path, User: GetUser(r), RepoNav: app.repoNavData(r, data.CurrentRef)}
+	app.renderPage(w, r, "repo_blob.html", &data)
 }
 
 // HandleRepoCommitsGET renders a list of commits for a repository/ref.
@@ -400,11 +380,8 @@ func (app *App) HandleRepoCommitsGET(w http.ResponseWriter, r *http.Request) {
 			app.respondWebError(w, r, repositoryGitError(err, "Revision not found"))
 			return
 		}
-		app.renderPage(w, r, "repo_commits.html", PageData{
-			Title: repo.Name + " Commits",
-			User:  GetUser(r),
-			Data:  data,
-		})
+		data.PageData = PageData{Title: repo.Name + " Commits", User: GetUser(r)}
+		app.renderPage(w, r, "repo_commits.html", &data)
 		return
 	}
 
@@ -459,12 +436,8 @@ func (app *App) HandleRepoCommitsGET(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	app.renderPage(w, r, "repo_commits.html", PageData{
-		Title:   repo.Name + " Commits",
-		User:    GetUser(r),
-		Data:    data,
-		RepoNav: app.repoNavData(r, data.CurrentRef),
-	})
+	data.PageData = PageData{Title: repo.Name + " Commits", User: GetUser(r), RepoNav: app.repoNavData(r, data.CurrentRef)}
+	app.renderPage(w, r, "repo_commits.html", &data)
 }
 
 // HandleRepoArchiveGET streams a zip or tar.gz archive of the repository.

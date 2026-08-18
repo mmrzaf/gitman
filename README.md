@@ -6,7 +6,7 @@ Gitman is aimed at small teams and private infrastructure. It is not a multi-ten
 
 ## Features
 
-- Browser UI for repositories, branches, tags, commit diffs, syntax-highlighted source with line permalinks, README rendering, collaborators, SSH keys, and personal access tokens.
+- Browser UI for repositories, branches, tags, commit diffs, exact source with line permalinks, root README preview, collaborators, SSH keys, and personal access tokens.
 - Git smart HTTP with personal access token authentication.
 - Optional SSH Git transport through the host OpenSSH server and generated `authorized_keys` forced commands.
 - Private and public repositories with read and write collaborators.

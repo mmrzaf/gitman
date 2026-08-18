@@ -15,6 +15,7 @@ import (
 )
 
 type ReposPageData struct {
+	PageData
 	Repos []models.Repository
 }
 
@@ -34,12 +35,9 @@ func (app *App) renderReposPage(w http.ResponseWriter, r *http.Request, user *mo
 		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Repository data is temporarily unavailable", err))
 		return
 	}
-	app.renderPage(w, r, "repos.html", PageData{
-		Title:   "Repositories",
-		User:    user,
-		Error:   errStr,
-		Success: successStr,
-		Data:    ReposPageData{Repos: repos},
+	app.renderPage(w, r, "repos.html", &ReposPageData{
+		PageData: PageData{Title: "Repositories", User: user, Error: errStr, Success: successStr},
+		Repos:    repos,
 	})
 }
 
@@ -102,6 +100,7 @@ func (app *App) HandleRepoDeletePOST(w http.ResponseWriter, r *http.Request) {
 }
 
 type RepoSettingsPageData struct {
+	PageData
 	Owner      *models.User
 	Repository *models.Repository
 }
@@ -109,16 +108,9 @@ type RepoSettingsPageData struct {
 func (app *App) renderRepoSettings(w http.ResponseWriter, r *http.Request, errMessage, successMessage string) {
 	repo := GetRepo(r)
 	owner := GetRepoOwner(r)
-	app.renderPage(w, r, "repo_settings.html", PageData{
-		Title:   repo.Name + " - Settings",
-		User:    GetUser(r),
-		Error:   errMessage,
-		Success: successMessage,
-		RepoNav: app.repoNavData(r, ""),
-		Data: RepoSettingsPageData{
-			Owner:      owner,
-			Repository: repo,
-		},
+	app.renderPage(w, r, "repo_settings.html", &RepoSettingsPageData{
+		PageData: PageData{Title: repo.Name + " - Settings", User: GetUser(r), Error: errMessage, Success: successMessage, RepoNav: app.repoNavData(r, "")},
+		Owner:    owner, Repository: repo,
 	})
 }
 

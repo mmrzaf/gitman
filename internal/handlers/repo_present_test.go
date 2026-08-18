@@ -5,24 +5,25 @@ import (
 	"testing"
 )
 
-func TestHighlightSourceLineEscapesHTML(t *testing.T) {
-	language := detectSourceLanguage("main.go")
-	got := string(highlightSourceLine(`if value == "<script>alert(1)</script>" { // <b>`, language))
-	if strings.Contains(got, "<script>") || strings.Contains(got, "<b>") {
-		t.Fatalf("highlighted source contains raw HTML: %s", got)
-	}
-	if !strings.Contains(got, `class="syn-keyword"`) || !strings.Contains(got, "&lt;script&gt;") || !strings.Contains(got, `class="syn-comment"`) {
-		t.Fatalf("highlighting missing expected safe spans: %s", got)
-	}
-}
-
-func TestSourceLinesPreserveUnicodeAndTerminalNewline(t *testing.T) {
-	lines := sourceLines([]byte("hello 世界\nsecond\n"), detectSourceLanguage("note.txt"))
+func TestSourceLinesPreserveExactTextAndUnicode(t *testing.T) {
+	lines := sourceLines([]byte("<script>alert(1)</script> 世界\nsecond\n"))
 	if len(lines) != 2 {
 		t.Fatalf("lines = %d, want 2", len(lines))
 	}
-	if got := string(lines[0].Highlighted); got != "hello 世界" {
-		t.Fatalf("unicode line = %q", got)
+	if lines[0].Text != "<script>alert(1)</script> 世界" {
+		t.Fatalf("first line = %q", lines[0].Text)
+	}
+	if lines[1].Text != "second" {
+		t.Fatalf("second line = %q", lines[1].Text)
+	}
+}
+
+func TestSourceLanguageLabelIsPresentationOnly(t *testing.T) {
+	if got := sourceLanguageLabel("main.go"); got != "Go" {
+		t.Fatalf("main.go label = %q", got)
+	}
+	if got := sourceLanguageLabel("README"); got != "Text" {
+		t.Fatalf("README label = %q", got)
 	}
 }
 
@@ -86,15 +87,29 @@ func TestRepoNavActiveUsesRouteSegmentsNotRepositoryName(t *testing.T) {
 		"/alice/settings/tree":        "files",
 		"/alice/commits/blob":         "files",
 		"/alice/demo/ci":              "ci",
-		"/alice/demo/ci/secrets":      "secrets",
+		"/alice/demo/settings/ci":     "settings",
 		"/alice/demo/commit/deadbeef": "commits",
 		"/alice/demo/commits":         "commits",
 		"/alice/demo/settings":        "settings",
-		"/alice/demo/collaborators":   "collaborators",
+		"/alice/demo/settings/access": "settings",
 	}
 	for path, want := range tests {
 		if got := repoNavActive(path); got != want {
 			t.Errorf("repoNavActive(%q) = %q, want %q", path, got, want)
+		}
+	}
+}
+
+func TestRepoSettingsSectionUsesCanonicalSettingsRoutes(t *testing.T) {
+	tests := map[string]string{
+		"/alice/demo/settings":        "general",
+		"/alice/demo/settings/access": "access",
+		"/alice/demo/settings/ci":     "ci",
+		"/alice/demo/ci":              "",
+	}
+	for path, want := range tests {
+		if got := repoSettingsSection(path); got != want {
+			t.Errorf("repoSettingsSection(%q) = %q, want %q", path, got, want)
 		}
 	}
 }
