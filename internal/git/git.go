@@ -517,6 +517,9 @@ func SanitizeRefForFilename(ref string) string {
 			sb.WriteRune(c)
 		}
 	}
+	if sb.Len() == 0 {
+		return "revision"
+	}
 	return sb.String()
 }
 
@@ -766,15 +769,16 @@ func BlobExists(ctx context.Context, repoPath, ref, path string) (bool, error) {
 		return false, nil
 	}
 	treeish := fmt.Sprintf("%s:%s", resolvedRef, path)
-	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "cat-file", "-e", treeish)
-	if err := cmd.Run(); err != nil {
+	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "cat-file", "-t", treeish)
+	out, err := cmd.Output()
+	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			return false, nil
 		}
 		return false, fmt.Errorf("inspect blob: %w", err)
 	}
-	return true, nil
+	return strings.TrimSpace(string(out)) == "blob", nil
 }
 
 func resolveBlobSpec(ctx context.Context, repoPath, ref, path string) (string, error) {

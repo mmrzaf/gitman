@@ -21,6 +21,8 @@ type CommitPageData struct {
 	Repository     *models.Repository
 	CurrentRef     string
 	CurrentRefKind string
+	CIBranch       string
+	CITag          string
 	Commit         git.CommitDetail
 	Diff           git.CommitDiff
 	LatestCI       *models.CIRun
@@ -76,11 +78,32 @@ func (app *App) HandleRepoCommitGET(w http.ResponseWriter, r *http.Request) {
 
 	branches, _ := git.GetBranches(ctx, repoPath)
 	tags, _ := git.GetTags(ctx, repoPath)
+	currentRefKind := classifyRepoRef(currentRef, branches, tags)
+	if currentRefKind == "branch" {
+		reachable, reachErr := git.IsCommitReachableFromBranch(ctx, repoPath, detail.Hash, currentRef)
+		if reachErr != nil || !reachable {
+			currentRef = detail.Hash
+			currentRefKind = "commit"
+		}
+	}
+
+	var ciBranch, ciTag string
+	switch currentRefKind {
+	case "branch":
+		ciBranch = currentRef
+	case "tag":
+		if tagHash, tagErr := git.ResolveTagCommitHash(ctx, repoPath, currentRef); tagErr == nil && tagHash == detail.Hash {
+			ciTag = currentRef
+		}
+	}
+
 	data := CommitPageData{
 		Owner:          owner,
 		Repository:     repo,
 		CurrentRef:     currentRef,
-		CurrentRefKind: classifyRepoRef(currentRef, branches, tags),
+		CurrentRefKind: currentRefKind,
+		CIBranch:       ciBranch,
+		CITag:          ciTag,
 		Commit:         detail,
 		Diff:           diff,
 		CanViewCI:      app.canViewCI(ctx, GetUser(r), repo),
@@ -172,8 +195,8 @@ func (app *App) HandleRepoFileSearchGET(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
-	if len(query) > 200 {
-		query = query[:200]
+	if runes := []rune(query); len(runes) > 200 {
+		query = string(runes[:200])
 	}
 	files, err := git.ListFiles(ctx, repoPath, ref)
 	if err != nil {

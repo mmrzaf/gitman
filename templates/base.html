@@ -1,6 +1,6 @@
 {{define "base.html"}}
 <!doctype html>
-<html lang="en">
+<html lang="en" class="no-js">
   <head>
     <meta charset="UTF-8" />
     <title>{{if .Title}}{{.Title}} - {{end}}Gitman</title>
@@ -17,6 +17,7 @@
   </head>
 
   <body>
+    <a class="skip-link" href="#content">Skip to content</a>
     <header class="site-header">
       <a class="brand" href="/" aria-label="Gitman home">Gitman</a>
 
@@ -38,6 +39,10 @@
     </header>
 
     <main id="content" class="page-shell">
+      {{if .RepoNav}}
+        {{template "repo_header" .}}
+        {{template "repo_nav" .}}
+      {{end}}
       {{block "content" .}}{{end}}
     </main>
   </body>

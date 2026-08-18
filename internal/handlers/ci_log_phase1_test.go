@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/mmrzaf/gitman/internal/models"
 )
 
 func TestHandleCIRunLogGETSupportsIncrementalOffsets(t *testing.T) {
@@ -59,5 +60,47 @@ func TestHandleCIRunLogGETSupportsIncrementalOffsets(t *testing.T) {
 	}
 	if got := w.Header().Get("X-Gitman-CI-Status"); got != "running" {
 		t.Fatalf("status header = %q", got)
+	}
+}
+
+func TestCompleteUTF8PrefixLen(t *testing.T) {
+	full := []byte("hello 世界")
+	if got := completeUTF8PrefixLen(full); got != len(full) {
+		t.Fatalf("full UTF-8 prefix = %d, want %d", got, len(full))
+	}
+	partial := append([]byte("hello "), []byte{0xe4, 0xb8}...)
+	if got := completeUTF8PrefixLen(partial); got != len("hello ") {
+		t.Fatalf("partial UTF-8 prefix = %d, want %d", got, len("hello "))
+	}
+	invalid := append([]byte("hello "), 0xff)
+	if got := completeUTF8PrefixLen(invalid); got != len(invalid) {
+		t.Fatalf("invalid byte should be consumed: got %d want %d", got, len(invalid))
+	}
+}
+
+func TestCILogPrefixAndANSIStripping(t *testing.T) {
+	full := []byte("before \x1b[31mred\x1b[0m after")
+	if got := stripANSI(full); got != "before red after" {
+		t.Fatalf("stripANSI = %q", got)
+	}
+	partial := []byte("before \x1b[31")
+	if got := completeCILogPrefixLen(partial); got != len("before ") {
+		t.Fatalf("partial CSI prefix = %d, want %d", got, len("before "))
+	}
+	osc := []byte("x\x1b]8;;https://example.com\x07label\x1b]8;;\x07y")
+	if got := stripANSI(osc); got != "xlabely" {
+		t.Fatalf("OSC strip = %q", got)
+	}
+}
+func TestCIRunNavigationRefPrefersImmutableCommit(t *testing.T) {
+	run := &models.CIRun{CommitHash: "deadbeef", Branch: "main", Tag: "v1.0.0"}
+	if got := ciRunNavigationRef(run); got != "deadbeef" {
+		t.Fatalf("navigation ref = %q, want immutable commit", got)
+	}
+	if got := ciRunNavigationRef(&models.CIRun{Branch: "main"}); got != "main" {
+		t.Fatalf("branch fallback = %q", got)
+	}
+	if got := ciRunNavigationRef(&models.CIRun{Tag: "v1.0.0"}); got != "v1.0.0" {
+		t.Fatalf("tag fallback = %q", got)
 	}
 }

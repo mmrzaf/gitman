@@ -1,17 +1,12 @@
 {{define "content"}}
-<div class="page-header page-header-row">
+<div class="page-header page-header-row section-heading">
   <div>
-    <h2 class="repo-title">
-      <a href="/{{.Data.Owner.Username}}">{{.Data.Owner.Username}}</a>
-      /
-      <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}">{{.Data.Repository.Name}}</a>
-    </h2>
+    <h2>CI/CD</h2>
     <p class="muted">Pipelines for every pushed or manually selected revision.</p>
   </div>
   {{if .Data.CanControl}}<a class="button secondary small" href="#run-pipeline">Run pipeline</a>{{end}}
 </div>
 
-{{template "repo_nav" .}}
 {{template "flash" .}}
 
 <div id="run-pipeline" class="card ci-control-card">
@@ -45,16 +40,16 @@
     <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
     <label class="field">
       <span>Branch</span>
-      <select id="ci-branch" name="branch" onchange="if (this.value) document.getElementById('ci-tag').value = ''">
-        <option value="">Use default branch or choose a tag</option>
+      <select id="ci-branch" name="branch" data-clear-select="#ci-tag">
+        <option value="">{{if .Data.DefaultBranch}}Default branch ({{.Data.DefaultBranch}}){{else}}Use default branch{{end}} or choose a tag</option>
         {{range .Data.Branches}}
-        <option value="{{.}}" {{if eq . $.Data.DefaultBranch}}selected{{end}}>{{.}}</option>
+        <option value="{{.}}">{{.}}</option>
         {{end}}
       </select>
     </label>
     <label class="field">
       <span>Tag</span>
-      <select id="ci-tag" name="tag" onchange="if (this.value) document.getElementById('ci-branch').value = ''">
+      <select id="ci-tag" name="tag" data-clear-select="#ci-branch">
         <option value="">No tag</option>
         {{range .Data.Tags}}<option value="{{.}}">{{.}}</option>{{end}}
       </select>
@@ -72,10 +67,11 @@
   <form method="GET" action="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci" class="ci-filter-form">
     {{if .Data.StatusFilter}}<input type="hidden" name="status" value="{{.Data.StatusFilter}}">{{end}}
     <label class="sr-only" for="ci-branch-filter">Filter by branch</label>
-    <select id="ci-branch-filter" name="branch" onchange="this.form.submit()">
+    <select id="ci-branch-filter" name="branch" data-submit-select>
       <option value="">All branches</option>
       {{range .Data.Branches}}<option value="{{.}}" {{if eq . $.Data.BranchFilter}}selected{{end}}>{{.}}</option>{{end}}
     </select>
+    <button class="secondary small select-submit-fallback" type="submit">Apply</button>
     {{if .Data.BranchFilter}}<a class="button secondary small" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci{{if .Data.StatusFilter}}?status={{urlquery .Data.StatusFilter}}{{end}}">Clear branch</a>{{end}}
   </form>
 </div>

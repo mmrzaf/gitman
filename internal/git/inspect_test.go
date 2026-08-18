@@ -169,6 +169,13 @@ func TestListFilesPreservesOddNames(t *testing.T) {
 	if foundGitlink {
 		t.Fatalf("gitlink must not be returned as a file: %q", files)
 	}
+	exists, err := BlobExists(context.Background(), repoPath, "main", "vendor/submodule")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exists {
+		t.Fatal("gitlink reported as a blob")
+	}
 }
 
 func TestParseUnifiedPatchTracksLineNumbers(t *testing.T) {

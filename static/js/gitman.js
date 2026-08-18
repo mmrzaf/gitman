@@ -27,20 +27,29 @@
     });
   }
 
-  async function copyText(text) {
-    if (navigator.clipboard && window.isSecureContext) {
-      await navigator.clipboard.writeText(text);
-      return;
-    }
+  function copyTextFallback(text) {
     const input = document.createElement("textarea");
     input.value = text;
     input.setAttribute("readonly", "");
-    input.style.position = "fixed";
-    input.style.opacity = "0";
+    input.className = "clipboard-fallback";
     document.body.appendChild(input);
     input.select();
-    document.execCommand("copy");
+    input.setSelectionRange(0, input.value.length);
+    const copied = document.execCommand("copy");
     input.remove();
+    if (!copied) throw new Error("clipboard copy failed");
+  }
+
+  async function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return;
+      } catch (_) {
+        // Permissions can reject Clipboard API even in secure contexts.
+      }
+    }
+    copyTextFallback(text);
   }
 
   function installCopyActions() {
@@ -312,7 +321,9 @@
       parts.forEach(appendStructuredLine);
     }
 
-    function countMatches(text, query) {
+    const maxRenderedLogMatches = 300;
+
+    function countMatches(text, query, limit = Number.POSITIVE_INFINITY) {
       if (!query) return 0;
       let count = 0;
       let index = 0;
@@ -320,6 +331,7 @@
       const needle = query.toLocaleLowerCase();
       while ((index = haystack.indexOf(needle, index)) !== -1) {
         count++;
+        if (count >= limit) break;
         index += Math.max(needle.length, 1);
       }
       return count;
@@ -337,7 +349,7 @@
       const fragment = document.createDocumentFragment();
       let cursor = 0;
       let found = 0;
-      while (found < 300) {
+      while (found < maxRenderedLogMatches) {
         const index = lower.indexOf(needle, cursor);
         if (index === -1) break;
         fragment.appendChild(document.createTextNode(rawText.slice(cursor, index)));
@@ -354,23 +366,29 @@
 
     function refreshSearch() {
       const query = searchInput?.value.trim() || "";
-      const count = countMatches(rawText, query);
-      if (searchCount) searchCount.textContent = query ? `${count} match${count === 1 ? "" : "es"}` : "";
+      const count = countMatches(rawText, query, maxRenderedLogMatches + 1);
+      const visibleCount = Math.min(count, maxRenderedLogMatches);
+      if (searchCount) {
+        if (!query) searchCount.textContent = "";
+        else if (count > maxRenderedLogMatches) searchCount.textContent = `${maxRenderedLogMatches}+ matches`;
+        else searchCount.textContent = `${count} match${count === 1 ? "" : "es"}`;
+      }
       root.querySelectorAll("[data-ci-step]").forEach((node) => {
         const output = node.querySelector("[data-step-output]")?.textContent || "";
         const hit = query && output.toLocaleLowerCase().includes(query.toLocaleLowerCase());
         node.classList.toggle("ci-step-search-hit", Boolean(hit));
         if (hit) node.open = true;
       });
-      searchIndex = Math.min(searchIndex, Math.max(0, count - 1));
+      searchIndex = Math.min(searchIndex, Math.max(0, visibleCount - 1));
       renderRawSearch();
     }
 
     function navigateSearch(direction) {
       const query = searchInput?.value.trim() || "";
-      const count = countMatches(rawText, query);
-      if (!query || count === 0) return;
-      searchIndex = (searchIndex + direction + count) % count;
+      const count = countMatches(rawText, query, maxRenderedLogMatches + 1);
+      const visibleCount = Math.min(count, maxRenderedLogMatches);
+      if (!query || visibleCount === 0) return;
+      searchIndex = (searchIndex + direction + visibleCount) % visibleCount;
       setView("raw");
       renderRawSearch();
       const marks = rawPre?.querySelectorAll("mark[data-log-match]") || [];
@@ -380,7 +398,7 @@
         marks[cappedIndex].scrollIntoView({ block: "center" });
         marks[cappedIndex].classList.add("current");
         marks.forEach((mark, index) => { if (index !== cappedIndex) mark.classList.remove("current"); });
-        if (searchCount) searchCount.textContent = `${searchIndex + 1} / ${count}`;
+        if (searchCount) searchCount.textContent = `${searchIndex + 1} / ${visibleCount}${count > maxRenderedLogMatches ? "+" : ""}`;
       }
     }
 
@@ -480,13 +498,19 @@
 
     function applySelection(scroll = false) {
       const range = parseLineHash();
-      root.querySelectorAll("[data-source-line].is-selected").forEach((row) => row.classList.remove("is-selected"));
+      const rows = root.querySelectorAll("[data-source-line]");
+      rows.forEach((row) => row.classList.remove("is-selected"));
       if (!range) return;
-      for (let line = range.start; line <= range.end; line++) {
-        root.querySelector(`[data-source-line="${line}"]`)?.classList.add("is-selected");
-      }
+      let firstSelected = null;
+      rows.forEach((row) => {
+        const line = Number(row.getAttribute("data-source-line"));
+        if (!Number.isFinite(line) || line < range.start || line > range.end) return;
+        row.classList.add("is-selected");
+        if (!firstSelected) firstSelected = row;
+      });
+      if (!firstSelected) return;
       rangeAnchor = range.start;
-      if (scroll) root.querySelector(`[data-source-line="${range.start}"]`)?.scrollIntoView({ block: "center" });
+      if (scroll) firstSelected.scrollIntoView({ block: "center" });
     }
 
     root.addEventListener("click", (event) => {
@@ -551,6 +575,7 @@
       if (!results) return;
       results.replaceChildren();
       if (message) {
+        if (input instanceof HTMLInputElement) input.setAttribute("aria-activedescendant", "");
         const empty = document.createElement("div");
         empty.className = "file-finder-empty";
         empty.textContent = message;
@@ -563,12 +588,15 @@
         button.className = `file-finder-result${index === activeIndex ? " active" : ""}`;
         button.dataset.fileURL = item.url;
         button.dataset.fileIndex = String(index);
+        button.id = `gitman-file-finder-option-${index}`;
         button.setAttribute("role", "option");
         button.setAttribute("aria-selected", String(index === activeIndex));
         button.textContent = item.path;
         results.appendChild(button);
       });
-      results.querySelector(".file-finder-result.active")?.scrollIntoView({ block: "nearest" });
+      const active = results.querySelector(".file-finder-result.active");
+      active?.scrollIntoView({ block: "nearest" });
+      if (input instanceof HTMLInputElement) input.setAttribute("aria-activedescendant", active?.id || "");
     }
 
     function setActive(next) {
@@ -603,8 +631,11 @@
     }
 
     function openFinder() {
+      const shortcuts = document.querySelector("[data-shortcuts-dialog][open]");
+      if (shortcuts instanceof HTMLDialogElement) shortcuts.close();
       if (!dialog.open) dialog.showModal();
       if (input instanceof HTMLInputElement) {
+        input.setAttribute("aria-expanded", "true");
         input.focus();
         input.select();
       }
@@ -613,6 +644,14 @@
 
     document.querySelectorAll("[data-file-finder-open]").forEach((button) => button.addEventListener("click", openFinder));
     dialog.querySelector("[data-file-finder-close]")?.addEventListener("click", () => dialog.close());
+    dialog.addEventListener("close", () => {
+      if (input instanceof HTMLInputElement) {
+        input.setAttribute("aria-expanded", "false");
+        input.setAttribute("aria-activedescendant", "");
+      }
+      controller?.abort();
+    });
+    dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
     input?.addEventListener("input", queueSearch);
     input?.addEventListener("keydown", (event) => {
       if (event.key === "ArrowDown") {
@@ -644,6 +683,107 @@
     });
   }
 
+
+
+  function installRepoShortcuts() {
+    const root = document.querySelector("[data-repo-shortcuts]");
+    const dialog = document.querySelector("[data-shortcuts-dialog]");
+    if (!(root instanceof HTMLElement) || !(dialog instanceof HTMLDialogElement)) return;
+    let chord = "";
+    let chordTimer = 0;
+
+    function isEditable(target) {
+      return target instanceof HTMLInputElement
+        || target instanceof HTMLTextAreaElement
+        || target instanceof HTMLSelectElement
+        || target?.isContentEditable;
+    }
+
+    function resetChord() {
+      chord = "";
+      window.clearTimeout(chordTimer);
+    }
+
+    function openHelp() {
+      const finder = document.querySelector("[data-file-finder][open]");
+      if (finder instanceof HTMLDialogElement) finder.close();
+      if (!dialog.open) dialog.showModal();
+    }
+
+    document.querySelectorAll("[data-shortcuts-open]").forEach((button) => button.addEventListener("click", openHelp));
+    dialog.querySelector("[data-shortcuts-close]")?.addEventListener("click", () => dialog.close());
+    dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (isEditable(event.target)) return;
+      if (event.key === "?") {
+        event.preventDefault();
+        resetChord();
+        openHelp();
+        return;
+      }
+      if (dialog.open) return;
+
+      const key = event.key.toLowerCase();
+      if (key === "g" && !event.shiftKey) {
+        event.preventDefault();
+        chord = "g";
+        window.clearTimeout(chordTimer);
+        chordTimer = window.setTimeout(resetChord, 1200);
+        return;
+      }
+      if (chord !== "g") return;
+      resetChord();
+      const targetURL = key === "f"
+        ? root.dataset.filesUrl
+        : key === "c"
+          ? root.dataset.commitsUrl
+          : key === "i"
+            ? root.dataset.ciUrl
+            : "";
+      if (!targetURL) return;
+      event.preventDefault();
+      window.location.href = targetURL;
+    });
+  }
+
+
+
+  function installDisclosureMenus() {
+    const menus = Array.from(document.querySelectorAll("details.clone-menu, details.archive-menu"));
+    if (!menus.length) return;
+    menus.forEach((menu) => menu.addEventListener("toggle", () => {
+      if (!menu.open) return;
+      menus.forEach((other) => { if (other !== menu) other.open = false; });
+    }));
+    document.addEventListener("click", (event) => {
+      menus.forEach((menu) => {
+        if (menu.open && !menu.contains(event.target)) menu.open = false;
+      });
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      menus.forEach((menu) => { menu.open = false; });
+    });
+  }
+
+  function installProgressiveControls() {
+    document.querySelectorAll("select[data-submit-select]").forEach((select) => {
+      select.addEventListener("change", () => select.form?.requestSubmit());
+    });
+    document.querySelectorAll("select[data-clear-select]").forEach((select) => {
+      select.addEventListener("change", () => {
+        if (!select.value) return;
+        const other = document.querySelector(select.dataset.clearSelect || "");
+        if (other instanceof HTMLSelectElement) other.value = "";
+      });
+    });
+    document.querySelectorAll("[data-summary-action]").forEach((action) => {
+      action.addEventListener("click", (event) => event.stopPropagation());
+    });
+  }
+
   function start() {
     installConfirmForms();
     installCopyActions();
@@ -653,6 +793,11 @@
     installSourceCopy();
     installDiffControls();
     installFileFinder();
+    installRepoShortcuts();
+    installDisclosureMenus();
+    installProgressiveControls();
+    document.documentElement.classList.remove("no-js");
+    document.documentElement.classList.add("js");
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);

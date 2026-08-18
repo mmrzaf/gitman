@@ -1,13 +1,7 @@
 {{define "content"}}
-<div class="page-header">
-  <h2 class="repo-title">
-    <a href="/{{.Data.Owner.Username}}">{{.Data.Owner.Username}}</a>
-    /
-    <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}">{{.Data.Repository.Name}}</a>
-  </h2>
-  <p class="muted">{{if .Data.Repository.Description}}{{.Data.Repository.Description}}{{else}}No description provided.{{end}}</p>
+<div class="page-header section-heading">
+  <h2>Collaborators</h2>
+  <p class="muted">Manage who can access this repository.</p>
 </div>
-
-{{template "repo_nav" .}}
 {{template "collaborators_panel" .}}
 {{end}}

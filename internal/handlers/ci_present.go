@@ -403,7 +403,9 @@ func readCILog(path string) (string, int64) {
 	if err != nil {
 		return "", 0
 	}
-	return ansiEscapeRegex.ReplaceAllString(string(data), ""), int64(len(data))
+	consume := completeCILogPrefixLen(data)
+	data = data[:consume]
+	return stripANSI(data), int64(consume)
 }
 
 func buildArtifactTree(files []artifactFile) []*ArtifactNode {
@@ -498,11 +500,28 @@ func artifactLooksPreviewable(path string, size int64) bool {
 	buf := make([]byte, 4096)
 	n, _ := file.Read(buf)
 	buf = buf[:n]
-	if bytes.IndexByte(buf, 0) >= 0 || !utf8.Valid(buf) {
+	if bytes.IndexByte(buf, 0) >= 0 || !validUTF8Sample(buf, size > int64(n)) {
 		return false
 	}
 	contentType := http.DetectContentType(buf)
 	return strings.HasPrefix(contentType, "text/") || contentType == "application/json" || contentType == "application/xml"
+}
+
+func validUTF8Sample(sample []byte, truncated bool) bool {
+	if utf8.Valid(sample) {
+		return true
+	}
+	if !truncated {
+		return false
+	}
+	for trim := 1; trim < utf8.UTFMax && trim <= len(sample); trim++ {
+		prefix := sample[:len(sample)-trim]
+		suffix := sample[len(sample)-trim:]
+		if utf8.Valid(prefix) && len(suffix) > 0 && utf8.RuneStart(suffix[0]) && !utf8.FullRune(suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 func decorateArtifactTreeURLs(nodes []*ArtifactNode, owner, repo, runID string) {

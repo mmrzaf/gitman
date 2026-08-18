@@ -78,3 +78,17 @@ func TestArtifactTreePreservesNestedFiles(t *testing.T) {
 		t.Fatal("artifact tree size was not accumulated")
 	}
 }
+
+func TestValidUTF8SampleAllowsOnlyTrailingPartialRune(t *testing.T) {
+	partial := append([]byte("text "), []byte{0xe4, 0xb8}...)
+	if !validUTF8Sample(partial, true) {
+		t.Fatal("truncated sample ending in a partial UTF-8 rune should remain previewable")
+	}
+	if validUTF8Sample(partial, false) {
+		t.Fatal("complete file ending in a partial rune should not be considered valid UTF-8")
+	}
+	invalid := append([]byte("text "), 0xff)
+	if validUTF8Sample(invalid, true) {
+		t.Fatal("invalid UTF-8 byte must not be accepted as a truncation boundary")
+	}
+}

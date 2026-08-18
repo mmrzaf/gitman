@@ -83,7 +83,7 @@ func SetupRouter(app *App) *chi.Mux {
 			r.Post("/repos/{id}/delete", app.HandleRepoDeletePOST)
 		})
 
-		// Web interface for repositories (all require auth + CSRF)
+		// Repository web UI. Public source reads may be anonymous; mutations remain CSRF-protected.
 		r.Route("/{username}/{repo_name}", func(r chi.Router) {
 			r.Use(app.RepoAccessMiddleware)
 

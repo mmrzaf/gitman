@@ -138,20 +138,24 @@ func humanBytes(size int64) string {
 	return fmt.Sprintf("%.1f %ciB", float64(size)/float64(div), "KMGTPE"[exp])
 }
 
-func repoNavActive(path string) string {
-	switch {
-	case strings.Contains(path, "/ci/secrets"):
-		return "secrets"
-	case strings.Contains(path, "/ci"):
-		return "ci"
-	case strings.Contains(path, "/collaborators"):
-		return "collaborators"
-	case strings.Contains(path, "/settings"):
-		return "settings"
-	case strings.Contains(path, "/commits"), strings.Contains(path, "/commit/"):
-		return "commits"
-	case strings.Contains(path, "/tree"), strings.Contains(path, "/blob"):
+func repoNavActive(requestPath string) string {
+	parts := strings.Split(strings.Trim(requestPath, "/"), "/")
+	if len(parts) < 3 {
 		return "files"
+	}
+
+	switch parts[2] {
+	case "ci":
+		if len(parts) > 3 && parts[3] == "secrets" {
+			return "secrets"
+		}
+		return "ci"
+	case "collaborators":
+		return "collaborators"
+	case "settings":
+		return "settings"
+	case "commits", "commit":
+		return "commits"
 	default:
 		return "files"
 	}
@@ -342,13 +346,13 @@ func (app *App) renderPage(w http.ResponseWriter, r *http.Request, page string, 
 }
 
 func (app *App) renderError(w http.ResponseWriter, r *http.Request, data PageData, msg string, code int) {
-	w.WriteHeader(code)
-
 	errData := data
 	errData.Title = "Error"
-	errData.User = nil
 	errData.Error = msg
+	app.preparePageData(r, &errData)
 
+	noStore(w)
+	w.WriteHeader(code)
 	if err := app.renderTemplate(w, "error.html", "base.html", errData); err != nil {
 		slog.Error("failed to render error page", "error", err, "status", code)
 		http.Error(w, msg, code)
@@ -455,7 +459,7 @@ func (app *App) WebhookAuthMiddleware(next http.Handler) http.Handler {
 
 func (app *App) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
@@ -580,6 +584,7 @@ func (app *App) CSRFMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		next.ServeHTTP(w, r)
+		ctx := context.WithValue(r.Context(), csrfTokenKey, cookie.Value)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

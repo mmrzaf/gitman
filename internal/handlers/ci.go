@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	cipolicy "github.com/mmrzaf/gitman/internal/ci"
@@ -575,13 +577,13 @@ func ciRunNavigationRef(run *models.CIRun) string {
 	if run == nil {
 		return ""
 	}
+	if run.CommitHash != "" {
+		return run.CommitHash
+	}
 	if run.Branch != "" {
 		return run.Branch
 	}
-	if run.Tag != "" {
-		return run.Tag
-	}
-	return run.CommitHash
+	return run.Tag
 }
 
 func (app *App) HandleCIRunGET(w http.ResponseWriter, r *http.Request) {
@@ -636,8 +638,6 @@ func (app *App) HandleCIRunGET(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-var ansiEscapeRegex = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
-
 func writeCILogFragment(w http.ResponseWriter, content string) {
 	noStore(w)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -666,8 +666,10 @@ func (app *App) HandleCIRunLogGET(w http.ResponseWriter, r *http.Request) {
 			writeCILogFragment(w, "(log file not readable)")
 			return
 		}
-		w.Header().Set("X-Gitman-Log-Offset", strconv.FormatInt(int64(len(data)), 10))
-		writeCILogFragment(w, ansiEscapeRegex.ReplaceAllString(string(data), ""))
+		consume := completeCILogPrefixLen(data)
+		data = data[:consume]
+		w.Header().Set("X-Gitman-Log-Offset", strconv.FormatInt(int64(consume), 10))
+		writeCILogFragment(w, stripANSI(data))
 		return
 	}
 
@@ -711,9 +713,113 @@ func (app *App) HandleCIRunLogGET(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "log unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	nextOffset := offset + int64(len(data))
+	consume := completeCILogPrefixLen(data)
+	data = data[:consume]
+	nextOffset := offset + int64(consume)
 	w.Header().Set("X-Gitman-Log-Offset", strconv.FormatInt(nextOffset, 10))
-	writeCILogFragment(w, ansiEscapeRegex.ReplaceAllString(string(data), ""))
+	writeCILogFragment(w, stripANSI(data))
+}
+
+// completeUTF8PrefixLen avoids splitting a valid UTF-8 rune across incremental
+// log responses. Invalid byte sequences are consumed normally so a malformed
+// log cannot permanently stall the stream at one offset.
+func completeCILogPrefixLen(data []byte) int {
+	limit := completeUTF8PrefixLen(data)
+	data = data[:limit]
+	escape := bytes.LastIndexByte(data, 0x1b)
+	if escape < 0 {
+		return limit
+	}
+	suffix := data[escape:]
+	if len(suffix) == 1 {
+		return escape
+	}
+	switch suffix[1] {
+	case '[': // CSI: ESC [ ... final-byte
+		for i := 2; i < len(suffix); i++ {
+			if suffix[i] >= 0x40 && suffix[i] <= 0x7e {
+				return limit
+			}
+		}
+		return escape
+	case ']': // OSC: ESC ] ... BEL or ESC \
+		for i := 2; i < len(suffix); i++ {
+			if suffix[i] == 0x07 || (suffix[i] == 0x1b && i+1 < len(suffix) && suffix[i+1] == '\\') {
+				return limit
+			}
+		}
+		return escape
+	default:
+		return limit
+	}
+}
+
+func stripANSI(data []byte) string {
+	if bytes.IndexByte(data, 0x1b) < 0 {
+		return string(data)
+	}
+	out := make([]byte, 0, len(data))
+	for i := 0; i < len(data); {
+		if data[i] != 0x1b {
+			out = append(out, data[i])
+			i++
+			continue
+		}
+		if i+1 >= len(data) {
+			break
+		}
+		switch data[i+1] {
+		case '[':
+			j := i + 2
+			for j < len(data) && !(data[j] >= 0x40 && data[j] <= 0x7e) {
+				j++
+			}
+			if j < len(data) {
+				i = j + 1
+			} else {
+				i = len(data)
+			}
+		case ']':
+			j := i + 2
+			for j < len(data) {
+				if data[j] == 0x07 {
+					j++
+					break
+				}
+				if data[j] == 0x1b && j+1 < len(data) && data[j+1] == '\\' {
+					j += 2
+					break
+				}
+				j++
+			}
+			i = j
+		default:
+			// Two-byte escape sequence. Do not surface terminal control bytes.
+			i += 2
+		}
+	}
+	return string(out)
+}
+
+func completeUTF8PrefixLen(data []byte) int {
+	if len(data) == 0 {
+		return 0
+	}
+	start := len(data) - 1
+	min := len(data) - utf8.UTFMax
+	if min < 0 {
+		min = 0
+	}
+	for start >= min {
+		if utf8.RuneStart(data[start]) {
+			if utf8.FullRune(data[start:]) {
+				return len(data)
+			}
+			return start
+		}
+		start--
+	}
+	return len(data)
 }
 
 func ciRunLogDir(artifactsPath, owner, repo, runID string) string {
@@ -843,7 +949,7 @@ func (app *App) HandleCIRunLogsDownloadGET(w http.ResponseWriter, r *http.Reques
 				return
 			}
 		}
-		if !writeString(ansiEscapeRegex.ReplaceAllString(string(data), "")) {
+		if !writeString(stripANSI(data)) {
 			return
 		}
 		if len(data) > 0 && data[len(data)-1] != '\n' && !writeString("\n") {

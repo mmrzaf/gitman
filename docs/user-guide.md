@@ -51,15 +51,16 @@ Add RSA, ECDSA, Ed25519, or OpenSSH security keys from **SSH Keys** after the op
 
 Repository pages provide:
 
-- Branch and tag selection.
-- File tree browsing.
-- Blob viewing.
-- Commit history.
+- Branch, tag, and immutable commit browsing with source context preserved between pages.
+- File trees, breadcrumbs, syntax-highlighted blobs, line/range permalinks, Raw/Download/Copy actions, and keyboard-driven Go to File.
+- Commit history, commit detail pages, unified diffs, rename/delete/binary handling, and CI status linked to the exact commit.
+- Safe rendered root READMEs with repository-relative links.
 - ZIP and TAR.GZ source downloads.
 - Clone commands for HTTP and SSH.
+- A small repository shortcut set: `t`, `g f`, `g c`, `g i`, and `?`.
 
 ## CI UI
 
-Members can view exact run status, queue and execution timing, live logs, outcome reasons, retry history, and artifacts. Owners and write collaborators can run CI manually, cancel queued or running jobs, and retry completed jobs against the same commit. Owners can install or upgrade the durable post-receive auto-trigger hook and manage repository secrets.
+Members can view exact run status, queue and execution timing, structured step logs with incremental live updates, raw-log search/follow/wrap controls, exact pipeline configuration, outcome reasons, retry history, and nested artifacts. Owners and write collaborators can run CI manually, cancel queued or running jobs, and retry completed jobs against the same commit. Owners can install or upgrade the durable post-receive auto-trigger hook and manage repository secrets.
 
 Repository owners also have a dedicated **Settings** page for description, visibility, and safe deletion. Repositories with queued or running CI jobs—or a cancelled job whose worker is still stopping—must be settled before deletion.

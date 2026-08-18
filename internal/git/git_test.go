@@ -351,4 +351,25 @@ func TestBlobExists(t *testing.T) {
 	if exists {
 		t.Fatal("missing CI config reported as existing")
 	}
+	exists, err = BlobExists(ctx, repoPath, "main", ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exists {
+		t.Fatal("repository tree reported as a blob")
+	}
+}
+
+func TestSanitizeRefForFilename(t *testing.T) {
+	tests := map[string]string{
+		"feature/ci-v2": "feature_ci-v2",
+		"release 1":     "release1",
+		"日本語":           "revision",
+		"///":           "___",
+	}
+	for input, want := range tests {
+		if got := SanitizeRefForFilename(input); got != want {
+			t.Fatalf("SanitizeRefForFilename(%q) = %q, want %q", input, got, want)
+		}
+	}
 }
