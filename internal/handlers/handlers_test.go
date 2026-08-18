@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/mmrzaf/gitman/internal/config"
 	"github.com/mmrzaf/gitman/internal/db"
 	"github.com/mmrzaf/gitman/internal/git"
@@ -224,7 +223,7 @@ func TestReadinessDoesNotExposeStorageErrors(t *testing.T) {
 func TestArtifactAPIUnauthenticatedResponseIsJSON(t *testing.T) {
 	app := setupTestApp(t)
 	router := SetupRouter(app)
-	req := httptest.NewRequest(http.MethodGet, "/api/repos/testuser/repo/artifacts/latest/branch/main/report.txt", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/repos/testuser/repo/artifacts/latest/branch/report.txt?ref=main", nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	if w.Code != http.StatusUnauthorized {
@@ -341,29 +340,6 @@ func TestListArtifactsIncludesNestedFilesAndSkipsSymlinks(t *testing.T) {
 	}
 }
 
-func TestBuildHookScriptUsesDurableLocalQueue(t *testing.T) {
-	script := buildHookScript("owner", "repo")
-	for _, expected := range []string{
-		gitmanHookMarker,
-		ciHookQueueDirName,
-		`mktemp "$QUEUE_DIR/.event.XXXXXXXXXXXX"`,
-		`flock -x 9`,
-		`event-%020d`,
-		`printf '%s\n%s\n%s\n' "$old" "$new" "$ref"`,
-		`logger -t gitman-ci-hook`,
-	} {
-		if !strings.Contains(script, expected) {
-			t.Fatalf("hook script missing %q:\n%s", expected, script)
-		}
-	}
-	if strings.Contains(script, "curl ") {
-		t.Fatalf("durable hook must not depend on synchronous HTTP delivery:\n%s", script)
-	}
-	if strings.Contains(script, "secret") || strings.Contains(script, "token") {
-		t.Fatalf("durable hook must not contain credentials:\n%s", script)
-	}
-}
-
 func TestSupportedSSHKeyTypesRejectDSAAndCertificates(t *testing.T) {
 	for _, keyType := range []string{
 		"ssh-rsa",
@@ -382,79 +358,6 @@ func TestSupportedSSHKeyTypesRejectDSAAndCertificates(t *testing.T) {
 		if supportedSSHKeyType(keyType) {
 			t.Errorf("unsupported key type %q was accepted", keyType)
 		}
-	}
-}
-
-func TestBuildHookScriptQueuesOnlyUpdatedBranchesAndTags(t *testing.T) {
-	hooksDir := t.TempDir()
-	hookPath := filepath.Join(hooksDir, "post-receive")
-	if err := os.WriteFile(hookPath, []byte(buildHookScript("owner", "repo")), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	oldCommit := strings.Repeat("a", 40)
-	branchCommit := strings.Repeat("b", 40)
-	tagCommit := strings.Repeat("c", 40)
-	input := strings.Join([]string{
-		oldCommit + " " + branchCommit + " refs/heads/main",
-		oldCommit + " " + tagCommit + " refs/tags/v1.0.0",
-		oldCommit + " " + strings.Repeat("0", 40) + " refs/heads/deleted",
-		oldCommit + " " + branchCommit + " refs/notes/test",
-	}, "\n") + "\n"
-	cmd := exec.Command(hookPath)
-	cmd.Stdin = strings.NewReader(input)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("hook failed: %v\n%s", err, out)
-	}
-
-	entries, err := os.ReadDir(filepath.Join(hooksDir, ciHookQueueDirName))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var events []string
-	for _, entry := range entries {
-		if !strings.HasPrefix(entry.Name(), "event-") {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(hooksDir, ciHookQueueDirName, entry.Name()))
-		if err != nil {
-			t.Fatal(err)
-		}
-		events = append(events, string(data))
-	}
-	if len(events) != 2 {
-		t.Fatalf("queued event count = %d, want 2", len(events))
-	}
-	joined := strings.Join(events, "\n")
-	for _, expected := range []string{branchCommit + "\nrefs/heads/main", tagCommit + "\nrefs/tags/v1.0.0"} {
-		if !strings.Contains(joined, expected) {
-			t.Fatalf("queued events missing %q: %q", expected, joined)
-		}
-	}
-}
-
-func TestDetectHookState(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "post-receive")
-	if got := detectHookState(path); got != hookAbsent {
-		t.Fatalf("expected absent, got %s", got)
-	}
-	if err := os.WriteFile(path, []byte("#!/bin/sh\necho custom\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if got := detectHookState(path); got != hookUnmanaged {
-		t.Fatalf("expected unmanaged, got %s", got)
-	}
-	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+gitmanHookMarker+"\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if got := detectHookState(path); got != hookManaged {
-		t.Fatalf("expected managed, got %s", got)
-	}
-	if err := os.WriteFile(path, []byte("#!/bin/sh\n# Managed by Gitman CI/CD. Schema: 1\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if got := detectHookState(path); got != hookOutdated {
-		t.Fatalf("expected outdated, got %s", got)
 	}
 }
 
@@ -668,39 +571,6 @@ func TestRepoNavHidesCIFromNonMember(t *testing.T) {
 	nav := app.repoNavData(req.WithContext(ctx), "main")
 	if nav == nil || nav.CanViewCI || nav.IsOwner {
 		t.Fatalf("non-member unexpectedly received CI navigation: %+v", nav)
-	}
-}
-
-func TestWebhookAuthRejectsMismatchedRoute(t *testing.T) {
-	app := setupTestApp(t)
-	owner, _ := app.DB.GetUserByUsername(context.Background(), "testuser")
-	repoID, err := app.DB.CreateRepository(context.Background(), owner.ID, "repo", "", false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := app.DB.SetWebhookSecret(context.Background(), repoID, "hook-secret"); err != nil {
-		t.Fatal(err)
-	}
-	router := chi.NewRouter()
-	router.Post("/repos/{username}/{repo_name}/ci/webhook", app.WebhookAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	})).ServeHTTP)
-
-	for _, tc := range []struct {
-		path string
-		want int
-	}{
-		{path: "/repos/testuser/repo/ci/webhook", want: http.StatusNoContent},
-		{path: "/repos/testuser/other/ci/webhook", want: http.StatusUnauthorized},
-		{path: "/repos/other/repo/ci/webhook", want: http.StatusUnauthorized},
-	} {
-		req := httptest.NewRequest(http.MethodPost, tc.path, nil)
-		req.Header.Set("X-Gitman-Webhook-Secret", "hook-secret")
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-		if w.Code != tc.want {
-			t.Fatalf("%s: expected %d, got %d", tc.path, tc.want, w.Code)
-		}
 	}
 }
 

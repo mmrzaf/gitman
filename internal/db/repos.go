@@ -240,50 +240,6 @@ func (db *DB) GetRepoAccessLevel(ctx context.Context, repoID, userID string) (mo
 	return level, nil
 }
 
-func (db *DB) SetWebhookSecret(ctx context.Context, repoID, secret string) error {
-	res, err := db.sql.ExecContext(ctx, "UPDATE repositories SET webhook_secret = ? WHERE id = ?", secret, repoID)
-	if err != nil {
-		return err
-	}
-	return requireAffectedRow(res, ErrNotFound)
-}
-
-// GetRepositoryByWebhookSecret fetches a single repo by its webhook secret
-func (db *DB) GetRepositoryByWebhookSecret(ctx context.Context, secret string) (*models.Repository, error) {
-	query := `SELECT id, owner_id, name, COALESCE(description, ''), is_private, created_at, updated_at
-			  FROM repositories WHERE webhook_secret = ?`
-	row := db.sql.QueryRowContext(ctx, query, secret)
-
-	var r models.Repository
-	var createdAt, updatedAt int64
-	err := row.Scan(
-		&r.ID,
-		&r.OwnerID,
-		&r.Name,
-		&r.Description,
-		&r.IsPrivate,
-		&createdAt,
-		&updatedAt,
-	)
-	if err != nil {
-		return nil, normalizeNotFound(err)
-	}
-	r.CreatedAt = unixToTime(createdAt)
-	r.UpdatedAt = unixToTime(updatedAt)
-	return &r, nil
-}
-
-// GetWebhookSecret returns the current hook token so a failed reinstall can
-// restore the previously working configuration.
-func (db *DB) GetWebhookSecret(ctx context.Context, repoID string) (string, error) {
-	var secret string
-	err := db.sql.QueryRowContext(ctx, "SELECT webhook_secret FROM repositories WHERE id = ?", repoID).Scan(&secret)
-	if err != nil {
-		return "", normalizeNotFound(err)
-	}
-	return secret, nil
-}
-
 // RepositoryLocation is the minimal repository identity needed by operator
 // maintenance tasks that walk repositories on disk.
 type RepositoryLocation struct {

@@ -23,7 +23,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/mmrzaf/gitman/internal/apperr"
-	cipolicy "github.com/mmrzaf/gitman/internal/ci"
 	"github.com/mmrzaf/gitman/internal/db"
 	"github.com/mmrzaf/gitman/internal/git"
 	"github.com/mmrzaf/gitman/internal/models"
@@ -36,8 +35,6 @@ type CIPageData struct {
 	Owner         *models.User
 	Repository    *models.Repository
 	Runs          []CIRunView
-	HookExists    bool
-	HookState     string
 	Branches      []string
 	Tags          []string
 	DefaultBranch string
@@ -137,8 +134,6 @@ func (app *App) HandleCIGET(w http.ResponseWriter, r *http.Request) {
 		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Repository data is temporarily unavailable", err))
 		return
 	}
-	hookExists := hookIsInstalled(app.Config.ReposPath, owner.Username, repo.Name)
-	hookState := app.hookState(owner.Username, repo.Name)
 	app.renderPage(w, r, "repo_ci.html", PageData{
 		Title: repo.Name + " - CI",
 		User:  GetUser(r),
@@ -146,8 +141,6 @@ func (app *App) HandleCIGET(w http.ResponseWriter, r *http.Request) {
 			Owner:         owner,
 			Repository:    repo,
 			Runs:          runViews,
-			HookExists:    hookExists,
-			HookState:     string(hookState),
 			Branches:      branches,
 			Tags:          tags,
 			DefaultBranch: defaultBranch,
@@ -623,50 +616,6 @@ func (app *App) HandleCIRunRetryPOST(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("CI run retried", "run_id", newRunID, "retry_of", runID, "repo", repo.ID, "user", user.Username)
 	redirectCIRun(w, r, owner.Username, repo.Name, newRunID, "Retry queued.", "")
-}
-
-func (app *App) HandleCITriggerWebhook(w http.ResponseWriter, r *http.Request) {
-	repo := GetRepo(r)
-	owner, err := app.DB.GetUserByID(r.Context(), repo.OwnerID)
-	if err != nil {
-		if errors.Is(err, db.ErrNotFound) {
-			app.respondAPIError(w, r, apperr.Wrap(apperr.KindInternal, "Repository owner is unavailable", err))
-		} else {
-			app.respondAPIError(w, r, apperr.Wrap(apperr.KindUnavailable, "Gitman is temporarily unavailable", err))
-		}
-		return
-	}
-	req, err := decodeTriggerRequest(w, r)
-	if err != nil {
-		app.respondAPIError(w, r, err)
-		return
-	}
-	req, err = normalizeCITrigger(r.Context(), app.Config.ReposPath, owner, repo, req, models.CIEventPush)
-	if err != nil {
-		app.respondAPIError(w, r, err)
-		return
-	}
-	policy, err := (cipolicy.Resolver{DB: app.DB, ReposPath: app.Config.ReposPath}).Resolve(r.Context(), owner, repo, req.Branch, req.Tag)
-	if err != nil {
-		app.respondAPIError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI ref policy is temporarily unavailable", err))
-		return
-	}
-	if !policy.AutoRun {
-		slog.Info("CI webhook ignored by ref policy", "repo", repo.ID, "ref_type", policy.RefType, "ref", policy.RefName, "source", policy.Source)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusAccepted)
-		_ = json.NewEncoder(w).Encode(map[string]string{"result": "ignored", "reason": "auto-run disabled for ref"})
-		return
-	}
-	runID, err := app.DB.CreatePushCIRun(r.Context(), repo.ID, req.CommitHash, req.Branch, req.Tag)
-	if err != nil {
-		app.respondAPIError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI data is temporarily unavailable", err))
-		return
-	}
-	slog.Info("CI run created", "run_id", runID, "repo", repo.ID, "event", req.Event, "policy_source", policy.Source)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusAccepted)
-	_ = json.NewEncoder(w).Encode(map[string]string{"run_id": runID})
 }
 
 func listArtifacts(root string) ([]string, error) {
@@ -1229,272 +1178,16 @@ func (app *App) HandleCISecretsDeletePOST(w http.ResponseWriter, r *http.Request
 	app.renderCISecretsPage(w, r, "", "Secret deleted.")
 }
 
-func hookPath(reposPath, ownerUsername, repoName string) (string, error) {
-	repoPath, err := git.SecureRepoPath(reposPath, ownerUsername, repoName)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(repoPath, "hooks", "post-receive"), nil
-}
-
-const (
-	gitmanHookPrefix = "# Managed by Gitman CI/CD."
-	gitmanHookMarker = "# Managed by Gitman CI/CD. Durable queue format: 1"
-)
-
-type hookState string
-
-const (
-	hookAbsent    hookState = "absent"
-	hookManaged   hookState = "managed"
-	hookOutdated  hookState = "outdated"
-	hookUnmanaged hookState = "unmanaged"
-)
-
-func detectHookState(path string) hookState {
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return hookAbsent
-	}
-	if err != nil {
-		return hookUnmanaged
-	}
-	if strings.Contains(string(data), gitmanHookMarker) {
-		return hookManaged
-	}
-	if strings.Contains(string(data), gitmanHookPrefix) {
-		return hookOutdated
-	}
-	return hookUnmanaged
-}
-
-func (app *App) hookState(ownerUsername, repoName string) hookState {
-	hp, err := hookPath(app.Config.ReposPath, ownerUsername, repoName)
-	if err != nil {
-		return hookUnmanaged
-	}
-	return detectHookState(hp)
-}
-
-func hookIsInstalled(reposPath, ownerUsername, repoName string) bool {
-	hp, err := hookPath(reposPath, ownerUsername, repoName)
-	if err != nil {
-		return false
-	}
-	return detectHookState(hp) == hookManaged
-}
-
-func (app *App) HandleCIHookInstallPOST(w http.ResponseWriter, r *http.Request) {
-	repo := GetRepo(r)
-	owner := GetRepoOwner(r)
-	currentUser := GetUser(r)
-
-	if currentUser == nil || currentUser.ID != repo.OwnerID {
-		app.respondWebError(w, r, apperr.New(apperr.KindForbidden, "Forbidden"))
-		return
-	}
-
-	if !app.parseWebForm(w, r) {
-		return
-	}
-
-	hp, err := hookPath(app.Config.ReposPath, owner.Username, repo.Name)
-	if err != nil {
-		app.respondWebError(w, r, apperr.Wrap(apperr.KindInternal, "Gitman could not resolve this repository", err))
-		return
-	}
-	state := detectHookState(hp)
-	if state == hookUnmanaged {
-		app.respondWebError(w, r, apperr.New(apperr.KindConflict, "Refusing to overwrite unmanaged post-receive hook"))
-		return
-	}
-
-	previousSecret, err := app.DB.GetWebhookSecret(r.Context(), repo.ID)
-	if err != nil {
-		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI hook state is temporarily unavailable", err))
-		return
-	}
-
-	if err := os.MkdirAll(filepath.Dir(hp), 0o700); err != nil {
-		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Repository hook storage is temporarily unavailable", err))
-		return
-	}
-
-	// Durable local hooks have no credential. Revoke the legacy managed-hook
-	// secret during upgrade so an obsolete bearer is not left active.
-	if err := app.DB.SetWebhookSecret(r.Context(), repo.ID, ""); err != nil {
-		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI hook state is temporarily unavailable", err))
-		return
-	}
-	rollbackSecret := func() {
-		if err := app.DB.SetWebhookSecret(r.Context(), repo.ID, previousSecret); err != nil {
-			slog.Warn("failed to restore previous webhook secret", "repo", repo.ID, "error", err)
-		}
-	}
-	script := buildHookScript(owner.Username, repo.Name)
-
-	if err := writeExecutableFileAtomic(hp, script); err != nil {
-		rollbackSecret()
-		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Repository hook storage is temporarily unavailable", err))
-		return
-	}
-
-	slog.Info("post-receive hook installed", "repo", repo.ID, "by", currentUser.Username, "previous_state", state)
-	http.Redirect(w, r, fmt.Sprintf("/%s/%s/ci?success=hook_installed", owner.Username, repo.Name), http.StatusSeeOther)
-}
-
-// HandleCIHookUninstallPOST removes the Gitman-managed post-receive hook from the bare repo.
-func (app *App) HandleCIHookUninstallPOST(w http.ResponseWriter, r *http.Request) {
-	repo := GetRepo(r)
-	owner := GetRepoOwner(r)
-	currentUser := GetUser(r)
-
-	if currentUser == nil || currentUser.ID != repo.OwnerID {
-		app.respondWebError(w, r, apperr.New(apperr.KindForbidden, "Forbidden"))
-		return
-	}
-
-	hp, err := hookPath(app.Config.ReposPath, owner.Username, repo.Name)
-	if err != nil {
-		app.respondWebError(w, r, apperr.Wrap(apperr.KindInternal, "Gitman could not resolve this repository", err))
-		return
-	}
-	state := detectHookState(hp)
-	if state == hookUnmanaged {
-		app.respondWebError(w, r, apperr.New(apperr.KindConflict, "Refusing to remove unmanaged post-receive hook"))
-		return
-	}
-
-	if err := app.DB.SetWebhookSecret(r.Context(), repo.ID, ""); err != nil {
-		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI hook state is temporarily unavailable", err))
-		return
-	}
-	if state == hookManaged || state == hookOutdated {
-		if err := os.Remove(hp); err != nil && !os.IsNotExist(err) {
-			app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Repository hook storage is temporarily unavailable", err))
-			return
-		}
-	}
-
-	slog.Info("post-receive hook uninstalled", "repo", repo.ID, "by", currentUser.Username, "previous_state", state)
-	http.Redirect(w, r, fmt.Sprintf("/%s/%s/ci", owner.Username, repo.Name), http.StatusSeeOther)
-}
-
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
-}
-
-func writeExecutableFileAtomic(path, content string) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".post-receive-*")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	defer func() { _ = os.Remove(tmpPath) }()
-	if err := tmp.Chmod(0o700); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if _, err := tmp.WriteString(content); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, path)
-}
-
-func buildHookScript(ownerUsername, repoName string) string {
-	return fmt.Sprintf(`#!/bin/bash
-%s
-# Durable local delivery: events remain queued while the web process is down.
-GITMAN_OWNER=%s
-GITMAN_REPO=%s
-HOOK_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-QUEUE_DIR="$HOOK_DIR/%s"
-SEQUENCE_FILE="$QUEUE_DIR/.sequence"
-umask 077
-
-if ! mkdir -p "$QUEUE_DIR"; then
-    command -v logger >/dev/null 2>&1 && logger -t gitman-ci-hook -- "cannot create CI queue for $GITMAN_OWNER/$GITMAN_REPO"
-    exit 0
-fi
-
-while read -r old new ref; do
-    if [[ "$ref" != refs/heads/* && "$ref" != refs/tags/* ]]; then
-        continue
-    fi
-    if [[ "$new" =~ ^0+$ ]]; then
-        continue
-    fi
-    tmp="$(mktemp "$QUEUE_DIR/.event.XXXXXXXXXXXX")" || continue
-    if printf '%%s\n%%s\n%%s\n' "$old" "$new" "$ref" > "$tmp"; then
-        (
-            flock -x 9 || exit 1
-            sequence=0
-            if [[ -f "$SEQUENCE_FILE" ]]; then
-                IFS= read -r sequence < "$SEQUENCE_FILE" || exit 1
-                [[ "$sequence" =~ ^[0-9]+$ ]] || exit 1
-            fi
-            next=$((10#$sequence + 1))
-            while [[ -e "$(printf "$QUEUE_DIR/event-%%020d" "$next")" ||
-                     -e "$(printf "$QUEUE_DIR/.pending-event-%%020d" "$next")" ||
-                     -e "$(printf "$QUEUE_DIR/.processing-event-%%020d" "$next")" ]]; do
-                next=$((next + 1))
-            done
-            pending="$(printf "$QUEUE_DIR/.pending-event-%%020d" "$next")"
-            if ! mv "$tmp" "$pending" || ! sync -f "$QUEUE_DIR"; then
-                exit 1
-            fi
-            sequence_tmp="$(mktemp "$QUEUE_DIR/.sequence.XXXXXXXXXXXX")" || exit 1
-            if ! printf '%%s\n' "$next" > "$sequence_tmp" ||
-               ! sync -f "$sequence_tmp" ||
-               ! mv -f "$sequence_tmp" "$SEQUENCE_FILE"; then
-                rm -f "$sequence_tmp"
-                exit 1
-            fi
-            final="$(printf "$QUEUE_DIR/event-%%020d" "$next")"
-            mv "$pending" "$final" && sync -f "$QUEUE_DIR"
-        ) 9>"$QUEUE_DIR/.sequence.lock"
-        if [[ -e "$tmp" ]]; then
-            command -v logger >/dev/null 2>&1 && logger -t gitman-ci-hook -- "cannot persist CI event for $GITMAN_OWNER/$GITMAN_REPO"
-            rm -f "$tmp"
-        fi
-    else
-        rm -f "$tmp"
-    fi
-done
-exit 0
-`, gitmanHookMarker, shellQuote(ownerUsername), shellQuote(repoName), ciHookQueueDirName)
-}
-
 // Artifact endpoints use ?ref=<branch-or-tag> and a wildcard artifact path so
 // nested files and refs containing slashes are representable.
 func artifactPathParam(r *http.Request) string {
 	return strings.TrimPrefix(chi.URLParam(r, "*"), "/")
 }
 
-func splitLegacyArtifactPath(raw string) (string, string) {
-	parts := strings.SplitN(raw, "/", 2)
-	if len(parts) != 2 {
-		return "", ""
-	}
-	return parts[0], parts[1]
-}
-
 func (app *App) HandleArtifactByBranch(w http.ResponseWriter, r *http.Request) {
 	repo, owner := GetRepo(r), GetRepoOwner(r)
 	branch := strings.TrimSpace(r.URL.Query().Get("ref"))
 	artifact := artifactPathParam(r)
-	if branch == "" {
-		branch, artifact = splitLegacyArtifactPath(artifact)
-	}
 	if branch == "" || artifact == "" {
 		app.respondAPIError(w, r, apperr.New(apperr.KindInvalid, "invalid branch or artifact path"))
 		return
@@ -1523,9 +1216,6 @@ func (app *App) HandleArtifactByTag(w http.ResponseWriter, r *http.Request) {
 	repo, owner := GetRepo(r), GetRepoOwner(r)
 	tag := strings.TrimSpace(r.URL.Query().Get("ref"))
 	artifact := artifactPathParam(r)
-	if tag == "" {
-		tag, artifact = splitLegacyArtifactPath(artifact)
-	}
 	if tag == "" || artifact == "" {
 		app.respondAPIError(w, r, apperr.New(apperr.KindInvalid, "invalid tag or artifact path"))
 		return

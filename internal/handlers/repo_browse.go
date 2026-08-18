@@ -141,17 +141,11 @@ func loadRefsIntoData(ctx context.Context, repoPath string, data *RepoPageData) 
 }
 
 func requestRef(r *http.Request) string {
-	if ref := strings.TrimSpace(r.URL.Query().Get("ref")); ref != "" {
-		return ref
-	}
-	return chi.URLParam(r, "ref")
+	return strings.TrimSpace(r.URL.Query().Get("ref"))
 }
 
 func requestRepoPath(r *http.Request) string {
-	if path := strings.TrimPrefix(r.URL.Query().Get("path"), "/"); path != "" {
-		return path
-	}
-	return strings.TrimPrefix(chi.URLParam(r, "*"), "/")
+	return strings.TrimPrefix(r.URL.Query().Get("path"), "/")
 }
 
 const maxReadmeRenderBytes int64 = 512 * 1024
@@ -475,8 +469,7 @@ func (app *App) HandleRepoCommitsGET(w http.ResponseWriter, r *http.Request) {
 
 // HandleRepoArchiveGET streams a zip or tar.gz archive of the repository.
 //
-// Route: /archive/* — the wildcard captures "<ref>.<format>" including refs
-// that contain slashes (e.g. "feature/foo.zip" → ref=feature/foo, format=zip).
+// Route: /archive/{format}?ref=<revision>.
 func (app *App) HandleRepoArchiveGET(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
 	repo := GetRepo(r)
@@ -493,37 +486,19 @@ func (app *App) HandleRepoArchiveGET(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var refPart, format, contentType string
-	format = chi.URLParam(r, "format")
-	refPart = strings.TrimSpace(r.URL.Query().Get("ref"))
-	if format != "" {
-		switch format {
-		case "tar.gz":
-			contentType = "application/gzip"
-		case "tar":
-			contentType = "application/x-tar"
-		case "zip":
-			contentType = "application/zip"
-		default:
-			app.respondWebError(w, r, apperr.New(apperr.KindInvalid, "Unsupported archive format"))
-			return
-		}
-	} else {
-		archivePath := chi.URLParam(r, "*")
-		switch {
-		case strings.HasSuffix(archivePath, ".tar.gz"):
-			format, contentType = "tar.gz", "application/gzip"
-			refPart = strings.TrimSuffix(archivePath, ".tar.gz")
-		case strings.HasSuffix(archivePath, ".tar"):
-			format, contentType = "tar", "application/x-tar"
-			refPart = strings.TrimSuffix(archivePath, ".tar")
-		case strings.HasSuffix(archivePath, ".zip"):
-			format, contentType = "zip", "application/zip"
-			refPart = strings.TrimSuffix(archivePath, ".zip")
-		default:
-			app.respondWebError(w, r, apperr.New(apperr.KindInvalid, "Unsupported archive format"))
-			return
-		}
+	format := chi.URLParam(r, "format")
+	refPart := strings.TrimSpace(r.URL.Query().Get("ref"))
+	var contentType string
+	switch format {
+	case "tar.gz":
+		contentType = "application/gzip"
+	case "tar":
+		contentType = "application/x-tar"
+	case "zip":
+		contentType = "application/zip"
+	default:
+		app.respondWebError(w, r, apperr.New(apperr.KindInvalid, "Unsupported archive format"))
+		return
 	}
 
 	if refPart == "" {

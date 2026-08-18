@@ -114,7 +114,7 @@ CREATE INDEX idx_ci_runs_tag ON ci_runs(tag);
 CREATE INDEX idx_ci_runs_commit_hash ON ci_runs(commit_hash);
 CREATE INDEX idx_ci_runs_created_at ON ci_runs(created_at);
 
--- Webhook secret lookup (used by the webhook auth middleware)
+-- Historical webhook lookup; removed by migration 006.
 CREATE INDEX idx_repositories_webhook_secret ON repositories(webhook_secret);
 
 -- Repo secrets

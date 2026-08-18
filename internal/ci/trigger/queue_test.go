@@ -1,4 +1,4 @@
-package handlers
+package trigger
 
 import (
 	"context"
@@ -10,28 +10,84 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mmrzaf/gitman/internal/db"
 	"github.com/mmrzaf/gitman/internal/git"
 	"github.com/mmrzaf/gitman/internal/models"
 )
 
-func setupQueuedPushTest(t *testing.T, repoName string) (*App, context.Context, *models.User, *models.Repository, string, string, string) {
+func setupTriggerTest(t *testing.T) (*Manager, context.Context, *models.User) {
 	t.Helper()
-	app := setupTestApp(t)
+	database, err := db.InitDB(filepath.Join(t.TempDir(), "gitman.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
 	ctx := context.Background()
-	owner, err := app.DB.GetUserByUsername(ctx, "testuser")
+	owner, err := database.CreateUser(ctx, "testuser", "TestPass123")
 	if err != nil {
 		t.Fatal(err)
 	}
-	repoID, err := app.DB.CreateRepository(ctx, owner.ID, repoName, "", false)
+	return &Manager{DB: database, ReposPath: t.TempDir()}, ctx, owner
+}
+
+func setupCIRefRepo(t *testing.T, reposPath string, owner *models.User, repo *models.Repository) (mainCommit, devCommit, tagCommit string) {
+	t.Helper()
+	repoPath, err := git.SecureRepoPath(reposPath, owner.Username, repo.Name)
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo, err := app.DB.GetRepositoryByID(ctx, repoID)
+	if err := git.InitBareRepo(context.Background(), repoPath, 512*1024*1024); err != nil {
+		t.Fatal(err)
+	}
+	work := t.TempDir()
+	runGit := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", work}, args...)...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	clone := exec.Command("git", "clone", repoPath, work)
+	if out, err := clone.CombinedOutput(); err != nil {
+		t.Fatalf("clone failed: %v\n%s", err, out)
+	}
+	runGit("config", "user.email", "test@example.com")
+	runGit("config", "user.name", "Test User")
+	if err := os.WriteFile(filepath.Join(work, ".gitman-ci.yml"), []byte("image: alpine\nsteps:\n- name: main\n  run: echo main\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit("checkout", "-b", "main")
+	runGit("add", ".gitman-ci.yml")
+	runGit("commit", "-m", "main")
+	mainCommit = runGit("rev-parse", "HEAD")
+	runGit("tag", "v1.0.0")
+	tagCommit = mainCommit
+	runGit("checkout", "-b", "development")
+	if err := os.WriteFile(filepath.Join(work, ".gitman-ci.yml"), []byte("image: alpine\nsteps:\n- name: dev\n  run: echo dev\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", ".gitman-ci.yml")
+	runGit("commit", "-m", "development")
+	devCommit = runGit("rev-parse", "HEAD")
+	runGit("push", "origin", "main", "development", "v1.0.0")
+	return mainCommit, devCommit, tagCommit
+}
+
+func setupQueuedPushTest(t *testing.T, repoName string) (*Manager, context.Context, *models.User, *models.Repository, string, string, string) {
+	t.Helper()
+	manager, ctx, owner := setupTriggerTest(t)
+	repoID, err := manager.DB.CreateRepository(ctx, owner.ID, repoName, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, second, _ := setupCIRefRepo(t, app.Config.ReposPath, owner, repo)
-	repoPath, err := git.SecureRepoPath(app.Config.ReposPath, owner.Username, repo.Name)
+	repo, err := manager.DB.GetRepositoryByID(ctx, repoID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, second, _ := setupCIRefRepo(t, manager.ReposPath, owner, repo)
+	repoPath, err := git.SecureRepoPath(manager.ReposPath, owner.Username, repo.Name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,12 +102,10 @@ func setupQueuedPushTest(t *testing.T, repoName string) (*App, context.Context, 
 	}
 	tree := runGit("rev-parse", second+"^{tree}")
 	third := runGit("-c", "user.name=Gitman Test", "-c", "user.email=test@example.com", "commit-tree", tree, "-p", second, "-m", "third")
-	if err := app.DB.UpsertRepoCIRefRule(ctx, models.RepoCIRefRule{
-		RepoID: repo.ID, RefType: "branch", RefName: "main", AutoRun: true,
-	}); err != nil {
+	if err := manager.DB.UpsertRepoCIRefRule(ctx, models.RepoCIRefRule{RepoID: repo.ID, RefType: models.CIRefBranch, RefName: "main", AutoRun: true}); err != nil {
 		t.Fatal(err)
 	}
-	return app, ctx, owner, repo, first, second, third
+	return manager, ctx, owner, repo, first, second, third
 }
 
 func queuedEventBody(oldCommit, newCommit string) string {
@@ -68,18 +122,18 @@ func writeQueuedEvent(t *testing.T, queueDir, name, oldCommit, newCommit string)
 	}
 }
 
-func queueDirForRepo(t *testing.T, app *App, owner *models.User, repo *models.Repository) string {
+func queueDirForRepo(t *testing.T, manager *Manager, owner *models.User, repo *models.Repository) string {
 	t.Helper()
-	repoPath, err := git.SecureRepoPath(app.Config.ReposPath, owner.Username, repo.Name)
+	repoPath, err := git.SecureRepoPath(manager.ReposPath, owner.Username, repo.Name)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return filepath.Join(repoPath, "hooks", ciHookQueueDirName)
+	return filepath.Join(repoPath, "hooks", QueueDirName)
 }
 
-func assertQueuedPushStates(t *testing.T, app *App, repoID string, commits []string) {
+func assertQueuedPushStates(t *testing.T, manager *Manager, repoID string, commits []string) {
 	t.Helper()
-	runs, err := app.DB.GetCIRunsByRepo(context.Background(), repoID, len(commits)+10)
+	runs, err := manager.DB.GetCIRunsByRepo(context.Background(), repoID, len(commits)+10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,8 +150,8 @@ func assertQueuedPushStates(t *testing.T, app *App, repoID string, commits []str
 }
 
 func TestDurableQueueReplaysOfflinePushesChronologically(t *testing.T) {
-	app, ctx, owner, repo, first, second, third := setupQueuedPushTest(t, "offline-order")
-	queueDir := queueDirForRepo(t, app, owner, repo)
+	manager, ctx, owner, repo, first, second, third := setupQueuedPushTest(t, "offline-order")
+	queueDir := queueDirForRepo(t, manager, owner, repo)
 	hook := filepath.Join(filepath.Dir(queueDir), "post-receive")
 	if err := os.WriteFile(hook, []byte(buildHookScript(owner.Username, repo.Name)), 0o700); err != nil {
 		t.Fatal(err)
@@ -123,34 +177,42 @@ func TestDurableQueueReplaysOfflinePushesChronologically(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	app.drainRepoCITriggerQueue(ctx, owner, repo)
-	assertQueuedPushStates(t, app, repo.ID, []string{first, second, third})
+	if err := manager.DrainRepository(ctx, owner, repo); err != nil {
+		t.Fatal(err)
+	}
+	assertQueuedPushStates(t, manager, repo.ID, []string{first, second, third})
 
 	// Reappearance after a database commit but before queue-file removal must
 	// resolve to the original trigger key without creating or superseding work.
 	writeQueuedEvent(t, queueDir, "event-00000000000000000003", second, third)
-	app.drainRepoCITriggerQueue(ctx, owner, repo)
-	assertQueuedPushStates(t, app, repo.ID, []string{first, second, third})
+	if err := manager.DrainRepository(ctx, owner, repo); err != nil {
+		t.Fatal(err)
+	}
+	assertQueuedPushStates(t, manager, repo.ID, []string{first, second, third})
 }
 
 func TestDurableQueueResumesClaimedEventBeforeNewerEvents(t *testing.T) {
-	app, ctx, owner, repo, first, second, _ := setupQueuedPushTest(t, "resume-order")
-	queueDir := queueDirForRepo(t, app, owner, repo)
+	manager, ctx, owner, repo, first, second, _ := setupQueuedPushTest(t, "resume-order")
+	queueDir := queueDirForRepo(t, manager, owner, repo)
 	writeQueuedEvent(t, queueDir, ".processing-event-00000000000000000001", strings.Repeat("0", 40), first)
 	writeQueuedEvent(t, queueDir, "event-00000000000000000002", first, second)
 
-	app.drainRepoCITriggerQueue(ctx, owner, repo)
-	assertQueuedPushStates(t, app, repo.ID, []string{first, second})
+	if err := manager.DrainRepository(ctx, owner, repo); err != nil {
+		t.Fatal(err)
+	}
+	assertQueuedPushStates(t, manager, repo.ID, []string{first, second})
 }
 
 func TestDurableQueueRecoversPublicationInterruptedAfterSequenceAssignment(t *testing.T) {
-	app, ctx, owner, repo, first, second, _ := setupQueuedPushTest(t, "publish-order")
-	queueDir := queueDirForRepo(t, app, owner, repo)
+	manager, ctx, owner, repo, first, second, _ := setupQueuedPushTest(t, "publish-order")
+	queueDir := queueDirForRepo(t, manager, owner, repo)
 	writeQueuedEvent(t, queueDir, ".pending-event-00000000000000000001", strings.Repeat("0", 40), first)
 	writeQueuedEvent(t, queueDir, "event-00000000000000000002", first, second)
 
-	app.drainRepoCITriggerQueue(ctx, owner, repo)
-	assertQueuedPushStates(t, app, repo.ID, []string{first, second})
+	if err := manager.DrainRepository(ctx, owner, repo); err != nil {
+		t.Fatal(err)
+	}
+	assertQueuedPushStates(t, manager, repo.ID, []string{first, second})
 	sequence, err := readCITriggerSequence(filepath.Join(queueDir, ".sequence"))
 	if err != nil || sequence != 2 {
 		t.Fatalf("recovered sequence = %d, err=%v; want 2", sequence, err)
@@ -158,13 +220,15 @@ func TestDurableQueueRecoversPublicationInterruptedAfterSequenceAssignment(t *te
 }
 
 func TestDurableQueueStopsAtTransientFailureAndResumesInOrder(t *testing.T) {
-	app, ctx, owner, repo, first, second, _ := setupQueuedPushTest(t, "transient-order")
-	queueDir := queueDirForRepo(t, app, owner, repo)
+	manager, ctx, owner, repo, first, second, _ := setupQueuedPushTest(t, "transient-order")
+	queueDir := queueDirForRepo(t, manager, owner, repo)
 	writeQueuedEvent(t, queueDir, "event-00000000000000000001", strings.Repeat("0", 40), strings.Repeat("a", 40))
 	writeQueuedEvent(t, queueDir, "event-00000000000000000002", first, second)
 
-	app.drainRepoCITriggerQueue(ctx, owner, repo)
-	runs, err := app.DB.GetCIRunsByRepo(ctx, repo.ID, 10)
+	if err := manager.DrainRepository(ctx, owner, repo); err != nil {
+		t.Fatal(err)
+	}
+	runs, err := manager.DB.GetCIRunsByRepo(ctx, repo.ID, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,13 +236,15 @@ func TestDurableQueueStopsAtTransientFailureAndResumesInOrder(t *testing.T) {
 		t.Fatalf("newer event overtook transient failure; run count = %d", len(runs))
 	}
 	writeQueuedEvent(t, queueDir, "event-00000000000000000001", strings.Repeat("0", 40), first)
-	app.drainRepoCITriggerQueue(ctx, owner, repo)
-	assertQueuedPushStates(t, app, repo.ID, []string{first, second})
+	if err := manager.DrainRepository(ctx, owner, repo); err != nil {
+		t.Fatal(err)
+	}
+	assertQueuedPushStates(t, manager, repo.ID, []string{first, second})
 }
 
 func TestDurableQueueIsolatesMalformedFileWithoutBlockingValidEvent(t *testing.T) {
-	app, ctx, owner, repo, first, _, _ := setupQueuedPushTest(t, "malformed-order")
-	queueDir := queueDirForRepo(t, app, owner, repo)
+	manager, ctx, owner, repo, first, _, _ := setupQueuedPushTest(t, "malformed-order")
+	queueDir := queueDirForRepo(t, manager, owner, repo)
 	if err := os.MkdirAll(queueDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -188,11 +254,13 @@ func TestDurableQueueIsolatesMalformedFileWithoutBlockingValidEvent(t *testing.T
 	}
 	writeQueuedEvent(t, queueDir, "event-00000000000000000002", strings.Repeat("0", 40), first)
 
-	app.drainRepoCITriggerQueue(ctx, owner, repo)
+	if err := manager.DrainRepository(ctx, owner, repo); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := os.Stat(filepath.Join(queueDir, ".malformed-"+badName)); err != nil {
 		t.Fatalf("malformed event was not quarantined: %v", err)
 	}
-	assertQueuedPushStates(t, app, repo.ID, []string{first})
+	assertQueuedPushStates(t, manager, repo.ID, []string{first})
 }
 
 func TestQueuedTriggerFileDetectionFailsRepositoryDeletionClosed(t *testing.T) {
@@ -215,7 +283,7 @@ func TestQueuedTriggerFileDetectionFailsRepositoryDeletionClosed(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(queueDir, name), []byte("queued"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			pending, err := hasQueuedCITriggerFiles(queueDir)
+			pending, err := HasQueuedEvents(queueDir)
 			if err != nil || !pending {
 				t.Fatalf("pending=%t err=%v for %s", pending, err, name)
 			}
@@ -224,29 +292,24 @@ func TestQueuedTriggerFileDetectionFailsRepositoryDeletionClosed(t *testing.T) {
 	if err := os.RemoveAll(queueDir); err != nil {
 		t.Fatal(err)
 	}
-	pending, err := hasQueuedCITriggerFiles(queueDir)
+	pending, err := HasQueuedEvents(queueDir)
 	if err != nil || pending {
 		t.Fatalf("missing queue pending=%t err=%v", pending, err)
 	}
 }
 
 func TestQueuedAnnotatedTagSurvivesLaterRefDeletion(t *testing.T) {
-	app := setupTestApp(t)
-	ctx := context.Background()
-	owner, err := app.DB.GetUserByUsername(ctx, "testuser")
+	manager, ctx, owner := setupTriggerTest(t)
+	repoID, err := manager.DB.CreateRepository(ctx, owner.ID, "queued-tag", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	repoID, err := app.DB.CreateRepository(ctx, owner.ID, "queued-tag", "", false)
+	repo, err := manager.DB.GetRepositoryByID(ctx, repoID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo, err := app.DB.GetRepositoryByID(ctx, repoID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	mainCommit, _, _ := setupCIRefRepo(t, app.Config.ReposPath, owner, repo)
-	repoPath, err := git.SecureRepoPath(app.Config.ReposPath, owner.Username, repo.Name)
+	mainCommit, _, _ := setupCIRefRepo(t, manager.ReposPath, owner, repo)
+	repoPath, err := git.SecureRepoPath(manager.ReposPath, owner.Username, repo.Name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +329,7 @@ func TestQueuedAnnotatedTagSurvivesLaterRefDeletion(t *testing.T) {
 	}
 	runGit("update-ref", "-d", "refs/tags/queued-v1")
 
-	if err := app.DB.UpsertRepoCIRefRule(ctx, models.RepoCIRefRule{
+	if err := manager.DB.UpsertRepoCIRefRule(ctx, models.RepoCIRefRule{
 		RepoID: repo.ID, RefType: "tag", RefName: "queued-v1", AutoRun: true,
 	}); err != nil {
 		t.Fatal(err)
@@ -277,11 +340,11 @@ func TestQueuedAnnotatedTagSurvivesLaterRefDeletion(t *testing.T) {
 	if err := os.WriteFile(eventPath, []byte(event), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	remove, err := app.processQueuedCITrigger(ctx, owner, repo, "event-test", eventPath)
+	remove, err := manager.processQueued(ctx, owner, repo, "event-test", eventPath)
 	if err != nil || !remove {
 		t.Fatalf("remove=%v err=%v", remove, err)
 	}
-	runs, err := app.DB.GetCIRunsByRepo(ctx, repo.ID, 10)
+	runs, err := manager.DB.GetCIRunsByRepo(ctx, repo.ID, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,19 +354,23 @@ func TestQueuedAnnotatedTagSurvivesLaterRefDeletion(t *testing.T) {
 }
 
 func TestQueuedTriggerRetriesUnresolvedObject(t *testing.T) {
-	app := setupTestApp(t)
-	ctx := context.Background()
-	owner, _ := app.DB.GetUserByUsername(ctx, "testuser")
-	repoID, _ := app.DB.CreateRepository(ctx, owner.ID, "queued-retry", "", false)
-	repo, _ := app.DB.GetRepositoryByID(ctx, repoID)
-	setupCIRefRepo(t, app.Config.ReposPath, owner, repo)
+	manager, ctx, owner := setupTriggerTest(t)
+	repoID, err := manager.DB.CreateRepository(ctx, owner.ID, "queued-retry", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := manager.DB.GetRepositoryByID(ctx, repoID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	setupCIRefRepo(t, manager.ReposPath, owner, repo)
 
 	eventPath := filepath.Join(t.TempDir(), ".processing-event-retry")
 	event := strings.Repeat("0", 40) + "\n" + strings.Repeat("a", 40) + "\nrefs/heads/main\n"
 	if err := os.WriteFile(eventPath, []byte(event), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	remove, err := app.processQueuedCITrigger(ctx, owner, repo, "event-retry", eventPath)
+	remove, err := manager.processQueued(ctx, owner, repo, "event-retry", eventPath)
 	if err == nil || remove {
 		t.Fatalf("unresolved event should remain queued: remove=%v err=%v", remove, err)
 	}

@@ -17,19 +17,21 @@ Gitman builds one binary with four top-level commands:
 | --- | --- |
 | `internal/config` | Environment-based configuration |
 | `internal/ci` | Shared CI configuration parsing and trusted-ref policy |
+| `internal/ci/trigger` | Managed post-receive hook and durable push-trigger queue |
 | `internal/db` | SQLite initialization, migrations, and persistence |
 | `internal/git` | Safe Git repository paths, Git subprocess calls, commits, diffs, browsing, refs, and archives |
-| `internal/handlers` | Router, auth, CSRF, repository UI, Git smart HTTP, CI triggers, live logs, and artifact serving |
+| `internal/handlers` | Router, auth, CSRF, repository UI, Git smart HTTP, live CI logs, and artifact serving |
 | `internal/markdown` | Safe server-side README subset renderer |
+| `internal/repository` | Repository namespace locking and database/filesystem lifecycle coordination |
 | `internal/ssh` | Managed `authorized_keys` generation and SSH command authorization |
 | `internal/worker` | CI config validation, leases, workspaces, Docker containers, caches, logs, redaction, and artifacts |
-| `internal/admin` | Username/password validation, user lifecycle, and backups |
+| `internal/admin` | Operator user lifecycle, repository maintenance, and backups |
 
 ## Embedded assets
 
 `embed.go` embeds:
 
-- `migrations/*.sql`
+- `migrations/*.up.sql`
 - `templates/**/*.html`
 - `static/**/*`
 
@@ -50,7 +52,7 @@ A source-release package must retain those directories.
 
 ## Data flow: CI
 
-1. UI, external webhook, or the durable repository-local trigger queue creates an idempotent pending row. Hook events use a locked monotonic repository sequence; the web process claims and replays them strictly in that order, restoring an interrupted claim before later events.
+1. A manual action or the durable repository-local trigger queue creates an idempotent pending row. Push events use a locked monotonic repository sequence; the web process claims and replays them strictly in that order, restoring an interrupted claim before later events.
 2. Worker claims the row with a new attempt ID and heartbeat lease.
 3. Worker clones from the local bare repository.
 4. Worker validates `.gitman-ci.yml`, resolves secrets, and creates an environment file outside the checkout.

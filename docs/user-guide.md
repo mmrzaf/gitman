@@ -61,6 +61,6 @@ Repository pages provide:
 
 ## CI UI
 
-Members can view exact run status, queue and execution timing, structured step logs with incremental live updates, raw-log search/follow/wrap controls, exact pipeline configuration, outcome reasons, retry history, and nested artifacts. Owners and write collaborators can run CI manually, cancel queued or running jobs, and retry completed jobs against the same commit. Owners can install or upgrade the durable post-receive auto-trigger hook and manage repository secrets.
+Members can view exact run status, queue and execution timing, structured step logs with incremental live updates, raw-log search/follow/wrap controls, exact pipeline configuration, outcome reasons, retry history, and nested artifacts. Owners and write collaborators can run CI manually, cancel queued or running jobs, and retry completed jobs against the same commit. Gitman manages the durable post-receive trigger automatically; owners manage repository secrets and trusted-ref policy.
 
 Repository owners also have a dedicated **Settings** page for description, visibility, and safe deletion. Repositories with queued or running CI jobs—or a cancelled job whose worker is still stopping—must be settled before deletion.

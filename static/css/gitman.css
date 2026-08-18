@@ -559,7 +559,7 @@ button.small {
 .note { color: var(--color-text-muted); font-size: 0.84rem; }
 .text-right { text-align: right; }
 
-/* Beta 16 / Phase 1 — CI presentation and interaction */
+/* CI presentation and interaction */
 .sr-only {
   position: absolute !important;
   width: 1px !important;
@@ -966,7 +966,7 @@ button.secondary.active,
   .metadata-list > div { grid-template-columns: 90px minmax(0, 1fr); }
 }
 
-/* ── Beta 16 source inspection ─────────────────────────────────── */
+/* ── Source inspection ─────────────────────────────────────────── */
 :root {
   --source-keyword: #7C3AED;
   --source-string: #047857;
@@ -1320,7 +1320,7 @@ kbd {
   .diff-line-number { min-width: 38px; padding: 0 4px; }
 }
 
-/* Beta 16 / Phase 3 — repository cohesion and landing experience */
+/* Repository shell and landing experience */
 .repo-masthead {
   display: flex;
   align-items: flex-start;
