@@ -6,7 +6,6 @@ import (
 	"embed"
 	"errors"
 	"fmt"
-	"log/slog"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -32,7 +31,7 @@ func (db *DB) runMigrations(ctx context.Context, migrationsFS embed.FS, dir stri
 	if err != nil {
 		return err
 	}
-	conn, err := db.Conn(ctx)
+	conn, err := db.sql.Conn(ctx)
 	if err != nil {
 		return err
 	}
@@ -47,7 +46,7 @@ func (db *DB) runMigrations(ctx context.Context, migrationsFS embed.FS, dir stri
 	committed := false
 	defer func() {
 		if !committed {
-			rollbackConn(conn)
+			err = errors.Join(err, rollbackConn(conn))
 		}
 	}()
 
@@ -62,7 +61,6 @@ func (db *DB) runMigrations(ctx context.Context, migrationsFS embed.FS, dir stri
 		if m.version <= current {
 			continue
 		}
-		slog.Info("applying migration", "version", m.version, "name", m.name)
 		if _, err := conn.ExecContext(ctx, m.up); err != nil {
 			return fmt.Errorf("migration %d (%s) failed: %w", m.version, m.name, err)
 		}
@@ -84,7 +82,7 @@ func (db *DB) rollbackTo(ctx context.Context, migrationsFS embed.FS, dir string,
 	if err != nil {
 		return err
 	}
-	conn, err := db.Conn(ctx)
+	conn, err := db.sql.Conn(ctx)
 	if err != nil {
 		return err
 	}
@@ -99,7 +97,7 @@ func (db *DB) rollbackTo(ctx context.Context, migrationsFS embed.FS, dir string,
 	committed := false
 	defer func() {
 		if !committed {
-			rollbackConn(conn)
+			err = errors.Join(err, rollbackConn(conn))
 		}
 	}()
 
@@ -125,7 +123,6 @@ func (db *DB) rollbackTo(ctx context.Context, migrationsFS embed.FS, dir string,
 		if m.down == "" {
 			return fmt.Errorf("no down migration for version %d", m.version)
 		}
-		slog.Info("rolling back migration", "version", m.version, "name", m.name)
 		if _, err := conn.ExecContext(ctx, m.down); err != nil {
 			return fmt.Errorf("rollback of %d failed: %w", m.version, err)
 		}
@@ -148,10 +145,11 @@ func beginImmediate(ctx context.Context, conn *sql.Conn) error {
 	return nil
 }
 
-func rollbackConn(conn *sql.Conn) {
+func rollbackConn(conn *sql.Conn) error {
 	if _, err := conn.ExecContext(context.Background(), "ROLLBACK"); err != nil && !strings.Contains(strings.ToLower(err.Error()), "no transaction") {
-		slog.Warn("failed to rollback migration transaction", "error", err)
+		return fmt.Errorf("rollback migration transaction: %w", err)
 	}
+	return nil
 }
 
 func ensureMigrationTable(ctx context.Context, conn migrationConn) error {

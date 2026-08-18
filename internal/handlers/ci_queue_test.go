@@ -79,42 +79,18 @@ func queueDirForRepo(t *testing.T, app *App, owner *models.User, repo *models.Re
 
 func assertQueuedPushStates(t *testing.T, app *App, repoID string, commits []string) {
 	t.Helper()
-	rows, err := app.DB.QueryContext(context.Background(), `
-		SELECT commit_hash, status, status_reason FROM ci_runs
-		WHERE repo_id = ? ORDER BY rowid ASC
-	`, repoID)
+	runs, err := app.DB.GetCIRunsByRepo(context.Background(), repoID, len(commits)+10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
-	type state struct{ commit, status, reason string }
-	var states []state
-	for rows.Next() {
-		var got state
-		if err := rows.Scan(&got.commit, &got.status, &got.reason); err != nil {
-			t.Fatal(err)
-		}
-		states = append(states, got)
+	if len(runs) != len(commits) {
+		t.Fatalf("run count = %d, want %d: %+v", len(runs), len(commits), runs)
 	}
-	if err := rows.Err(); err != nil {
-		t.Fatal(err)
-	}
-	if len(states) != len(commits) {
-		t.Fatalf("run count = %d, want %d: %+v", len(states), len(commits), states)
-	}
+	// GetCIRunsByRepo is newest-first; queue assertions are oldest-first.
 	for i, commit := range commits {
-		if states[i].commit != commit {
-			t.Fatalf("run %d commit = %s, want %s; replay order: %+v", i, states[i].commit, commit, states)
-		}
-		wantStatus := "cancelled"
-		if i == len(commits)-1 {
-			wantStatus = "pending"
-		}
-		if states[i].status != wantStatus {
-			t.Fatalf("run %d status = %s, want %s: %+v", i, states[i].status, wantStatus, states)
-		}
-		if i < len(commits)-1 && !strings.Contains(states[i].reason, commits[i+1][:12]) {
-			t.Fatalf("run %d reason %q does not name its chronological successor %s", i, states[i].reason, commits[i+1])
+		run := runs[len(runs)-1-i]
+		if run.CommitHash != commit || run.Status != "pending" || run.StatusReason != "" {
+			t.Fatalf("run %d = {%s %s %q}, want {%s pending empty}", i, run.CommitHash, run.Status, run.StatusReason, commit)
 		}
 	}
 }
@@ -188,12 +164,12 @@ func TestDurableQueueStopsAtTransientFailureAndResumesInOrder(t *testing.T) {
 	writeQueuedEvent(t, queueDir, "event-00000000000000000002", first, second)
 
 	app.drainRepoCITriggerQueue(ctx, owner, repo)
-	var count int
-	if err := app.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM ci_runs WHERE repo_id = ?", repo.ID).Scan(&count); err != nil {
+	runs, err := app.DB.GetCIRunsByRepo(ctx, repo.ID, 10)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if count != 0 {
-		t.Fatalf("newer event overtook transient failure; run count = %d", count)
+	if len(runs) != 0 {
+		t.Fatalf("newer event overtook transient failure; run count = %d", len(runs))
 	}
 	writeQueuedEvent(t, queueDir, "event-00000000000000000001", strings.Repeat("0", 40), first)
 	app.drainRepoCITriggerQueue(ctx, owner, repo)

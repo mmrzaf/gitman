@@ -21,8 +21,9 @@ import (
 
 func init() {
 	register(Command{
-		Name: "web",
-		Run:  runWeb,
+		Name:     "web",
+		NeedsGit: true,
+		Run:      runWeb,
 	})
 }
 
@@ -72,16 +73,16 @@ func runWeb(cfg *config.Config, database *db.DB, args []string) error {
 		Templates: templates,
 		StaticFS:  staticFS,
 	}
-	if err := gitmanssh.SyncAuthorizedKeys(context.Background(), database, cfg); err != nil {
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	defer cancelRun()
+	if err := gitmanssh.SyncAuthorizedKeys(runCtx, database, cfg); err != nil {
 		return fmt.Errorf("synchronize authorized_keys: %w", err)
 	}
-	if err := database.DeleteExpiredSessions(context.Background()); err != nil {
+	if err := database.DeleteExpiredSessions(runCtx); err != nil {
 		slog.Warn("failed to prune expired sessions at startup", "error", err)
 	}
-	pruneCtx, stopPrune := context.WithCancel(context.Background())
-	defer stopPrune()
-	go pruneExpiredSessions(pruneCtx, database)
-	go app.RunCITriggerQueue(pruneCtx)
+	go pruneExpiredSessions(runCtx, database)
+	go app.RunCITriggerQueue(runCtx)
 
 	router := handlers.SetupRouter(app)
 
@@ -112,6 +113,7 @@ func runWeb(cfg *config.Config, database *db.DB, args []string) error {
 
 	case sig := <-stop:
 		slog.Info("shutdown", "signal", sig)
+		cancelRun()
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -130,7 +132,7 @@ func pruneExpiredSessions(ctx context.Context, database *db.DB) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := database.DeleteExpiredSessions(context.Background()); err != nil {
+			if err := database.DeleteExpiredSessions(ctx); err != nil {
 				slog.Warn("failed to prune expired sessions", "error", err)
 			}
 		}

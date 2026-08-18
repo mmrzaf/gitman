@@ -20,7 +20,7 @@ func TestInitDBNew(t *testing.T) {
 	defer db.Close()
 
 	var mode string
-	err = db.QueryRowContext(context.Background(), "PRAGMA journal_mode").Scan(&mode)
+	err = db.sql.QueryRowContext(context.Background(), "PRAGMA journal_mode").Scan(&mode)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func TestInitDBNew(t *testing.T) {
 	}
 
 	var count int
-	err = db.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM schema_migrations").Scan(&count)
+	err = db.sql.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM schema_migrations").Scan(&count)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestRollbackTo(t *testing.T) {
 	}
 
 	var count int
-	if err := db.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM schema_migrations").Scan(&count); err != nil {
+	if err := db.sql.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM schema_migrations").Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	if count != 0 {
@@ -217,7 +217,7 @@ func TestBeta14DataUpgradeAndRollbackPreservesCIRuns(t *testing.T) {
 	}
 	defer database.Close()
 	var commit, status, logFile, attemptID, statusReason, retryOf, triggerKey string
-	if err := database.QueryRow(`
+	if err := database.sql.QueryRow(`
 		SELECT commit_hash, status, log_file, attempt_id, status_reason, retry_of_run_id, trigger_key
 		FROM ci_runs WHERE id = 'run-1'
 	`).Scan(&commit, &status, &logFile, &attemptID, &statusReason, &retryOf, &triggerKey); err != nil {
@@ -233,13 +233,13 @@ func TestBeta14DataUpgradeAndRollbackPreservesCIRuns(t *testing.T) {
 		t.Fatalf("rollback Beta 15 migrations: %v", err)
 	}
 	var version int
-	if err := database.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil {
+	if err := database.sql.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
 	if version != 3 {
 		t.Fatalf("schema version after rollback = %d, want 3", version)
 	}
-	if err := database.QueryRow(`
+	if err := database.sql.QueryRow(`
 		SELECT commit_hash, status, log_file, attempt_id FROM ci_runs WHERE id = 'run-1'
 	`).Scan(&commit, &status, &logFile, &attemptID); err != nil {
 		t.Fatal(err)
@@ -249,7 +249,7 @@ func TestBeta14DataUpgradeAndRollbackPreservesCIRuns(t *testing.T) {
 	}
 	for _, column := range []string{"status_reason", "retry_of_run_id", "trigger_key"} {
 		var count int
-		if err := database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('ci_runs') WHERE name = ?", column).Scan(&count); err != nil {
+		if err := database.sql.QueryRow("SELECT COUNT(*) FROM pragma_table_info('ci_runs') WHERE name = ?", column).Scan(&count); err != nil {
 			t.Fatal(err)
 		}
 		if count != 0 {

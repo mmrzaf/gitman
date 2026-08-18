@@ -31,13 +31,13 @@ func TestGetLatestCIRunsForCommits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.ExecContext(ctx, "UPDATE ci_runs SET status='failed', created_at=100 WHERE id=?", oldID); err != nil {
+	if _, err := database.sql.ExecContext(ctx, "UPDATE ci_runs SET status='failed', created_at=100 WHERE id=?", oldID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.ExecContext(ctx, "UPDATE ci_runs SET status='success', created_at=200 WHERE id=?", newID); err != nil {
+	if _, err := database.sql.ExecContext(ctx, "UPDATE ci_runs SET status='success', created_at=200 WHERE id=?", newID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.ExecContext(ctx, "UPDATE ci_runs SET status='running', created_at=150 WHERE id=?", otherID); err != nil {
+	if _, err := database.sql.ExecContext(ctx, "UPDATE ci_runs SET status='running', created_at=150 WHERE id=?", otherID); err != nil {
 		t.Fatal(err)
 	}
 

@@ -2,5 +2,6 @@
 <div class="card">
   <h2>Something went wrong</h2>
   <p class="muted">{{.Error}}</p>
+  {{if .RequestID}}<p class="muted"><small>Request {{.RequestID}}</small></p>{{end}}
 </div>
 {{end}}

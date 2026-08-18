@@ -245,7 +245,7 @@ func TestAuthMiddlewareRefreshesExpiringSessionCookie(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := app.DB.ExecContext(context.Background(), "UPDATE sessions SET expires_at = ?", time.Now().Add(time.Minute).Unix()); err != nil {
+	if err := app.DB.ExtendSession(context.Background(), token, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	handler := app.AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -332,7 +332,10 @@ func TestListArtifactsIncludesNestedFilesAndSkipsSymlinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = os.Symlink(filepath.Join(root, "reports", "coverage.txt"), filepath.Join(root, "link.txt"))
-	artifacts := listArtifacts(root)
+	artifacts, err := listArtifacts(root)
+	if err != nil {
+		t.Fatalf("list artifacts: %v", err)
+	}
 	if len(artifacts) != 1 || artifacts[0] != "reports/coverage.txt" {
 		t.Fatalf("unexpected artifacts: %v", artifacts)
 	}
@@ -570,9 +573,10 @@ func TestServeArtifactNestedAndRejectsTraversal(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	app := &App{}
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/artifact", nil)
-	serveArtifact(w, r, root, "owner", "repo", "run", "attempt", "reports/coverage.txt")
+	app.serveArtifact(w, r, root, "owner", "repo", "run", "attempt", "reports/coverage.txt")
 	if w.Code != http.StatusOK || w.Body.String() != "ok" {
 		t.Fatalf("nested artifact response: status=%d body=%q", w.Code, w.Body.String())
 	}
@@ -581,7 +585,7 @@ func TestServeArtifactNestedAndRejectsTraversal(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	serveArtifact(w, r, root, "owner", "repo", "run", "attempt", "../outside")
+	app.serveArtifact(w, r, root, "owner", "repo", "run", "attempt", "../outside")
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected traversal rejection, got %d", w.Code)
 	}
@@ -731,7 +735,8 @@ func TestCISecretPreservesWhitespace(t *testing.T) {
 }
 
 func TestLimitRequestBodyRejectsOversizedUIRequest(t *testing.T) {
-	handler := limitRequestBody(4)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	app := setupTestApp(t)
+	handler := app.limitRequestBody(4)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("12345"))
@@ -777,5 +782,76 @@ func TestSecurityHeadersDoNotRequireInlineScriptOrStyle(t *testing.T) {
 		if !strings.Contains(csp, want) {
 			t.Fatalf("CSP missing %q: %q", want, csp)
 		}
+	}
+}
+
+func TestBearerTokenSchemeIsCaseInsensitive(t *testing.T) {
+	for _, header := range []string{"Bearer abc123", "bearer abc123", "BEARER abc123"} {
+		token, ok := bearerToken(header)
+		if !ok || token != "abc123" {
+			t.Fatalf("bearerToken(%q) = %q, %v", header, token, ok)
+		}
+	}
+	for _, header := range []string{"", "Basic abc123", "Bearer", "Bearer ", "Bearer a b", "Bearer a\tb"} {
+		if token, ok := bearerToken(header); ok {
+			t.Fatalf("bearerToken(%q) unexpectedly accepted %q", header, token)
+		}
+	}
+}
+
+func TestLogoutDoesNotHideSessionStoreFailure(t *testing.T) {
+	app := setupTestApp(t)
+	cookie := loginUser(t, app)
+	if err := app.DB.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/logout", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	app.HandleLogout(w, req)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("logout status = %d, want %d", w.Code, http.StatusServiceUnavailable)
+	}
+	cleared := false
+	for _, c := range w.Result().Cookies() {
+		if c.Name == "session_token" && c.MaxAge == -1 {
+			cleared = true
+			break
+		}
+	}
+	if !cleared {
+		t.Fatal("logout did not clear browser session cookie after revocation failure")
+	}
+}
+
+func TestRepositoryWebDBFailureIsUnavailableNotNotFound(t *testing.T) {
+	app := setupTestApp(t)
+	if err := app.DB.Close(); err != nil {
+		t.Fatal(err)
+	}
+	router := SetupRouter(app)
+	req := httptest.NewRequest(http.MethodGet, "/testuser/missing", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusServiceUnavailable, w.Body.String())
+	}
+}
+
+func TestTrustedForwardedHeadersUseExactParameters(t *testing.T) {
+	app := &App{Config: &config.Config{TrustProxyHeaders: true}}
+	req := httptest.NewRequest(http.MethodGet, "http://gitman.test/", nil)
+	req.Header.Set("Forwarded", `for="203.0.113.8:4321";proto=https, for=198.51.100.9;proto=http`)
+	if got := app.clientIP(req); got != "203.0.113.8" {
+		t.Fatalf("forwarded client IP = %q, want 203.0.113.8", got)
+	}
+	if !app.requestIsHTTPS(req) {
+		t.Fatal("exact Forwarded proto=https was not recognized")
+	}
+
+	req.Header.Set("Forwarded", `for=203.0.113.8;notproto=https`)
+	if app.requestIsHTTPS(req) {
+		t.Fatal("substring notproto=https was incorrectly trusted as proto=https")
 	}
 }

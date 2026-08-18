@@ -12,6 +12,8 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/mmrzaf/gitman/internal/apperr"
+	"github.com/mmrzaf/gitman/internal/db"
 	"github.com/mmrzaf/gitman/internal/git"
 	"github.com/mmrzaf/gitman/internal/models"
 )
@@ -36,34 +38,40 @@ func (app *App) HandleRepoCommitGET(w http.ResponseWriter, r *http.Request) {
 	owner := GetRepoOwner(r)
 	ctx := r.Context()
 
-	if git.IsEmpty(ctx, repoPath) {
-		app.renderError(w, r, PageData{User: GetUser(r)}, "Repository is empty", http.StatusNotFound)
+	isEmpty, err := git.IsEmpty(ctx, repoPath)
+	if err != nil {
+		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Repository data is temporarily unavailable", err))
+		return
+	}
+	if isEmpty {
+		app.respondWebError(w, r, apperr.New(apperr.KindNotFound, "Repository is empty"))
 		return
 	}
 
 	hash := strings.TrimSpace(chi.URLParam(r, "commit_hash"))
 	detail, err := git.GetCommitDetail(ctx, repoPath, hash)
 	if err != nil {
-		if errors.Is(err, git.ErrRefNotFound) {
-			app.renderError(w, r, PageData{User: GetUser(r)}, "Commit not found", http.StatusNotFound)
-			return
-		}
-		slog.Warn("failed to load commit detail", "repo", repo.ID, "commit", hash, "error", err)
-		app.renderError(w, r, PageData{User: GetUser(r)}, "Commit not found", http.StatusNotFound)
+		app.respondWebError(w, r, repositoryGitError(err, "Commit not found"))
 		return
 	}
 
 	diff, err := git.GetCommitDiff(ctx, repoPath, detail)
 	if err != nil {
-		slog.Error("failed to load commit diff", "repo", repo.ID, "commit", detail.Hash, "error", err)
-		app.renderError(w, r, PageData{User: GetUser(r)}, "Failed to read commit diff", http.StatusInternalServerError)
+		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Repository data is temporarily unavailable", err))
 		return
 	}
 
 	currentRef := strings.TrimSpace(r.URL.Query().Get("ref"))
 	if currentRef != "" {
-		if _, err := git.ResolveRef(ctx, repoPath, currentRef); err != nil {
-			currentRef = ""
+		if _, refErr := git.ResolveRef(ctx, repoPath, currentRef); refErr != nil {
+			if errors.Is(refErr, git.ErrInvalidRef) || errors.Is(refErr, git.ErrRefNotFound) {
+				// A stale/invalid presentation context should not hide an otherwise
+				// valid immutable commit.
+				currentRef = ""
+			} else {
+				app.respondWebError(w, r, repositoryGitError(refErr, "Revision not found"))
+				return
+			}
 		}
 	}
 	if currentRef == "" {
@@ -76,12 +84,24 @@ func (app *App) HandleRepoCommitGET(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	branches, _ := git.GetBranches(ctx, repoPath)
-	tags, _ := git.GetTags(ctx, repoPath)
+	branches, err := git.GetBranches(ctx, repoPath)
+	if err != nil {
+		app.respondWebError(w, r, repositoryGitError(err, "Revision not found"))
+		return
+	}
+	tags, err := git.GetTags(ctx, repoPath)
+	if err != nil {
+		app.respondWebError(w, r, repositoryGitError(err, "Revision not found"))
+		return
+	}
 	currentRefKind := classifyRepoRef(currentRef, branches, tags)
 	if currentRefKind == "branch" {
 		reachable, reachErr := git.IsCommitReachableFromBranch(ctx, repoPath, detail.Hash, currentRef)
-		if reachErr != nil || !reachable {
+		if reachErr != nil {
+			app.respondWebError(w, r, repositoryGitError(reachErr, "Revision not found"))
+			return
+		}
+		if !reachable {
 			currentRef = detail.Hash
 			currentRefKind = "commit"
 		}
@@ -92,7 +112,12 @@ func (app *App) HandleRepoCommitGET(w http.ResponseWriter, r *http.Request) {
 	case "branch":
 		ciBranch = currentRef
 	case "tag":
-		if tagHash, tagErr := git.ResolveTagCommitHash(ctx, repoPath, currentRef); tagErr == nil && tagHash == detail.Hash {
+		tagHash, tagErr := git.ResolveTagCommitHash(ctx, repoPath, currentRef)
+		if tagErr != nil {
+			app.respondWebError(w, r, repositoryGitError(tagErr, "Revision not found"))
+			return
+		}
+		if tagHash == detail.Hash {
 			ciTag = currentRef
 		}
 	}
@@ -110,8 +135,15 @@ func (app *App) HandleRepoCommitGET(w http.ResponseWriter, r *http.Request) {
 		CanControlCI:   app.canControlCI(ctx, GetUser(r), repo),
 	}
 	if data.CanViewCI {
-		if run, runErr := app.DB.GetLatestCIRunForCommit(ctx, repo.ID, detail.Hash); runErr == nil {
+		run, runErr := app.DB.GetLatestCIRunForCommit(ctx, repo.ID, detail.Hash)
+		switch {
+		case runErr == nil:
 			data.LatestCI = run
+		case errors.Is(runErr, db.ErrNotFound):
+			// No run for this commit is a normal empty state.
+		default:
+			app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI data is temporarily unavailable", runErr))
+			return
 		}
 	}
 
@@ -145,17 +177,17 @@ func (app *App) serveRepoBlob(w http.ResponseWriter, r *http.Request, download b
 	ref := requestRef(r)
 	path := requestRepoPath(r)
 	if strings.TrimSpace(path) == "" {
-		http.NotFound(w, r)
+		app.respondPlainError(w, r, apperr.New(apperr.KindNotFound, "file not found"))
 		return
 	}
 	resolvedRef, err := git.ResolveRef(ctx, repoPath, ref)
 	if err != nil {
-		http.NotFound(w, r)
+		app.respondPlainError(w, r, repositoryGitError(err, "file not found"))
 		return
 	}
 	size, err := git.GetBlobSize(ctx, repoPath, resolvedRef, path)
 	if err != nil {
-		http.NotFound(w, r)
+		app.respondPlainError(w, r, repositoryGitError(err, "file not found"))
 		return
 	}
 
@@ -170,7 +202,7 @@ func (app *App) serveRepoBlob(w http.ResponseWriter, r *http.Request, download b
 	}
 	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 	if err := git.StreamBlob(ctx, repoPath, resolvedRef, path, w); err != nil {
-		slog.Warn("blob stream ended with error", "path", path, "ref", resolvedRef, "error", err)
+		slog.Warn("blob stream ended with error", "request_id", RequestID(r), "path", path, "ref", resolvedRef, "error", err)
 	}
 }
 
@@ -185,13 +217,18 @@ func (app *App) HandleRepoFileSearchGET(w http.ResponseWriter, r *http.Request) 
 	owner := GetRepoOwner(r)
 	repo := GetRepo(r)
 	ctx := r.Context()
-	if git.IsEmpty(ctx, repoPath) {
+	isEmpty, err := git.IsEmpty(ctx, repoPath)
+	if err != nil {
+		app.respondAPIError(w, r, apperr.Wrap(apperr.KindUnavailable, "Repository data is temporarily unavailable", err))
+		return
+	}
+	if isEmpty {
 		writeFileSearchJSON(w, fileSearchResponse{Results: []fileSearchMatch{}})
 		return
 	}
 	ref, err := git.ResolveRef(ctx, repoPath, requestRef(r))
 	if err != nil {
-		http.Error(w, "Invalid reference", http.StatusBadRequest)
+		app.respondAPIError(w, r, repositoryGitError(err, "revision not found"))
 		return
 	}
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
@@ -200,8 +237,7 @@ func (app *App) HandleRepoFileSearchGET(w http.ResponseWriter, r *http.Request) 
 	}
 	files, err := git.ListFiles(ctx, repoPath, ref)
 	if err != nil {
-		slog.Warn("failed to list files for finder", "repo", repo.ID, "ref", ref, "error", err)
-		http.Error(w, "Failed to list files", http.StatusInternalServerError)
+		app.respondAPIError(w, r, repositoryGitError(err, "revision not found"))
 		return
 	}
 	writeFileSearchJSON(w, fileSearchResponse{

@@ -63,20 +63,12 @@ func ConfigureAllRepos(ctx context.Context, database *db.DB, cfg *config.Config)
 	if err != nil {
 		return err
 	}
-	rows, err := database.QueryContext(ctx, `
-		SELECT u.username, r.name
-		FROM repositories r
-		JOIN users u ON u.id = r.owner_id
-		ORDER BY u.username, r.name
-	`)
+	locations, err := database.ListRepositoryLocations(ctx)
 	if err != nil {
 		return err
 	}
-	for rows.Next() {
-		var owner, repoName string
-		if err := rows.Scan(&owner, &repoName); err != nil {
-			return err
-		}
+	for _, location := range locations {
+		owner, repoName := location.Owner, location.Name
 		repoPath, err := git.SecureRepoPath(cfg.ReposPath, owner, repoName)
 		if err != nil {
 			return err
@@ -105,11 +97,7 @@ func ConfigureAllRepos(ctx context.Context, database *db.DB, cfg *config.Config)
 			return err
 		}
 	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return err
-	}
-	return rows.Close()
+	return nil
 }
 
 func rejectSymlinkPath(base, candidate string) error {
@@ -312,15 +300,5 @@ func copyFile(src, dst string) (err error) {
 }
 
 func vacuumDatabase(ctx context.Context, database *db.DB, destination string) error {
-	if _, err := os.Stat(destination); err == nil {
-		return fmt.Errorf("destination database already exists: %s", destination)
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	_, err := database.ExecContext(ctx, "VACUUM INTO "+sqliteStringLiteral(destination))
-	return err
-}
-
-func sqliteStringLiteral(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+	return database.BackupTo(ctx, destination)
 }

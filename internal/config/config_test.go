@@ -23,7 +23,10 @@ func TestLoadConfigDefaults(t *testing.T) {
 		k := kv[:indexByte(kv, '=')]
 		os.Unsetenv(k)
 	}
-	cfg := LoadConfig()
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
 	if cfg.Port != "8080" {
 		t.Errorf("expected default Port=8080, got %s", cfg.Port)
 	}
@@ -55,7 +58,10 @@ func TestLoadConfigOverrides(t *testing.T) {
 	t.Setenv("GITMAN_SECRET_KEY", "testkey")
 	t.Setenv("GITMAN_CI_ALLOW_DOCKER_SOCKET", "true")
 	t.Setenv("GITMAN_CI_DOCKER_SOCKET_PATH", "/tmp/custom-docker.sock")
-	cfg := LoadConfig()
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
 	if cfg.Port != "9090" {
 		t.Errorf("expected Port=9090, got %s", cfg.Port)
 	}
@@ -116,7 +122,10 @@ func TestPublicURLDefaultsToConfiguredPort(t *testing.T) {
 	t.Setenv("GITMAN_PORT", "9090")
 	t.Setenv("GITMAN_SERVER_HOST", "git.internal")
 	os.Unsetenv("GITMAN_PUBLIC_URL")
-	cfg := LoadConfig()
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
 	if cfg.PublicURL != "http://git.internal:9090" {
 		t.Fatalf("unexpected public URL: %s", cfg.PublicURL)
 	}
@@ -153,7 +162,10 @@ func TestValidateEnvironmentAcceptsSupportedDurationForms(t *testing.T) {
 }
 
 func TestConfigValidateRejectsUnsafeValues(t *testing.T) {
-	base := LoadConfig()
+	base, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
 	base.CILeaseTimeout = 2 * time.Minute
 	base.CIHeartbeatInterval = 15 * time.Second
 	if err := base.Validate(); err != nil {
@@ -169,6 +181,8 @@ func TestConfigValidateRejectsUnsafeValues(t *testing.T) {
 		{name: "memory limit", mutate: func(c *Config) { c.MemoryLimit = "unlimited" }},
 		{name: "CPU limit", mutate: func(c *Config) { c.CPULimit = "NaN" }},
 		{name: "network whitespace", mutate: func(c *Config) { c.CINetwork = "bad network" }},
+		{name: "container user missing gid", mutate: func(c *Config) { c.CIContainerUser = "1000" }},
+		{name: "container user symbolic", mutate: func(c *Config) { c.CIContainerUser = "git:git" }},
 		{name: "relative path mapping", mutate: func(c *Config) {
 			c.CIWorkerPathPrefix = "data"
 			c.CIHostPathPrefix = "host-data"
@@ -183,5 +197,54 @@ func TestConfigValidateRejectsUnsafeValues(t *testing.T) {
 				t.Fatal("expected validation error")
 			}
 		})
+	}
+}
+
+func TestLoadConfigRejectsExplicitEmptyContainerUser(t *testing.T) {
+	t.Setenv("GITMAN_CI_CONTAINER_USER", "")
+	if _, err := LoadConfig(); err == nil || !strings.Contains(err.Error(), "GITMAN_CI_CONTAINER_USER") {
+		t.Fatalf("expected explicit empty container user to be rejected, got %v", err)
+	}
+}
+
+func TestLoadConfigReturnsEnvironmentErrors(t *testing.T) {
+	t.Setenv("GITMAN_WORKER_CONCURRENCY", "not-a-number")
+	if _, err := LoadConfig(); err == nil || !strings.Contains(err.Error(), "GITMAN_WORKER_CONCURRENCY") {
+		t.Fatalf("expected load error for invalid environment, got %v", err)
+	}
+}
+
+func TestParseCIContainerUser(t *testing.T) {
+	tests := []struct {
+		value    string
+		wantUID  int
+		wantGID  int
+		wantFail bool
+	}{
+		{value: "1:1", wantUID: 1, wantGID: 1},
+		{value: "1000:1000", wantUID: 1000, wantGID: 1000},
+		{value: " 42:7 ", wantUID: 42, wantGID: 7},
+		// Root is syntactically valid configuration. The worker rejects it.
+		{value: "0:0", wantUID: 0, wantGID: 0},
+		{value: "", wantFail: true},
+		{value: "1000", wantFail: true},
+		{value: "1000:", wantFail: true},
+		{value: ":1000", wantFail: true},
+		{value: "git:1000", wantFail: true},
+		{value: "1000:git", wantFail: true},
+		{value: "1:2:3", wantFail: true},
+		{value: "-1:2", wantFail: true},
+	}
+	for _, tt := range tests {
+		uid, gid, err := ParseCIContainerUser(tt.value)
+		if tt.wantFail {
+			if err == nil {
+				t.Fatalf("ParseCIContainerUser(%q) unexpectedly succeeded", tt.value)
+			}
+			continue
+		}
+		if err != nil || uid != tt.wantUID || gid != tt.wantGID {
+			t.Fatalf("ParseCIContainerUser(%q) = %d:%d, %v; want %d:%d", tt.value, uid, gid, err, tt.wantUID, tt.wantGID)
+		}
 	}
 }

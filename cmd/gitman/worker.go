@@ -8,8 +8,9 @@ import (
 
 func init() {
 	register(Command{
-		Name: "worker",
-		Run:  runWorker,
+		Name:     "worker",
+		NeedsGit: true,
+		Run:      runWorker,
 	})
 }
 

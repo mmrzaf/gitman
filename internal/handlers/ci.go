@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -21,6 +22,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/mmrzaf/gitman/internal/apperr"
 	cipolicy "github.com/mmrzaf/gitman/internal/ci"
 	"github.com/mmrzaf/gitman/internal/db"
 	"github.com/mmrzaf/gitman/internal/git"
@@ -73,49 +75,70 @@ func (app *App) HandleCIGET(w http.ResponseWriter, r *http.Request) {
 	owner := GetRepoOwner(r)
 	ctx := r.Context()
 
-	statusFilter := strings.TrimSpace(r.URL.Query().Get("status"))
-	if statusFilter != "" {
-		switch statusFilter {
-		case "pending", "running", "success", "failed", "skipped", "cancelled":
-		default:
-			statusFilter = ""
-		}
+	statusFilter := models.CIStatus(strings.TrimSpace(r.URL.Query().Get("status")))
+	if statusFilter != "" && !statusFilter.Valid() {
+		app.respondWebError(w, r, apperr.New(apperr.KindInvalid, "Invalid CI status filter"))
+		return
 	}
 	branchFilter := strings.TrimSpace(r.URL.Query().Get("branch"))
-	if branchFilter != "" && git.ValidateRefName(branchFilter) != nil {
-		branchFilter = ""
+	if branchFilter != "" {
+		if err := git.ValidateRefNameContext(ctx, branchFilter); err != nil {
+			if errors.Is(err, git.ErrInvalidRef) {
+				app.respondWebError(w, r, apperr.New(apperr.KindInvalid, "Invalid branch filter"))
+			} else {
+				app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Repository refs are temporarily unavailable", err))
+			}
+			return
+		}
 	}
 
 	runs, err := app.DB.GetCIRunsByRepoFiltered(ctx, repo.ID, statusFilter, branchFilter, 100)
 	if err != nil {
-		slog.Error("failed to list CI runs", "repo", repo.ID, "error", err)
-		runs = []models.CIRun{}
+		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI data is temporarily unavailable", err))
+		return
 	}
 
-	hookExists := hookIsInstalled(app.Config.ReposPath, owner.Username, repo.Name)
-	hookState := app.hookState(owner.Username, repo.Name)
+	repoPath, err := git.SecureRepoPath(app.Config.ReposPath, owner.Username, repo.Name)
+	if err != nil {
+		app.respondWebError(w, r, apperr.Wrap(apperr.KindInternal, "Gitman could not resolve this repository", err))
+		return
+	}
+	isEmpty, err := git.IsEmpty(ctx, repoPath)
+	if err != nil {
+		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Repository data is temporarily unavailable", err))
+		return
+	}
 
 	var branches, tags []string
 	defaultBranch := ""
-	repoPath, err := git.SecureRepoPath(app.Config.ReposPath, owner.Username, repo.Name)
-	if err == nil && !git.IsEmpty(ctx, repoPath) {
+	if !isEmpty {
 		if branches, err = git.GetBranches(ctx, repoPath); err != nil {
-			branches = []string{}
+			app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Repository refs are temporarily unavailable", err))
+			return
 		}
 		if tags, err = git.GetTags(ctx, repoPath); err != nil {
-			tags = []string{}
+			app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Repository refs are temporarily unavailable", err))
+			return
 		}
 		if defaultBranch, err = git.GetDefaultBranch(ctx, repoPath); err != nil {
-			defaultBranch = ""
+			app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Repository refs are temporarily unavailable", err))
+			return
 		}
 	}
-	runViews := loadCIRunViews(ctx, repoPath, runs)
+
 	refRules, err := app.DB.ListRepoCIRefRules(ctx, repo.ID)
 	if err != nil {
-		slog.Warn("failed to list CI ref rules", "repo", repo.ID, "error", err)
-		refRules = []models.RepoCIRefRule{}
+		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI settings are temporarily unavailable", err))
+		return
 	}
 
+	runViews, err := loadCIRunViews(ctx, repoPath, runs)
+	if err != nil {
+		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Repository data is temporarily unavailable", err))
+		return
+	}
+	hookExists := hookIsInstalled(app.Config.ReposPath, owner.Username, repo.Name)
+	hookState := app.hookState(owner.Username, repo.Name)
 	app.renderPage(w, r, "repo_ci.html", PageData{
 		Title: repo.Name + " - CI",
 		User:  GetUser(r),
@@ -130,7 +153,7 @@ func (app *App) HandleCIGET(w http.ResponseWriter, r *http.Request) {
 			DefaultBranch: defaultBranch,
 			RefRules:      refRules,
 			CanControl:    app.canControlCI(r.Context(), GetUser(r), repo),
-			StatusFilter:  statusFilter,
+			StatusFilter:  string(statusFilter),
 			BranchFilter:  branchFilter,
 		},
 	})
@@ -140,22 +163,20 @@ func (app *App) canViewCI(ctx context.Context, user *models.User, repo *models.R
 	if user == nil || repo == nil {
 		return false
 	}
-	if user.ID == repo.OwnerID {
-		return true
+	if member, ok := ctx.Value(repoMemberContextKey).(bool); ok {
+		return member
 	}
-	hasRead, err := app.DB.HasRepoAccess(ctx, repo.ID, user.ID, "read")
-	return err == nil && hasRead
+	return user.ID == repo.OwnerID
 }
 
 func (app *App) canControlCI(ctx context.Context, user *models.User, repo *models.Repository) bool {
 	if user == nil || repo == nil {
 		return false
 	}
-	if user.ID == repo.OwnerID {
-		return true
+	if canWrite, ok := ctx.Value(repoWriteContextKey).(bool); ok {
+		return canWrite
 	}
-	hasWrite, err := app.DB.HasRepoAccess(ctx, repo.ID, user.ID, "write")
-	return err == nil && hasWrite
+	return user.ID == repo.OwnerID
 }
 
 func (app *App) HandleCISettingsRulePOST(w http.ResponseWriter, r *http.Request) {
@@ -163,47 +184,58 @@ func (app *App) HandleCISettingsRulePOST(w http.ResponseWriter, r *http.Request)
 	owner := GetRepoOwner(r)
 	currentUser := GetUser(r)
 	if currentUser == nil || currentUser.ID != repo.OwnerID {
-		app.renderError(w, r, PageData{User: currentUser}, "Forbidden", http.StatusForbidden)
+		app.respondWebError(w, r, apperr.New(apperr.KindForbidden, "Forbidden"))
 		return
 	}
-	if err := r.ParseForm(); err != nil {
-		app.renderError(w, r, PageData{User: currentUser}, "Invalid form data", http.StatusBadRequest)
+	if !app.parseWebForm(w, r) {
 		return
 	}
-	refType := strings.TrimSpace(r.FormValue("ref_type"))
+	refType := models.CIRefType(strings.TrimSpace(r.FormValue("ref_type")))
 	refName := strings.TrimSpace(r.FormValue("ref_name"))
-	if refType != "branch" && refType != "tag" {
-		app.renderError(w, r, PageData{User: currentUser}, "Invalid CI ref type", http.StatusBadRequest)
+	if !refType.Valid() {
+		app.respondWebError(w, r, apperr.New(apperr.KindInvalid, "Invalid CI ref type"))
 		return
 	}
 	if refName == "" || strings.ContainsAny(refName, "\x00\r\n") {
-		app.renderError(w, r, PageData{User: currentUser}, "Invalid CI ref name", http.StatusBadRequest)
+		app.respondWebError(w, r, apperr.New(apperr.KindInvalid, "Invalid CI ref name"))
 		return
 	}
 	refIsPattern := strings.ContainsAny(refName, "*?[")
 	if refIsPattern {
 		if _, err := path.Match(refName, "test"); err != nil {
-			app.renderError(w, r, PageData{User: currentUser}, "Invalid CI ref pattern", http.StatusBadRequest)
+			app.respondWebError(w, r, apperr.New(apperr.KindInvalid, "Invalid CI ref pattern"))
 			return
 		}
 	} else {
-		if err := git.ValidateRefName(refName); err != nil {
-			app.renderError(w, r, PageData{User: currentUser}, "Invalid CI ref name", http.StatusBadRequest)
+		if err := git.ValidateRefNameContext(r.Context(), refName); err != nil {
+			if errors.Is(err, git.ErrInvalidRef) {
+				app.respondWebError(w, r, apperr.Wrap(apperr.KindInvalid, "Invalid CI ref name", err))
+			} else {
+				app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Repository refs are temporarily unavailable", err))
+			}
 			return
 		}
 		repoPath, err := git.SecureRepoPath(app.Config.ReposPath, owner.Username, repo.Name)
 		if err != nil {
-			app.renderError(w, r, PageData{User: currentUser}, "Invalid repository path", http.StatusInternalServerError)
+			app.respondWebError(w, r, apperr.Wrap(apperr.KindInternal, "Gitman could not resolve this repository", err))
 			return
 		}
-		if refType == "branch" {
+		if refType == models.CIRefBranch {
 			if _, err := git.ResolveBranchCommitHash(r.Context(), repoPath, refName); err != nil {
-				app.renderError(w, r, PageData{User: currentUser}, "Branch does not resolve in repository", http.StatusBadRequest)
+				if errors.Is(err, git.ErrRefNotFound) || errors.Is(err, git.ErrInvalidRef) {
+					app.respondWebError(w, r, apperr.Wrap(apperr.KindInvalid, "Branch does not resolve in repository", err))
+				} else {
+					app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Repository refs are temporarily unavailable", err))
+				}
 				return
 			}
 		} else {
 			if _, err := git.ResolveTagCommitHash(r.Context(), repoPath, refName); err != nil {
-				app.renderError(w, r, PageData{User: currentUser}, "Tag does not resolve in repository", http.StatusBadRequest)
+				if errors.Is(err, git.ErrRefNotFound) || errors.Is(err, git.ErrInvalidRef) {
+					app.respondWebError(w, r, apperr.Wrap(apperr.KindInvalid, "Tag does not resolve in repository", err))
+				} else {
+					app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Repository refs are temporarily unavailable", err))
+				}
 				return
 			}
 		}
@@ -217,7 +249,7 @@ func (app *App) HandleCISettingsRulePOST(w http.ResponseWriter, r *http.Request)
 		AllowDockerSocket: r.FormValue("allow_docker_socket") == "on",
 	}
 	if err := app.DB.UpsertRepoCIRefRule(r.Context(), rule); err != nil {
-		app.renderError(w, r, PageData{User: currentUser}, "Failed to save CI ref rule", http.StatusBadRequest)
+		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI settings are temporarily unavailable", err))
 		return
 	}
 	http.Redirect(w, r, fmt.Sprintf("/%s/%s/ci?success=ci_rule_saved", owner.Username, repo.Name), http.StatusSeeOther)
@@ -228,113 +260,174 @@ func (app *App) HandleCISettingsRuleDeletePOST(w http.ResponseWriter, r *http.Re
 	owner := GetRepoOwner(r)
 	currentUser := GetUser(r)
 	if currentUser == nil || currentUser.ID != repo.OwnerID {
-		app.renderError(w, r, PageData{User: currentUser}, "Forbidden", http.StatusForbidden)
+		app.respondWebError(w, r, apperr.New(apperr.KindForbidden, "Forbidden"))
 		return
 	}
-	if err := r.ParseForm(); err != nil {
-		app.renderError(w, r, PageData{User: currentUser}, "Invalid form data", http.StatusBadRequest)
+	if !app.parseWebForm(w, r) {
 		return
 	}
-	refType := strings.TrimSpace(r.FormValue("ref_type"))
+	refType := models.CIRefType(strings.TrimSpace(r.FormValue("ref_type")))
 	refName := strings.TrimSpace(r.FormValue("ref_name"))
+	if !refType.Valid() {
+		app.respondWebError(w, r, apperr.New(apperr.KindInvalid, "Invalid CI ref type"))
+		return
+	}
 	if err := app.DB.DeleteRepoCIRefRule(r.Context(), repo.ID, refType, refName); err != nil {
-		app.renderError(w, r, PageData{User: currentUser}, "Failed to delete CI ref rule", http.StatusBadRequest)
+		if errors.Is(err, db.ErrNotFound) {
+			app.respondWebError(w, r, apperr.New(apperr.KindNotFound, "CI ref rule not found"))
+		} else {
+			app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI settings are temporarily unavailable", err))
+		}
 		return
 	}
 	http.Redirect(w, r, fmt.Sprintf("/%s/%s/ci?success=ci_rule_deleted", owner.Username, repo.Name), http.StatusSeeOther)
 }
 
 type triggerRequest struct {
-	CommitHash string `json:"commit_hash"`
-	Branch     string `json:"branch"`
-	Tag        string `json:"tag"`
-	Event      string `json:"event"`
+	CommitHash string         `json:"commit_hash"`
+	Branch     string         `json:"branch"`
+	Tag        string         `json:"tag"`
+	Event      models.CIEvent `json:"event"`
+}
+
+func ciTriggerDecodeError(err error) error {
+	var maxErr *http.MaxBytesError
+	if errors.As(err, &maxErr) {
+		return apperr.Wrap(apperr.KindTooLarge, "CI request body too large", err)
+	}
+	return apperr.Wrap(apperr.KindInvalid, "Invalid CI request", err)
+}
+
+func requestMediaType(r *http.Request) (string, error) {
+	raw := strings.TrimSpace(r.Header.Get("Content-Type"))
+	if raw == "" {
+		return "", nil
+	}
+	mediaType, _, err := mime.ParseMediaType(raw)
+	if err != nil {
+		return "", apperr.Wrap(apperr.KindInvalid, "Invalid Content-Type", err)
+	}
+	return strings.ToLower(mediaType), nil
 }
 
 func decodeTriggerRequest(w http.ResponseWriter, r *http.Request) (triggerRequest, error) {
 	var req triggerRequest
 	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
-	if strings.Contains(r.Header.Get("Content-Type"), "application/json") {
+	mediaType, err := requestMediaType(r)
+	if err != nil {
+		return req, err
+	}
+	switch mediaType {
+	case "application/json":
 		decoder := json.NewDecoder(r.Body)
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&req); err != nil {
-			return req, fmt.Errorf("invalid JSON: %w", err)
+			return req, ciTriggerDecodeError(fmt.Errorf("decode JSON: %w", err))
 		}
 		if err := decoder.Decode(&struct{}{}); err != io.EOF {
-			return req, fmt.Errorf("JSON body must contain exactly one object")
+			if err != nil {
+				return req, ciTriggerDecodeError(fmt.Errorf("decode trailing JSON: %w", err))
+			}
+			return req, apperr.New(apperr.KindInvalid, "CI request must contain exactly one JSON object")
 		}
 		return req, nil
+	case "", "application/x-www-form-urlencoded", "multipart/form-data":
+		if err := r.ParseForm(); err != nil {
+			return req, ciTriggerDecodeError(fmt.Errorf("parse form: %w", err))
+		}
+		req.CommitHash = r.FormValue("commit_hash")
+		req.Branch = r.FormValue("branch")
+		req.Tag = r.FormValue("tag")
+		req.Event = models.CIEvent(r.FormValue("event"))
+		return req, nil
+	default:
+		return req, apperr.New(apperr.KindUnsupported, "Unsupported CI request content type")
 	}
-	if err := r.ParseForm(); err != nil {
-		return req, fmt.Errorf("invalid form data: %w", err)
-	}
-	req.CommitHash = r.FormValue("commit_hash")
-	req.Branch = r.FormValue("branch")
-	req.Tag = r.FormValue("tag")
-	req.Event = r.FormValue("event")
-	return req, nil
 }
 
-func normalizeCITrigger(ctx context.Context, reposPath string, owner *models.User, repo *models.Repository, req triggerRequest, defaultEvent string) (triggerRequest, error) {
+func normalizeCITrigger(ctx context.Context, reposPath string, owner *models.User, repo *models.Repository, req triggerRequest, defaultEvent models.CIEvent) (triggerRequest, error) {
 	req.CommitHash = strings.TrimSpace(req.CommitHash)
 	req.Branch = strings.TrimSpace(req.Branch)
 	req.Tag = strings.TrimSpace(req.Tag)
-	req.Event = strings.TrimSpace(req.Event)
+	req.Event = models.CIEvent(strings.TrimSpace(string(req.Event)))
+
+	invalid := func(message string, err error) (triggerRequest, error) {
+		return req, apperr.Wrap(apperr.KindInvalid, message, err)
+	}
+	unavailable := func(message string, err error) (triggerRequest, error) {
+		return req, apperr.Wrap(apperr.KindUnavailable, message, err)
+	}
 
 	for name, value := range map[string]string{
 		"commit_hash": req.CommitHash,
 		"branch":      req.Branch,
 		"tag":         req.Tag,
-		"event":       req.Event,
+		"event":       string(req.Event),
 	} {
 		if strings.ContainsAny(value, "\x00\r\n") {
-			return req, fmt.Errorf("%s contains unsupported control characters", name)
+			return invalid(fmt.Sprintf("%s contains unsupported control characters", name), nil)
 		}
 	}
 	if req.Branch != "" && req.Tag != "" {
-		return req, fmt.Errorf("branch and tag are mutually exclusive")
+		return invalid("branch and tag are mutually exclusive", nil)
 	}
 	if req.Branch != "" {
-		if err := git.ValidateRefName(req.Branch); err != nil {
-			return req, fmt.Errorf("invalid branch: %w", err)
+		if err := git.ValidateRefNameContext(ctx, req.Branch); err != nil {
+			if errors.Is(err, git.ErrInvalidRef) {
+				return invalid("invalid branch", err)
+			}
+			return unavailable("Repository data is temporarily unavailable", err)
 		}
 	}
 	if req.Tag != "" {
-		if err := git.ValidateRefName(req.Tag); err != nil {
-			return req, fmt.Errorf("invalid tag: %w", err)
+		if err := git.ValidateRefNameContext(ctx, req.Tag); err != nil {
+			if errors.Is(err, git.ErrInvalidRef) {
+				return invalid("invalid tag", err)
+			}
+			return unavailable("Repository data is temporarily unavailable", err)
 		}
 	}
 
 	switch defaultEvent {
-	case "push":
-		req.Event = "push"
+	case models.CIEventPush:
+		req.Event = models.CIEventPush
 		if req.Branch == "" && req.Tag == "" {
-			return req, fmt.Errorf("push event requires a branch or tag")
+			return invalid("push event requires a branch or tag", nil)
 		}
-	case "manual":
-		req.Event = "manual"
+	case models.CIEventManual:
+		req.Event = models.CIEventManual
 	default:
-		return req, fmt.Errorf("invalid CI event")
+		return invalid("invalid CI event", nil)
 	}
 
 	repoPath, err := git.SecureRepoPath(reposPath, owner.Username, repo.Name)
 	if err != nil {
-		return req, fmt.Errorf("invalid repository path: %w", err)
+		return req, apperr.Wrap(apperr.KindInternal, "Gitman could not resolve this repository", err)
 	}
-	if git.IsEmpty(ctx, repoPath) {
-		return req, fmt.Errorf("repository is empty")
+	isEmpty, err := git.IsEmpty(ctx, repoPath)
+	if err != nil {
+		return unavailable("Repository data is temporarily unavailable", err)
+	}
+	if isEmpty {
+		return invalid("repository is empty", nil)
 	}
 
 	var requestedRefHash string
 	if req.Branch != "" {
 		requestedRefHash, err = git.ResolveBranchCommitHash(ctx, repoPath, req.Branch)
 		if err != nil {
-			return req, fmt.Errorf("branch does not resolve in repository")
+			if errors.Is(err, git.ErrRefNotFound) || errors.Is(err, git.ErrInvalidRef) {
+				return invalid("branch does not resolve in repository", err)
+			}
+			return unavailable("Repository data is temporarily unavailable", err)
 		}
 	} else if req.Tag != "" {
 		requestedRefHash, err = git.ResolveTagCommitHash(ctx, repoPath, req.Tag)
 		if err != nil {
-			return req, fmt.Errorf("tag does not resolve in repository")
+			if errors.Is(err, git.ErrRefNotFound) || errors.Is(err, git.ErrInvalidRef) {
+				return invalid("tag does not resolve in repository", err)
+			}
+			return unavailable("Repository data is temporarily unavailable", err)
 		}
 	}
 
@@ -342,90 +435,102 @@ func normalizeCITrigger(ctx context.Context, reposPath string, owner *models.Use
 		if requestedRefHash != "" {
 			req.CommitHash = requestedRefHash
 		} else {
-			resolvedRef, err := git.ResolveRef(ctx, repoPath, "")
-			if err != nil {
-				return req, fmt.Errorf("resolve CI ref: %w", err)
+			resolvedRef, resolveErr := git.ResolveRefInfo(ctx, repoPath, "")
+			if resolveErr != nil {
+				return unavailable("Repository data is temporarily unavailable", resolveErr)
 			}
-			commits, err := git.GetCommits(ctx, repoPath, resolvedRef, 0, 1)
-			if err != nil || len(commits) == 0 {
-				return req, fmt.Errorf("resolve CI commit")
+			resolvedHash, resolveErr := git.ResolveRevisionCommitHash(ctx, repoPath, resolvedRef.Name)
+			if resolveErr != nil {
+				return unavailable("Repository data is temporarily unavailable", resolveErr)
 			}
-			req.CommitHash = commits[0].Hash
-			if branchHash, branchErr := git.ResolveBranchCommitHash(ctx, repoPath, resolvedRef); branchErr == nil && branchHash == req.CommitHash {
-				req.Branch = resolvedRef
-				requestedRefHash = branchHash
+			req.CommitHash = resolvedHash
+			if resolvedRef.Kind == git.RefKindBranch {
+				req.Branch = resolvedRef.Name
+				requestedRefHash = resolvedHash
 			}
 		}
 	}
 
 	resolvedHash, err := git.ResolveCommitHash(ctx, repoPath, req.CommitHash)
 	if err != nil {
-		return req, fmt.Errorf("commit does not resolve in repository")
+		if errors.Is(err, git.ErrRefNotFound) || errors.Is(err, git.ErrInvalidCommit) {
+			return invalid("commit does not resolve in repository", err)
+		}
+		return unavailable("Repository data is temporarily unavailable", err)
 	}
 	req.CommitHash = resolvedHash
 
 	if req.Tag != "" && resolvedHash != requestedRefHash {
-		return req, fmt.Errorf("commit does not match tag")
+		return invalid("commit does not match tag", nil)
 	}
 	if req.Branch != "" {
-		if req.Event == "push" {
+		if req.Event == models.CIEventPush {
 			if resolvedHash != requestedRefHash {
-				return req, fmt.Errorf("commit does not match pushed branch tip")
+				return invalid("commit does not match pushed branch tip", nil)
 			}
 		} else {
-			reachable, err := git.IsCommitReachableFromBranch(ctx, repoPath, resolvedHash, req.Branch)
-			if err != nil || !reachable {
-				return req, fmt.Errorf("commit is not reachable from branch")
+			reachable, reachErr := git.IsCommitReachableFromBranch(ctx, repoPath, resolvedHash, req.Branch)
+			if reachErr != nil {
+				return unavailable("Repository data is temporarily unavailable", reachErr)
+			}
+			if !reachable {
+				return invalid("commit is not reachable from branch", nil)
 			}
 		}
 	}
 	return req, nil
 }
 
-func (app *App) createCIRun(w http.ResponseWriter, r *http.Request, repo *models.Repository, owner *models.User, defaultEvent string) (string, bool) {
+func (app *App) createCIRun(w http.ResponseWriter, r *http.Request, repo *models.Repository, owner *models.User, defaultEvent models.CIEvent) (string, error) {
 	req, err := decodeTriggerRequest(w, r)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return "", false
+		return "", err
 	}
 	req, err = normalizeCITrigger(r.Context(), app.Config.ReposPath, owner, repo, req, defaultEvent)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return "", false
+		return "", err
 	}
 	var runID string
-	if req.Event == "push" {
+	if req.Event == models.CIEventPush {
 		runID, err = app.DB.CreatePushCIRun(r.Context(), repo.ID, req.CommitHash, req.Branch, req.Tag)
 	} else {
 		runID, err = app.DB.CreateCIRun(r.Context(), repo.ID, req.CommitHash, req.Branch, req.Tag, req.Event)
 	}
 	if err != nil {
-		slog.Error("failed to create CI run", "repo", repo.ID, "error", err)
-		http.Error(w, "Failed to create CI run", http.StatusInternalServerError)
-		return "", false
+		return "", apperr.Wrap(apperr.KindUnavailable, "CI data is temporarily unavailable", err)
 	}
-	slog.Info("CI run created", "run_id", runID, "repo", repo.ID, "event", req.Event)
-	return runID, true
+	slog.Info("CI run created", "request_id", RequestID(r), "run_id", runID, "repo", repo.ID, "event", req.Event)
+	return runID, nil
 }
 
 func (app *App) HandleCITriggerPOST(w http.ResponseWriter, r *http.Request) {
 	repo := GetRepo(r)
 	owner := GetRepoOwner(r)
 	currentUser := GetUser(r)
+	mediaType, mediaTypeErr := requestMediaType(r)
+	jsonResponse := mediaTypeErr == nil && mediaType == "application/json"
+	respondError := func(err error) {
+		if jsonResponse {
+			app.respondAPIError(w, r, err)
+			return
+		}
+		app.respondWebError(w, r, err)
+	}
 	if currentUser == nil {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		respondError(apperr.New(apperr.KindUnauthenticated, "authentication required"))
 		return
 	}
 	if !app.canControlCI(r.Context(), currentUser, repo) {
-		http.Error(w, "Forbidden", http.StatusForbidden)
+		respondError(apperr.New(apperr.KindForbidden, "repository access denied"))
 		return
 	}
 
-	runID, ok := app.createCIRun(w, r, repo, owner, "manual")
-	if !ok {
+	runID, err := app.createCIRun(w, r, repo, owner, models.CIEventManual)
+	if err != nil {
+		respondError(err)
 		return
 	}
-	if strings.Contains(r.Header.Get("Content-Type"), "application/json") {
+	if jsonResponse {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
 		_ = json.NewEncoder(w).Encode(map[string]string{"run_id": runID})
@@ -453,24 +558,38 @@ func redirectCIRun(w http.ResponseWriter, r *http.Request, owner, repo, runID, m
 	http.Redirect(w, r, target, http.StatusSeeOther)
 }
 
+func (app *App) getRepoCIRun(ctx context.Context, repoID, runID string) (*models.CIRun, error) {
+	run, err := app.DB.GetCIRunByID(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	if run.RepoID != repoID {
+		return nil, db.ErrNotFound
+	}
+	return run, nil
+}
+
 func (app *App) HandleCIRunCancelPOST(w http.ResponseWriter, r *http.Request) {
 	repo := GetRepo(r)
 	owner := GetRepoOwner(r)
 	user := GetUser(r)
 	if !app.canControlCI(r.Context(), user, repo) {
-		http.Error(w, "Forbidden", http.StatusForbidden)
+		app.respondWebError(w, r, apperr.New(apperr.KindForbidden, "Forbidden"))
 		return
 	}
 	runID := chi.URLParam(r, "run_id")
-	run, err := app.DB.GetCIRunByID(r.Context(), runID)
-	if err != nil || run == nil || run.RepoID != repo.ID {
-		app.renderError(w, r, PageData{User: user}, "CI run not found", http.StatusNotFound)
+	_, err := app.getRepoCIRun(r.Context(), repo.ID, runID)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			app.respondWebError(w, r, apperr.New(apperr.KindNotFound, "CI run not found"))
+		} else {
+			app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI data is temporarily unavailable", err))
+		}
 		return
 	}
 	cancelled, err := app.DB.CancelCIRun(r.Context(), repo.ID, runID, "Cancelled by "+user.Username)
 	if err != nil {
-		slog.Error("failed to cancel CI run", "run_id", runID, "repo", repo.ID, "error", err)
-		redirectCIRun(w, r, owner.Username, repo.Name, runID, "", "Failed to cancel the run.")
+		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI data is temporarily unavailable", err))
 		return
 	}
 	if !cancelled {
@@ -486,14 +605,20 @@ func (app *App) HandleCIRunRetryPOST(w http.ResponseWriter, r *http.Request) {
 	owner := GetRepoOwner(r)
 	user := GetUser(r)
 	if !app.canControlCI(r.Context(), user, repo) {
-		http.Error(w, "Forbidden", http.StatusForbidden)
+		app.respondWebError(w, r, apperr.New(apperr.KindForbidden, "Forbidden"))
 		return
 	}
 	runID := chi.URLParam(r, "run_id")
 	newRunID, err := app.DB.RetryCIRun(r.Context(), repo.ID, runID)
 	if err != nil {
-		slog.Warn("failed to retry CI run", "run_id", runID, "repo", repo.ID, "error", err)
-		redirectCIRun(w, r, owner.Username, repo.Name, runID, "", "Only completed runs can be retried.")
+		switch {
+		case errors.Is(err, db.ErrNotFound):
+			app.respondWebError(w, r, apperr.Wrap(apperr.KindNotFound, "CI run not found", err))
+		case errors.Is(err, db.ErrCIRunNotRetryable):
+			redirectCIRun(w, r, owner.Username, repo.Name, runID, "", "Only completed runs can be retried.")
+		default:
+			app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI data is temporarily unavailable", err))
+		}
 		return
 	}
 	slog.Info("CI run retried", "run_id", newRunID, "retry_of", runID, "repo", repo.ID, "user", user.Username)
@@ -503,26 +628,27 @@ func (app *App) HandleCIRunRetryPOST(w http.ResponseWriter, r *http.Request) {
 func (app *App) HandleCITriggerWebhook(w http.ResponseWriter, r *http.Request) {
 	repo := GetRepo(r)
 	owner, err := app.DB.GetUserByID(r.Context(), repo.OwnerID)
-	if err != nil || owner == nil {
-		http.Error(w, "Repository owner not found", http.StatusInternalServerError)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			app.respondAPIError(w, r, apperr.Wrap(apperr.KindInternal, "Repository owner is unavailable", err))
+		} else {
+			app.respondAPIError(w, r, apperr.Wrap(apperr.KindUnavailable, "Gitman is temporarily unavailable", err))
+		}
 		return
 	}
 	req, err := decodeTriggerRequest(w, r)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		app.respondAPIError(w, r, err)
 		return
 	}
-	req, err = normalizeCITrigger(r.Context(), app.Config.ReposPath, owner, repo, req, "push")
+	req, err = normalizeCITrigger(r.Context(), app.Config.ReposPath, owner, repo, req, models.CIEventPush)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		app.respondAPIError(w, r, err)
 		return
 	}
 	policy, err := (cipolicy.Resolver{DB: app.DB, ReposPath: app.Config.ReposPath}).Resolve(r.Context(), owner, repo, req.Branch, req.Tag)
 	if err != nil {
-		slog.Warn("CI webhook denied because ref policy failed closed", "repo", repo.ID, "branch", req.Branch, "tag", req.Tag, "error", err)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusAccepted)
-		_ = json.NewEncoder(w).Encode(map[string]string{"result": "ignored", "reason": "ref policy unavailable"})
+		app.respondAPIError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI ref policy is temporarily unavailable", err))
 		return
 	}
 	if !policy.AutoRun {
@@ -534,8 +660,7 @@ func (app *App) HandleCITriggerWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	runID, err := app.DB.CreatePushCIRun(r.Context(), repo.ID, req.CommitHash, req.Branch, req.Tag)
 	if err != nil {
-		slog.Error("failed to create push CI run", "repo", repo.ID, "error", err)
-		http.Error(w, "Failed to create CI run", http.StatusInternalServerError)
+		app.respondAPIError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI data is temporarily unavailable", err))
 		return
 	}
 	slog.Info("CI run created", "run_id", runID, "repo", repo.ID, "event", req.Event, "policy_source", policy.Source)
@@ -544,33 +669,16 @@ func (app *App) HandleCITriggerWebhook(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"run_id": runID})
 }
 
-func listArtifacts(root string) []string {
-	var artifacts []string
-	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
-		if err != nil || path == root {
-			return nil
-		}
-		if entry.Type()&os.ModeSymlink != 0 {
-			if entry.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		info, err := entry.Info()
-		if err != nil || !info.Mode().IsRegular() {
-			return nil
-		}
-		rel, err := filepath.Rel(root, path)
-		if err == nil {
-			artifacts = append(artifacts, filepath.ToSlash(rel))
-		}
-		return nil
-	})
-	sort.Strings(artifacts)
-	return artifacts
+func listArtifacts(root string) ([]string, error) {
+	files, err := listArtifactFiles(root)
+	if err != nil {
+		return nil, err
+	}
+	artifacts := make([]string, 0, len(files))
+	for _, file := range files {
+		artifacts = append(artifacts, file.Path)
+	}
+	return artifacts, nil
 }
 
 func ciRunNavigationRef(run *models.CIRun) string {
@@ -590,34 +698,58 @@ func (app *App) HandleCIRunGET(w http.ResponseWriter, r *http.Request) {
 	repo := GetRepo(r)
 	owner := GetRepoOwner(r)
 	runID := chi.URLParam(r, "run_id")
-	run, err := app.DB.GetCIRunByID(r.Context(), runID)
-	if err != nil || run == nil || run.RepoID != repo.ID {
-		app.renderError(w, r, PageData{User: GetUser(r)}, "CI run not found", http.StatusNotFound)
+	run, err := app.getRepoCIRun(r.Context(), repo.ID, runID)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			app.respondWebError(w, r, apperr.New(apperr.KindNotFound, "CI run not found"))
+		} else {
+			app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI data is temporarily unavailable", err))
+		}
 		return
 	}
 
 	repoPath := GetRepoPath(r)
-	logContent, logOffset := readCILog(run.LogFile)
-	cfg, configView := loadCIConfigView(r.Context(), repoPath, run.CommitHash)
+	logContent, logOffset, err := readCILog(run.LogFile)
+	if err != nil {
+		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI log storage is temporarily unavailable", err))
+		return
+	}
+	cfg, configView, err := loadCIConfigView(r.Context(), repoPath, run.CommitHash)
+	if err != nil {
+		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Repository data is temporarily unavailable", err))
+		return
+	}
 	logView := parseCILog(logContent, run, cfg)
 
-	artifactFiles := listArtifactFiles(artifactRunDir(app.Config.ArtifactsPath, owner.Username, repo.Name, run.ID, run.AttemptID))
+	artifactFiles, err := listArtifactFiles(artifactRunDir(app.Config.ArtifactsPath, owner.Username, repo.Name, run.ID, run.AttemptID))
+	if err != nil {
+		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Artifact storage is temporarily unavailable", err))
+		return
+	}
 	artifactTree := buildArtifactTree(artifactFiles)
 	decorateArtifactTreeURLs(artifactTree, owner.Username, repo.Name, run.ID)
 
 	attemptRuns, err := app.DB.GetCIRunRetryChain(r.Context(), repo.ID, run.ID)
 	if err != nil {
-		slog.Warn("failed to load CI retry chain", "run_id", run.ID, "error", err)
-		attemptRuns = []models.CIRun{*run}
+		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI data is temporarily unavailable", err))
+		return
 	}
-	attemptViews := loadCIRunViews(r.Context(), repoPath, attemptRuns)
+	attemptViews, err := loadCIRunViews(r.Context(), repoPath, attemptRuns)
+	if err != nil {
+		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Repository data is temporarily unavailable", err))
+		return
+	}
 	for i := range attemptViews {
 		attemptViews[i].IsCurrent = attemptViews[i].Run.ID == run.ID
 		attemptViews[i].AttemptNumber = i + 1
 	}
 
 	var commit *git.Commit
-	views := loadCIRunViews(r.Context(), repoPath, []models.CIRun{*run})
+	views, err := loadCIRunViews(r.Context(), repoPath, []models.CIRun{*run})
+	if err != nil {
+		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Repository data is temporarily unavailable", err))
+		return
+	}
 	if len(views) == 1 {
 		commit = views[0].Commit
 	}
@@ -644,26 +776,41 @@ func writeCILogFragment(w http.ResponseWriter, content string) {
 	_, _ = io.WriteString(w, content)
 }
 
+func ciLogUnavailableText(run *models.CIRun) string {
+	if run != nil && (run.Status == models.CIStatusPending || run.Status == models.CIStatusRunning) {
+		return "log not yet available — worker is preparing the workspace"
+	}
+	return "no build log is available for this run"
+}
+
 func (app *App) HandleCIRunLogGET(w http.ResponseWriter, r *http.Request) {
 	repo := GetRepo(r)
 	runID := chi.URLParam(r, "run_id")
-	run, err := app.DB.GetCIRunByID(r.Context(), runID)
-	if err != nil || run == nil || run.RepoID != repo.ID {
-		http.Error(w, "not found", http.StatusNotFound)
+	run, err := app.getRepoCIRun(r.Context(), repo.ID, runID)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			app.respondPlainError(w, r, apperr.New(apperr.KindNotFound, "CI run not found"))
+		} else {
+			app.respondPlainError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI data is temporarily unavailable", err))
+		}
 		return
 	}
-	w.Header().Set("X-Gitman-CI-Status", run.Status)
+	w.Header().Set("X-Gitman-CI-Status", string(run.Status))
 	w.Header().Set("X-Gitman-CI-Reason", run.StatusReason)
 
 	offsetValue, incremental := r.URL.Query()["offset"]
 	if !incremental {
 		if run.LogFile == "" {
-			writeCILogFragment(w, "(log not yet available — worker is preparing the workspace)")
+			writeCILogFragment(w, "("+ciLogUnavailableText(run)+")")
 			return
 		}
 		data, err := os.ReadFile(run.LogFile)
 		if err != nil {
-			writeCILogFragment(w, "(log file not readable)")
+			if os.IsNotExist(err) {
+				writeCILogFragment(w, "("+ciLogUnavailableText(run)+")")
+				return
+			}
+			app.respondPlainError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI log is temporarily unavailable", err))
 			return
 		}
 		consume := completeCILogPrefixLen(data)
@@ -677,27 +824,40 @@ func (app *App) HandleCIRunLogGET(w http.ResponseWriter, r *http.Request) {
 	if len(offsetValue) > 0 && strings.TrimSpace(offsetValue[0]) != "" {
 		parsed, parseErr := strconv.ParseInt(strings.TrimSpace(offsetValue[0]), 10, 64)
 		if parseErr != nil || parsed < 0 {
-			http.Error(w, "invalid log offset", http.StatusBadRequest)
+			app.respondPlainError(w, r, apperr.New(apperr.KindInvalid, "invalid log offset"))
 			return
 		}
 		offset = parsed
 	}
 	if run.LogFile == "" {
 		w.Header().Set("X-Gitman-Log-Offset", "0")
-		w.Header().Set("X-Gitman-Log-Pending", "true")
-		writeCILogFragment(w, "")
+		if run.Status == models.CIStatusPending || run.Status == models.CIStatusRunning {
+			w.Header().Set("X-Gitman-Log-Pending", "true")
+			writeCILogFragment(w, "")
+		} else {
+			writeCILogFragment(w, ciLogUnavailableText(run)+"\n")
+		}
 		return
 	}
 	file, err := os.Open(run.LogFile)
 	if err != nil {
-		w.Header().Set("X-Gitman-Log-Offset", strconv.FormatInt(offset, 10))
-		writeCILogFragment(w, "")
+		if os.IsNotExist(err) {
+			w.Header().Set("X-Gitman-Log-Offset", strconv.FormatInt(offset, 10))
+			if run.Status == models.CIStatusPending || run.Status == models.CIStatusRunning {
+				w.Header().Set("X-Gitman-Log-Pending", "true")
+				writeCILogFragment(w, "")
+			} else {
+				writeCILogFragment(w, ciLogUnavailableText(run)+"\n")
+			}
+			return
+		}
+		app.respondPlainError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI log is temporarily unavailable", err))
 		return
 	}
 	defer file.Close()
 	stat, err := file.Stat()
 	if err != nil {
-		http.Error(w, "log unavailable", http.StatusServiceUnavailable)
+		app.respondPlainError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI log is temporarily unavailable", err))
 		return
 	}
 	if offset > stat.Size() {
@@ -705,12 +865,12 @@ func (app *App) HandleCIRunLogGET(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Gitman-Log-Reset", "true")
 	}
 	if _, err := file.Seek(offset, io.SeekStart); err != nil {
-		http.Error(w, "log unavailable", http.StatusServiceUnavailable)
+		app.respondPlainError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI log is temporarily unavailable", err))
 		return
 	}
 	data, err := io.ReadAll(file)
 	if err != nil {
-		http.Error(w, "log unavailable", http.StatusServiceUnavailable)
+		app.respondPlainError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI log is temporarily unavailable", err))
 		return
 	}
 	consume := completeCILogPrefixLen(data)
@@ -899,16 +1059,19 @@ func (app *App) HandleCIRunLogsDownloadGET(w http.ResponseWriter, r *http.Reques
 	repo := GetRepo(r)
 	owner := GetRepoOwner(r)
 	runID := chi.URLParam(r, "run_id")
-	run, err := app.DB.GetCIRunByID(r.Context(), runID)
-	if err != nil || run == nil || run.RepoID != repo.ID {
-		http.Error(w, "not found", http.StatusNotFound)
+	run, err := app.getRepoCIRun(r.Context(), repo.ID, runID)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			app.respondPlainError(w, r, apperr.New(apperr.KindNotFound, "CI run not found"))
+		} else {
+			app.respondPlainError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI data is temporarily unavailable", err))
+		}
 		return
 	}
 
 	logs, err := collectCIRunLogFiles(app.Config.ArtifactsPath, owner.Username, repo.Name, run)
 	if err != nil {
-		slog.Warn("failed to collect CI log files", "run", run.ID, "error", err)
-		http.Error(w, "log files not readable", http.StatusInternalServerError)
+		app.respondPlainError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI logs are temporarily unavailable", err))
 		return
 	}
 
@@ -918,7 +1081,7 @@ func (app *App) HandleCIRunLogsDownloadGET(w http.ResponseWriter, r *http.Reques
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
 
 	if len(logs) == 0 {
-		_, _ = io.WriteString(w, "log not yet available — worker is preparing the workspace\n")
+		_, _ = io.WriteString(w, ciLogUnavailableText(run)+"\n")
 		return
 	}
 
@@ -936,7 +1099,13 @@ func (app *App) HandleCIRunLogsDownloadGET(w http.ResponseWriter, r *http.Reques
 	for i, logPath := range logs {
 		data, err := os.ReadFile(logPath)
 		if err != nil {
-			if !writef("=== %s ===\n(log file not readable: %v)\n", filepath.Base(logPath), err) {
+			slog.Warn("CI log became unreadable during download",
+				"request_id", RequestID(r),
+				"run", run.ID,
+				"log", filepath.Base(logPath),
+				"error", err,
+			)
+			if !writef("=== %s ===\n(log file unavailable)\n", filepath.Base(logPath)) {
 				return
 			}
 			continue
@@ -964,7 +1133,8 @@ func (app *App) renderCISecretsPage(w http.ResponseWriter, r *http.Request, errS
 	currentUser := GetUser(r)
 	secrets, err := app.DB.GetRepoSecrets(r.Context(), repo.ID)
 	if err != nil {
-		secrets = []models.RepoSecret{}
+		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI secrets are temporarily unavailable", err))
+		return
 	}
 
 	app.renderPage(w, r, "repo_ci_secrets.html", PageData{
@@ -986,7 +1156,7 @@ func (app *App) HandleCISecretsGET(w http.ResponseWriter, r *http.Request) {
 	currentUser := GetUser(r)
 
 	if currentUser == nil || currentUser.ID != repo.OwnerID {
-		app.renderError(w, r, PageData{User: currentUser}, "Forbidden", http.StatusForbidden)
+		app.respondWebError(w, r, apperr.New(apperr.KindForbidden, "Forbidden"))
 		return
 	}
 
@@ -1007,8 +1177,7 @@ func (app *App) HandleCISecretsAddPOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := r.ParseForm(); err != nil {
-		app.renderCISecretsPage(w, r, "Invalid form data.", "")
+	if !app.parseWebForm(w, r) {
 		return
 	}
 	key := strings.TrimSpace(r.FormValue("key"))
@@ -1026,12 +1195,12 @@ func (app *App) HandleCISecretsAddPOST(w http.ResponseWriter, r *http.Request) {
 
 	encrypted, err := db.EncryptSecret(app.Config.SecretKey, value)
 	if err != nil {
-		app.renderCISecretsPage(w, r, "Failed to encrypt secret.", "")
+		app.respondWebError(w, r, apperr.Wrap(apperr.KindInternal, "Gitman could not encrypt the secret", err))
 		return
 	}
 
 	if err := app.DB.AddRepoSecret(r.Context(), repo.ID, key, encrypted); err != nil {
-		app.renderCISecretsPage(w, r, "Failed to save secret.", "")
+		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI secrets are temporarily unavailable", err))
 		return
 	}
 
@@ -1049,7 +1218,11 @@ func (app *App) HandleCISecretsDeletePOST(w http.ResponseWriter, r *http.Request
 	}
 
 	if err := app.DB.DeleteRepoSecret(r.Context(), secretID, repo.ID); err != nil {
-		app.renderCISecretsPage(w, r, "Failed to delete secret.", "")
+		if errors.Is(err, db.ErrNotFound) {
+			app.renderCISecretsPage(w, r, "Secret not found.", "")
+		} else {
+			app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI secrets are temporarily unavailable", err))
+		}
 		return
 	}
 
@@ -1117,41 +1290,40 @@ func (app *App) HandleCIHookInstallPOST(w http.ResponseWriter, r *http.Request) 
 	currentUser := GetUser(r)
 
 	if currentUser == nil || currentUser.ID != repo.OwnerID {
-		app.renderError(w, r, PageData{User: currentUser}, "Forbidden", http.StatusForbidden)
+		app.respondWebError(w, r, apperr.New(apperr.KindForbidden, "Forbidden"))
 		return
 	}
 
-	if err := r.ParseForm(); err != nil {
-		app.renderError(w, r, PageData{User: currentUser}, "Invalid form data", http.StatusBadRequest)
+	if !app.parseWebForm(w, r) {
 		return
 	}
 
 	hp, err := hookPath(app.Config.ReposPath, owner.Username, repo.Name)
 	if err != nil {
-		app.renderError(w, r, PageData{User: currentUser}, "Invalid repository path", http.StatusInternalServerError)
+		app.respondWebError(w, r, apperr.Wrap(apperr.KindInternal, "Gitman could not resolve this repository", err))
 		return
 	}
 	state := detectHookState(hp)
 	if state == hookUnmanaged {
-		app.renderError(w, r, PageData{User: currentUser}, "Refusing to overwrite unmanaged post-receive hook", http.StatusConflict)
+		app.respondWebError(w, r, apperr.New(apperr.KindConflict, "Refusing to overwrite unmanaged post-receive hook"))
 		return
 	}
 
 	previousSecret, err := app.DB.GetWebhookSecret(r.Context(), repo.ID)
 	if err != nil {
-		app.renderError(w, r, PageData{User: currentUser}, "Failed to read existing webhook secret", http.StatusInternalServerError)
+		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI hook state is temporarily unavailable", err))
 		return
 	}
 
 	if err := os.MkdirAll(filepath.Dir(hp), 0o700); err != nil {
-		app.renderError(w, r, PageData{User: currentUser}, "Failed to create hooks directory", http.StatusInternalServerError)
+		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Repository hook storage is temporarily unavailable", err))
 		return
 	}
 
 	// Durable local hooks have no credential. Revoke the legacy managed-hook
 	// secret during upgrade so an obsolete bearer is not left active.
 	if err := app.DB.SetWebhookSecret(r.Context(), repo.ID, ""); err != nil {
-		app.renderError(w, r, PageData{User: currentUser}, "Failed to revoke legacy webhook secret", http.StatusInternalServerError)
+		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI hook state is temporarily unavailable", err))
 		return
 	}
 	rollbackSecret := func() {
@@ -1163,7 +1335,7 @@ func (app *App) HandleCIHookInstallPOST(w http.ResponseWriter, r *http.Request) 
 
 	if err := writeExecutableFileAtomic(hp, script); err != nil {
 		rollbackSecret()
-		app.renderError(w, r, PageData{User: currentUser}, "Failed to write hook script", http.StatusInternalServerError)
+		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Repository hook storage is temporarily unavailable", err))
 		return
 	}
 
@@ -1178,28 +1350,28 @@ func (app *App) HandleCIHookUninstallPOST(w http.ResponseWriter, r *http.Request
 	currentUser := GetUser(r)
 
 	if currentUser == nil || currentUser.ID != repo.OwnerID {
-		app.renderError(w, r, PageData{User: currentUser}, "Forbidden", http.StatusForbidden)
+		app.respondWebError(w, r, apperr.New(apperr.KindForbidden, "Forbidden"))
 		return
 	}
 
 	hp, err := hookPath(app.Config.ReposPath, owner.Username, repo.Name)
 	if err != nil {
-		app.renderError(w, r, PageData{User: currentUser}, "Invalid repository path", http.StatusInternalServerError)
+		app.respondWebError(w, r, apperr.Wrap(apperr.KindInternal, "Gitman could not resolve this repository", err))
 		return
 	}
 	state := detectHookState(hp)
 	if state == hookUnmanaged {
-		app.renderError(w, r, PageData{User: currentUser}, "Refusing to remove unmanaged post-receive hook", http.StatusConflict)
+		app.respondWebError(w, r, apperr.New(apperr.KindConflict, "Refusing to remove unmanaged post-receive hook"))
 		return
 	}
 
 	if err := app.DB.SetWebhookSecret(r.Context(), repo.ID, ""); err != nil {
-		app.renderError(w, r, PageData{User: currentUser}, "Failed to revoke webhook secret; hook was not removed", http.StatusInternalServerError)
+		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI hook state is temporarily unavailable", err))
 		return
 	}
 	if state == hookManaged || state == hookOutdated {
 		if err := os.Remove(hp); err != nil && !os.IsNotExist(err) {
-			app.renderError(w, r, PageData{User: currentUser}, "Webhook secret revoked, but the inert hook file could not be removed", http.StatusInternalServerError)
+			app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Repository hook storage is temporarily unavailable", err))
 			return
 		}
 	}
@@ -1323,16 +1495,28 @@ func (app *App) HandleArtifactByBranch(w http.ResponseWriter, r *http.Request) {
 	if branch == "" {
 		branch, artifact = splitLegacyArtifactPath(artifact)
 	}
-	if git.ValidateRefName(branch) != nil || artifact == "" {
-		http.Error(w, "Invalid branch or artifact path", http.StatusBadRequest)
+	if branch == "" || artifact == "" {
+		app.respondAPIError(w, r, apperr.New(apperr.KindInvalid, "invalid branch or artifact path"))
+		return
+	}
+	if err := git.ValidateRefNameContext(r.Context(), branch); err != nil {
+		if errors.Is(err, git.ErrInvalidRef) {
+			app.respondAPIError(w, r, apperr.Wrap(apperr.KindInvalid, "invalid branch or artifact path", err))
+		} else {
+			app.respondAPIError(w, r, apperr.Wrap(apperr.KindUnavailable, "Repository refs are temporarily unavailable", err))
+		}
 		return
 	}
 	run, err := app.DB.GetLatestSuccessfulRunForBranch(r.Context(), repo.ID, branch)
-	if err != nil || run == nil {
-		http.Error(w, "No successful run found for branch", http.StatusNotFound)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			app.respondAPIError(w, r, apperr.New(apperr.KindNotFound, "no successful run found for branch"))
+		} else {
+			app.respondAPIError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI data is temporarily unavailable", err))
+		}
 		return
 	}
-	serveArtifact(w, r, app.Config.ArtifactsPath, owner.Username, repo.Name, run.ID, run.AttemptID, artifact)
+	app.serveArtifact(w, r, app.Config.ArtifactsPath, owner.Username, repo.Name, run.ID, run.AttemptID, artifact)
 }
 
 func (app *App) HandleArtifactByTag(w http.ResponseWriter, r *http.Request) {
@@ -1342,16 +1526,28 @@ func (app *App) HandleArtifactByTag(w http.ResponseWriter, r *http.Request) {
 	if tag == "" {
 		tag, artifact = splitLegacyArtifactPath(artifact)
 	}
-	if git.ValidateRefName(tag) != nil || artifact == "" {
-		http.Error(w, "Invalid tag or artifact path", http.StatusBadRequest)
+	if tag == "" || artifact == "" {
+		app.respondAPIError(w, r, apperr.New(apperr.KindInvalid, "invalid tag or artifact path"))
+		return
+	}
+	if err := git.ValidateRefNameContext(r.Context(), tag); err != nil {
+		if errors.Is(err, git.ErrInvalidRef) {
+			app.respondAPIError(w, r, apperr.Wrap(apperr.KindInvalid, "invalid tag or artifact path", err))
+		} else {
+			app.respondAPIError(w, r, apperr.Wrap(apperr.KindUnavailable, "Repository refs are temporarily unavailable", err))
+		}
 		return
 	}
 	run, err := app.DB.GetSuccessfulRunForTag(r.Context(), repo.ID, tag)
-	if err != nil || run == nil {
-		http.Error(w, "No successful run found for tag", http.StatusNotFound)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			app.respondAPIError(w, r, apperr.New(apperr.KindNotFound, "no successful run found for tag"))
+		} else {
+			app.respondAPIError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI data is temporarily unavailable", err))
+		}
 		return
 	}
-	serveArtifact(w, r, app.Config.ArtifactsPath, owner.Username, repo.Name, run.ID, run.AttemptID, artifact)
+	app.serveArtifact(w, r, app.Config.ArtifactsPath, owner.Username, repo.Name, run.ID, run.AttemptID, artifact)
 }
 
 func (app *App) HandleArtifactByCommit(w http.ResponseWriter, r *http.Request) {
@@ -1359,51 +1555,67 @@ func (app *App) HandleArtifactByCommit(w http.ResponseWriter, r *http.Request) {
 	commit := chi.URLParam(r, "commit_hash")
 	artifact := artifactPathParam(r)
 	run, err := app.DB.GetSuccessfulRunForCommit(r.Context(), repo.ID, commit)
-	if err != nil || run == nil {
-		http.Error(w, "No successful run found for commit", http.StatusNotFound)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			app.respondAPIError(w, r, apperr.New(apperr.KindNotFound, "no successful run found for commit"))
+		} else {
+			app.respondAPIError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI data is temporarily unavailable", err))
+		}
 		return
 	}
-	serveArtifact(w, r, app.Config.ArtifactsPath, owner.Username, repo.Name, run.ID, run.AttemptID, artifact)
+	app.serveArtifact(w, r, app.Config.ArtifactsPath, owner.Username, repo.Name, run.ID, run.AttemptID, artifact)
 }
 
 func (app *App) HandleArtifactByRunID(w http.ResponseWriter, r *http.Request) {
 	repo, owner := GetRepo(r), GetRepoOwner(r)
 	runID := chi.URLParam(r, "run_id")
-	run, err := app.DB.GetCIRunByID(r.Context(), runID)
-	if err != nil || run == nil || run.RepoID != repo.ID {
-		http.Error(w, "Run not found", http.StatusNotFound)
+	run, err := app.getRepoCIRun(r.Context(), repo.ID, runID)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			app.respondAPIError(w, r, apperr.New(apperr.KindNotFound, "run not found"))
+		} else {
+			app.respondAPIError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI data is temporarily unavailable", err))
+		}
 		return
 	}
-	serveArtifact(w, r, app.Config.ArtifactsPath, owner.Username, repo.Name, runID, run.AttemptID, artifactPathParam(r))
+	app.serveArtifact(w, r, app.Config.ArtifactsPath, owner.Username, repo.Name, runID, run.AttemptID, artifactPathParam(r))
 }
 
 func (app *App) HandleCIRunArtifactPreviewGET(w http.ResponseWriter, r *http.Request) {
 	repo, owner := GetRepo(r), GetRepoOwner(r)
 	runID := chi.URLParam(r, "run_id")
-	run, err := app.DB.GetCIRunByID(r.Context(), runID)
-	if err != nil || run == nil || run.RepoID != repo.ID {
-		http.Error(w, "Run not found", http.StatusNotFound)
+	run, err := app.getRepoCIRun(r.Context(), repo.ID, runID)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			app.respondPlainError(w, r, apperr.New(apperr.KindNotFound, "CI run not found"))
+		} else {
+			app.respondPlainError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI data is temporarily unavailable", err))
+		}
 		return
 	}
 	artifact := filepath.Clean(filepath.FromSlash(strings.TrimPrefix(artifactPathParam(r), "/")))
 	if artifact == "." || artifact == "" || filepath.IsAbs(artifact) || artifact == ".." || strings.HasPrefix(artifact, ".."+string(filepath.Separator)) {
-		http.Error(w, "Invalid artifact path", http.StatusBadRequest)
+		app.respondPlainError(w, r, apperr.New(apperr.KindInvalid, "Invalid artifact path"))
 		return
 	}
 	baseDir := artifactRunDir(app.Config.ArtifactsPath, owner.Username, repo.Name, run.ID, run.AttemptID)
 	baseAbs, err := filepath.Abs(baseDir)
 	if err != nil {
-		http.Error(w, "Internal error", http.StatusInternalServerError)
+		app.respondPlainError(w, r, apperr.Wrap(apperr.KindInternal, "Gitman could not resolve this artifact", err))
 		return
 	}
 	requestedAbs, err := filepath.Abs(filepath.Join(baseDir, artifact))
 	if err != nil {
-		http.Error(w, "Invalid artifact path", http.StatusBadRequest)
+		app.respondPlainError(w, r, apperr.Wrap(apperr.KindInvalid, "Invalid artifact path", err))
 		return
 	}
 	rel, err := filepath.Rel(baseAbs, requestedAbs)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		http.Error(w, "Forbidden", http.StatusForbidden)
+	if err != nil {
+		app.respondPlainError(w, r, apperr.Wrap(apperr.KindInternal, "Gitman could not resolve this artifact", err))
+		return
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		app.respondPlainError(w, r, apperr.New(apperr.KindForbidden, "Forbidden"))
 		return
 	}
 	current := baseAbs
@@ -1411,26 +1623,51 @@ func (app *App) HandleCIRunArtifactPreviewGET(w http.ResponseWriter, r *http.Req
 		current = filepath.Join(current, part)
 		info, err := os.Lstat(current)
 		if err != nil {
-			http.Error(w, "Artifact not found", http.StatusNotFound)
+			if os.IsNotExist(err) {
+				app.respondPlainError(w, r, apperr.New(apperr.KindNotFound, "Artifact not found"))
+			} else {
+				app.respondPlainError(w, r, apperr.Wrap(apperr.KindUnavailable, "Artifact storage is temporarily unavailable", err))
+			}
 			return
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
-			http.Error(w, "Forbidden", http.StatusForbidden)
+			app.respondPlainError(w, r, apperr.New(apperr.KindForbidden, "Forbidden"))
 			return
 		}
 	}
 	info, err := os.Stat(requestedAbs)
-	if err != nil || !info.Mode().IsRegular() {
-		http.Error(w, "Artifact not found", http.StatusNotFound)
+	if err != nil {
+		if os.IsNotExist(err) {
+			app.respondPlainError(w, r, apperr.New(apperr.KindNotFound, "Artifact not found"))
+		} else {
+			app.respondPlainError(w, r, apperr.Wrap(apperr.KindUnavailable, "Artifact storage is temporarily unavailable", err))
+		}
 		return
 	}
-	if !artifactLooksPreviewable(requestedAbs, info.Size()) {
-		http.Error(w, "Artifact is not previewable as text", http.StatusUnsupportedMediaType)
+	if !info.Mode().IsRegular() {
+		app.respondPlainError(w, r, apperr.New(apperr.KindNotFound, "Artifact not found"))
+		return
+	}
+	previewable, err := artifactLooksPreviewable(requestedAbs, info.Size())
+	if err != nil {
+		if os.IsNotExist(err) {
+			app.respondPlainError(w, r, apperr.New(apperr.KindNotFound, "Artifact not found"))
+		} else {
+			app.respondPlainError(w, r, apperr.Wrap(apperr.KindUnavailable, "Artifact storage is temporarily unavailable", err))
+		}
+		return
+	}
+	if !previewable {
+		app.respondPlainError(w, r, apperr.New(apperr.KindUnsupported, "Artifact is not previewable as text"))
 		return
 	}
 	data, err := os.ReadFile(requestedAbs)
 	if err != nil {
-		http.Error(w, "Artifact not found", http.StatusNotFound)
+		if os.IsNotExist(err) {
+			app.respondPlainError(w, r, apperr.New(apperr.KindNotFound, "Artifact not found"))
+		} else {
+			app.respondPlainError(w, r, apperr.Wrap(apperr.KindUnavailable, "Artifact storage is temporarily unavailable", err))
+		}
 		return
 	}
 	noStore(w)
@@ -1447,11 +1684,11 @@ func artifactRunDir(artifactsPath, owner, repo, runID, attemptID string) string 
 	return filepath.Join(base, attemptID)
 }
 
-func serveArtifact(w http.ResponseWriter, r *http.Request, artifactsPath, owner, repo, runID, attemptID, artifact string) {
+func (app *App) serveArtifact(w http.ResponseWriter, r *http.Request, artifactsPath, owner, repo, runID, attemptID, artifact string) {
 	noStore(w)
 	artifact = filepath.Clean(filepath.FromSlash(strings.TrimPrefix(artifact, "/")))
 	if artifact == "." || artifact == "" || filepath.IsAbs(artifact) || artifact == ".." || strings.HasPrefix(artifact, ".."+string(filepath.Separator)) {
-		http.Error(w, "Invalid artifact path", http.StatusBadRequest)
+		app.respondAPIError(w, r, apperr.New(apperr.KindInvalid, "invalid artifact path"))
 		return
 	}
 
@@ -1459,17 +1696,21 @@ func serveArtifact(w http.ResponseWriter, r *http.Request, artifactsPath, owner,
 	requestedPath := filepath.Join(baseDir, artifact)
 	baseAbs, err := filepath.Abs(baseDir)
 	if err != nil {
-		http.Error(w, "Internal error", http.StatusInternalServerError)
+		app.respondAPIError(w, r, apperr.Wrap(apperr.KindInternal, "Gitman could not resolve this artifact", err))
 		return
 	}
 	requestedAbs, err := filepath.Abs(requestedPath)
 	if err != nil {
-		http.Error(w, "Invalid artifact path", http.StatusBadRequest)
+		app.respondAPIError(w, r, apperr.Wrap(apperr.KindInvalid, "invalid artifact path", err))
 		return
 	}
 	rel, err := filepath.Rel(baseAbs, requestedAbs)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		http.Error(w, "Forbidden", http.StatusForbidden)
+	if err != nil {
+		app.respondAPIError(w, r, apperr.Wrap(apperr.KindInternal, "Gitman could not resolve this artifact", err))
+		return
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		app.respondAPIError(w, r, apperr.New(apperr.KindForbidden, "artifact access denied"))
 		return
 	}
 
@@ -1478,18 +1719,26 @@ func serveArtifact(w http.ResponseWriter, r *http.Request, artifactsPath, owner,
 		current = filepath.Join(current, part)
 		info, err := os.Lstat(current)
 		if err != nil {
-			http.Error(w, "Artifact not found", http.StatusNotFound)
+			if os.IsNotExist(err) {
+				app.respondAPIError(w, r, apperr.New(apperr.KindNotFound, "artifact not found"))
+			} else {
+				app.respondAPIError(w, r, apperr.Wrap(apperr.KindUnavailable, "artifact storage is temporarily unavailable", err))
+			}
 			return
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
-			http.Error(w, "Forbidden", http.StatusForbidden)
+			app.respondAPIError(w, r, apperr.New(apperr.KindForbidden, "artifact access denied"))
 			return
 		}
 	}
 
 	f, err := os.Open(requestedAbs)
 	if err != nil {
-		http.Error(w, "Artifact not found", http.StatusNotFound)
+		if os.IsNotExist(err) {
+			app.respondAPIError(w, r, apperr.New(apperr.KindNotFound, "artifact not found"))
+		} else {
+			app.respondAPIError(w, r, apperr.Wrap(apperr.KindUnavailable, "artifact storage is temporarily unavailable", err))
+		}
 		return
 	}
 	defer func() {
@@ -1498,8 +1747,12 @@ func serveArtifact(w http.ResponseWriter, r *http.Request, artifactsPath, owner,
 		}
 	}()
 	stat, err := f.Stat()
-	if err != nil || !stat.Mode().IsRegular() {
-		http.Error(w, "Artifact not found", http.StatusNotFound)
+	if err != nil {
+		app.respondAPIError(w, r, apperr.Wrap(apperr.KindUnavailable, "artifact storage is temporarily unavailable", err))
+		return
+	}
+	if !stat.Mode().IsRegular() {
+		app.respondAPIError(w, r, apperr.New(apperr.KindNotFound, "artifact not found"))
 		return
 	}
 	disposition := mime.FormatMediaType("attachment", map[string]string{"filename": filepath.Base(artifact)})
@@ -1508,22 +1761,22 @@ func serveArtifact(w http.ResponseWriter, r *http.Request, artifactsPath, owner,
 }
 
 // StatusBadge returns a short display string and CSS class for a CI run status.
-func StatusBadge(status string) (label, class string) {
+func StatusBadge(status models.CIStatus) (label, class string) {
 	switch status {
-	case "pending":
+	case models.CIStatusPending:
 		return "Pending", "badge-pending"
-	case "running":
+	case models.CIStatusRunning:
 		return "Running", "badge-running"
-	case "success":
+	case models.CIStatusSuccess:
 		return "Success", "badge-success"
-	case "failed":
+	case models.CIStatusFailed:
 		return "Failed", "badge-failed"
-	case "skipped":
+	case models.CIStatusSkipped:
 		return "Skipped", "badge-skipped"
-	case "cancelled":
+	case models.CIStatusCancelled:
 		return "Cancelled", "badge-cancelled"
 	default:
-		return status, "badge-unknown"
+		return string(status), "badge-unknown"
 	}
 }
 

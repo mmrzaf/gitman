@@ -2,13 +2,13 @@ package handlers
 
 import (
 	"errors"
-	"log/slog"
 	"net/http"
 	"strings"
 
 	crypto_ssh "golang.org/x/crypto/ssh"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/mmrzaf/gitman/internal/apperr"
 	"github.com/mmrzaf/gitman/internal/db"
 	"github.com/mmrzaf/gitman/internal/models"
 	"github.com/mmrzaf/gitman/internal/ssh"
@@ -33,26 +33,23 @@ func supportedSSHKeyType(keyType string) bool {
 	}
 }
 
-func (app *App) getKeysForUser(r *http.Request, userID string) []models.SSHKey {
-	keys, err := app.DB.GetUserSSHKeys(r.Context(), userID)
+func (app *App) renderKeysPage(w http.ResponseWriter, r *http.Request, user *models.User, errStr, successStr string) {
+	keys, err := app.DB.GetUserSSHKeys(r.Context(), user.ID)
 	if err != nil {
-		return []models.SSHKey{}
+		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "SSH key data is temporarily unavailable", err))
+		return
 	}
 	for i := range keys {
 		if parsed, _, _, _, parseErr := crypto_ssh.ParseAuthorizedKey([]byte(keys[i].PublicKey)); parseErr == nil {
 			keys[i].Fingerprint = crypto_ssh.FingerprintSHA256(parsed)
 		}
 	}
-	return keys
-}
-
-func (app *App) renderKeysPage(w http.ResponseWriter, r *http.Request, user *models.User, errStr, successStr string) {
 	app.renderPage(w, r, "keys.html", PageData{
 		Title:   "SSH Keys",
 		User:    user,
 		Error:   errStr,
 		Success: successStr,
-		Data:    KeysPageData{Keys: app.getKeysForUser(r, user.ID)},
+		Data:    KeysPageData{Keys: keys},
 	})
 }
 
@@ -61,6 +58,9 @@ func (app *App) HandleKeysGET(w http.ResponseWriter, r *http.Request) {
 }
 
 func (app *App) HandleKeysPOST(w http.ResponseWriter, r *http.Request) {
+	if !app.parseWebForm(w, r) {
+		return
+	}
 	user := GetUser(r)
 	name := strings.TrimSpace(r.FormValue("name"))
 	pubKey := strings.TrimSpace(r.FormValue("public_key"))
@@ -100,7 +100,7 @@ func (app *App) HandleKeysPOST(w http.ResponseWriter, r *http.Request) {
 	fingerprint := crypto_ssh.FingerprintSHA256(parsedKey)
 	allKeys, err := app.DB.GetAllSSHKeys(r.Context())
 	if err != nil {
-		app.renderKeysPage(w, r, user, "Failed to verify existing SSH keys.", "")
+		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "SSH key data is temporarily unavailable", err))
 		return
 	}
 	for _, existing := range allKeys {
@@ -116,17 +116,19 @@ func (app *App) HandleKeysPOST(w http.ResponseWriter, r *http.Request) {
 			app.renderKeysPage(w, r, user, "This SSH key is already attached to an account.", "")
 			return
 		}
-		app.renderKeysPage(w, r, user, "Failed to add SSH key.", "")
+		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "SSH key storage is temporarily unavailable", err))
 		return
 	}
 
-	if err := ssh.SyncAuthorizedKeys(r.Context(), app.DB, app.Config); err != nil {
-		slog.Error("failed to sync authorized_keys after adding key", "error", err)
-		if rollbackErr := app.DB.DeleteSSHKeyByPublicKey(r.Context(), user.ID, pubKey); rollbackErr != nil {
-			slog.Error("failed to rollback SSH key after sync failure", "error", rollbackErr)
+	if syncErr := ssh.SyncAuthorizedKeys(r.Context(), app.DB, app.Config); syncErr != nil {
+		rollbackErr := app.DB.DeleteSSHKeyByPublicKey(r.Context(), user.ID, pubKey)
+		resyncErr := ssh.SyncAuthorizedKeys(r.Context(), app.DB, app.Config)
+		combined := errors.Join(syncErr, rollbackErr, resyncErr)
+		if rollbackErr != nil {
+			app.respondWebError(w, r, apperr.Wrap(apperr.KindInternal, "SSH key activation failed and Gitman could not fully restore the previous state", combined))
+		} else {
+			app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "SSH key activation is temporarily unavailable", combined))
 		}
-		_ = ssh.SyncAuthorizedKeys(r.Context(), app.DB, app.Config)
-		app.renderKeysPage(w, r, user, "The SSH key could not be activated. No change was kept.", "")
 		return
 	}
 
@@ -142,24 +144,38 @@ func (app *App) HandleKeyDeletePOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key, err := app.DB.GetSSHKeyByID(r.Context(), keyID)
-	if err != nil || key == nil || key.UserID != user.ID {
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			app.renderKeysPage(w, r, user, "SSH key not found.", "")
+		} else {
+			app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "SSH key data is temporarily unavailable", err))
+		}
+		return
+	}
+	if key.UserID != user.ID {
 		app.renderKeysPage(w, r, user, "SSH key not found.", "")
 		return
 	}
 
 	err = app.DB.DeleteSSHKey(r.Context(), keyID, user.ID)
 	if err != nil {
-		app.renderKeysPage(w, r, user, "Failed to delete key.", "")
+		if errors.Is(err, db.ErrNotFound) {
+			app.renderKeysPage(w, r, user, "SSH key not found.", "")
+		} else {
+			app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "SSH key storage is temporarily unavailable", err))
+		}
 		return
 	}
 
-	if err := ssh.SyncAuthorizedKeys(r.Context(), app.DB, app.Config); err != nil {
-		slog.Error("failed to sync authorized_keys after deleting key", "error", err)
-		if restoreErr := app.DB.AddSSHKey(r.Context(), user.ID, key.Name, key.PublicKey); restoreErr != nil {
-			slog.Error("failed to restore SSH key after sync failure", "error", restoreErr)
+	if syncErr := ssh.SyncAuthorizedKeys(r.Context(), app.DB, app.Config); syncErr != nil {
+		restoreErr := app.DB.AddSSHKey(r.Context(), user.ID, key.Name, key.PublicKey)
+		resyncErr := ssh.SyncAuthorizedKeys(r.Context(), app.DB, app.Config)
+		combined := errors.Join(syncErr, restoreErr, resyncErr)
+		if restoreErr != nil {
+			app.respondWebError(w, r, apperr.Wrap(apperr.KindInternal, "SSH key removal failed and Gitman could not fully restore the previous state", combined))
+		} else {
+			app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "SSH key activation is temporarily unavailable", combined))
 		}
-		_ = ssh.SyncAuthorizedKeys(r.Context(), app.DB, app.Config)
-		app.renderKeysPage(w, r, user, "The SSH key could not be removed. No change was kept.", "")
 		return
 	}
 

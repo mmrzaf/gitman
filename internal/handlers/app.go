@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/mmrzaf/gitman"
+	"github.com/mmrzaf/gitman/internal/apperr"
 	"github.com/mmrzaf/gitman/internal/config"
 	"github.com/mmrzaf/gitman/internal/db"
 	"github.com/mmrzaf/gitman/internal/models"
@@ -31,11 +33,15 @@ import (
 type contextKey string
 
 const (
-	userContextKey      contextKey = "user"
-	repoContextKey      contextKey = "repo"
-	repoPathContextKey  contextKey = "repoPath"
-	repoOwnerContextKey contextKey = "repoOwner"
-	csrfTokenKey        contextKey = "csrfToken"
+	userContextKey       contextKey = "user"
+	repoContextKey       contextKey = "repo"
+	repoPathContextKey   contextKey = "repoPath"
+	repoOwnerContextKey  contextKey = "repoOwner"
+	repoMemberContextKey contextKey = "repoMember"
+	repoWriteContextKey  contextKey = "repoWrite"
+	csrfTokenKey         contextKey = "csrfToken"
+	requestIDContextKey  contextKey = "requestID"
+	responseSurfaceKey   contextKey = "responseSurface"
 )
 
 var embeddedFiles = gitman.FS
@@ -76,6 +82,7 @@ type PageData struct {
 	Data      any
 	CSRFToken string
 	RepoNav   *RepoNavData
+	RequestID string
 }
 
 func (app *App) requestIsHTTPS(r *http.Request) bool {
@@ -85,11 +92,10 @@ func (app *App) requestIsHTTPS(r *http.Request) bool {
 	if app == nil || app.Config == nil || !app.Config.TrustProxyHeaders {
 		return false
 	}
-	if strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+	if strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https") {
 		return true
 	}
-	forwarded := strings.ToLower(r.Header.Get("Forwarded"))
-	return strings.Contains(forwarded, "proto=https")
+	return strings.EqualFold(forwardedParam(r.Header.Get("Forwarded"), "proto"), "https")
 }
 
 func (app *App) secureCookie(r *http.Request) bool {
@@ -179,11 +185,11 @@ var templateFuncs = template.FuncMap{
 		}
 		return base + "/" + name
 	},
-	"statusLabel": func(status string) string {
+	"statusLabel": func(status models.CIStatus) string {
 		label, _ := StatusBadge(status)
 		return label
 	},
-	"statusClass": func(status string) string {
+	"statusClass": func(status models.CIStatus) string {
 		_, class := StatusBadge(status)
 		return class
 	},
@@ -207,16 +213,11 @@ var templateFuncs = template.FuncMap{
 			return ""
 		}
 	},
-	"canCancelRun": func(status string) bool {
-		return status == "pending" || status == "running"
+	"canCancelRun": func(status models.CIStatus) bool {
+		return status == models.CIStatusPending || status == models.CIStatusRunning
 	},
-	"canRetryRun": func(status string) bool {
-		switch status {
-		case "success", "failed", "skipped", "cancelled":
-			return true
-		default:
-			return false
-		}
+	"canRetryRun": func(status models.CIStatus) bool {
+		return status.Terminal()
 	},
 }
 
@@ -261,7 +262,7 @@ func noStore(w http.ResponseWriter) {
 
 const maxUIRequestBodyBytes int64 = 1 << 20
 
-func limitRequestBody(maxBytes int64) func(http.Handler) http.Handler {
+func (app *App) limitRequestBody(maxBytes int64) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.Method {
@@ -270,7 +271,7 @@ func limitRequestBody(maxBytes int64) func(http.Handler) http.Handler {
 				return
 			}
 			if r.ContentLength > maxBytes {
-				http.Error(w, "Request body too large", http.StatusRequestEntityTooLarge)
+				app.respondWebError(w, r, apperr.New(apperr.KindTooLarge, "Request body too large"))
 				return
 			}
 			r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
@@ -300,16 +301,19 @@ func (app *App) repoNavData(r *http.Request, currentRef string) *RepoNavData {
 	}
 	if user.ID == repo.OwnerID {
 		nav.IsOwner = true
-		nav.CanViewCI = true
-		return nav
 	}
-	if app != nil && app.DB != nil {
-		nav.CanViewCI, _ = app.DB.HasRepoAccess(r.Context(), repo.ID, user.ID, "read")
+	if member, ok := r.Context().Value(repoMemberContextKey).(bool); ok {
+		nav.CanViewCI = member
+	} else {
+		nav.CanViewCI = nav.IsOwner
 	}
 	return nav
 }
 
 func (app *App) preparePageData(r *http.Request, data *PageData) {
+	if data.RequestID == "" {
+		data.RequestID = RequestID(r)
+	}
 	if data.CSRFToken == "" {
 		if token, ok := r.Context().Value(csrfTokenKey).(string); ok {
 			data.CSRFToken = token
@@ -320,7 +324,7 @@ func (app *App) preparePageData(r *http.Request, data *PageData) {
 	}
 }
 
-func (app *App) renderTemplate(w http.ResponseWriter, tmplMapKey string, executeName string, data PageData) error {
+func (app *App) renderTemplateStatus(w http.ResponseWriter, tmplMapKey string, executeName string, data PageData, status int) error {
 	data.Config = app.Config
 
 	t, ok := app.Templates[tmplMapKey]
@@ -328,21 +332,41 @@ func (app *App) renderTemplate(w http.ResponseWriter, tmplMapKey string, execute
 		return fs.ErrNotExist
 	}
 
-	noStore(w)
+	// Render before committing the response status. A template execution error
+	// can then still be translated into Gitman's normal error surface instead
+	// of leaving a half-started 200/4xx response.
 	var buf bytes.Buffer
 	if err := t.ExecuteTemplate(&buf, executeName, data); err != nil {
 		return err
+	}
+
+	noStore(w)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if status != 0 && status != http.StatusOK {
+		w.WriteHeader(status)
 	}
 	_, err := w.Write(buf.Bytes())
 	return err
 }
 
-func (app *App) renderPage(w http.ResponseWriter, r *http.Request, page string, data PageData) {
+func (app *App) renderTemplate(w http.ResponseWriter, tmplMapKey string, executeName string, data PageData) error {
+	return app.renderTemplateStatus(w, tmplMapKey, executeName, data, http.StatusOK)
+}
+
+func (app *App) renderPageStatus(w http.ResponseWriter, r *http.Request, page string, data PageData, status int) {
 	app.preparePageData(r, &data)
-	if err := app.renderTemplate(w, page, "base.html", data); err != nil {
-		slog.Error("failed to render page", "page", page, "error", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+	if err := app.renderTemplateStatus(w, page, "base.html", data, status); err != nil {
+		appErr := apperr.Wrap(apperr.KindInternal, "Gitman could not render this page", err)
+		if responseStarted(w) {
+			app.logRequestError(r, appErr, http.StatusInternalServerError)
+			return
+		}
+		app.respondWebError(w, r, appErr)
 	}
+}
+
+func (app *App) renderPage(w http.ResponseWriter, r *http.Request, page string, data PageData) {
+	app.renderPageStatus(w, r, page, data, http.StatusOK)
 }
 
 func (app *App) renderError(w http.ResponseWriter, r *http.Request, data PageData, msg string, code int) {
@@ -351,12 +375,28 @@ func (app *App) renderError(w http.ResponseWriter, r *http.Request, data PageDat
 	errData.Error = msg
 	app.preparePageData(r, &errData)
 
-	noStore(w)
-	w.WriteHeader(code)
-	if err := app.renderTemplate(w, "error.html", "base.html", errData); err != nil {
-		slog.Error("failed to render error page", "error", err, "status", code)
-		http.Error(w, msg, code)
+	if err := app.renderTemplateStatus(w, "error.html", "base.html", errData, code); err != nil {
+		slog.Error("failed to render error page", "request_id", RequestID(r), "error", err, "status", code)
+		if responseStarted(w) {
+			return
+		}
+		noStore(w)
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(code)
+		_, _ = fmt.Fprintln(w, msg)
 	}
+}
+
+func bearerToken(header string) (string, bool) {
+	scheme, token, ok := strings.Cut(strings.TrimSpace(header), " ")
+	if !ok || !strings.EqualFold(scheme, "Bearer") {
+		return "", false
+	}
+	token = strings.TrimSpace(token)
+	if token == "" || strings.ContainsAny(token, " \t\r\n") {
+		return "", false
+	}
+	return token, true
 }
 
 // AuthMiddleware resolves the current user from either a session cookie OR a
@@ -365,37 +405,41 @@ func (app *App) renderError(w http.ResponseWriter, r *http.Request, data PageDat
 // Unauthenticated requests pass through — protected routes use RequireAuth.
 func (app *App) AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if cookie, err := r.Cookie("session_token"); err == nil {
+		if cookie, cookieErr := r.Cookie("session_token"); cookieErr == nil {
 			user, err := app.DB.GetUserBySession(r.Context(), cookie.Value)
-			if err == nil && user != nil {
+			switch {
+			case err == nil:
 				extended, extendErr := app.DB.ExtendSessionIfExpiring(r.Context(), cookie.Value, sessionDuration, 12*time.Hour)
 				if extendErr != nil {
-					slog.Warn("failed to extend session", "error", extendErr)
+					slog.Warn("failed to extend session", "request_id", RequestID(r), "error", extendErr)
 				} else if extended {
 					app.setSessionCookie(w, r, cookie.Value, time.Now().Add(sessionDuration))
 				}
 				ctx := context.WithValue(r.Context(), userContextKey, user)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
-			}
-			if err != nil {
-				slog.Warn("GetUserBySession failed in AuthMiddleware", "error", err)
+			case errors.Is(err, db.ErrNotFound):
+				app.clearSessionCookie(w, r)
+			default:
+				app.respondForSurface(w, r, apperr.Wrap(apperr.KindUnavailable, "Gitman is temporarily unavailable", err))
+				return
 			}
 		}
 
-		if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
-			token := strings.TrimPrefix(auth, "Bearer ")
+		if token, ok := bearerToken(r.Header.Get("Authorization")); ok {
 			hash := sha256.Sum256([]byte(token))
 			tokenHash := hex.EncodeToString(hash[:])
 			user, err := app.DB.GetUserByTokenHash(r.Context(), tokenHash)
-			if err == nil && user != nil {
+			switch {
+			case err == nil:
 				ctx := context.WithValue(r.Context(), userContextKey, user)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
-			}
-			app.clearSessionCookie(w, r)
-			if err != nil {
-				slog.Warn("GetUserByTokenHash failed in AuthMiddleware", "error", err)
+			case errors.Is(err, db.ErrNotFound):
+				// Invalid bearer credentials are handled by the protected surface.
+			default:
+				app.respondForSurface(w, r, apperr.Wrap(apperr.KindUnavailable, "Gitman is temporarily unavailable", err))
+				return
 			}
 		}
 
@@ -416,11 +460,7 @@ func (app *App) RequireAuth(next http.Handler) http.Handler {
 func (app *App) RequireAPIAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Context().Value(userContextKey) == nil {
-			noStore(w)
-			w.Header().Set("Content-Type", "application/json")
-			w.Header().Set("WWW-Authenticate", "Bearer")
-			w.WriteHeader(http.StatusUnauthorized)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "authentication required"})
+			app.respondAPIError(w, r, apperr.New(apperr.KindUnauthenticated, "authentication required"))
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -438,17 +478,33 @@ func (app *App) WebhookAuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		secret := r.Header.Get("X-Gitman-Webhook-Secret")
 		if secret == "" {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			app.respondForSurface(w, r, apperr.New(apperr.KindUnauthenticated, "authentication required"))
 			return
 		}
 		repo, err := app.DB.GetRepositoryByWebhookSecret(r.Context(), secret)
-		if err != nil || repo == nil || repo.Name != chi.URLParam(r, "repo_name") {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		if err != nil {
+			if errors.Is(err, db.ErrNotFound) {
+				app.respondForSurface(w, r, apperr.New(apperr.KindUnauthenticated, "authentication required"))
+			} else {
+				app.respondForSurface(w, r, apperr.Wrap(apperr.KindUnavailable, "Gitman is temporarily unavailable", err))
+			}
+			return
+		}
+		if repo.Name != chi.URLParam(r, "repo_name") {
+			app.respondForSurface(w, r, apperr.New(apperr.KindUnauthenticated, "authentication required"))
 			return
 		}
 		owner, err := app.DB.GetUserByUsername(r.Context(), chi.URLParam(r, "username"))
-		if err != nil || owner == nil || owner.ID != repo.OwnerID {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		if err != nil {
+			if errors.Is(err, db.ErrNotFound) {
+				app.respondForSurface(w, r, apperr.New(apperr.KindUnauthenticated, "authentication required"))
+			} else {
+				app.respondForSurface(w, r, apperr.Wrap(apperr.KindUnavailable, "Gitman is temporarily unavailable", err))
+			}
+			return
+		}
+		if owner.ID != repo.OwnerID {
+			app.respondForSurface(w, r, apperr.New(apperr.KindUnauthenticated, "authentication required"))
 			return
 		}
 		ctx := context.WithValue(r.Context(), repoContextKey, repo)
@@ -465,7 +521,7 @@ func (app *App) securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		if app.requestIsHTTPS(r) || (app.Config != nil && app.Config.ForceSecureCookies) {
-			w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload")
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000")
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -501,7 +557,7 @@ func (app *App) HandleLiveness(w http.ResponseWriter, _ *http.Request) {
 func (app *App) HandleReadiness(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
 	if err := app.DB.PingContext(r.Context()); err != nil {
-		slog.Warn("readiness database check failed", "error", err)
+		slog.Warn("readiness database check failed", "request_id", RequestID(r), "error", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "not_ready", "component": "database"})
@@ -513,7 +569,7 @@ func (app *App) HandleReadiness(w http.ResponseWriter, r *http.Request) {
 	} {
 		info, err := os.Stat(configuredPath)
 		if err != nil || !info.IsDir() {
-			slog.Warn("readiness storage check failed", "component", name, "path", configuredPath, "error", err)
+			slog.Warn("readiness storage check failed", "request_id", RequestID(r), "component", name, "path", configuredPath, "error", err)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusServiceUnavailable)
 			_ = json.NewEncoder(w).Encode(map[string]string{"status": "not_ready", "component": name})
@@ -545,7 +601,7 @@ func (app *App) CSRFMiddleware(next http.Handler) http.Handler {
 			if err != nil || cookie.Value == "" {
 				token, err = generateCSRFToken()
 				if err != nil {
-					http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+					app.respondWebError(w, r, apperr.Wrap(apperr.KindInternal, "Gitman could not create a CSRF token", err))
 					return
 				}
 				http.SetCookie(w, &http.Cookie{
@@ -571,16 +627,23 @@ func (app *App) CSRFMiddleware(next http.Handler) http.Handler {
 
 		cookie, err := r.Cookie("csrf_token")
 		if err != nil || cookie.Value == "" {
-			http.Error(w, "CSRF token missing", http.StatusForbidden)
+			app.respondForSurface(w, r, apperr.New(apperr.KindForbidden, "CSRF token missing"))
 			return
 		}
 
-		formToken := r.FormValue("csrf_token")
+		formToken := r.Header.Get("X-CSRF-Token")
 		if formToken == "" {
-			formToken = r.Header.Get("X-CSRF-Token")
+			contentType := r.Header.Get("Content-Type")
+			if strings.HasPrefix(contentType, "application/x-www-form-urlencoded") || strings.HasPrefix(contentType, "multipart/form-data") {
+				if err := r.ParseForm(); err != nil {
+					app.respondForSurface(w, r, formParseError(err))
+					return
+				}
+				formToken = r.PostForm.Get("csrf_token")
+			}
 		}
 		if formToken == "" || subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(formToken)) != 1 {
-			http.Error(w, "CSRF validation failed", http.StatusForbidden)
+			app.respondForSurface(w, r, apperr.New(apperr.KindForbidden, "CSRF validation failed"))
 			return
 		}
 
