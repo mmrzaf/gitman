@@ -5,7 +5,7 @@
     /
     <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}">{{.Data.Repository.Name}}</a>
   </h2>
-  <p class="muted">{{if .Data.Repository.Description}}{{.Data.Repository.Description}}{{else}}No description provided.{{end}}</p>
+  <p class="muted">History for {{if .Data.CurrentRef}}<code>{{.Data.CurrentRef}}</code>{{else}}this repository{{end}}.</p>
 </div>
 
 {{template "repo_nav" .}}
@@ -26,34 +26,43 @@ git branch -M main
 git push -u origin main</code></pre>
 </div>
 {{else}}
-<div class="selector-bar">
+<div class="selector-bar source-selector-bar">
   <div class="selector-group">
     <select onchange="window.location.href=this.value" class="code-input" aria-label="Select ref">
+      {{if eq .Data.CurrentRefKind "commit"}}<option selected value="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/commits?ref={{urlquery .Data.CurrentRef}}">Revision {{short .Data.ResolvedCommit 8}}</option>{{end}}
       {{if .Data.Branches}}
       <optgroup label="Branches">
         {{range .Data.Branches}}
-        <option value="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/commits?ref={{.}}" {{if eq . $.Data.CurrentRef}}selected{{end}}>{{.}}</option>
+        <option value="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/commits?ref={{urlquery .}}" {{if eq . $.Data.CurrentRef}}selected{{end}}>{{.}}</option>
         {{end}}
       </optgroup>
       {{end}}
       {{if .Data.Tags}}
       <optgroup label="Tags">
         {{range .Data.Tags}}
-        <option value="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/commits?ref={{.}}" {{if eq . $.Data.CurrentRef}}selected{{end}}>{{.}}</option>
+        <option value="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/commits?ref={{urlquery .}}" {{if eq . $.Data.CurrentRef}}selected{{end}}>{{.}}</option>
         {{end}}
       </optgroup>
       {{end}}
     </select>
+    {{if .Data.ResolvedCommit}}<a class="chip mono" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/commit/{{.Data.ResolvedCommit}}?ref={{urlquery .Data.CurrentRef}}">tip {{short .Data.ResolvedCommit 8}}</a>{{end}}
   </div>
 </div>
 
-<div class="commit-list">
-  {{range .Data.Commits}}
-  <article class="card commit-card">
-    <div class="commit-message"><strong>{{.Message}}</strong></div>
-    <div class="commit-meta muted">
-      <code>{{printf "%.7s" .Hash}}</code>
-      <span><strong>{{.Author}}</strong> committed on {{.Date.Format "2006-01-02 15:04:05"}}</span>
+<div class="commit-list list-card">
+  {{range .Data.CommitViews}}
+  <article class="commit-row">
+    <div class="commit-main">
+      <a class="commit-message" href="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/commit/{{.Commit.Hash}}?ref={{urlquery $.Data.CurrentRef}}"><strong>{{.Commit.Message}}</strong></a>
+      <div class="commit-meta muted">
+        <span><strong>{{.Commit.Author}}</strong></span>
+        <span>·</span>
+        <time datetime="{{.Commit.Date.Format "2006-01-02T15:04:05Z07:00"}}" data-relative-time>{{.Commit.Date.Format "2006-01-02 15:04"}}</time>
+      </div>
+    </div>
+    <div class="commit-actions">
+      {{if .CI}}<a class="badge {{statusClass .CI.Status}}" href="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/ci/{{.CI.ID}}">CI {{statusLabel .CI.Status}}</a>{{end}}
+      <a class="button secondary small mono" href="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/commit/{{.Commit.Hash}}?ref={{urlquery $.Data.CurrentRef}}">{{short .Commit.Hash 8}}</a>
     </div>
   </article>
   {{end}}

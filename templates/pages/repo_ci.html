@@ -102,7 +102,7 @@
       </div>
       <div class="ci-run-context">
         <span class="chip">{{if eq .RefKind "tag"}}tag {{end}}{{.RefLabel}}</span>
-        {{if .Run.CommitHash}}<code>{{short .Run.CommitHash 7}}</code>{{end}}
+        {{if .Run.CommitHash}}<a class="mono" href="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/commit/{{.Run.CommitHash}}{{if .Run.Branch}}?ref={{urlquery .Run.Branch}}{{else if .Run.Tag}}?ref={{urlquery .Run.Tag}}{{end}}">{{short .Run.CommitHash 7}}</a>{{end}}
         <span class="muted">{{.Run.Event}}</span>
       </div>
       <div class="ci-run-meta">

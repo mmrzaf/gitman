@@ -10,23 +10,65 @@
 
 {{template "repo_nav" .}}
 
-<div class="selector-bar">
-  <div class="selector-group">
-    <span class="chip mono">ref {{.Data.CurrentRef}}</span>
-    <a class="chip" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/tree?ref={{.Data.CurrentRef}}">tree</a>
-    <span class="chip mono">/{{.Data.CurrentPath}}</span>
-    <span class="muted mono">{{.Data.BlobSize}} B</span>
+<div class="source-file-header">
+  <div class="source-file-context">
+    <nav class="source-breadcrumbs" aria-label="File path">
+      <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/tree?ref={{urlquery .Data.CurrentRef}}">{{.Data.Repository.Name}}</a>
+      {{range $index, $crumb := .Data.Breadcrumbs}}
+        <span aria-hidden="true">/</span>
+        {{if eq $index (sub1 (len $.Data.Breadcrumbs))}}
+          <strong>{{$crumb.Name}}</strong>
+        {{else}}
+          <a href="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/tree?ref={{urlquery $.Data.CurrentRef}}&amp;path={{urlquery $crumb.Path}}">{{$crumb.Name}}</a>
+        {{end}}
+      {{end}}
+    </nav>
+    <div class="source-file-meta muted">
+      <span class="chip">{{.Data.CurrentRef}}</span>
+      {{if .Data.ResolvedCommit}}<a class="mono" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/commit/{{.Data.ResolvedCommit}}?ref={{urlquery .Data.CurrentRef}}">{{short .Data.ResolvedCommit 8}}</a>{{end}}
+      <span>{{.Data.BlobLanguage}}</span>
+      <span>{{humanSize .Data.BlobSize}}</span>
+    </div>
+  </div>
+  <div class="source-file-actions">
+    {{template "file_finder" .Data}}
+    {{if and (not .Data.IsTooBig) (not .Data.BlobBinary)}}<button class="button secondary small" type="button" data-copy-source-lines data-copy-label="Copy file">Copy file</button>{{end}}
+    <a class="button secondary small" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/raw?ref={{urlquery .Data.CurrentRef}}&amp;path={{urlquery .Data.CurrentPath}}">Raw</a>
+    <a class="button secondary small" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/download?ref={{urlquery .Data.CurrentRef}}&amp;path={{urlquery .Data.CurrentPath}}">Download</a>
+    {{if .Data.ResolvedCommit}}
+    <button class="button secondary small" type="button" data-copy-url="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/blob?ref={{urlquery .Data.ResolvedCommit}}&amp;path={{urlquery .Data.CurrentPath}}" data-copy-current-hash data-copy-label="Permalink">Permalink</button>
+    {{end}}
   </div>
 </div>
 
-<div class="card flush">
-  {{if .Data.IsTooBig}}
-  <div class="empty-state">
-    <p>This file is too large to render in the browser.</p>
-    <p class="muted">{{.Data.BlobSize}} bytes</p>
-  </div>
-  {{else}}
-  <pre><code>{{.Data.BlobContent}}</code></pre>
-  {{end}}
+{{if and (not .Data.IsTooBig) (not .Data.BlobBinary)}}<textarea hidden data-source-raw>{{.Data.BlobContent}}</textarea>{{end}}
+
+{{if .Data.IsTooBig}}
+<div class="empty-state source-empty-state">
+  <h3>File too large to render</h3>
+  <p class="muted">{{humanSize .Data.BlobSize}}. Raw and download remain available.</p>
 </div>
+{{else if .Data.BlobBinary}}
+<div class="empty-state source-empty-state">
+  <h3>Binary file</h3>
+  <p class="muted">Gitman won't reinterpret binary contents. Use Raw or Download to inspect the exact blob.</p>
+</div>
+{{else if not .Data.BlobLines}}
+<div class="empty-state source-empty-state">
+  <p>This file is empty.</p>
+</div>
+{{else}}
+<div class="source-view" data-source-view data-source-path="{{.Data.CurrentPath}}">
+  <table class="source-table" aria-label="Source code">
+    <tbody>
+      {{range .Data.BlobLines}}
+      <tr id="L{{.Number}}" data-source-line="{{.Number}}">
+        <td class="source-line-number"><a href="#L{{.Number}}" data-source-line-link="{{.Number}}" aria-label="Line {{.Number}}">{{.Number}}</a></td>
+        <td class="source-line-code"><pre><code>{{.Highlighted}}</code></pre></td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
 {{end}}

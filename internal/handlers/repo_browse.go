@@ -14,19 +14,29 @@ import (
 )
 
 type RepoPageData struct {
-	Owner         *models.User
-	Repository    *models.Repository
-	CurrentRef    string
-	CurrentPath   string
-	Branches      []string
-	Tags          []string
-	IsEmpty       bool
-	Tree          []git.TreeEntry
-	Commits       []git.Commit
-	BlobContent   string
-	BlobSize      int64
-	IsTooBig      bool
-	Collaborators []models.Collaborator
+	Owner          *models.User
+	Repository     *models.Repository
+	CurrentRef     string
+	CurrentRefKind string
+	ResolvedCommit string
+	CurrentPath    string
+	Breadcrumbs    []RepoBreadcrumb
+	Branches       []string
+	Tags           []string
+	IsEmpty        bool
+	Tree           []git.TreeEntry
+	Commits        []git.Commit
+	CommitViews    []CommitListItem
+	BlobContent    string
+	BlobLines      []SourceLine
+	BlobSize       int64
+	BlobLanguage   string
+	BlobLanguageID string
+	BlobBinary     bool
+	IsTooBig       bool
+	CanViewCI      bool
+	CanControlCI   bool
+	Collaborators  []models.Collaborator
 }
 
 // RepoAccessMiddleware ensures the repository exists and is accessible.
@@ -154,7 +164,10 @@ func (app *App) HandleRepoTreeGET(w http.ResponseWriter, r *http.Request) {
 	// 3. Collect basic data.
 	data.CurrentRef = ref
 	data.CurrentPath = requestRepoPath(r)
+	data.Breadcrumbs = repoBreadcrumbs(data.CurrentPath)
+	data.ResolvedCommit, _ = git.ResolveRevisionCommitHash(ctx, repoPath, ref)
 	loadRefsIntoData(ctx, repoPath, &data)
+	data.CurrentRefKind = classifyRepoRef(data.CurrentRef, data.Branches, data.Tags)
 
 	// 4. Fetch tree.
 	tree, err := git.GetTree(ctx, repoPath, ref, data.CurrentPath)
@@ -217,8 +230,14 @@ func (app *App) HandleRepoBlobGET(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data.CurrentRef = ref
+	data.ResolvedCommit, _ = git.ResolveRevisionCommitHash(ctx, repoPath, ref)
+	data.Breadcrumbs = repoBreadcrumbs(path)
+	language := detectSourceLanguage(path)
+	data.BlobLanguage = language.Label
+	data.BlobLanguageID = language.ID
 
 	loadRefsIntoData(ctx, repoPath, &data)
+	data.CurrentRefKind = classifyRepoRef(data.CurrentRef, data.Branches, data.Tags)
 
 	size, err := git.GetBlobSize(ctx, repoPath, ref, path)
 	if err != nil {
@@ -253,6 +272,11 @@ func (app *App) HandleRepoBlobGET(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		data.BlobContent = string(content)
+		if isTextBlob(content) {
+			data.BlobLines = sourceLines(content, language)
+		} else {
+			data.BlobBinary = true
+		}
 	}
 
 	app.renderPage(w, r, "repo_blob.html", PageData{
@@ -307,8 +331,12 @@ func (app *App) HandleRepoCommitsGET(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data.CurrentRef = ref
+	data.ResolvedCommit, _ = git.ResolveRevisionCommitHash(ctx, repoPath, ref)
+	data.CanViewCI = app.canViewCI(ctx, GetUser(r), repo)
+	data.CanControlCI = app.canControlCI(ctx, GetUser(r), repo)
 
 	loadRefsIntoData(ctx, repoPath, &data)
+	data.CurrentRefKind = classifyRepoRef(data.CurrentRef, data.Branches, data.Tags)
 
 	commits, err := git.GetCommits(ctx, repoPath, ref, 0, 50)
 	if err != nil {
@@ -325,6 +353,25 @@ func (app *App) HandleRepoCommitsGET(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		data.Commits = commits
+		latestRuns := map[string]models.CIRun{}
+		if data.CanViewCI && len(commits) > 0 {
+			hashes := make([]string, 0, len(commits))
+			for _, commit := range commits {
+				hashes = append(hashes, commit.Hash)
+			}
+			if runs, runErr := app.DB.GetLatestCIRunsForCommits(ctx, repo.ID, hashes); runErr == nil {
+				latestRuns = runs
+			}
+		}
+		data.CommitViews = make([]CommitListItem, 0, len(commits))
+		for _, commit := range commits {
+			item := CommitListItem{Commit: commit}
+			if run, ok := latestRuns[commit.Hash]; ok {
+				runCopy := run
+				item.CI = &runCopy
+			}
+			data.CommitViews = append(data.CommitViews, item)
+		}
 	}
 
 	app.renderPage(w, r, "repo_commits.html", PageData{

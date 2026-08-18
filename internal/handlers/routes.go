@@ -90,7 +90,11 @@ func SetupRouter(app *App) *chi.Mux {
 			r.Get("/", app.HandleRepoTreeGET)
 			r.Get("/tree", app.HandleRepoTreeGET)
 			r.Get("/blob", app.HandleRepoBlobGET)
+			r.Get("/raw", app.HandleRepoBlobRawGET)
+			r.Get("/download", app.HandleRepoBlobDownloadGET)
+			r.Get("/files/search", app.HandleRepoFileSearchGET)
 			r.Get("/commits", app.HandleRepoCommitsGET)
+			r.Get("/commit/{commit_hash}", app.HandleRepoCommitGET)
 			r.Get("/archive/{format}", app.HandleRepoArchiveGET)
 
 			// Legacy path-based routes remain during the beta transition.

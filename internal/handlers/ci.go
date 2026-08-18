@@ -134,6 +134,17 @@ func (app *App) HandleCIGET(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (app *App) canViewCI(ctx context.Context, user *models.User, repo *models.Repository) bool {
+	if user == nil || repo == nil {
+		return false
+	}
+	if user.ID == repo.OwnerID {
+		return true
+	}
+	hasRead, err := app.DB.HasRepoAccess(ctx, repo.ID, user.ID, "read")
+	return err == nil && hasRead
+}
+
 func (app *App) canControlCI(ctx context.Context, user *models.User, repo *models.Repository) bool {
 	if user == nil || repo == nil {
 		return false
