@@ -8,7 +8,7 @@ The product has two independently runnable processes:
 
 | Process | Purpose | Required dependencies |
 | --- | --- | --- |
-| `gitman web` | Browser UI, Git smart HTTP, CI trigger webhook, health endpoint | `git` |
+| `gitman web` | Browser UI, Git smart HTTP, durable CI trigger drain, health endpoint | `git` |
 | `gitman worker` | Polls queued CI runs and starts restricted Docker containers | `git`, Docker CLI, access to Docker daemon |
 
 Optional SSH Git transport uses the host OpenSSH server and a host-visible `gitman` wrapper. It is not implemented by an embedded SSH daemon.
@@ -17,7 +17,7 @@ Optional SSH Git transport uses the host OpenSSH server and a host-visible `gitm
 
 A repository has one owner and can have collaborators:
 
-| Role | Browse private source | Pull | Push | View CI logs and artifacts | Run CI manually | Manage collaborators | Manage CI secrets and hook |
+| Role | Browse private source | Pull | Push | View CI logs and artifacts | Run CI manually | Manage collaborators | Manage CI settings |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Owner | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | `write` collaborator | Yes | Yes | Yes | Yes | Yes | No | No |

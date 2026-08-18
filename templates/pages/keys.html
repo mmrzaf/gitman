@@ -1,30 +1,18 @@
 {{define "content"}}
-<div class="page-header page-header-row">
-  <div>
-    <h2>SSH Keys</h2>
-    <p class="muted">Manage SSH keys allowed to access your repositories.</p>
-  </div>
-</div>
-
-<div class="content-grid">
-  <section>
-    {{template "keys_panel" .}}
+<div class="page-heading"><h1>SSH keys</h1><p>Keys used for Git over SSH.</p></div>
+{{template "flash" .}}
+<div class="split-layout">
+  <section class="primary-column">
+    {{if .Keys}}
+    <div class="resource-list">{{range .Keys}}<div class="resource-row"><div><strong>{{.Name}}</strong>{{if .Fingerprint}}<div class="meta-line mono">{{.Fingerprint}}</div>{{end}}<div class="meta-line">Added {{.CreatedAt.Format "Jan 02, 2006"}}</div></div><form method="POST" action="/keys/{{.ID}}/delete" data-confirm="Delete SSH key {{.Name}}?"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="danger-link" type="submit">Delete</button></form></div>{{end}}</div>
+    {{else}}<p class="empty-line">No SSH keys.</p>{{end}}
   </section>
-
-  <aside class="form-card side-panel">
-    <h3>Add SSH key</h3>
-    <p class="muted">Generate one with <code>ssh-keygen -t ed25519</code>, then paste the public key.</p>
-    <form method="POST" action="/keys" class="form-stack">
-      <label class="field">
-        <span>Name</span>
-        <input id="key-name" type="text" name="name" required maxlength="100" placeholder="Work laptop" />
-      </label>
-      <label class="field">
-        <span>Public key</span>
-        <textarea id="public-key" name="public_key" rows="5" required maxlength="16384" placeholder="ssh-ed25519 AAAA..."></textarea>
-      </label>
-      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
-      <button type="submit">Add SSH key</button>
+  <aside class="side-form">
+    <h2>Add SSH key</h2>
+    <form method="POST" action="/keys" class="settings-form">
+      <label><span>Name</span><input type="text" name="name" required maxlength="100" placeholder="Work laptop"></label>
+      <label><span>Public key</span><textarea name="public_key" rows="6" required maxlength="16384" placeholder="ssh-ed25519 AAAA…"></textarea></label>
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button type="submit">Add key</button>
     </form>
   </aside>
 </div>

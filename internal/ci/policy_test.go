@@ -107,3 +107,13 @@ func TestResolverPatternRuleAllowsVersionTags(t *testing.T) {
 		t.Fatalf("pattern rule was not applied: %+v", policy)
 	}
 }
+
+func TestResolverDetachedCommitIsUntrusted(t *testing.T) {
+	policy, err := (Resolver{}).Resolve(context.Background(), nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policy.Source != PolicySourceDetached || policy.AutoRun || policy.AllowSecrets || policy.AllowDockerSocket || policy.RefType != "" || policy.RefName != "" {
+		t.Fatalf("unexpected detached policy: %+v", policy)
+	}
+}

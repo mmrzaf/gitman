@@ -1,6 +1,6 @@
 # CI secrets
 
-Repository owners manage CI secrets from the repository **Secrets** page. Secret storage is disabled until the operator configures `GITMAN_SECRET_KEY` on both web and worker processes.
+Repository owners manage CI secrets from the repository **Settings → CI** page. Secret storage is disabled until the operator configures `GITMAN_SECRET_KEY` on both web and worker processes.
 
 ## Reference a secret
 

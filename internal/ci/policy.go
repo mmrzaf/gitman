@@ -10,8 +10,9 @@ import (
 )
 
 const (
-	PolicySourceDefault = "default-policy"
-	PolicySourceRule    = "explicit-rule"
+	PolicySourceDefault  = "default-policy"
+	PolicySourceRule     = "explicit-rule"
+	PolicySourceDetached = "detached-commit"
 )
 
 type RefPolicy struct {
@@ -19,7 +20,7 @@ type RefPolicy struct {
 	AllowSecrets      bool
 	AllowDockerSocket bool
 	Source            string
-	RefType           string
+	RefType           models.CIRefType
 	RefName           string
 	RuleRefName       string
 }
@@ -31,17 +32,20 @@ type Resolver struct {
 
 func (r Resolver) Resolve(ctx context.Context, owner *models.User, repo *models.Repository, branch, tag string) (RefPolicy, error) {
 	if branch == "" && tag == "" {
-		return RefPolicy{}, fmt.Errorf("CI run has no branch or tag")
+		// Manual and retry runs may intentionally target an exact commit without
+		// carrying branch/tag trust. They are valid, but untrusted by default:
+		// no auto-run, secrets, or Docker socket access.
+		return RefPolicy{Source: PolicySourceDetached}, nil
 	}
 	if branch != "" && tag != "" {
 		return RefPolicy{}, fmt.Errorf("CI run targets both branch and tag")
 	}
 
-	refType, refName := "branch", branch
+	refType, refName := models.CIRefBranch, branch
 	if tag != "" {
-		refType, refName = "tag", tag
+		refType, refName = models.CIRefTag, tag
 	}
-	if err := git.ValidateRefName(refName); err != nil {
+	if err := git.ValidateRefNameContext(ctx, refName); err != nil {
 		return RefPolicy{}, fmt.Errorf("invalid CI ref: %w", err)
 	}
 
@@ -61,7 +65,7 @@ func (r Resolver) Resolve(ctx context.Context, owner *models.User, repo *models.
 		}, nil
 	}
 
-	if refType == "tag" {
+	if refType == models.CIRefTag {
 		return RefPolicy{Source: PolicySourceDefault, RefType: refType, RefName: refName}, nil
 	}
 	repoPath, err := git.SecureRepoPath(r.ReposPath, owner.Username, repo.Name)

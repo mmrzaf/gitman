@@ -1,32 +1,19 @@
 {{define "content"}}
-<div class="page-header">
-  <h2 class="repo-title">
-    <a href="/{{.Data.Owner.Username}}">{{.Data.Owner.Username}}</a>
-    /
-    <a href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}">{{.Data.Repository.Name}}</a>
-  </h2>
-  <p class="muted">{{if .Data.Repository.Description}}{{.Data.Repository.Description}}{{else}}No description provided.{{end}}</p>
-</div>
-
-{{template "repo_nav" .}}
-
-<div class="selector-bar">
-  <div class="selector-group">
-    <span class="chip mono">ref {{.Data.CurrentRef}}</span>
-    <a class="chip" href="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/tree?ref={{.Data.CurrentRef}}">tree</a>
-    <span class="chip mono">/{{.Data.CurrentPath}}</span>
-    <span class="muted mono">{{.Data.BlobSize}} B</span>
+<div class="source-header">
+  <div>
+    <nav class="breadcrumbs" aria-label="File path"><a href="/{{.Owner.Username}}/{{.Repository.Name}}/tree?ref={{urlquery .CurrentRef}}">{{.Repository.Name}}</a>{{range $index, $crumb := .Breadcrumbs}}<span>/</span>{{if eq $index (sub1 (len $.Breadcrumbs))}}<strong>{{$crumb.Name}}</strong>{{else}}<a href="/{{$.Owner.Username}}/{{$.Repository.Name}}/tree?ref={{urlquery $.CurrentRef}}&amp;path={{urlquery $crumb.Path}}">{{$crumb.Name}}</a>{{end}}{{end}}</nav>
+    <div class="meta-line"><span class="mono">{{.CurrentRef}}</span>{{if .ResolvedCommit}}<a class="mono" href="/{{.Owner.Username}}/{{.Repository.Name}}/commit/{{.ResolvedCommit}}?ref={{urlquery .CurrentRef}}">{{short .ResolvedCommit 8}}</a>{{end}}<span>{{.BlobLanguage}}</span><span>{{humanSize .BlobSize}}</span></div>
+  </div>
+  <div class="inline-actions">
+    {{if and (not .IsTooBig) (not .BlobBinary)}}<button class="secondary small js-only" type="button" data-copy-source-lines data-copy-label="Copy file">Copy</button>{{end}}
+    <a class="button secondary small" href="/{{.Owner.Username}}/{{.Repository.Name}}/raw?ref={{urlquery .CurrentRef}}&amp;path={{urlquery .CurrentPath}}">Raw</a>
+    <a class="button secondary small" href="/{{.Owner.Username}}/{{.Repository.Name}}/download?ref={{urlquery .CurrentRef}}&amp;path={{urlquery .CurrentPath}}">Download</a>
+    {{if .ResolvedCommit}}<button class="secondary small js-only" type="button" data-copy-url="/{{.Owner.Username}}/{{.Repository.Name}}/blob?ref={{urlquery .ResolvedCommit}}&amp;path={{urlquery .CurrentPath}}" data-copy-current-hash data-copy-label="Permalink">Permalink</button>{{end}}
   </div>
 </div>
-
-<div class="card flush">
-  {{if .Data.IsTooBig}}
-  <div class="empty-state">
-    <p>This file is too large to render in the browser.</p>
-    <p class="muted">{{.Data.BlobSize}} bytes</p>
-  </div>
-  {{else}}
-  <pre><code>{{.Data.BlobContent}}</code></pre>
-  {{end}}
-</div>
+{{if and (not .IsTooBig) (not .BlobBinary)}}<textarea hidden data-source-raw>{{.BlobContent}}</textarea>{{end}}
+{{if .IsTooBig}}<p class="empty-line">{{if .BlobRenderNote}}{{.BlobRenderNote}}{{else}}This file is too large for the source viewer.{{end}}</p>
+{{else if .BlobBinary}}<p class="empty-line">Binary file. Use Raw or Download.</p>
+{{else if not .BlobLines}}<p class="empty-line">This file is empty.</p>
+{{else}}<div class="source-view" data-source-view data-source-path="{{.CurrentPath}}"><table class="source-table" aria-label="Source code"><tbody>{{range .BlobLines}}<tr id="L{{.Number}}" data-source-line="{{.Number}}"><td class="source-line-number"><a href="#L{{.Number}}" data-source-line-link="{{.Number}}">{{.Number}}</a></td><td class="source-line-code"><pre><code>{{.Text}}</code></pre></td></tr>{{end}}</tbody></table></div>{{end}}
 {{end}}

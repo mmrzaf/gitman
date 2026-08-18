@@ -6,13 +6,13 @@ Gitman is aimed at small teams and private infrastructure. It is not a multi-ten
 
 ## Features
 
-- Browser UI for repositories, branches, tags, commits, files, collaborators, SSH keys, and personal access tokens.
+- Browser UI for repositories, branches, tags, commit diffs, exact source with line permalinks, root README preview, collaborators, SSH keys, and personal access tokens.
 - Git smart HTTP with personal access token authentication.
 - Optional SSH Git transport through the host OpenSSH server and generated `authorized_keys` forced commands.
 - Private and public repositories with read and write collaborators.
 - Built-in CI jobs defined in `.gitman-ci.yml`.
 - CI secrets encrypted at rest when `GITMAN_SECRET_KEY` is configured.
-- Durable push-triggered CI, cancellation and exact-commit retries, live logs, outcome reasons, and nested artifacts.
+- Durable push-triggered CI, cancellation and exact-commit retries, structured incremental live logs, retry lineage, exact pipeline visibility, outcome reasons, and nested artifacts.
 - Repository settings and guarded deletion, repository archives, backups, and an admin CLI.
 
 ## Requirements
@@ -106,7 +106,7 @@ gitman admin repos configure-all
 gitman version
 ```
 
-Backup destinations must be absent or empty, and must not be inside the repository or artifact trees. Repository and artifact files are copied live. Use a maintenance window or filesystem snapshots when strict point-in-time consistency is required.
+Backup commands require Gitman's exclusive state lock. Stop the web and worker processes first; Gitman refuses the backup while another Gitman process is using mutable state. The destination must be absent or empty and must not be inside the repository or artifact trees.
 
 ## Configuration
 

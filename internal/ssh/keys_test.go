@@ -3,10 +3,12 @@ package ssh
 import (
 	"context"
 	"crypto/ed25519"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mmrzaf/gitman/internal/config"
 	"github.com/mmrzaf/gitman/internal/db"
@@ -115,5 +117,102 @@ func TestSyncAuthorizedKeysBasenameDoesNotChmodWorkingDirectory(t *testing.T) {
 	}
 	if got := info.Mode().Perm(); got != 0o755 {
 		t.Fatalf("working directory mode changed to %o", got)
+	}
+}
+
+func TestAuthorizedKeysLockSerializesPublishers(t *testing.T) {
+	lockPath := filepath.Join(t.TempDir(), "authorized_keys.lock")
+	first, err := acquireAuthorizedKeysLock(context.Background(), lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
+	defer cancel()
+	if _, err := acquireAuthorizedKeysLock(ctx, lockPath); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("second lock error = %v, want context deadline exceeded", err)
+	}
+
+	if err := releaseAuthorizedKeysLock(first); err != nil {
+		t.Fatal(err)
+	}
+	second, err := acquireAuthorizedKeysLock(context.Background(), lockPath)
+	if err != nil {
+		t.Fatalf("reacquire after release: %v", err)
+	}
+	if err := releaseAuthorizedKeysLock(second); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAuthorizedKeysLockRejectsSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	if err := os.WriteFile(target, []byte("not a lock"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(dir, "authorized_keys.lock")
+	if err := os.Symlink(target, lockPath); err != nil {
+		t.Fatal(err)
+	}
+
+	file, err := acquireAuthorizedKeysLock(context.Background(), lockPath)
+	if file != nil {
+		_ = releaseAuthorizedKeysLock(file)
+	}
+	if err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("lock symlink error = %v, want non-regular-file rejection", err)
+	}
+}
+
+func TestAddKeyRollsBackWhenAuthorizedKeysPublishFails(t *testing.T) {
+	database := setupTestDB(t)
+	ctx := context.Background()
+	user, err := database.GetUserByUsername(ctx, "gituser")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Using a directory as the destination makes the final atomic rename fail
+	// after the database insert has succeeded.
+	badDestination := t.TempDir()
+	cfg := &config.Config{AuthKeysPath: badDestination, BinaryPath: "/usr/local/bin/gitman"}
+	key := testPublicKey(t, 3)
+	if err := AddKey(ctx, database, cfg, user.ID, "rollback", key); err == nil {
+		t.Fatal("expected authorized_keys publication failure")
+	}
+	keys, err := database.GetUserSSHKeys(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, existing := range keys {
+		if existing.PublicKey == key {
+			t.Fatal("failed AddKey left the new key in the database")
+		}
+	}
+}
+
+func TestDeleteKeyRestoresRowWhenAuthorizedKeysPublishFails(t *testing.T) {
+	database := setupTestDB(t)
+	ctx := context.Background()
+	user, err := database.GetUserByUsername(ctx, "gituser")
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, err := database.GetUserSSHKeys(ctx, user.ID)
+	if err != nil || len(keys) == 0 {
+		t.Fatalf("keys: %v, %v", keys, err)
+	}
+	badDestination := t.TempDir()
+	cfg := &config.Config{AuthKeysPath: badDestination, BinaryPath: "/usr/local/bin/gitman"}
+	key := keys[0]
+	if err := DeleteKey(ctx, database, cfg, &key); err == nil {
+		t.Fatal("expected authorized_keys publication failure")
+	}
+	restored, err := database.GetSSHKeyByID(ctx, key.ID)
+	if err != nil {
+		t.Fatalf("deleted key was not restored: %v", err)
+	}
+	if restored.PublicKey != key.PublicKey {
+		t.Fatal("restored key changed")
 	}
 }

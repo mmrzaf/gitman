@@ -1,0 +1,139 @@
+package handlers
+
+import (
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/mmrzaf/gitman/internal/apperr"
+	cipipeline "github.com/mmrzaf/gitman/internal/ci"
+	"github.com/mmrzaf/gitman/internal/models"
+)
+
+func TestParseCILogStructuresConfiguredSteps(t *testing.T) {
+	started := time.Date(2026, 8, 18, 0, 0, 0, 0, time.UTC)
+	finished := started.Add(8 * time.Second)
+	run := &models.CIRun{Status: "failed", StartedAt: &started, CompletedAt: &finished}
+	cfg := &cipipeline.Config{Steps: []cipipeline.Step{{Name: "Test"}, {Name: "Build"}, {Name: "Package"}}}
+	log := strings.Join([]string{
+		"[2026-08-18T00:00:00Z] Repository : me/gitman",
+		"2026-08-18T00:00:01Z --- Step: Test ---",
+		"ok github.com/me/gitman",
+		"2026-08-18T00:00:03Z --- Step: Test: SUCCESS ---",
+		"2026-08-18T00:00:04Z --- Step: Build ---",
+		"compile error",
+		"2026-08-18T00:00:07Z --- Step: Build: FAILED (exit 2) ---",
+		"[2026-08-18T00:00:08Z] Exit status: FAILED",
+	}, "\n") + "\n"
+
+	view := parseCILog(log, run, cfg)
+	if view.Setup.Status != "success" || !strings.Contains(view.Setup.Output, "Repository") {
+		t.Fatalf("unexpected setup: %+v", view.Setup)
+	}
+	if got := view.Steps[0]; got.Status != "success" || got.Duration != "2s" || !strings.Contains(got.Output, "ok github") {
+		t.Fatalf("unexpected test step: %+v", got)
+	}
+	if got := view.Steps[1]; got.Status != "failed" || got.ExitCode != 2 || got.Duration != "3s" || !got.Open {
+		t.Fatalf("unexpected build step: %+v", got)
+	}
+	if got := view.Steps[2]; got.Status != "pending" {
+		t.Fatalf("unexpected package step: %+v", got)
+	}
+	if view.Finalize.Status != "failed" || !strings.Contains(view.Finalize.Output, "Exit status") {
+		t.Fatalf("unexpected finalize section: %+v", view.Finalize)
+	}
+}
+
+func TestParseCILogHandlesStepNamesEndingInStatusWords(t *testing.T) {
+	cfg := &cipipeline.Config{Steps: []cipipeline.Step{{Name: "Check: SUCCESS"}}}
+	run := &models.CIRun{Status: "success"}
+	log := "2026-08-18T00:00:01Z --- Step: Check: SUCCESS ---\noutput\n2026-08-18T00:00:02Z --- Step: Check: SUCCESS: SUCCESS ---\n"
+	view := parseCILog(log, run, cfg)
+	if len(view.Steps) != 1 || view.Steps[0].Status != "success" || view.Steps[0].Output != "output" {
+		t.Fatalf("ambiguous step name parsed incorrectly: %+v", view.Steps)
+	}
+}
+
+func TestArtifactTreePreservesNestedFiles(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "coverage", "assets"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "coverage", "index.html"), []byte("<h1>report</h1>"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "coverage", "assets", "data.json"), []byte(`{"ok":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	files, err := listArtifactFiles(root)
+	if err != nil {
+		t.Fatalf("list artifact files: %v", err)
+	}
+	if len(files) != 2 {
+		t.Fatalf("files = %d, want 2: %+v", len(files), files)
+	}
+	tree := buildArtifactTree(files)
+	if len(tree) != 1 || tree[0].Name != "coverage" || len(tree[0].Children) != 2 {
+		t.Fatalf("unexpected tree: %+v", tree)
+	}
+	if artifactTreeSize(tree) == 0 {
+		t.Fatal("artifact tree size was not accumulated")
+	}
+}
+
+func TestValidUTF8SampleAllowsOnlyTrailingPartialRune(t *testing.T) {
+	partial := append([]byte("text "), []byte{0xe4, 0xb8}...)
+	if !validUTF8Sample(partial, true) {
+		t.Fatal("truncated sample ending in a partial UTF-8 rune should remain previewable")
+	}
+	if validUTF8Sample(partial, false) {
+		t.Fatal("complete file ending in a partial rune should not be considered valid UTF-8")
+	}
+	invalid := append([]byte("text "), 0xff)
+	if validUTF8Sample(invalid, true) {
+		t.Fatal("invalid UTF-8 byte must not be accepted as a truncation boundary")
+	}
+}
+
+func TestListArtifactFilesTreatsMissingRootAsEmpty(t *testing.T) {
+	files, err := listArtifactFiles(filepath.Join(t.TempDir(), "missing"))
+	if err != nil {
+		t.Fatalf("missing artifact root: %v", err)
+	}
+	if len(files) != 0 {
+		t.Fatalf("files = %+v, want empty", files)
+	}
+}
+
+func TestListArtifactFilesRejectsNonDirectoryRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "artifacts")
+	if err := os.WriteFile(root, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := listArtifactFiles(root); err == nil {
+		t.Fatal("expected non-directory artifact root to fail")
+	}
+}
+
+func TestReadCILogDistinguishesMissingFromUnreadableShape(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing.log")
+	content, offset, err := readCILog(missing)
+	if err != nil || content != "" || offset != 0 {
+		t.Fatalf("missing log = (%q, %d, %v), want empty normal state", content, offset, err)
+	}
+
+	dir := t.TempDir()
+	if _, _, err := readCILog(dir); err == nil {
+		t.Fatal("directory used as log path must be reported as storage failure")
+	}
+}
+
+func TestCITriggerDecodeErrorPreservesTooLargeKind(t *testing.T) {
+	err := ciTriggerDecodeError(&http.MaxBytesError{Limit: 64 * 1024})
+	if got := apperr.KindOf(err); got != apperr.KindTooLarge {
+		t.Fatalf("KindOf(ciTriggerDecodeError) = %v; want %v", got, apperr.KindTooLarge)
+	}
+}

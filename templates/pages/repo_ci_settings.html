@@ -1,0 +1,68 @@
+{{define "content"}}
+<div class="page-heading">
+  <h1>Settings</h1>
+  <p>CI secrets and trusted refs.</p>
+</div>
+{{template "repo_settings_nav" .}}
+{{template "flash" .}}
+
+<section class="settings-section">
+  <div class="section-copy">
+    <h2>Secrets</h2>
+    <p>Encrypted values available only to refs allowed to use secrets.</p>
+  </div>
+  <div class="section-body">
+    {{if .NoKey}}<div class="notice warning"><strong>Secret storage unavailable.</strong> The server administrator must configure <code>GITMAN_SECRET_KEY</code>.</div>{{end}}
+    {{if .Secrets}}
+    <div class="resource-list compact">
+      {{range .Secrets}}
+      <div class="resource-row">
+        <div><strong class="mono">{{.Key}}</strong><div class="meta-line">Added {{.CreatedAt.Format "Jan 02, 2006"}}</div></div>
+        <form method="POST" action="/{{$.Owner.Username}}/{{$.Repository.Name}}/settings/ci/secrets/{{.ID}}/delete" data-confirm="Delete secret {{.Key}}?">
+          <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="danger-link" type="submit">Delete</button>
+        </form>
+      </div>
+      {{end}}
+    </div>
+    {{else}}<p class="empty-line">No secrets configured.</p>{{end}}
+
+    <form method="POST" action="/{{.Owner.Username}}/{{.Repository.Name}}/settings/ci/secrets" class="settings-form narrow-form">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <label><span>Key</span><input type="text" name="key" placeholder="DOCKER_TOKEN" pattern="[A-Z][A-Z0-9_]*" required {{if .NoKey}}disabled{{end}}></label>
+      <label><span>Value</span><input type="password" name="value" required {{if .NoKey}}disabled{{end}}></label>
+      <div><button type="submit" {{if .NoKey}}disabled{{end}}>Add secret</button></div>
+    </form>
+  </div>
+</section>
+
+<section class="settings-section">
+  <div class="section-copy">
+    <h2>Trusted refs</h2>
+    <p>Control which branches or tags auto-run, receive secrets, or can use the Docker socket.</p>
+  </div>
+  <div class="section-body">
+    {{if .RefRules}}
+    <div class="table-wrap">
+      <table class="data-table compact-table">
+        <thead><tr><th>Ref</th><th>Auto-run</th><th>Secrets</th><th>Docker</th><th></th></tr></thead>
+        <tbody>{{range .RefRules}}<tr>
+          <td><span class="muted">{{.RefType}}</span> <code>{{.RefName}}</code></td>
+          <td>{{if .AutoRun}}yes{{else}}—{{end}}</td><td>{{if .AllowSecrets}}yes{{else}}—{{end}}</td><td>{{if .AllowDockerSocket}}yes{{else}}—{{end}}</td>
+          <td><form method="POST" action="/{{$.Owner.Username}}/{{$.Repository.Name}}/settings/ci/rules/delete" data-confirm="Delete this trusted-ref rule?"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="ref_type" value="{{.RefType}}"><input type="hidden" name="ref_name" value="{{.RefName}}"><button class="danger-link" type="submit">Delete</button></form></td>
+        </tr>{{end}}</tbody>
+      </table>
+    </div>
+    {{else}}<p class="empty-line">No explicit rules. The default branch may auto-run and use secrets; Docker access always needs a rule.</p>{{end}}
+
+    <form method="POST" action="/{{.Owner.Username}}/{{.Repository.Name}}/settings/ci/rules" class="trusted-ref-form">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <label><span>Type</span><select name="ref_type"><option value="branch">Branch</option><option value="tag">Tag</option></select></label>
+      <label class="grow"><span>Ref or pattern</span><input name="ref_name" required placeholder="main, v*, release/*"></label>
+      <label class="check"><input type="checkbox" name="auto_run"> Auto-run</label>
+      <label class="check"><input type="checkbox" name="allow_secrets"> Secrets</label>
+      <label class="check"><input type="checkbox" name="allow_docker_socket"> Docker</label>
+      <button type="submit">Save rule</button>
+    </form>
+  </div>
+</section>
+{{end}}

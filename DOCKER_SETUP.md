@@ -149,13 +149,15 @@ For stronger isolation:
 
 ## Backups
 
-Create a full backup from the web container:
+A full backup takes Gitman's exclusive state lock, so stop the long-running web and worker processes first:
 
 ```bash
-docker compose exec -T web gitman admin repos backup-all /data/backups/gitman-$(date +%F)
+docker compose stop web worker
+docker compose run --rm --no-deps web gitman admin repos backup-all /data/backups/gitman-$(date +%F)
+docker compose start web worker
 ```
 
-The destination must be absent or empty and must not be inside `/data/repos` or `/data/artifacts`. The SQLite database is copied coherently with `VACUUM INTO`. Repositories and artifacts are copied live, so use a maintenance window or filesystem snapshot when strict point-in-time consistency is required.
+The destination must be absent or empty and must not be inside `/data/repos` or `/data/artifacts`. While the exclusive lock is held, the SQLite database, repositories, and artifacts are copied as one offline-consistent Gitman snapshot. Generated `authorized_keys`, CI caches, and temporary workspaces are derived/runtime state and are intentionally excluded; web startup regenerates `authorized_keys` from the database.
 
 ## Common operations
 
@@ -170,6 +172,7 @@ docker compose down
 Upgrade by backing up first, then rebuilding:
 
 ```bash
-docker compose exec -T web gitman admin repos backup-all /data/backups/pre-upgrade-$(date +%F-%H%M%S)
+docker compose stop web worker
+docker compose run --rm --no-deps web gitman admin repos backup-all /data/backups/pre-upgrade-$(date +%F-%H%M%S)
 docker compose up -d --build
 ```

@@ -2,7 +2,6 @@ package db
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"path"
@@ -10,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mmrzaf/gitman/internal/git"
 	"github.com/mmrzaf/gitman/internal/models"
 )
 
@@ -29,13 +27,19 @@ func scanRepoCIRefRule(scanner rowScanner) (*models.RepoCIRefRule, error) {
 	); err != nil {
 		return nil, err
 	}
+	if !rule.RefType.Valid() {
+		return nil, fmt.Errorf("invalid stored CI ref type %q", rule.RefType)
+	}
+	if err := validateCIRefRuleName(rule.RefName); err != nil {
+		return nil, fmt.Errorf("invalid stored CI ref rule %q: %w", rule.RefName, err)
+	}
 	rule.CreatedAt = unixToTime(createdAt)
 	rule.UpdatedAt = unixToTime(updatedAt)
 	return &rule, nil
 }
 
-func validateCIRefRule(refType, refName string) error {
-	if refType != "branch" && refType != "tag" {
+func validateCIRefRule(refType models.CIRefType, refName string) error {
+	if !refType.Valid() {
 		return fmt.Errorf("invalid CI ref rule type %q", refType)
 	}
 	if err := validateCIRefRuleName(refName); err != nil {
@@ -49,6 +53,9 @@ func validateCIRefRuleName(refName string) error {
 	if refName == "" {
 		return fmt.Errorf("CI ref rule name is required")
 	}
+	if len(refName) > 255 {
+		return fmt.Errorf("CI ref rule name is too long")
+	}
 	if strings.ContainsAny(refName, "\x00\r\n") {
 		return fmt.Errorf("CI ref rule name contains unsupported control characters")
 	}
@@ -57,9 +64,6 @@ func validateCIRefRuleName(refName string) error {
 			return fmt.Errorf("invalid CI ref rule pattern %q: %w", refName, err)
 		}
 		return nil
-	}
-	if err := git.ValidateRefName(refName); err != nil {
-		return fmt.Errorf("invalid CI ref rule name %q: %w", refName, err)
 	}
 	return nil
 }
@@ -86,7 +90,7 @@ func (db *DB) UpsertRepoCIRefRule(ctx context.Context, rule models.RepoCIRefRule
 		return err
 	}
 	now := time.Now().Unix()
-	_, err := db.ExecContext(ctx, `
+	_, err := db.sql.ExecContext(ctx, `
 		INSERT INTO repo_ci_ref_rules (
 			repo_id, ref_type, ref_name, auto_run, allow_secrets,
 			allow_docker_socket, created_at, updated_at
@@ -102,33 +106,36 @@ func (db *DB) UpsertRepoCIRefRule(ctx context.Context, rule models.RepoCIRefRule
 	return err
 }
 
-func (db *DB) GetRepoCIRefRule(ctx context.Context, repoID, refType, refName string) (*models.RepoCIRefRule, error) {
+func (db *DB) GetRepoCIRefRule(ctx context.Context, repoID string, refType models.CIRefType, refName string) (*models.RepoCIRefRule, error) {
 	if err := validateCIRefRule(refType, refName); err != nil {
 		return nil, err
 	}
-	rule, err := scanRepoCIRefRule(db.QueryRowContext(ctx, `
+	rule, err := scanRepoCIRefRule(db.sql.QueryRowContext(ctx, `
 		SELECT repo_id, ref_type, ref_name, auto_run, allow_secrets,
 		       allow_docker_socket, created_at, updated_at
 		FROM repo_ci_ref_rules
 		WHERE repo_id = ? AND ref_type = ? AND ref_name = ?
 	`, repoID, refType, refName))
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
+	if err != nil {
+		return nil, normalizeNotFound(err)
 	}
-	return rule, err
+	return rule, nil
 }
 
-func (db *DB) MatchRepoCIRefRule(ctx context.Context, repoID, refType, refName string) (*models.RepoCIRefRule, error) {
-	if refType != "branch" && refType != "tag" {
+func (db *DB) MatchRepoCIRefRule(ctx context.Context, repoID string, refType models.CIRefType, refName string) (*models.RepoCIRefRule, error) {
+	if !refType.Valid() {
 		return nil, fmt.Errorf("invalid CI ref rule type %q", refType)
 	}
-	if err := git.ValidateRefName(refName); err != nil {
+	if err := validateCIRefRuleName(refName); err != nil {
 		return nil, fmt.Errorf("invalid CI ref %q: %w", refName, err)
 	}
 
 	rule, err := db.GetRepoCIRefRule(ctx, repoID, refType, refName)
-	if err != nil || rule != nil {
-		return rule, err
+	if err == nil {
+		return rule, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return nil, err
 	}
 
 	rules, err := db.ListRepoCIRefRules(ctx, repoID)
@@ -158,7 +165,7 @@ func (db *DB) MatchRepoCIRefRule(ctx context.Context, repoID, refType, refName s
 }
 
 func (db *DB) ListRepoCIRefRules(ctx context.Context, repoID string) (rules []models.RepoCIRefRule, err error) {
-	rows, err := db.QueryContext(ctx, `
+	rows, err := db.sql.QueryContext(ctx, `
 		SELECT repo_id, ref_type, ref_name, auto_run, allow_secrets,
 		       allow_docker_socket, created_at, updated_at
 		FROM repo_ci_ref_rules
@@ -183,13 +190,16 @@ func (db *DB) ListRepoCIRefRules(ctx context.Context, repoID string) (rules []mo
 	return rules, rows.Err()
 }
 
-func (db *DB) DeleteRepoCIRefRule(ctx context.Context, repoID, refType, refName string) error {
+func (db *DB) DeleteRepoCIRefRule(ctx context.Context, repoID string, refType models.CIRefType, refName string) error {
 	if err := validateCIRefRule(refType, refName); err != nil {
 		return err
 	}
-	_, err := db.ExecContext(ctx, `
+	res, err := db.sql.ExecContext(ctx, `
 		DELETE FROM repo_ci_ref_rules
 		WHERE repo_id = ? AND ref_type = ? AND ref_name = ?
 	`, repoID, refType, refName)
-	return err
+	if err != nil {
+		return err
+	}
+	return requireAffectedRow(res, ErrNotFound)
 }

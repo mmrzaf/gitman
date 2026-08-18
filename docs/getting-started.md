@@ -72,7 +72,7 @@ steps:
     run: echo "CI is working"
 ```
 
-Push the file, open the repository's **CI/CD** page, and select **Run CI**. Repository owners can install the post-receive auto-trigger hook from the same page.
+Push the file, open the repository's **CI** page, and select **Run CI**. Gitman manages the repository's durable post-receive trigger automatically.
 
 ## 6. Before exposing Gitman
 

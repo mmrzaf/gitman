@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/mmrzaf/gitman/internal/config"
 	"github.com/mmrzaf/gitman/internal/db"
 	"github.com/mmrzaf/gitman/internal/git"
@@ -50,15 +49,15 @@ func setupTestApp(t *testing.T) *App {
 		"register.html": template.Must(template.New("").Parse(`{{define "base.html"}}{{if .Error}}<div class="error">{{.Error}}</div>{{else}}register page{{end}}{{end}}`)),
 		"repos.html": template.Must(template.New("").Parse(`
 			{{define "base.html"}}
-			{{range .Data.Repos}}<span>{{.Name}}</span>{{end}}
+			{{range .Repos}}<span>{{.Name}}</span>{{end}}
 			{{end}}`)),
 		"keys.html": template.Must(template.New("").Parse(`
 			{{define "base.html"}}
-			{{range .Data.Keys}}<span>{{.Name}}</span>{{end}}
+			{{range .Keys}}<span>{{.Name}}</span>{{end}}
 			{{end}}`)),
 		"tokens.html": template.Must(template.New("").Parse(`
 			{{define "base.html"}}
-			{{range .Data.Tokens}}<span>{{.Name}}</span>{{end}}
+			{{range .Tokens}}<span>{{.Name}}</span>{{end}}
 			{{end}}`)),
 	}
 
@@ -224,7 +223,7 @@ func TestReadinessDoesNotExposeStorageErrors(t *testing.T) {
 func TestArtifactAPIUnauthenticatedResponseIsJSON(t *testing.T) {
 	app := setupTestApp(t)
 	router := SetupRouter(app)
-	req := httptest.NewRequest(http.MethodGet, "/api/repos/testuser/repo/artifacts/latest/branch/main/report.txt", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/repos/testuser/repo/artifacts/latest/branch/report.txt?ref=main", nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	if w.Code != http.StatusUnauthorized {
@@ -245,7 +244,7 @@ func TestAuthMiddlewareRefreshesExpiringSessionCookie(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := app.DB.ExecContext(context.Background(), "UPDATE sessions SET expires_at = ?", time.Now().Add(time.Minute).Unix()); err != nil {
+	if err := app.DB.ExtendSession(context.Background(), token, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	handler := app.AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -332,32 +331,12 @@ func TestListArtifactsIncludesNestedFilesAndSkipsSymlinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = os.Symlink(filepath.Join(root, "reports", "coverage.txt"), filepath.Join(root, "link.txt"))
-	artifacts := listArtifacts(root)
+	artifacts, err := listArtifacts(root)
+	if err != nil {
+		t.Fatalf("list artifacts: %v", err)
+	}
 	if len(artifacts) != 1 || artifacts[0] != "reports/coverage.txt" {
 		t.Fatalf("unexpected artifacts: %v", artifacts)
-	}
-}
-
-func TestBuildHookScriptUsesDurableLocalQueue(t *testing.T) {
-	script := buildHookScript("owner", "repo")
-	for _, expected := range []string{
-		gitmanHookMarker,
-		ciHookQueueDirName,
-		`mktemp "$QUEUE_DIR/.event.XXXXXXXXXXXX"`,
-		`flock -x 9`,
-		`event-%020d`,
-		`printf '%s\n%s\n%s\n' "$old" "$new" "$ref"`,
-		`logger -t gitman-ci-hook`,
-	} {
-		if !strings.Contains(script, expected) {
-			t.Fatalf("hook script missing %q:\n%s", expected, script)
-		}
-	}
-	if strings.Contains(script, "curl ") {
-		t.Fatalf("durable hook must not depend on synchronous HTTP delivery:\n%s", script)
-	}
-	if strings.Contains(script, "secret") || strings.Contains(script, "token") {
-		t.Fatalf("durable hook must not contain credentials:\n%s", script)
 	}
 }
 
@@ -379,79 +358,6 @@ func TestSupportedSSHKeyTypesRejectDSAAndCertificates(t *testing.T) {
 		if supportedSSHKeyType(keyType) {
 			t.Errorf("unsupported key type %q was accepted", keyType)
 		}
-	}
-}
-
-func TestBuildHookScriptQueuesOnlyUpdatedBranchesAndTags(t *testing.T) {
-	hooksDir := t.TempDir()
-	hookPath := filepath.Join(hooksDir, "post-receive")
-	if err := os.WriteFile(hookPath, []byte(buildHookScript("owner", "repo")), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	oldCommit := strings.Repeat("a", 40)
-	branchCommit := strings.Repeat("b", 40)
-	tagCommit := strings.Repeat("c", 40)
-	input := strings.Join([]string{
-		oldCommit + " " + branchCommit + " refs/heads/main",
-		oldCommit + " " + tagCommit + " refs/tags/v1.0.0",
-		oldCommit + " " + strings.Repeat("0", 40) + " refs/heads/deleted",
-		oldCommit + " " + branchCommit + " refs/notes/test",
-	}, "\n") + "\n"
-	cmd := exec.Command(hookPath)
-	cmd.Stdin = strings.NewReader(input)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("hook failed: %v\n%s", err, out)
-	}
-
-	entries, err := os.ReadDir(filepath.Join(hooksDir, ciHookQueueDirName))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var events []string
-	for _, entry := range entries {
-		if !strings.HasPrefix(entry.Name(), "event-") {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(hooksDir, ciHookQueueDirName, entry.Name()))
-		if err != nil {
-			t.Fatal(err)
-		}
-		events = append(events, string(data))
-	}
-	if len(events) != 2 {
-		t.Fatalf("queued event count = %d, want 2", len(events))
-	}
-	joined := strings.Join(events, "\n")
-	for _, expected := range []string{branchCommit + "\nrefs/heads/main", tagCommit + "\nrefs/tags/v1.0.0"} {
-		if !strings.Contains(joined, expected) {
-			t.Fatalf("queued events missing %q: %q", expected, joined)
-		}
-	}
-}
-
-func TestDetectHookState(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "post-receive")
-	if got := detectHookState(path); got != hookAbsent {
-		t.Fatalf("expected absent, got %s", got)
-	}
-	if err := os.WriteFile(path, []byte("#!/bin/sh\necho custom\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if got := detectHookState(path); got != hookUnmanaged {
-		t.Fatalf("expected unmanaged, got %s", got)
-	}
-	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+gitmanHookMarker+"\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if got := detectHookState(path); got != hookManaged {
-		t.Fatalf("expected managed, got %s", got)
-	}
-	if err := os.WriteFile(path, []byte("#!/bin/sh\n# Managed by Gitman CI/CD. Schema: 1\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if got := detectHookState(path); got != hookOutdated {
-		t.Fatalf("expected outdated, got %s", got)
 	}
 }
 
@@ -570,9 +476,10 @@ func TestServeArtifactNestedAndRejectsTraversal(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	app := &App{}
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/artifact", nil)
-	serveArtifact(w, r, root, "owner", "repo", "run", "attempt", "reports/coverage.txt")
+	app.serveArtifact(w, r, root, "owner", "repo", "run", "attempt", "reports/coverage.txt")
 	if w.Code != http.StatusOK || w.Body.String() != "ok" {
 		t.Fatalf("nested artifact response: status=%d body=%q", w.Code, w.Body.String())
 	}
@@ -581,17 +488,17 @@ func TestServeArtifactNestedAndRejectsTraversal(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	serveArtifact(w, r, root, "owner", "repo", "run", "attempt", "../outside")
+	app.serveArtifact(w, r, root, "owner", "repo", "run", "attempt", "../outside")
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected traversal rejection, got %d", w.Code)
 	}
 }
 func TestRenderPageBuffersTemplateErrors(t *testing.T) {
-	bad := template.Must(template.New("base.html").Parse(`{{define "base.html"}}prefix{{.Data.Missing}}{{end}}`))
+	bad := template.Must(template.New("base.html").Parse(`{{define "base.html"}}prefix{{.Missing}}{{end}}`))
 	app := &App{Config: &config.Config{}, Templates: map[string]*template.Template{"bad.html": bad}}
 	req := httptest.NewRequest(http.MethodGet, "/bad", nil)
 	w := httptest.NewRecorder()
-	app.renderPage(w, req, "bad.html", PageData{Data: struct{}{}})
+	app.renderPage(w, req, "bad.html", &PageData{})
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d", w.Code)
 	}
@@ -630,12 +537,13 @@ func TestRepoNavRendersCIPageWithoutCurrentRefField(t *testing.T) {
 	ctx = context.WithValue(ctx, repoOwnerContextKey, owner)
 	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()
-	app.renderPage(w, req, "repo_ci.html", PageData{User: owner, Data: CIPageData{Owner: owner, Repository: repo}})
+	app.renderPage(w, req, "repo_ci.html", &CIPageData{PageData: PageData{User: owner}, Owner: owner, Repository: repo})
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 	body := w.Body.String()
-	for _, want := range []string{"/testuser/repo/tree?ref=feature%2fa", "/testuser/repo/commits?ref=feature%2fa", "CI/CD", "Secrets"} {
+	escapedRef := url.QueryEscape("feature/a")
+	for _, want := range []string{"/testuser/repo/tree?ref=" + escapedRef, "/testuser/repo/commits?ref=" + escapedRef, ">CI<", ">Settings<"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("navigation missing %q: %s", want, body)
 		}
@@ -667,39 +575,6 @@ func TestRepoNavHidesCIFromNonMember(t *testing.T) {
 	}
 }
 
-func TestWebhookAuthRejectsMismatchedRoute(t *testing.T) {
-	app := setupTestApp(t)
-	owner, _ := app.DB.GetUserByUsername(context.Background(), "testuser")
-	repoID, err := app.DB.CreateRepository(context.Background(), owner.ID, "repo", "", false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := app.DB.SetWebhookSecret(context.Background(), repoID, "hook-secret"); err != nil {
-		t.Fatal(err)
-	}
-	router := chi.NewRouter()
-	router.Post("/repos/{username}/{repo_name}/ci/webhook", app.WebhookAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	})).ServeHTTP)
-
-	for _, tc := range []struct {
-		path string
-		want int
-	}{
-		{path: "/repos/testuser/repo/ci/webhook", want: http.StatusNoContent},
-		{path: "/repos/testuser/other/ci/webhook", want: http.StatusUnauthorized},
-		{path: "/repos/other/repo/ci/webhook", want: http.StatusUnauthorized},
-	} {
-		req := httptest.NewRequest(http.MethodPost, tc.path, nil)
-		req.Header.Set("X-Gitman-Webhook-Secret", "hook-secret")
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-		if w.Code != tc.want {
-			t.Fatalf("%s: expected %d, got %d", tc.path, tc.want, w.Code)
-		}
-	}
-}
-
 func TestCISecretPreservesWhitespace(t *testing.T) {
 	app := setupTestApp(t)
 	owner, _ := app.DB.GetUserByUsername(context.Background(), "testuser")
@@ -708,9 +583,9 @@ func TestCISecretPreservesWhitespace(t *testing.T) {
 		t.Fatal(err)
 	}
 	repo, _ := app.DB.GetRepositoryByID(context.Background(), repoID)
-	app.Templates["repo_ci_secrets.html"] = template.Must(template.New("ci_secrets_panel").Parse(`{{define "ci_secrets_panel"}}ok{{end}}`))
+	app.Templates["repo_ci_settings.html"] = template.Must(template.New("ci_secrets_panel").Parse(`{{define "ci_secrets_panel"}}ok{{end}}`))
 	form := url.Values{"key": {"TOKEN"}, "value": {"  keep spaces  "}}
-	req := httptest.NewRequest(http.MethodPost, "/testuser/repo/ci/secrets", strings.NewReader(form.Encode()))
+	req := httptest.NewRequest(http.MethodPost, "/testuser/repo/settings/ci/secrets", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	ctx := context.WithValue(req.Context(), userContextKey, owner)
 	ctx = context.WithValue(ctx, repoContextKey, repo)
@@ -731,7 +606,8 @@ func TestCISecretPreservesWhitespace(t *testing.T) {
 }
 
 func TestLimitRequestBodyRejectsOversizedUIRequest(t *testing.T) {
-	handler := limitRequestBody(4)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	app := setupTestApp(t)
+	handler := app.limitRequestBody(4)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("12345"))
@@ -739,5 +615,114 @@ func TestLimitRequestBodyRejectsOversizedUIRequest(t *testing.T) {
 	handler.ServeHTTP(w, req)
 	if w.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("expected 413, got %d", w.Code)
+	}
+}
+
+func TestCSRFMiddlewarePreservesValidatedTokenInPOSTContext(t *testing.T) {
+	app := setupTestApp(t)
+	const token = "csrf-test-token"
+	handler := app.CSRFMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got, _ := r.Context().Value(csrfTokenKey).(string)
+		if got != token {
+			t.Fatalf("csrf token context = %q, want %q", got, token)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("csrf_token="+token))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "csrf_token", Value: token})
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, body=%q", w.Code, w.Body.String())
+	}
+}
+
+func TestSecurityHeadersDoNotRequireInlineScriptOrStyle(t *testing.T) {
+	app := setupTestApp(t)
+	handler := app.securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	csp := w.Header().Get("Content-Security-Policy")
+	if strings.Contains(csp, "'unsafe-inline'") {
+		t.Fatalf("CSP still permits inline script/style: %q", csp)
+	}
+	for _, want := range []string{"script-src 'self'", "style-src 'self'", "frame-ancestors 'none'"} {
+		if !strings.Contains(csp, want) {
+			t.Fatalf("CSP missing %q: %q", want, csp)
+		}
+	}
+}
+
+func TestBearerTokenSchemeIsCaseInsensitive(t *testing.T) {
+	for _, header := range []string{"Bearer abc123", "bearer abc123", "BEARER abc123"} {
+		token, ok := bearerToken(header)
+		if !ok || token != "abc123" {
+			t.Fatalf("bearerToken(%q) = %q, %v", header, token, ok)
+		}
+	}
+	for _, header := range []string{"", "Basic abc123", "Bearer", "Bearer ", "Bearer a b", "Bearer a\tb"} {
+		if token, ok := bearerToken(header); ok {
+			t.Fatalf("bearerToken(%q) unexpectedly accepted %q", header, token)
+		}
+	}
+}
+
+func TestLogoutDoesNotHideSessionStoreFailure(t *testing.T) {
+	app := setupTestApp(t)
+	cookie := loginUser(t, app)
+	if err := app.DB.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/logout", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	app.HandleLogout(w, req)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("logout status = %d, want %d", w.Code, http.StatusServiceUnavailable)
+	}
+	cleared := false
+	for _, c := range w.Result().Cookies() {
+		if c.Name == "session_token" && c.MaxAge == -1 {
+			cleared = true
+			break
+		}
+	}
+	if !cleared {
+		t.Fatal("logout did not clear browser session cookie after revocation failure")
+	}
+}
+
+func TestRepositoryWebDBFailureIsUnavailableNotNotFound(t *testing.T) {
+	app := setupTestApp(t)
+	if err := app.DB.Close(); err != nil {
+		t.Fatal(err)
+	}
+	router := SetupRouter(app)
+	req := httptest.NewRequest(http.MethodGet, "/testuser/missing", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusServiceUnavailable, w.Body.String())
+	}
+}
+
+func TestTrustedForwardedHeadersUseExactParameters(t *testing.T) {
+	app := &App{Config: &config.Config{TrustProxyHeaders: true}}
+	req := httptest.NewRequest(http.MethodGet, "http://gitman.test/", nil)
+	req.Header.Set("Forwarded", `for="203.0.113.8:4321";proto=https, for=198.51.100.9;proto=http`)
+	if got := app.clientIP(req); got != "203.0.113.8" {
+		t.Fatalf("forwarded client IP = %q, want 203.0.113.8", got)
+	}
+	if !app.requestIsHTTPS(req) {
+		t.Fatal("exact Forwarded proto=https was not recognized")
+	}
+
+	req.Header.Set("Forwarded", `for=203.0.113.8;notproto=https`)
+	if app.requestIsHTTPS(req) {
+		t.Fatal("substring notproto=https was incorrectly trusted as proto=https")
 	}
 }

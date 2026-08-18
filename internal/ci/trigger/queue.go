@@ -1,4 +1,4 @@
-package handlers
+package trigger
 
 import (
 	"context"
@@ -14,16 +14,28 @@ import (
 	"time"
 
 	cipolicy "github.com/mmrzaf/gitman/internal/ci"
+	"github.com/mmrzaf/gitman/internal/db"
 	"github.com/mmrzaf/gitman/internal/git"
 	"github.com/mmrzaf/gitman/internal/models"
 	"golang.org/x/sys/unix"
 )
 
+type Manager struct {
+	DB        *db.DB
+	ReposPath string
+}
+
+type normalizedTrigger struct {
+	CommitHash string
+	Branch     string
+	Tag        string
+}
+
 const (
-	ciHookQueueDirName  = "gitman-ci-queue"
-	ciQueuePollInterval = 2 * time.Second
-	ciQueueBatchPerRepo = 100
-	ciQueueDrainLock    = ".drain.lock"
+	QueueDirName      = "gitman-ci-queue"
+	queuePollInterval = 2 * time.Second
+	queueBatchPerRepo = 100
+	queueDrainLock    = ".drain.lock"
 )
 
 var errMalformedQueuedCITrigger = errors.New("malformed queued CI trigger")
@@ -34,25 +46,25 @@ type queuedCITrigger struct {
 	ref       string
 }
 
-// RunCITriggerQueue drains durable post-receive events stored beside each
+// Run continuously drains durable post-receive events stored beside each
 // managed repository hook. Delivery remains safe across web restarts because
 // each event has a stable database idempotency key.
-func (app *App) RunCITriggerQueue(ctx context.Context) {
-	app.drainCITriggerQueues(ctx)
-	ticker := time.NewTicker(ciQueuePollInterval)
+func (m *Manager) Run(ctx context.Context) {
+	m.drainAll(ctx)
+	ticker := time.NewTicker(queuePollInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			app.drainCITriggerQueues(ctx)
+			m.drainAll(ctx)
 		}
 	}
 }
 
-func (app *App) drainCITriggerQueues(ctx context.Context) {
-	repos, err := app.DB.GetAllRepositories(ctx)
+func (m *Manager) drainAll(ctx context.Context) {
+	repos, err := m.DB.GetAllRepositories(ctx)
 	if err != nil {
 		slog.Warn("failed to list repositories for CI trigger queue", "error", err)
 		return
@@ -61,63 +73,64 @@ func (app *App) drainCITriggerQueues(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		owner, err := app.DB.GetUserByID(ctx, repos[i].OwnerID)
-		if err != nil || owner == nil {
-			slog.Warn("failed to resolve CI queue repository owner", "repo", repos[i].ID, "error", err)
+		owner, err := m.DB.GetUserByID(ctx, repos[i].OwnerID)
+		if err != nil {
+			if errors.Is(err, db.ErrNotFound) {
+				slog.Error("CI queue repository has no owner", "repo", repos[i].ID, "owner_id", repos[i].OwnerID)
+			} else {
+				slog.Warn("failed to load CI queue repository owner", "repo", repos[i].ID, "owner_id", repos[i].OwnerID, "error", err)
+			}
 			continue
 		}
-		app.drainRepoCITriggerQueue(ctx, owner, &repos[i])
+		if err := m.DrainRepository(ctx, owner, &repos[i]); err != nil {
+			slog.Warn("failed to drain CI trigger queue", "repo", repos[i].ID, "error", err)
+		}
 	}
 }
 
-func (app *App) drainRepoCITriggerQueue(ctx context.Context, owner *models.User, repo *models.Repository) {
-	repoPath, err := git.SecureRepoPath(app.Config.ReposPath, owner.Username, repo.Name)
+func (m *Manager) DrainRepository(ctx context.Context, owner *models.User, repo *models.Repository) error {
+	repoPath, err := git.SecureRepoPath(m.ReposPath, owner.Username, repo.Name)
 	if err != nil {
-		return
+		return fmt.Errorf("resolve CI trigger repository: %w", err)
 	}
-	queueDir := filepath.Join(repoPath, "hooks", ciHookQueueDirName)
+	queueDir := filepath.Join(repoPath, "hooks", QueueDirName)
 	unlock, acquired, err := tryLockCITriggerQueue(queueDir)
 	if os.IsNotExist(err) {
-		return
+		return nil
 	}
 	if err != nil {
-		slog.Warn("failed to lock CI trigger queue", "repo", repo.ID, "error", err)
-		return
+		return fmt.Errorf("lock CI trigger queue: %w", err)
 	}
 	if !acquired {
-		return
+		return nil
 	}
 	defer unlock()
 
 	sequenceUnlock, sequenceAcquired, err := tryLockCITriggerQueueFile(filepath.Join(queueDir, ".sequence.lock"))
 	if err != nil {
-		slog.Warn("failed to lock CI trigger sequence", "repo", repo.ID, "error", err)
-		return
+		return fmt.Errorf("lock CI trigger sequence: %w", err)
 	}
 	if !sequenceAcquired {
-		return
+		return nil
 	}
 
 	entries, err := os.ReadDir(queueDir)
 	if os.IsNotExist(err) {
 		sequenceUnlock()
-		return
+		return nil
 	}
 	if err != nil {
 		sequenceUnlock()
-		slog.Warn("failed to read CI trigger queue", "repo", repo.ID, "error", err)
-		return
+		return fmt.Errorf("read CI trigger queue: %w", err)
 	}
 	if err := recoverPendingCITriggers(queueDir, entries); err != nil {
 		sequenceUnlock()
-		slog.Warn("failed to recover pending CI trigger publication", "repo", repo.ID, "error", err)
-		return
+		return fmt.Errorf("recover CI trigger publication: %w", err)
 	}
 	sequenceUnlock()
 	entries, err = os.ReadDir(queueDir)
 	if err != nil {
-		slog.Warn("failed to reread CI trigger queue", "repo", repo.ID, "error", err)
-		return
+		return fmt.Errorf("reread CI trigger queue: %w", err)
 	}
 
 	names := make([]string, 0, len(entries))
@@ -161,20 +174,20 @@ func (app *App) drainRepoCITriggerQueue(ctx context.Context, owner *models.User,
 		}
 	}
 	sort.Strings(names)
-	if len(names) > ciQueueBatchPerRepo {
-		names = names[:ciQueueBatchPerRepo]
+	if len(names) > queueBatchPerRepo {
+		names = names[:queueBatchPerRepo]
 	}
 
 	for _, name := range names {
-		if ctx.Err() != nil {
-			return
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		source := filepath.Join(queueDir, name)
 		claimed := filepath.Join(queueDir, ".processing-"+name)
 		if err := os.Rename(source, claimed); err != nil {
 			continue
 		}
-		remove, err := app.processQueuedCITrigger(ctx, owner, repo, name, claimed)
+		remove, err := m.processQueued(ctx, owner, repo, name, claimed)
 		if err != nil {
 			if errors.Is(err, errMalformedQueuedCITrigger) {
 				quarantined := filepath.Join(queueDir, ".malformed-"+name)
@@ -191,7 +204,7 @@ func (app *App) drainRepoCITriggerQueue(ctx context.Context, owner *models.User,
 			}
 			// Later events must not overtake an older event that could not be
 			// committed. Retry the exact same prefix on the next drain.
-			return
+			return err
 		}
 		if remove {
 			if err := os.Remove(claimed); err != nil && !os.IsNotExist(err) {
@@ -199,6 +212,7 @@ func (app *App) drainRepoCITriggerQueue(ctx context.Context, owner *models.User,
 			}
 		}
 	}
+	return nil
 }
 
 func recoverPendingCITriggers(queueDir string, entries []os.DirEntry) error {
@@ -264,18 +278,22 @@ func writeCITriggerSequence(queueDir string, sequence uint64) (err error) {
 		return err
 	}
 	tmpPath := tmp.Name()
-	defer func() { _ = os.Remove(tmpPath) }()
+	defer func() {
+		if removeErr := os.Remove(tmpPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			err = errors.Join(err, removeErr)
+		}
+	}()
+	closeTemp := func(cause error) error {
+		return errors.Join(cause, tmp.Close())
+	}
 	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return err
+		return closeTemp(err)
 	}
 	if _, err := fmt.Fprintf(tmp, "%d\n", sequence); err != nil {
-		_ = tmp.Close()
-		return err
+		return closeTemp(err)
 	}
 	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
+		return closeTemp(err)
 	}
 	if err := tmp.Close(); err != nil {
 		return err
@@ -307,7 +325,7 @@ func orderedCITriggerSequence(name string) (uint64, bool) {
 	return value, err == nil
 }
 
-func hasQueuedCITriggerFiles(queueDir string) (bool, error) {
+func HasQueuedEvents(queueDir string) (bool, error) {
 	entries, err := os.ReadDir(queueDir)
 	if os.IsNotExist(err) {
 		return false, nil
@@ -335,7 +353,7 @@ func hasQueuedCITriggerFiles(queueDir string) (bool, error) {
 // which lets a restarted web process immediately recover a claimed event
 // without waiting for a stale-file timeout.
 func tryLockCITriggerQueue(queueDir string) (unlock func(), acquired bool, err error) {
-	return tryLockCITriggerQueueFile(filepath.Join(queueDir, ciQueueDrainLock))
+	return tryLockCITriggerQueueFile(filepath.Join(queueDir, queueDrainLock))
 }
 
 func tryLockCITriggerQueueFile(path string) (unlock func(), acquired bool, err error) {
@@ -344,11 +362,14 @@ func tryLockCITriggerQueueFile(path string) (unlock func(), acquired bool, err e
 		return nil, false, err
 	}
 	if err := unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
-		_ = lock.Close()
+		closeErr := lock.Close()
 		if errors.Is(err, unix.EWOULDBLOCK) || errors.Is(err, unix.EAGAIN) {
+			if closeErr != nil {
+				return nil, false, closeErr
+			}
 			return nil, false, nil
 		}
-		return nil, false, err
+		return nil, false, errors.Join(err, closeErr)
 	}
 	return func() {
 		if err := unix.Flock(int(lock.Fd()), unix.LOCK_UN); err != nil {
@@ -360,16 +381,16 @@ func tryLockCITriggerQueueFile(path string) (unlock func(), acquired bool, err e
 	}, true, nil
 }
 
-func (app *App) processQueuedCITrigger(ctx context.Context, owner *models.User, repo *models.Repository, eventName, eventPath string) (bool, error) {
+func (m *Manager) processQueued(ctx context.Context, owner *models.User, repo *models.Repository, eventName, eventPath string) (bool, error) {
 	event, err := readQueuedCITrigger(eventPath)
 	if err != nil {
-		return false, fmt.Errorf("%w: %v", errMalformedQueuedCITrigger, err)
+		return false, errors.Join(errMalformedQueuedCITrigger, err)
 	}
 	if isZeroGitObjectID(event.newCommit) {
 		return true, nil
 	}
 
-	req := triggerRequest{CommitHash: event.newCommit, Event: "push"}
+	req := normalizedTrigger{CommitHash: event.newCommit}
 	switch {
 	case strings.HasPrefix(event.ref, "refs/heads/"):
 		req.Branch = strings.TrimPrefix(event.ref, "refs/heads/")
@@ -378,11 +399,11 @@ func (app *App) processQueuedCITrigger(ctx context.Context, owner *models.User, 
 	default:
 		return false, fmt.Errorf("%w: unsupported ref namespace", errMalformedQueuedCITrigger)
 	}
-	normalized, err := normalizeQueuedCITrigger(ctx, app.Config.ReposPath, owner, repo, req)
+	normalized, err := normalizeQueuedCITrigger(ctx, m.ReposPath, owner, repo, req)
 	if err != nil {
 		return false, fmt.Errorf("normalize queued push: %w", err)
 	}
-	policy, err := (cipolicy.Resolver{DB: app.DB, ReposPath: app.Config.ReposPath}).Resolve(
+	policy, err := (cipolicy.Resolver{DB: m.DB, ReposPath: m.ReposPath}).Resolve(
 		ctx, owner, repo, normalized.Branch, normalized.Tag,
 	)
 	if err != nil {
@@ -393,7 +414,7 @@ func (app *App) processQueuedCITrigger(ctx context.Context, owner *models.User, 
 	}
 	eventDigest := sha256.Sum256([]byte(event.oldCommit + "\n" + event.newCommit + "\n" + event.ref + "\n"))
 	triggerKey := fmt.Sprintf("%s:hook:%s:%x", repo.ID, eventName, eventDigest)
-	runID, err := app.DB.CreatePushCIRunWithTriggerKey(
+	runID, err := m.DB.CreatePushCIRunWithTriggerKey(
 		ctx, repo.ID, normalized.CommitHash, normalized.Branch, normalized.Tag, triggerKey,
 	)
 	if err != nil {
@@ -407,11 +428,10 @@ func (app *App) processQueuedCITrigger(ctx context.Context, owner *models.User, 
 // without requiring the ref to still point at the same object. A later push or
 // deletion must not erase an earlier durable event before it reaches the
 // database. Resolving the object through ^{commit} also handles annotated tags.
-func normalizeQueuedCITrigger(ctx context.Context, reposPath string, owner *models.User, repo *models.Repository, req triggerRequest) (triggerRequest, error) {
+func normalizeQueuedCITrigger(ctx context.Context, reposPath string, owner *models.User, repo *models.Repository, req normalizedTrigger) (normalizedTrigger, error) {
 	req.CommitHash = strings.TrimSpace(req.CommitHash)
 	req.Branch = strings.TrimSpace(req.Branch)
 	req.Tag = strings.TrimSpace(req.Tag)
-	req.Event = "push"
 	if req.Branch == "" && req.Tag == "" {
 		return req, fmt.Errorf("queued push requires a branch or tag")
 	}
@@ -422,7 +442,7 @@ func normalizeQueuedCITrigger(ctx context.Context, reposPath string, owner *mode
 	if refName == "" {
 		refName = req.Tag
 	}
-	if err := git.ValidateRefName(refName); err != nil {
+	if err := git.ValidateRefNameContext(ctx, refName); err != nil {
 		return req, fmt.Errorf("invalid queued ref: %w", err)
 	}
 	repoPath, err := git.SecureRepoPath(reposPath, owner.Username, repo.Name)

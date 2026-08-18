@@ -48,8 +48,14 @@ func TestResolveRepo(t *testing.T) {
 	defer database.Close()
 	ctx := context.Background()
 	// Create user and repo
-	user, _ := database.CreateUser(ctx, "owner", "OwnerPass1")
-	repoID, _ := database.CreateRepository(ctx, user.ID, "testrepo", "", false)
+	user, err := database.CreateUser(ctx, "owner", "OwnerPass1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoID, err := database.CreateRepository(ctx, user.ID, "testrepo", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	info, ownerName, err := resolveRepo(ctx, database, repoID)
 	if err != nil {
@@ -407,6 +413,63 @@ func TestCloneFallsBackForHistoricalCommit(t *testing.T) {
 	}
 }
 
+func TestCloneFetchesUnadvertisedExactCommit(t *testing.T) {
+	root := t.TempDir()
+	reposRoot := filepath.Join(root, "repos")
+	bare := filepath.Join(reposRoot, "owner", "repo.git")
+	if err := os.MkdirAll(filepath.Dir(bare), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runGitTest(t, "", "init", "--bare", bare)
+
+	work := filepath.Join(root, "source")
+	if err := os.MkdirAll(work, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runGitTest(t, work, "init")
+	runGitTest(t, work, "config", "user.email", "test@example.com")
+	runGitTest(t, work, "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(work, "payload"), []byte("orphaned"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGitTest(t, work, "add", "payload")
+	runGitTest(t, work, "commit", "-m", "orphan candidate")
+	commit := strings.TrimSpace(runGitTest(t, work, "rev-parse", "HEAD"))
+	branch := strings.TrimSpace(runGitTest(t, work, "branch", "--show-current"))
+	runGitTest(t, work, "remote", "add", "origin", bare)
+	runGitTest(t, work, "push", "origin", branch)
+	// Remove the only advertised ref while leaving the commit object in the bare
+	// repository. Exact-commit CI must still be able to execute it.
+	runGitTest(t, "", "--git-dir="+bare, "update-ref", "-d", "refs/heads/"+branch)
+
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	j := &job{
+		cfg: &config.Config{
+			ReposPath:           reposRoot,
+			CIWorkspaceMaxBytes: 100 * 1024 * 1024,
+		},
+		run:       &models.CIRun{CommitHash: commit},
+		repo:      &repoInfo{name: "repo"},
+		owner:     "owner",
+		workspace: workspace,
+		checkout:  filepath.Join(workspace, "src"),
+		logWriter: io.Discard,
+	}
+	if err := j.clone(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got := strings.TrimSpace(runGitTest(t, j.checkout, "rev-parse", "HEAD"))
+	if got != commit {
+		t.Fatalf("expected exact commit %s, got %s", commit, got)
+	}
+	if gotRemote := strings.TrimSpace(runGitTest(t, j.checkout, "remote", "get-url", "origin")); gotRemote == "" {
+		t.Fatal("exact commit checkout lost origin remote")
+	}
+}
+
 func runGitTest(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)
@@ -422,7 +485,69 @@ func runGitTest(t *testing.T, dir string, args ...string) string {
 
 func TestCIFailureSummaryIncludesExitCode(t *testing.T) {
 	err := exec.Command("sh", "-c", "exit 7").Run()
-	if got := ciFailureSummary(context.Background(), err, &CIConfig{}); got != "Pipeline exited with code 7" {
+	if got := ciFailureSummary(context.Background(), err); got != "Pipeline exited with code 7" {
 		t.Fatalf("unexpected summary: %q", got)
 	}
+}
+
+func TestCIFailureSummaryUsesTypedDockerImageError(t *testing.T) {
+	got := ciFailureSummary(context.Background(), fmt.Errorf("%w: alpine:test", errDockerImageUnavailable))
+	if got != "Runner image is unavailable or invalid on the worker" {
+		t.Fatalf("summary = %q", got)
+	}
+}
+
+func TestWaitForPollReturnsImmediatelyWhenCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	start := time.Now()
+	if waitForPoll(ctx) {
+		t.Fatal("cancelled poll wait reported success")
+	}
+	if time.Since(start) > 100*time.Millisecond {
+		t.Fatal("cancelled poll wait did not return promptly")
+	}
+}
+
+func TestLimitedWriterTruncatesOnceAndReportsInputConsumed(t *testing.T) {
+	var out bytes.Buffer
+	lw := &limitedWriter{w: &out, max: 4}
+
+	if n, err := lw.Write([]byte("abcdef")); err != nil || n != 6 {
+		t.Fatalf("first write = (%d, %v), want (6, nil)", n, err)
+	}
+	if n, err := lw.Write([]byte("gh")); err != nil || n != 2 {
+		t.Fatalf("second write = (%d, %v), want (2, nil)", n, err)
+	}
+	got := out.String()
+	if !strings.HasPrefix(got, "abcd") {
+		t.Fatalf("output prefix = %q, want %q", got, "abcd")
+	}
+	if strings.Count(got, "log limit reached") != 1 {
+		t.Fatalf("limit notice count = %d, output %q", strings.Count(got, "log limit reached"), got)
+	}
+}
+
+func TestLimitedWriterPropagatesNoticeWriteFailure(t *testing.T) {
+	w := &failAfterWriter{remaining: 4}
+	lw := &limitedWriter{w: w, max: 4}
+	if n, err := lw.Write([]byte("abcdef")); err == nil || n != 4 {
+		t.Fatalf("write = (%d, %v), want 4 and an error", n, err)
+	}
+}
+
+type failAfterWriter struct {
+	remaining int
+}
+
+func (w *failAfterWriter) Write(p []byte) (int, error) {
+	if w.remaining <= 0 {
+		return 0, fmt.Errorf("storage unavailable")
+	}
+	if len(p) > w.remaining {
+		p = p[:w.remaining]
+	}
+	n := len(p)
+	w.remaining -= n
+	return n, nil
 }
