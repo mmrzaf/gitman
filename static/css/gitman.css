@@ -240,7 +240,7 @@ kbd {
 .menu > summary { cursor: pointer; list-style: none; color: var(--accent); }
 .menu > summary::-webkit-details-marker { display: none; }
 .menu-popover { position: absolute; right: 0; top: calc(100% + 7px); z-index: 20; width: min(460px, 80vw); padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); }
-.menu-popover label { display: block; margin: 6px 0 4px; color: var(--muted); font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .04em; }
+.menu-popover .menu-label { display: block; margin: 6px 0 4px; color: var(--muted); font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .04em; }
 .menu-links { width: 130px; display: grid; gap: 8px; }
 .copy-row { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .copy-row code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -414,7 +414,6 @@ dd { margin: 0; min-width: 0; }
 @media (max-width: 560px) {
   h1 { font-size: 21px; }
   .page-shell { padding-top: 18px; }
-  .site-nav a[href="/keys"], .site-nav a[href="/tokens"] { display: none; }
   .repo-name { font-size: 18px; }
   .repo-nav { align-items: flex-end; }
   .repo-file-finder-link { font-size: 0; }
@@ -429,7 +428,7 @@ dd { margin: 0; min-width: 0; }
   .file-tree .file-size { width: 72px; }
   .commit-actions, .inline-meta { justify-content: flex-start; }
   .diff-files { display: grid; gap: 12px; }
-.diff-index a { grid-template-columns: 28px minmax(0,1fr); }
+  .diff-index a { grid-template-columns: 28px minmax(0,1fr); }
   .diff-index a > :last-child { display: none; }
   .diff-file > summary { grid-template-columns: 28px minmax(0,1fr); }
   .diff-summary-stats { display: none; }

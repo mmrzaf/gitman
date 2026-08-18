@@ -76,6 +76,18 @@ func responseSurfaceMiddleware(surface responseSurface) func(http.Handler) http.
 	}
 }
 
+func quietSuccessfulAccessLog(r *http.Request) bool {
+	if r == nil || r.Method != http.MethodGet {
+		return false
+	}
+	path := r.URL.Path
+	if strings.HasPrefix(path, "/static/") || path == "/health" || path == "/healthz" || path == "/readyz" {
+		return true
+	}
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	return len(parts) == 5 && parts[2] == "ci" && parts[3] != "" && parts[4] == "log"
+}
+
 func (app *App) accessLogMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		wrapped := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
@@ -85,14 +97,19 @@ func (app *App) accessLogMiddleware(next http.Handler) http.Handler {
 		if status == 0 {
 			status = http.StatusOK
 		}
-		slog.Info("http request",
+		attrs := []any{
 			"request_id", RequestID(r),
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", status,
 			"bytes", wrapped.BytesWritten(),
 			"duration", time.Since(started),
-		)
+		}
+		if status < http.StatusBadRequest && quietSuccessfulAccessLog(r) {
+			slog.Debug("http request", attrs...)
+			return
+		}
+		slog.Info("http request", attrs...)
 	})
 }
 

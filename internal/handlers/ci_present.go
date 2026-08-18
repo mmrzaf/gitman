@@ -545,11 +545,14 @@ func artifactLooksPreviewable(path string, size int64) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	defer file.Close()
 	buf := make([]byte, 4096)
-	n, err := file.Read(buf)
-	if err != nil && !errors.Is(err, io.EOF) {
-		return false, err
+	n, readErr := file.Read(buf)
+	closeErr := file.Close()
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		return false, readErr
+	}
+	if closeErr != nil {
+		return false, closeErr
 	}
 	buf = buf[:n]
 	if bytes.IndexByte(buf, 0) >= 0 || !validUTF8Sample(buf, size > int64(n)) {

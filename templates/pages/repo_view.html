@@ -32,8 +32,8 @@ git push -u origin main</code></pre>
   <div class="toolbar-actions">
     {{if not .CurrentPath}}
     <details class="menu clone-menu"><summary>Clone</summary><div class="menu-popover">
-      <label>SSH</label><div class="copy-row"><code>{{$.Config.SSHUser}}@{{$.Config.ServerHost}}:{{.Owner.Username}}/{{.Repository.Name}}.git</code><button class="secondary tiny js-only" type="button" data-copy-text="{{$.Config.SSHUser}}@{{$.Config.ServerHost}}:{{.Owner.Username}}/{{.Repository.Name}}.git" data-copy-label="Copy">Copy</button></div>
-      <label>HTTP</label><div class="copy-row"><code>{{$.Config.PublicURL}}/{{.Owner.Username}}/{{.Repository.Name}}.git</code><button class="secondary tiny js-only" type="button" data-copy-text="{{$.Config.PublicURL}}/{{.Owner.Username}}/{{.Repository.Name}}.git" data-copy-label="Copy">Copy</button></div>
+      <strong class="menu-label">SSH</strong><div class="copy-row"><code>{{$.Config.SSHUser}}@{{$.Config.ServerHost}}:{{.Owner.Username}}/{{.Repository.Name}}.git</code><button class="secondary tiny js-only" type="button" data-copy-text="{{$.Config.SSHUser}}@{{$.Config.ServerHost}}:{{.Owner.Username}}/{{.Repository.Name}}.git" data-copy-label="Copy">Copy</button></div>
+      <strong class="menu-label">HTTP</strong><div class="copy-row"><code>{{$.Config.PublicURL}}/{{.Owner.Username}}/{{.Repository.Name}}.git</code><button class="secondary tiny js-only" type="button" data-copy-text="{{$.Config.PublicURL}}/{{.Owner.Username}}/{{.Repository.Name}}.git" data-copy-label="Copy">Copy</button></div>
     </div></details>
     {{end}}
     <details class="menu archive-menu"><summary>Download</summary><div class="menu-popover menu-links"><a href="/{{.Owner.Username}}/{{.Repository.Name}}/archive/zip?ref={{urlquery .CurrentRef}}">ZIP</a><a href="/{{.Owner.Username}}/{{.Repository.Name}}/archive/tar.gz?ref={{urlquery .CurrentRef}}">TAR.GZ</a></div></details>
