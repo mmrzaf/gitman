@@ -140,11 +140,27 @@ func assertQueuedPushStates(t *testing.T, manager *Manager, repoID string, commi
 	if len(runs) != len(commits) {
 		t.Fatalf("run count = %d, want %d: %+v", len(runs), len(commits), runs)
 	}
-	// GetCIRunsByRepo is newest-first; queue assertions are oldest-first.
+	// Durable events must be inserted in queue order. Push superseding is a
+	// separate CI policy: once a newer push for the same ref is inserted, older
+	// still-pending runs become cancelled rather than wasting worker time.
 	for i, commit := range commits {
-		run := runs[len(runs)-1-i]
-		if run.CommitHash != commit || run.Status != "pending" || run.StatusReason != "" {
-			t.Fatalf("run %d = {%s %s %q}, want {%s pending empty}", i, run.CommitHash, run.Status, run.StatusReason, commit)
+		run := runs[len(runs)-1-i] // DB returns newest first.
+		if run.CommitHash != commit {
+			t.Fatalf("run %d commit = %s, want %s", i, run.CommitHash, commit)
+		}
+		wantStatus := models.CIStatusPending
+		if i < len(commits)-1 {
+			wantStatus = models.CIStatusCancelled
+		}
+		if run.Status != wantStatus {
+			t.Fatalf("run %d status = %s, want %s: %+v", i, run.Status, wantStatus, run)
+		}
+		if wantStatus == models.CIStatusCancelled {
+			if run.StatusReason == "" || run.CancelReason != run.StatusReason {
+				t.Fatalf("superseded run %d has inconsistent reason: %+v", i, run)
+			}
+		} else if run.StatusReason != "" || run.CancelReason != "" {
+			t.Fatalf("latest pending run has cancellation reason: %+v", run)
 		}
 	}
 }
@@ -225,8 +241,8 @@ func TestDurableQueueStopsAtTransientFailureAndResumesInOrder(t *testing.T) {
 	writeQueuedEvent(t, queueDir, "event-00000000000000000001", strings.Repeat("0", 40), strings.Repeat("a", 40))
 	writeQueuedEvent(t, queueDir, "event-00000000000000000002", first, second)
 
-	if err := manager.DrainRepository(ctx, owner, repo); err != nil {
-		t.Fatal(err)
+	if err := manager.DrainRepository(ctx, owner, repo); err == nil {
+		t.Fatal("expected unresolved oldest event to stop the drain")
 	}
 	runs, err := manager.DB.GetCIRunsByRepo(ctx, repo.ID, 10)
 	if err != nil {

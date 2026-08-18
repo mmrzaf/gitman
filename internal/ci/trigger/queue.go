@@ -278,18 +278,22 @@ func writeCITriggerSequence(queueDir string, sequence uint64) (err error) {
 		return err
 	}
 	tmpPath := tmp.Name()
-	defer func() { _ = os.Remove(tmpPath) }()
+	defer func() {
+		if removeErr := os.Remove(tmpPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			err = errors.Join(err, removeErr)
+		}
+	}()
+	closeTemp := func(cause error) error {
+		return errors.Join(cause, tmp.Close())
+	}
 	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return err
+		return closeTemp(err)
 	}
 	if _, err := fmt.Fprintf(tmp, "%d\n", sequence); err != nil {
-		_ = tmp.Close()
-		return err
+		return closeTemp(err)
 	}
 	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
+		return closeTemp(err)
 	}
 	if err := tmp.Close(); err != nil {
 		return err
@@ -358,11 +362,14 @@ func tryLockCITriggerQueueFile(path string) (unlock func(), acquired bool, err e
 		return nil, false, err
 	}
 	if err := unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
-		_ = lock.Close()
+		closeErr := lock.Close()
 		if errors.Is(err, unix.EWOULDBLOCK) || errors.Is(err, unix.EAGAIN) {
+			if closeErr != nil {
+				return nil, false, closeErr
+			}
 			return nil, false, nil
 		}
-		return nil, false, err
+		return nil, false, errors.Join(err, closeErr)
 	}
 	return func() {
 		if err := unix.Flock(int(lock.Fd()), unix.LOCK_UN); err != nil {

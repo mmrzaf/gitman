@@ -10,8 +10,9 @@ import (
 )
 
 const (
-	PolicySourceDefault = "default-policy"
-	PolicySourceRule    = "explicit-rule"
+	PolicySourceDefault  = "default-policy"
+	PolicySourceRule     = "explicit-rule"
+	PolicySourceDetached = "detached-commit"
 )
 
 type RefPolicy struct {
@@ -31,7 +32,10 @@ type Resolver struct {
 
 func (r Resolver) Resolve(ctx context.Context, owner *models.User, repo *models.Repository, branch, tag string) (RefPolicy, error) {
 	if branch == "" && tag == "" {
-		return RefPolicy{}, fmt.Errorf("CI run has no branch or tag")
+		// Manual and retry runs may intentionally target an exact commit without
+		// carrying branch/tag trust. They are valid, but untrusted by default:
+		// no auto-run, secrets, or Docker socket access.
+		return RefPolicy{Source: PolicySourceDetached}, nil
 	}
 	if branch != "" && tag != "" {
 		return RefPolicy{}, fmt.Errorf("CI run targets both branch and tag")

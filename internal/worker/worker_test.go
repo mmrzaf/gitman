@@ -413,6 +413,63 @@ func TestCloneFallsBackForHistoricalCommit(t *testing.T) {
 	}
 }
 
+func TestCloneFetchesUnadvertisedExactCommit(t *testing.T) {
+	root := t.TempDir()
+	reposRoot := filepath.Join(root, "repos")
+	bare := filepath.Join(reposRoot, "owner", "repo.git")
+	if err := os.MkdirAll(filepath.Dir(bare), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runGitTest(t, "", "init", "--bare", bare)
+
+	work := filepath.Join(root, "source")
+	if err := os.MkdirAll(work, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runGitTest(t, work, "init")
+	runGitTest(t, work, "config", "user.email", "test@example.com")
+	runGitTest(t, work, "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(work, "payload"), []byte("orphaned"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGitTest(t, work, "add", "payload")
+	runGitTest(t, work, "commit", "-m", "orphan candidate")
+	commit := strings.TrimSpace(runGitTest(t, work, "rev-parse", "HEAD"))
+	branch := strings.TrimSpace(runGitTest(t, work, "branch", "--show-current"))
+	runGitTest(t, work, "remote", "add", "origin", bare)
+	runGitTest(t, work, "push", "origin", branch)
+	// Remove the only advertised ref while leaving the commit object in the bare
+	// repository. Exact-commit CI must still be able to execute it.
+	runGitTest(t, "", "--git-dir="+bare, "update-ref", "-d", "refs/heads/"+branch)
+
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	j := &job{
+		cfg: &config.Config{
+			ReposPath:           reposRoot,
+			CIWorkspaceMaxBytes: 100 * 1024 * 1024,
+		},
+		run:       &models.CIRun{CommitHash: commit},
+		repo:      &repoInfo{name: "repo"},
+		owner:     "owner",
+		workspace: workspace,
+		checkout:  filepath.Join(workspace, "src"),
+		logWriter: io.Discard,
+	}
+	if err := j.clone(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got := strings.TrimSpace(runGitTest(t, j.checkout, "rev-parse", "HEAD"))
+	if got != commit {
+		t.Fatalf("expected exact commit %s, got %s", commit, got)
+	}
+	if gotRemote := strings.TrimSpace(runGitTest(t, j.checkout, "remote", "get-url", "origin")); gotRemote == "" {
+		t.Fatal("exact commit checkout lost origin remote")
+	}
+}
+
 func runGitTest(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)

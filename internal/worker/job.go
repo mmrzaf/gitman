@@ -191,6 +191,9 @@ func (j *job) logError(format string, args ...any) {
 }
 
 func (j *job) refPolicySummary() string {
+	if j.refPolicy.Source == cipolicy.PolicySourceDetached {
+		return "detached commit (auto_run=false secrets=false docker_socket=false)"
+	}
 	if j.refPolicy.RefType == "" && j.refPolicy.RefName == "" {
 		return "not resolved"
 	}
@@ -209,6 +212,13 @@ func (j *job) refPolicySummary() string {
 	)
 }
 
+func (j *job) refPolicySubject() string {
+	if j.refPolicy.Source == cipolicy.PolicySourceDetached {
+		return "detached commit"
+	}
+	return fmt.Sprintf("%s %q", j.refPolicy.RefType, j.refPolicy.RefName)
+}
+
 func (j *job) logRunnerFailure(ctx context.Context, err error, cfg *CIConfig) {
 	if err == nil {
 		return
@@ -224,7 +234,7 @@ func (j *job) logRunnerFailure(ctx context.Context, err error, cfg *CIConfig) {
 		j.logf("Details    : %v", err)
 		j.logf("Fix        : set GITMAN_CI_ALLOW_DOCKER_SOCKET=true, mount the Docker socket into the worker, and recreate the worker container.")
 	case errors.Is(err, errDockerSocketRefNotTrusted):
-		j.logError("Docker socket access was requested by .gitman-ci.yml, but this %s %q is not trusted for Docker socket access.", j.refPolicy.RefType, j.refPolicy.RefName)
+		j.logError("Docker socket access was requested by .gitman-ci.yml, but this %s is not trusted for Docker socket access.", j.refPolicySubject())
 		j.logf("Ref policy : %s", j.refPolicySummary())
 		j.logf("Details    : %v", err)
 		j.logf("Fix        : add or update a matching CI ref rule and enable Docker socket access. For release tags, use a rule like: tag v*")
@@ -245,7 +255,7 @@ func (j *job) logRunnerFailure(ctx context.Context, err error, cfg *CIConfig) {
 		j.logError("Gitman could not read the repository's configured CI secrets.")
 		j.logf("Fix        : check GITMAN_SECRET_KEY and the Gitman server logs.")
 	case errors.Is(err, errCISecretsRefNotTrusted):
-		j.logError("CI secrets were requested by .gitman-ci.yml, but this %s %q is not trusted for secrets.", j.refPolicy.RefType, j.refPolicy.RefName)
+		j.logError("CI secrets were requested by .gitman-ci.yml, but this %s is not trusted for secrets.", j.refPolicySubject())
 		j.logf("Ref policy : %s", j.refPolicySummary())
 		j.logf("Details    : %v", err)
 		j.logf("Fix        : add or update a matching CI ref rule and enable secrets.")
@@ -279,7 +289,7 @@ func ciFailureSummary(ctx context.Context, err error) string {
 	case errors.Is(err, errDockerSocketWorkerDisabled):
 		return "Docker socket access is disabled on the worker"
 	case errors.Is(err, errDockerSocketRefNotTrusted):
-		return "This ref is not trusted for Docker socket access"
+		return "This revision is not trusted for Docker socket access"
 	case errors.Is(err, errDockerImageUnavailable):
 		return "Runner image is unavailable or invalid on the worker"
 	case errors.Is(err, errDockerUnavailable):
@@ -289,7 +299,7 @@ func ciFailureSummary(ctx context.Context, err error) string {
 	case errors.Is(err, errCISecretStoreUnavailable):
 		return "Gitman could not read the configured CI secrets"
 	case errors.Is(err, errCISecretsRefNotTrusted):
-		return "This ref is not trusted to use CI secrets"
+		return "This revision is not trusted to use CI secrets"
 	case errors.Is(err, errDockerHostPathMisconfigured):
 		return "Worker path mapping is misconfigured"
 	case errors.Is(err, errDiskLimitExceeded):
@@ -329,7 +339,14 @@ func (j *job) clone(ctx context.Context) error {
 		}
 		j.logf("branch/tag clone failed, falling back to full clone")
 		if err := j.fullClone(ctx, repoURL, cloneLimits); err != nil {
-			return err
+			if errors.Is(err, errDiskLimitExceeded) {
+				return err
+			}
+			j.logf("full clone could not resolve the repository default ref; fetching the exact run commit")
+			if exactErr := j.exactCommitClone(ctx, repoURL, cloneLimits); exactErr != nil {
+				return errors.Join(err, exactErr)
+			}
+			return nil
 		}
 		usedFullClone = true
 	}
@@ -346,7 +363,13 @@ func (j *job) clone(ctx context.Context) error {
 	}
 	if usedFullClone {
 		if err := j.checkoutCommit(ctx); err != nil {
-			return err
+			j.logf("full clone did not advertise the exact run commit; fetching it directly")
+			if fetchErr := j.fetchExactCommit(ctx, repoURL, cloneLimits); fetchErr != nil {
+				return errors.Join(err, fetchErr)
+			}
+			if err := j.checkoutCommit(ctx); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -360,10 +383,41 @@ func (j *job) fullClone(ctx context.Context, repoURL string, limits []diskLimit)
 	fallback.Stdout = j.logWriter
 	fallback.Stderr = j.logWriter
 	if err := runCommandWithDiskLimits(ctx, fallback, limits); err != nil {
-		j.logf("ERROR: git clone failed: %v", err)
 		return fmt.Errorf("clone failed: %w", err)
 	}
 	return nil
+}
+
+func (j *job) fetchExactCommit(ctx context.Context, repoURL string, limits []diskLimit) error {
+	cmd := exec.CommandContext(ctx, "git", "-C", j.checkout, "fetch", "--no-tags", repoURL, j.run.CommitHash)
+	cmd.Stdout = j.logWriter
+	cmd.Stderr = j.logWriter
+	if err := runCommandWithDiskLimits(ctx, cmd, limits); err != nil {
+		return fmt.Errorf("fetch exact run commit: %w", err)
+	}
+	return nil
+}
+
+func (j *job) exactCommitClone(ctx context.Context, repoURL string, limits []diskLimit) error {
+	if err := os.RemoveAll(j.checkout); err != nil {
+		return fmt.Errorf("reset checkout before exact commit fetch: %w", err)
+	}
+	initCmd := exec.CommandContext(ctx, "git", "init", j.checkout)
+	initCmd.Stdout = j.logWriter
+	initCmd.Stderr = j.logWriter
+	if err := runCommandWithDiskLimits(ctx, initCmd, limits); err != nil {
+		return fmt.Errorf("initialize exact commit checkout: %w", err)
+	}
+	remoteCmd := exec.CommandContext(ctx, "git", "-C", j.checkout, "remote", "add", "origin", repoURL)
+	remoteCmd.Stdout = j.logWriter
+	remoteCmd.Stderr = j.logWriter
+	if err := remoteCmd.Run(); err != nil {
+		return fmt.Errorf("configure exact commit checkout: %w", err)
+	}
+	if err := j.fetchExactCommit(ctx, repoURL, limits); err != nil {
+		return err
+	}
+	return j.checkoutCommit(ctx)
 }
 
 func (j *job) checkoutCommit(ctx context.Context) error {
@@ -392,7 +446,7 @@ func (j *job) resolveEnvFile(ctx context.Context, cfg *CIConfig) (string, error)
 
 	if hasSecrets {
 		if !j.refPolicy.AllowSecrets {
-			return "", fmt.Errorf("%w: pipeline requests CI secrets, but ref %s %q is not trusted for secrets", errCISecretsRefNotTrusted, j.refPolicy.RefType, j.refPolicy.RefName)
+			return "", fmt.Errorf("%w: pipeline requests CI secrets, but %s is not trusted for secrets", errCISecretsRefNotTrusted, j.refPolicySubject())
 		}
 		secrets, err := j.database.GetRepoSecrets(ctx, j.repo.id)
 		if err != nil {

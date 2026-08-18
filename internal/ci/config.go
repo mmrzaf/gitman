@@ -87,7 +87,12 @@ func ParseConfigBytes(data []byte) (*Config, error) {
 	if err := decoder.Decode(&raw); err != nil {
 		return nil, fmt.Errorf("parse YAML: %w", err)
 	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+	// Decode a possible second document into an untyped value. KnownFields applies
+	// to application config, not to the sentinel used only to detect another
+	// document; decoding into struct{} would turn a valid second document into a
+	// misleading "unknown field" error.
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
 		if err == nil {
 			return nil, fmt.Errorf("parse YAML: multiple documents are not supported")
 		}

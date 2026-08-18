@@ -22,6 +22,7 @@ func TestBuildHookScriptUsesDurableLocalQueue(t *testing.T) {
 		`event-%020d`,
 		`printf '%s\n%s\n%s\n' "$old" "$new" "$ref"`,
 		`logger -t gitman-ci-hook`,
+		`warning: Gitman could not queue CI`,
 	} {
 		if !strings.Contains(script, expected) {
 			t.Fatalf("hook script missing %q:\n%s", expected, script)
