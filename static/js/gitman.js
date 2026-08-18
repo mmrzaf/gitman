@@ -147,7 +147,7 @@
       if (!Number.isNaN(start.getTime()) && !Number.isNaN(end.getTime())) {
         const seconds = Math.max(0, (end.getTime() - start.getTime()) / 1000);
         const duration = node.querySelector("[data-step-duration]");
-        if (duration) duration.textContent = seconds < 60 ? `${seconds.toFixed(seconds % 1 ? 1 : 0)}s` : `${Math.floor(seconds / 60)}m ${Math.floor(seconds % 60)}s`;
+        if (duration) duration.textContent = seconds < 1 ? "<1s" : (seconds < 60 ? `${seconds.toFixed(seconds % 1 ? 1 : 0)}s` : `${Math.floor(seconds / 60)}m ${Math.floor(seconds % 60)}s`);
       }
     }
     if (options.exitCode) {
@@ -231,6 +231,14 @@
       if (!newOutput || follow || newLines <= 0) return;
       newOutput.textContent = `↓ ${newLines} new ${newLines === 1 ? "line" : "lines"}`;
       newOutput.hidden = false;
+    }
+
+    function settleTerminalUI() {
+      newLines = 0;
+      if (newOutput) newOutput.hidden = true;
+      if (followButton) followButton.hidden = true;
+      const note = root.querySelector("[data-log-live-note]");
+      if (note) note.hidden = true;
     }
 
     function setView(view) {
@@ -438,8 +446,7 @@
         updateRunStatus(status);
         if (terminalStatuses.has(status)) {
           setStepStatus(finalizeNode, status);
-          const note = root.querySelector("[data-log-live-note]");
-          if (note) note.textContent = "Run finished. Finalizing this view…";
+          settleTerminalUI();
           window.setTimeout(() => window.location.reload(), 450);
           return;
         }
@@ -475,8 +482,12 @@
     });
 
     applyWrap();
-    setFollow(true);
-    if (!terminalStatuses.has(status)) schedulePoll(Number(root.dataset.refreshMs || "1500"));
+    if (terminalStatuses.has(status)) {
+      settleTerminalUI();
+    } else {
+      setFollow(true);
+      schedulePoll(Number(root.dataset.refreshMs || "1500"));
+    }
   }
 
   function installLogViewers() {

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 	"time"
 
@@ -68,5 +69,64 @@ func TestEmbeddedTemplatesExecuteWithRepresentativeTypedPages(t *testing.T) {
 				t.Fatal("rendered page is empty")
 			}
 		})
+	}
+}
+
+func TestPurifiedTemplatesKeepRoutineAndDestructiveActionsSeparate(t *testing.T) {
+	templates, err := LoadTemplates()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	cfg := &config.Config{SSHUser: "git", ServerHost: "git.example", PublicURL: "https://git.example"}
+	owner := &models.User{ID: "u1", Username: "alice", CreatedAt: now}
+	repo := &models.Repository{ID: "r1", OwnerID: owner.ID, Name: "project", IsPrivate: true, CreatedAt: now}
+	base := PageData{User: owner, Config: cfg, CSRFToken: "csrf"}
+
+	var reposOut bytes.Buffer
+	if err := templates["repos.html"].ExecuteTemplate(&reposOut, "base.html", &ReposPageData{PageData: base, Repos: []models.Repository{*repo}}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(reposOut.String(), "/repos/r1/delete") || strings.Contains(reposOut.String(), ">Delete<") {
+		t.Fatalf("repository index exposed destructive action:\n%s", reposOut.String())
+	}
+
+	base.RepoNav = &RepoNavData{Owner: owner, Repository: repo, Active: "settings", SettingsSection: "general", IsOwner: true, CanViewCI: true}
+	var settingsOut bytes.Buffer
+	if err := templates["repo_settings.html"].ExecuteTemplate(&settingsOut, "base.html", &RepoSettingsPageData{PageData: base, Owner: owner, Repository: repo}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(settingsOut.String(), "readonly") {
+		t.Fatalf("immutable repository name still rendered as readonly form control:\n%s", settingsOut.String())
+	}
+	if !strings.Contains(settingsOut.String(), "/repos/r1/delete") {
+		t.Fatal("settings danger zone lost repository deletion")
+	}
+}
+
+func TestTerminalCIRunOmitsLiveOnlyControls(t *testing.T) {
+	templates, err := LoadTemplates()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	owner := &models.User{ID: "u1", Username: "alice"}
+	repo := &models.Repository{ID: "r1", OwnerID: owner.ID, Name: "project"}
+	run := &models.CIRun{ID: "run-1", RepoID: repo.ID, CommitHash: "0123456789abcdef0123456789abcdef01234567", Branch: "main", Status: models.CIStatusSuccess, Event: models.CIEventManual, CreatedAt: now}
+	data := &CIRunPageData{
+		PageData: PageData{User: owner, Config: &config.Config{}, CSRFToken: "csrf", RepoNav: &RepoNavData{Owner: owner, Repository: repo, Active: "ci", CanViewCI: true}},
+		Owner:    owner, Repository: repo, Run: run,
+		Log: CILogView{Setup: CILogSection{Name: "Setup", Kind: "setup", Status: models.CIStatusSuccess}, Finalize: CILogSection{Name: "Finalize", Kind: "finalize", Status: models.CIStatusSuccess}},
+	}
+	var out bytes.Buffer
+	if err := templates["repo_ci_run.html"].ExecuteTemplate(&out, "base.html", data); err != nil {
+		t.Fatal(err)
+	}
+	html := out.String()
+	if strings.Contains(html, "data-log-follow") || strings.Contains(html, "data-log-new-output") || strings.Contains(html, "data-log-live-note") {
+		t.Fatalf("terminal run rendered live-only controls:\n%s", html)
+	}
+	if !strings.Contains(html, "data-log-wrap") || !strings.Contains(html, "logs/download") {
+		t.Fatal("terminal run lost persistent log controls")
 	}
 }

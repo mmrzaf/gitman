@@ -36,7 +36,7 @@ git push -u origin main</code></pre>
       <strong class="menu-label">HTTP</strong><div class="copy-row"><code>{{$.Config.PublicURL}}/{{.Owner.Username}}/{{.Repository.Name}}.git</code><button class="secondary tiny js-only" type="button" data-copy-text="{{$.Config.PublicURL}}/{{.Owner.Username}}/{{.Repository.Name}}.git" data-copy-label="Copy">Copy</button></div>
     </div></details>
     {{end}}
-    <details class="menu archive-menu"><summary>Download</summary><div class="menu-popover menu-links"><a href="/{{.Owner.Username}}/{{.Repository.Name}}/archive/zip?ref={{urlquery .CurrentRef}}">ZIP</a><a href="/{{.Owner.Username}}/{{.Repository.Name}}/archive/tar.gz?ref={{urlquery .CurrentRef}}">TAR.GZ</a></div></details>
+    <details class="menu archive-menu"><summary>Download archive</summary><div class="menu-popover menu-links"><a href="/{{.Owner.Username}}/{{.Repository.Name}}/archive/zip?ref={{urlquery .CurrentRef}}">ZIP</a><a href="/{{.Owner.Username}}/{{.Repository.Name}}/archive/tar.gz?ref={{urlquery .CurrentRef}}">TAR.GZ</a></div></details>
   </div>
 </div>
 

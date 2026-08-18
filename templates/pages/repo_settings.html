@@ -6,7 +6,7 @@
   <div class="section-copy"><h2>General</h2><p>Repository description and visibility.</p></div>
   <div class="section-body">
     <form method="POST" action="/{{.Owner.Username}}/{{.Repository.Name}}/settings" class="settings-form narrow-form">
-      <label><span>Name</span><input type="text" value="{{.Repository.Name}}" readonly></label>
+      <div class="static-field"><span>Name</span><code>{{.Repository.Name}}</code></div>
       <label><span>Description</span><textarea name="description" rows="4" maxlength="500">{{.Repository.Description}}</textarea></label>
       <label class="check"><input type="checkbox" name="is_private" {{if .Repository.IsPrivate}}checked{{end}}> Private repository</label>
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><div><button type="submit">Save changes</button></div>

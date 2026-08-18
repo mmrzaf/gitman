@@ -12,7 +12,6 @@
           {{if .Description}}<p>{{.Description}}</p>{{end}}
           <div class="meta-line mono">{{$.Config.SSHUser}}@{{$.Config.ServerHost}}:{{$.User.Username}}/{{.Name}}.git</div>
         </div>
-        <form method="POST" action="/repos/{{.ID}}/delete" data-confirm="Delete repository {{.Name}}? This cannot be undone."><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="danger-link" type="submit">Delete</button></form>
       </article>
       {{end}}
     </div>

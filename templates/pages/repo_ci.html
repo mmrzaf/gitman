@@ -61,7 +61,7 @@
     <div class="row-actions">
       {{if $.CanControl}}
         {{if canCancelRun .Run.Status}}<form method="POST" action="/{{$.Owner.Username}}/{{$.Repository.Name}}/ci/{{.Run.ID}}/cancel" data-confirm="Cancel this CI run?"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="danger-link" type="submit">Cancel</button></form>
-        {{else if canRetryRun .Run.Status}}<form method="POST" action="/{{$.Owner.Username}}/{{$.Repository.Name}}/ci/{{.Run.ID}}/retry"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="link-button" type="submit">Retry</button></form>{{end}}
+        {{else if or (eq .Run.Status "failed") (eq .Run.Status "cancelled")}}<form method="POST" action="/{{$.Owner.Username}}/{{$.Repository.Name}}/ci/{{.Run.ID}}/retry"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="link-button" type="submit">Retry</button></form>{{end}}
       {{end}}
     </div>
   </article>

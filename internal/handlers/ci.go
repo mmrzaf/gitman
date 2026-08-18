@@ -59,6 +59,8 @@ type CIRunPageData struct {
 	ArtifactBytes int64
 	Attempts      []CIRunView
 	CanControl    bool
+	FailureTitle  string
+	FailureDetail string
 }
 
 type RepoCISettingsPageData struct {
@@ -643,6 +645,82 @@ func ciRunNavigationRef(run *models.CIRun) string {
 	return run.Tag
 }
 
+func lastMeaningfulCILogLine(output string) string {
+	lines := strings.Split(output, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		_, message, _ := parseLogLine(line)
+		message = strings.TrimSpace(message)
+		if message == "" || strings.HasPrefix(message, "--- ") || strings.HasPrefix(message, "=== ") {
+			continue
+		}
+		message = strings.TrimSpace(strings.TrimPrefix(message, "ERROR:"))
+		const maxRunes = 280
+		runes := []rune(message)
+		if len(runes) > maxRunes {
+			message = string(runes[:maxRunes-1]) + "…"
+		}
+		return message
+	}
+	return ""
+}
+
+func ciFailurePresentation(run *models.CIRun, logView CILogView) (string, string) {
+	if run == nil || run.Status != models.CIStatusFailed {
+		return "", ""
+	}
+	for i := range logView.Steps {
+		step := &logView.Steps[i]
+		if step.Status != models.CIStatusFailed {
+			continue
+		}
+		detail := lastMeaningfulCILogLine(step.Output)
+		if detail == "" && run.StatusReason != "" {
+			detail = run.StatusReason
+		}
+		return fmt.Sprintf("Failed in “%s”", step.Name), detail
+	}
+
+	if logView.Setup.Status == models.CIStatusFailed {
+		detail := lastMeaningfulCILogLine(logView.Setup.Output)
+		if detail == "" {
+			detail = run.StatusReason
+		}
+		return "Failed during setup", detail
+	}
+
+	reason := strings.TrimSpace(run.StatusReason)
+	switch {
+	case strings.Contains(reason, "not trusted for Docker socket access"):
+		return "Docker access denied", reason
+	case strings.Contains(reason, "Docker socket access is disabled"):
+		return "Docker access disabled", reason
+	case strings.Contains(reason, "Runner image is unavailable"):
+		return "Runner image unavailable", reason
+	case strings.Contains(reason, "Docker runner is temporarily unavailable"):
+		return "Docker runner unavailable", reason
+	case strings.Contains(reason, "not trusted to use CI secrets"):
+		return "CI secrets denied", reason
+	case strings.Contains(reason, "could not read the configured CI secrets"):
+		return "CI secrets unavailable", reason
+	case reason == "Invalid .gitman-ci.yml":
+		return "Invalid CI configuration", reason
+	case reason == "Repository checkout failed":
+		return "Repository checkout failed", reason
+	case reason == "Artifact publication failed":
+		return "Artifact publication failed", reason
+	case reason == "CI storage limit exceeded":
+		return "CI storage limit exceeded", reason
+	case reason != "":
+		return "Failed", reason
+	default:
+		return "Failed", "Open the build log for details."
+	}
+}
+
 func (app *App) HandleCIRunGET(w http.ResponseWriter, r *http.Request) {
 	repo := GetRepo(r)
 	owner := GetRepoOwner(r)
@@ -703,6 +781,7 @@ func (app *App) HandleCIRunGET(w http.ResponseWriter, r *http.Request) {
 		commit = views[0].Commit
 	}
 
+	failureTitle, failureDetail := ciFailurePresentation(run, logView)
 	data := &CIRunPageData{
 		PageData: PageData{
 			Title: fmt.Sprintf("Run %s — CI", shortString(run.ID, 8)), User: GetUser(r),
@@ -712,6 +791,7 @@ func (app *App) HandleCIRunGET(w http.ResponseWriter, r *http.Request) {
 		Owner: owner, Repository: repo, Run: run, Commit: commit, LogContent: logContent, LogOffset: logOffset,
 		Log: logView, Pipeline: configView, Artifacts: artifactTree, ArtifactCount: len(artifactFiles),
 		ArtifactBytes: artifactTreeSize(artifactTree), Attempts: attemptViews, CanControl: app.canControlCI(r.Context(), GetUser(r), repo),
+		FailureTitle: failureTitle, FailureDetail: failureDetail,
 	}
 	app.renderPage(w, r, "repo_ci_run.html", data)
 }

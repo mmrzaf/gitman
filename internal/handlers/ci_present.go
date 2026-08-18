@@ -211,7 +211,7 @@ func compactDuration(d time.Duration) string {
 		d = 0
 	}
 	if d < time.Second {
-		return fmt.Sprintf("%dms", d.Milliseconds())
+		return "<1s"
 	}
 	if d < time.Minute {
 		if d%time.Second == 0 {

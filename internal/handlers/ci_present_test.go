@@ -137,3 +137,36 @@ func TestCITriggerDecodeErrorPreservesTooLargeKind(t *testing.T) {
 		t.Fatalf("KindOf(ciTriggerDecodeError) = %v; want %v", got, apperr.KindTooLarge)
 	}
 }
+
+func TestCompactDurationAvoidsFalseMillisecondPrecision(t *testing.T) {
+	if got := compactDuration(0); got != "<1s" {
+		t.Fatalf("compactDuration(0) = %q, want <1s", got)
+	}
+	if got := compactDuration(900 * time.Millisecond); got != "<1s" {
+		t.Fatalf("compactDuration(900ms) = %q, want <1s", got)
+	}
+}
+
+func TestCIFailurePresentationUsesFailedStepOutput(t *testing.T) {
+	run := &models.CIRun{Status: models.CIStatusFailed, StatusReason: "Pipeline exited with code 1"}
+	view := CILogView{Steps: []CILogSection{{
+		Name:   "resolve image tag",
+		Status: models.CIStatusFailed,
+		Output: "Gitman Docker image builds require a git tag; GITMAN_TAG is empty and HEAD is not exactly tagged",
+	}}}
+	title, detail := ciFailurePresentation(run, view)
+	if title != "Failed in “resolve image tag”" {
+		t.Fatalf("title = %q", title)
+	}
+	if !strings.Contains(detail, "GITMAN_TAG is empty") {
+		t.Fatalf("detail = %q", detail)
+	}
+}
+
+func TestCIFailurePresentationPromotesTypedRunnerReason(t *testing.T) {
+	run := &models.CIRun{Status: models.CIStatusFailed, StatusReason: "This revision is not trusted for Docker socket access"}
+	title, detail := ciFailurePresentation(run, CILogView{})
+	if title != "Docker access denied" || detail != run.StatusReason {
+		t.Fatalf("presentation = (%q, %q)", title, detail)
+	}
+}
