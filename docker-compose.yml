@@ -3,7 +3,7 @@ services:
     build:
       context: .
       args:
-        GO_IMAGE: "${GO_IMAGE:-golang:1.26-bookworm}"
+        GO_IMAGE: "${GO_IMAGE:-golang:1.26.6-bookworm}"
         RUNTIME_IMAGE: "${RUNTIME_IMAGE:-debian:bookworm-slim}"
         DEBIAN_MIRROR: "${DEBIAN_MIRROR:-http://linux-mirror.liara.ir/repository/debian}"
         DEBIAN_SECURITY_MIRROR: "${DEBIAN_SECURITY_MIRROR:-http://linux-mirror.liara.ir/repository/debian-security}"

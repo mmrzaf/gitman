@@ -7,6 +7,8 @@ VERSION=vX.Y.Z make verify
 VERSION=vX.Y.Z make release-source
 ```
 
+`make verify` is intentionally network-independent and does not run vulnerability scanning. Before release, require the GitHub CI/release `govulncheck` job to pass on the exact release commit with the pinned Go toolchain.
+
 Exercise at least:
 
 - Login and logout.

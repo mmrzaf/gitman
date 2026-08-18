@@ -16,7 +16,7 @@ steps:
 ## Full example
 
 ```yaml
-image: golang:1.26-bookworm
+image: golang:1.26.6-bookworm
 env:
   APP_ENV: test
   GOMODCACHE: /gitman/cache/go/pkg/mod

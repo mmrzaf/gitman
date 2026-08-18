@@ -1,4 +1,4 @@
-ARG GO_IMAGE=golang:1.26-bookworm
+ARG GO_IMAGE=golang:1.26.6-bookworm
 ARG RUNTIME_IMAGE=debian:bookworm-slim
 
 FROM ${GO_IMAGE} AS builder

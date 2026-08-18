@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Existing release tag to publish, for example v1.0.0-beta.16'
+        description: 'Existing release tag to publish, for example v1.0.0-beta.17'
         required: true
         type: string
 
@@ -21,12 +21,12 @@ concurrency:
 
 env:
   APP_NAME: gitman
-  GO_VERSION: '1.26'
+  GO_VERSION: '1.26.6'
   GOLANGCI_LINT_VERSION: 'v2.12'
   GOVULNCHECK_VERSION: 'v1.6.0'
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  GO_IMAGE: golang:1.26-bookworm
+  GO_IMAGE: golang:1.26.6-bookworm
   RUNTIME_IMAGE: debian:bookworm-slim
   DEBIAN_MIRROR: http://linux-mirror.liara.ir/repository/debian
   DEBIAN_SECURITY_MIRROR: http://linux-mirror.liara.ir/repository/debian-security
@@ -93,10 +93,10 @@ jobs:
           set -euo pipefail
           go version
           goversion="$(go env GOVERSION)"
-          case "$goversion" in
-            "go${GO_VERSION}"|"go${GO_VERSION}."*) ;;
-            *) echo "Expected Go ${GO_VERSION}.x, got ${goversion}" >&2; exit 1 ;;
-          esac
+          if [[ "$goversion" != "go${GO_VERSION}" ]]; then
+            echo "Expected Go ${GO_VERSION}, got ${goversion}" >&2
+            exit 1
+          fi
 
       - name: Download modules
         run: go mod download
