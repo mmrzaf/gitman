@@ -367,10 +367,6 @@ func (app *App) renderTemplateStatus(w http.ResponseWriter, tmplMapKey string, e
 	return err
 }
 
-func (app *App) renderTemplate(w http.ResponseWriter, tmplMapKey string, executeName string, data pageModel) error {
-	return app.renderTemplateStatus(w, tmplMapKey, executeName, data, http.StatusOK)
-}
-
 func (app *App) renderPageStatus(w http.ResponseWriter, r *http.Request, page string, data pageModel, status int) {
 	app.preparePageData(r, data)
 	if err := app.renderTemplateStatus(w, page, "base.html", data, status); err != nil {
@@ -401,9 +397,11 @@ func (app *App) renderError(w http.ResponseWriter, r *http.Request, data *PageDa
 			return
 		}
 		noStore(w)
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.WriteHeader(code)
-		_, _ = fmt.Fprintln(w, msg)
+		fallback := http.StatusText(code)
+		if fallback == "" {
+			fallback = "Error"
+		}
+		http.Error(w, fallback, code)
 	}
 }
 

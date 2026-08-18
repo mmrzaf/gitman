@@ -800,7 +800,11 @@ func (app *App) HandleCIRunLogGET(w http.ResponseWriter, r *http.Request) {
 		app.respondPlainError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI log is temporarily unavailable", err))
 		return
 	}
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			slog.Warn("failed to close CI log file", "run_id", run.ID, "path", run.LogFile, "error", closeErr)
+		}
+	}()
 	stat, err := file.Stat()
 	if err != nil {
 		app.respondPlainError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI log is temporarily unavailable", err))
@@ -877,7 +881,7 @@ func stripANSI(data []byte) string {
 		switch data[i+1] {
 		case '[':
 			j := i + 2
-			for j < len(data) && !(data[j] >= 0x40 && data[j] <= 0x7e) {
+			for j < len(data) && (data[j] < 0x40 || data[j] > 0x7e) {
 				j++
 			}
 			if j < len(data) {

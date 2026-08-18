@@ -182,3 +182,24 @@ func TestMachineSurfaceIsEstablishedBeforeAuthentication(t *testing.T) {
 		})
 	}
 }
+
+func TestQuietSuccessfulAccessLogOnlySuppressesPollNoise(t *testing.T) {
+	tests := []struct {
+		method string
+		path   string
+		want   bool
+	}{
+		{http.MethodGet, "/static/css/gitman.css", true},
+		{http.MethodGet, "/health", true},
+		{http.MethodGet, "/owner/repo/ci/run-id/log", true},
+		{http.MethodGet, "/owner/repo/ci", false},
+		{http.MethodGet, "/owner/ci/tree", false},
+		{http.MethodPost, "/owner/repo/ci/run-id/log", false},
+	}
+	for _, tt := range tests {
+		r := httptest.NewRequest(tt.method, tt.path, nil)
+		if got := quietSuccessfulAccessLog(r); got != tt.want {
+			t.Fatalf("quietSuccessfulAccessLog(%s %s) = %v, want %v", tt.method, tt.path, got, tt.want)
+		}
+	}
+}

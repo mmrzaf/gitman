@@ -542,7 +542,8 @@ func TestRepoNavRendersCIPageWithoutCurrentRefField(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 	body := w.Body.String()
-	for _, want := range []string{"/testuser/repo/tree?ref=feature%2fa", "/testuser/repo/commits?ref=feature%2fa", ">CI<", ">Settings<"} {
+	escapedRef := url.QueryEscape("feature/a")
+	for _, want := range []string{"/testuser/repo/tree?ref=" + escapedRef, "/testuser/repo/commits?ref=" + escapedRef, ">CI<", ">Settings<"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("navigation missing %q: %s", want, body)
 		}

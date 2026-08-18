@@ -17,7 +17,7 @@
         <div class="inline-actions artifact-actions">
           {{if .Previewable}}<a class="button secondary small" href="{{.PreviewURL}}" target="_blank" rel="noopener">View</a>{{end}}
           <a class="button secondary small" href="{{.DownloadURL}}" download="{{.Name}}">Download</a>
-          <button class="secondary small" type="button" data-copy-url="{{.DownloadURL}}" data-copy-label="Copy URL">Copy URL</button>
+          <button class="secondary small js-only" type="button" data-copy-url="{{.DownloadURL}}" data-copy-label="Copy URL">Copy URL</button>
         </div>
       </div>
     {{end}}
