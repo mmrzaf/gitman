@@ -1342,6 +1342,7 @@ kbd {
   align-items: baseline;
   gap: 5px;
   min-width: 0;
+  overflow-wrap: anywhere;
   color: var(--color-text);
   text-decoration: none;
   font-size: clamp(1.35rem, 2.5vw, 1.72rem);
@@ -1640,3 +1641,36 @@ kbd {
   transform: translateY(-150%);
 }
 .skip-link:focus { transform: translateY(0); }
+
+/* Clipboard fallback is only inserted when the modern Clipboard API is unavailable. */
+.clipboard-fallback {
+  position: fixed;
+  inset: 0 auto auto -9999px;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.js .ref-switch-fallback,
+.js .select-submit-fallback {
+  display: none;
+}
+
+/* A failed/missing JS asset should leave a usable HTML-first interface. */
+.no-js [data-file-finder-open],
+.no-js [data-shortcuts-open],
+.no-js [data-copy-text],
+.no-js [data-copy-url],
+.no-js [data-copy-source-lines],
+.no-js [data-diff-expand],
+.no-js [data-diff-collapse],
+.no-js [data-log-follow],
+.no-js [data-log-wrap],
+.no-js [data-log-new-output],
+.no-js [data-log-search],
+.no-js [data-log-search-prev],
+.no-js [data-log-search-next],
+.no-js [data-log-view-button] {
+  display: none !important;
+}

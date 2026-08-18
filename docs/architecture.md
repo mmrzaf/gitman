@@ -16,9 +16,11 @@ Gitman builds one binary with four top-level commands:
 | Package | Responsibility |
 | --- | --- |
 | `internal/config` | Environment-based configuration |
+| `internal/ci` | Shared CI configuration parsing and trusted-ref policy |
 | `internal/db` | SQLite initialization, migrations, and persistence |
-| `internal/git` | Safe Git repository paths, Git subprocess calls, browsing, refs, and archives |
-| `internal/handlers` | Router, auth, CSRF, UI, Git smart HTTP, CI triggers, logs, and artifact serving |
+| `internal/git` | Safe Git repository paths, Git subprocess calls, commits, diffs, browsing, refs, and archives |
+| `internal/handlers` | Router, auth, CSRF, repository UI, Git smart HTTP, CI triggers, live logs, and artifact serving |
+| `internal/markdown` | Safe server-side README subset renderer |
 | `internal/ssh` | Managed `authorized_keys` generation and SSH command authorization |
 | `internal/worker` | CI config validation, leases, workspaces, Docker containers, caches, logs, redaction, and artifacts |
 | `internal/admin` | Username/password validation, user lifecycle, and backups |

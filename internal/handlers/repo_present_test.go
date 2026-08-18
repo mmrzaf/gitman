@@ -64,3 +64,37 @@ func TestClassifyRepoRef(t *testing.T) {
 		t.Fatalf("hash = %q", got)
 	}
 }
+
+func TestSourceRenderLimitProtectsPathologicalFiles(t *testing.T) {
+	if got := sourceRenderLimitNote([]byte(strings.Repeat("x\n", maxSourceRenderLines))); got != "" {
+		t.Fatalf("exact line limit unexpectedly rejected: %q", got)
+	}
+	if got := sourceRenderLimitNote([]byte(strings.Repeat("x\n", maxSourceRenderLines) + "x")); got == "" {
+		t.Fatal("expected line-count render limit")
+	}
+	if got := sourceRenderLimitNote([]byte(strings.Repeat("x", maxSourceLineBytes+1))); got == "" {
+		t.Fatal("expected long-line render limit")
+	}
+	if got := sourceRenderLimitNote([]byte("small\nfile\n")); got != "" {
+		t.Fatalf("small file unexpectedly limited: %q", got)
+	}
+}
+
+func TestRepoNavActiveUsesRouteSegmentsNotRepositoryName(t *testing.T) {
+	tests := map[string]string{
+		"/alice/ci":                   "files",
+		"/alice/settings/tree":        "files",
+		"/alice/commits/blob":         "files",
+		"/alice/demo/ci":              "ci",
+		"/alice/demo/ci/secrets":      "secrets",
+		"/alice/demo/commit/deadbeef": "commits",
+		"/alice/demo/commits":         "commits",
+		"/alice/demo/settings":        "settings",
+		"/alice/demo/collaborators":   "collaborators",
+	}
+	for path, want := range tests {
+		if got := repoNavActive(path); got != want {
+			t.Errorf("repoNavActive(%q) = %q, want %q", path, got, want)
+		}
+	}
+}

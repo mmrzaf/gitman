@@ -37,6 +37,7 @@ type RepoPageData struct {
 	BlobLanguageID string
 	BlobBinary     bool
 	IsTooBig       bool
+	BlobRenderNote string
 	CanViewCI      bool
 	CanControlCI   bool
 	LatestCommit   *git.Commit
@@ -320,8 +321,9 @@ func (app *App) HandleRepoBlobGET(w http.ResponseWriter, r *http.Request) {
 	}
 	data.BlobSize = size
 
-	if size > 2*1024*1024 {
+	if size > maxSourceRenderBytes {
 		data.IsTooBig = true
+		data.BlobRenderNote = "Files larger than 2 MiB are available through Raw or Download."
 	} else {
 		content, err := git.GetBlob(ctx, repoPath, ref, path)
 		if err != nil {
@@ -341,7 +343,12 @@ func (app *App) HandleRepoBlobGET(w http.ResponseWriter, r *http.Request) {
 		}
 		data.BlobContent = string(content)
 		if isTextBlob(content) {
-			data.BlobLines = sourceLines(content, language)
+			if note := sourceRenderLimitNote(content); note != "" {
+				data.IsTooBig = true
+				data.BlobRenderNote = note
+			} else {
+				data.BlobLines = sourceLines(content, language)
+			}
 		} else {
 			data.BlobBinary = true
 		}

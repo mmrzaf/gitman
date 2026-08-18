@@ -63,6 +63,37 @@ func repoBreadcrumbs(path string) []RepoBreadcrumb {
 	return crumbs
 }
 
+const (
+	maxSourceRenderBytes = 2 * 1024 * 1024
+	maxSourceRenderLines = 20_000
+	maxSourceLineBytes   = 256 * 1024
+)
+
+func sourceRenderLimitNote(data []byte) string {
+	if len(data) > maxSourceRenderBytes {
+		return "Files larger than 2 MiB are available through Raw or Download."
+	}
+	lineCount := 1
+	lineBytes := 0
+	for i, b := range data {
+		if b == '\n' {
+			lineBytes = 0
+			if i+1 < len(data) {
+				lineCount++
+			}
+			if lineCount > maxSourceRenderLines {
+				return "This file has too many lines for the interactive source viewer. Raw and Download remain available."
+			}
+			continue
+		}
+		lineBytes++
+		if lineBytes > maxSourceLineBytes {
+			return "This file contains an exceptionally long line that is unsafe to render interactively. Raw and Download remain available."
+		}
+	}
+	return ""
+}
+
 func isTextBlob(data []byte) bool {
 	return bytes.IndexByte(data, 0) == -1 && utf8.Valid(data)
 }

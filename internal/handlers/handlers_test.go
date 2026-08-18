@@ -741,3 +741,41 @@ func TestLimitRequestBodyRejectsOversizedUIRequest(t *testing.T) {
 		t.Fatalf("expected 413, got %d", w.Code)
 	}
 }
+
+func TestCSRFMiddlewarePreservesValidatedTokenInPOSTContext(t *testing.T) {
+	app := setupTestApp(t)
+	const token = "csrf-test-token"
+	handler := app.CSRFMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got, _ := r.Context().Value(csrfTokenKey).(string)
+		if got != token {
+			t.Fatalf("csrf token context = %q, want %q", got, token)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("csrf_token="+token))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "csrf_token", Value: token})
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, body=%q", w.Code, w.Body.String())
+	}
+}
+
+func TestSecurityHeadersDoNotRequireInlineScriptOrStyle(t *testing.T) {
+	app := setupTestApp(t)
+	handler := app.securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	csp := w.Header().Get("Content-Security-Policy")
+	if strings.Contains(csp, "'unsafe-inline'") {
+		t.Fatalf("CSP still permits inline script/style: %q", csp)
+	}
+	for _, want := range []string{"script-src 'self'", "style-src 'self'", "frame-ancestors 'none'"} {
+		if !strings.Contains(csp, want) {
+			t.Fatalf("CSP missing %q: %q", want, csp)
+		}
+	}
+}

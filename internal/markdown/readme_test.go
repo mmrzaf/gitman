@@ -33,3 +33,12 @@ func TestRenderBasicBlocks(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderDeduplicatesHeadingIDs(t *testing.T) {
+	got := string(Render("## Build\n\n## Build\n\n## Build", Options{}))
+	for _, want := range []string{`id="build"`, `id="build-1"`, `id="build-2"`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing unique heading id %q in %s", want, got)
+		}
+	}
+}

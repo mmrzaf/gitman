@@ -15,20 +15,20 @@
     {{if .RepoNav.Repository.Description}}<p class="repo-masthead-description">{{.RepoNav.Repository.Description}}</p>{{end}}
   </div>
   <div class="repo-masthead-actions">
-    <button class="secondary small" type="button" data-file-finder-open>Go to file <kbd>t</kbd></button>
+    <button class="secondary small" type="button" data-file-finder-open aria-haspopup="dialog" aria-controls="gitman-file-finder">Go to file <kbd>t</kbd></button>
     <button class="repo-shortcuts-button secondary small" type="button" data-shortcuts-open aria-haspopup="dialog" title="Keyboard shortcuts (?)">Shortcuts <kbd>?</kbd></button>
   </div>
 </header>
 
-<dialog class="file-finder" data-file-finder data-search-url="/{{.RepoNav.Owner.Username}}/{{.RepoNav.Repository.Name}}/files/search{{if .RepoNav.CurrentRef}}?ref={{urlquery .RepoNav.CurrentRef}}{{end}}">
+<dialog id="gitman-file-finder" class="file-finder" data-file-finder data-search-url="/{{.RepoNav.Owner.Username}}/{{.RepoNav.Repository.Name}}/files/search{{if .RepoNav.CurrentRef}}?ref={{urlquery .RepoNav.CurrentRef}}{{end}}">
   <div class="file-finder-shell">
     <div class="file-finder-header">
       <div><strong>Go to file</strong>{{if .RepoNav.CurrentRef}}<span class="muted">{{.RepoNav.CurrentRef}}</span>{{end}}</div>
       <button class="icon-button" type="button" data-file-finder-close aria-label="Close file finder">×</button>
     </div>
     <label class="sr-only" for="gitman-file-finder-input">Search files</label>
-    <input id="gitman-file-finder-input" class="file-finder-input" type="search" placeholder="Search files…" autocomplete="off" data-file-finder-input>
-    <div class="file-finder-results" data-file-finder-results role="listbox" aria-label="Repository files"></div>
+    <input id="gitman-file-finder-input" class="file-finder-input" type="search" placeholder="Search files…" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="gitman-file-finder-results" aria-expanded="false" data-file-finder-input>
+    <div id="gitman-file-finder-results" class="file-finder-results" data-file-finder-results role="listbox" aria-label="Repository files"></div>
     <div class="file-finder-footer muted"><span>↑↓ navigate</span><span>Enter open</span><span>Esc close</span></div>
   </div>
 </dialog>

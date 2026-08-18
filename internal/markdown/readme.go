@@ -1,6 +1,7 @@
 package markdown
 
 import (
+	"fmt"
 	"html"
 	"html/template"
 	"net/url"
@@ -38,6 +39,7 @@ func Render(input string, opts Options) template.HTML {
 	var codeFence string
 	var codeLanguage string
 	var codeLines []string
+	headingIDs := make(map[string]int)
 
 	flushParagraph := func() {
 		if len(paragraph) == 0 {
@@ -136,6 +138,13 @@ func Render(input string, opts Options) template.HTML {
 			flushParagraph()
 			closeList()
 			id := headingID(text)
+			if id != "" {
+				base := id
+				if seen := headingIDs[base]; seen > 0 {
+					id = fmt.Sprintf("%s-%d", base, seen)
+				}
+				headingIDs[base]++
+			}
 			out.WriteString("<h")
 			out.WriteByte(byte('0' + level))
 			if id != "" {

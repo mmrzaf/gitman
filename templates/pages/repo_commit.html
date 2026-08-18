@@ -10,8 +10,8 @@
     <form method="POST" action="/{{.Data.Owner.Username}}/{{.Data.Repository.Name}}/ci/trigger">
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <input type="hidden" name="commit_hash" value="{{.Data.Commit.Hash}}">
-      {{if eq .Data.CurrentRefKind "branch"}}<input type="hidden" name="branch" value="{{.Data.CurrentRef}}">{{end}}
-      {{if eq .Data.CurrentRefKind "tag"}}<input type="hidden" name="tag" value="{{.Data.CurrentRef}}">{{end}}
+      {{if .Data.CIBranch}}<input type="hidden" name="branch" value="{{.Data.CIBranch}}">{{end}}
+      {{if .Data.CITag}}<input type="hidden" name="tag" value="{{.Data.CITag}}">{{end}}
       <button class="small" type="submit">Run CI on this commit</button>
     </form>
     {{end}}
@@ -101,7 +101,7 @@
       </span>
       <span class="diff-file-actions">
         {{if not $file.Binary}}<span class="diff-add">+{{$file.Additions}}</span><span class="diff-del">−{{$file.Deletions}}</span>{{end}}
-        {{if ne $file.StatusCode "D"}}<a class="button secondary tiny" href="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/blob?ref={{urlquery $.Data.Commit.Hash}}&amp;path={{urlquery $file.Path}}" onclick="event.stopPropagation()">View file</a>{{end}}
+        {{if ne $file.StatusCode "D"}}<a class="button secondary tiny" href="/{{$.Data.Owner.Username}}/{{$.Data.Repository.Name}}/blob?ref={{urlquery $.Data.Commit.Hash}}&amp;path={{urlquery $file.Path}}" data-summary-action>View file</a>{{end}}
       </span>
     </summary>
 

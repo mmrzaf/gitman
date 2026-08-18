@@ -33,8 +33,8 @@
 
 {{if .Data.IsTooBig}}
 <div class="empty-state source-empty-state">
-  <h3>File too large to render</h3>
-  <p class="muted">{{humanSize .Data.BlobSize}}. Raw and download remain available.</p>
+  <h3>File too large for the interactive viewer</h3>
+  <p class="muted">{{if .Data.BlobRenderNote}}{{.Data.BlobRenderNote}}{{else}}{{humanSize .Data.BlobSize}}. Raw and Download remain available.{{end}}</p>
 </div>
 {{else if .Data.BlobBinary}}
 <div class="empty-state source-empty-state">
