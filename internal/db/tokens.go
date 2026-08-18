@@ -19,7 +19,7 @@ func (db *DB) CreateAccessToken(ctx context.Context, userID, name, tokenHash str
 
 func (db *DB) GetUserAccessTokens(ctx context.Context, userID string) (tokens []models.AccessToken, err error) {
 	rows, err := db.sql.QueryContext(ctx,
-		"SELECT id, user_id, name, created_at FROM access_tokens WHERE user_id = ? ORDER BY created_at DESC",
+		"SELECT id, user_id, name, created_at FROM access_tokens WHERE user_id = ? ORDER BY created_at DESC, rowid DESC",
 		userID,
 	)
 	if err != nil {
