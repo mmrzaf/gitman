@@ -19,10 +19,6 @@ type Command struct {
 
 var version = "dev"
 
-func versionString() string {
-	return version
-}
-
 var commands = map[string]Command{}
 
 func register(cmd Command) {
@@ -31,7 +27,7 @@ func register(cmd Command) {
 
 func Execute(args []string) error {
 	if len(args) >= 2 && (args[1] == "--version" || args[1] == "version") {
-		_, err := fmt.Fprintln(os.Stdout, versionString())
+		_, err := fmt.Fprintln(os.Stdout, version)
 		return err
 	}
 	if len(args) < 2 {
