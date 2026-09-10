@@ -64,26 +64,19 @@ func (m *Manager) Run(ctx context.Context) {
 }
 
 func (m *Manager) drainAll(ctx context.Context) {
-	repos, err := m.DB.GetAllRepositories(ctx)
+	locations, err := m.DB.ListRepositoryLocations(ctx)
 	if err != nil {
 		slog.Warn("failed to list repositories for CI trigger queue", "error", err)
 		return
 	}
-	for i := range repos {
+	for _, location := range locations {
 		if ctx.Err() != nil {
 			return
 		}
-		owner, err := m.DB.GetUserByID(ctx, repos[i].OwnerID)
-		if err != nil {
-			if errors.Is(err, db.ErrNotFound) {
-				slog.Error("CI queue repository has no owner", "repo", repos[i].ID, "owner_id", repos[i].OwnerID)
-			} else {
-				slog.Warn("failed to load CI queue repository owner", "repo", repos[i].ID, "owner_id", repos[i].OwnerID, "error", err)
-			}
-			continue
-		}
-		if err := m.DrainRepository(ctx, owner, &repos[i]); err != nil {
-			slog.Warn("failed to drain CI trigger queue", "repo", repos[i].ID, "error", err)
+		owner := &models.User{Username: location.Owner}
+		repo := &models.Repository{ID: location.ID, Name: location.Name}
+		if err := m.DrainRepository(ctx, owner, repo); err != nil {
+			slog.Warn("failed to drain CI trigger queue", "repo", location.ID, "error", err)
 		}
 	}
 }
