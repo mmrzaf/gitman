@@ -25,6 +25,7 @@
           <a href="/repos">Repositories</a>
           <a href="/keys">SSH keys</a>
           <a href="/tokens">Tokens</a>
+          <a href="/security">Security</a>
           <span class="nav-user">{{.User.Username}}</span>
           <form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="link-button" type="submit">Logout</button></form>
         {{else}}

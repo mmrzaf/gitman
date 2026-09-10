@@ -39,6 +39,7 @@ git push -u origin main</code></pre>
     <details class="menu archive-menu"><summary>Download archive</summary><div class="menu-popover menu-links"><a href="/{{.Owner.Username}}/{{.Repository.Name}}/archive/zip?ref={{urlquery .CurrentRef}}">ZIP</a><a href="/{{.Owner.Username}}/{{.Repository.Name}}/archive/tar.gz?ref={{urlquery .CurrentRef}}">TAR.GZ</a></div></details>
   </div>
 </div>
+{{if .RefsTruncated}}<div class="notice warning">Branch/tag choices are capped for this repository. Direct ref URLs still work.</div>{{end}}
 
 {{if .CurrentPath}}
 <nav class="breadcrumbs" aria-label="Repository path"><a href="/{{.Owner.Username}}/{{.Repository.Name}}/tree?ref={{urlquery .CurrentRef}}">{{.Repository.Name}}</a>{{range $index, $crumb := .Breadcrumbs}}<span>/</span>{{if eq $index (sub1 (len $.Breadcrumbs))}}<strong>{{$crumb.Name}}</strong>{{else}}<a href="/{{$.Owner.Username}}/{{$.Repository.Name}}/tree?ref={{urlquery $.CurrentRef}}&amp;path={{urlquery $crumb.Path}}">{{$crumb.Name}}</a>{{end}}{{end}}</nav>
@@ -59,6 +60,7 @@ git push -u origin main</code></pre>
   </tr>{{else}}<tr><td colspan="3" class="empty-line">No files at this path.</td></tr>{{end}}
 </tbody></table>
 </div>
+{{if .TreeTruncated}}<div class="notice warning">This directory is very large. The file list was capped; use Go to File or a Git client for paths not shown here.</div>{{end}}
 
 {{if and (not .CurrentPath) .ReadmePath}}
 <section class="readme-section">

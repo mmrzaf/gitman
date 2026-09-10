@@ -113,3 +113,33 @@ func TestRepoSettingsSectionUsesCanonicalSettingsRoutes(t *testing.T) {
 		}
 	}
 }
+
+func TestRankFileMatchesKeepsOnlyBestLimit(t *testing.T) {
+	files := []string{
+		"zzz/deep/worker.go",
+		"docs/worker-notes.md",
+		"worker.txt",
+		"internal/worker.go",
+		"worker.go",
+	}
+	matches := rankFileMatches(files, "worker", "me", "repo", "main", 2)
+	if len(matches) != 2 {
+		t.Fatalf("matches = %d, want 2: %+v", len(matches), matches)
+	}
+	if matches[0].Path != "worker.go" || matches[1].Path != "internal/worker.go" {
+		t.Fatalf("unexpected top matches: %+v", matches)
+	}
+}
+
+func TestEnsureRefVisible(t *testing.T) {
+	original := []string{"branch-0001", "branch-0002"}
+	got := ensureRefVisible(append([]string(nil), original...), "branch-9000")
+	if len(got) != 3 || got[2] != "branch-9000" {
+		t.Fatalf("ensureRefVisible() = %#v", got)
+	}
+
+	got = ensureRefVisible(append([]string(nil), original...), "branch-0002")
+	if len(got) != len(original) {
+		t.Fatalf("existing ref duplicated: %#v", got)
+	}
+}

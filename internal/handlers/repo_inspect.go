@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/mmrzaf/gitman/internal/apperr"
@@ -85,17 +87,12 @@ func (app *App) HandleRepoCommitGET(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	branches, err := git.GetBranches(ctx, repoPath)
+	currentRefInfo, err := git.ResolveRefInfo(ctx, repoPath, currentRef)
 	if err != nil {
 		app.respondWebError(w, r, repositoryGitError(err, "Revision not found"))
 		return
 	}
-	tags, err := git.GetTags(ctx, repoPath)
-	if err != nil {
-		app.respondWebError(w, r, repositoryGitError(err, "Revision not found"))
-		return
-	}
-	currentRefKind := classifyRepoRef(currentRef, branches, tags)
+	currentRefKind := repoRefKindLabel(currentRefInfo.Kind)
 	if currentRefKind == "branch" {
 		reachable, reachErr := git.IsCommitReachableFromBranch(ctx, repoPath, detail.Hash, currentRef)
 		if reachErr != nil {
@@ -169,8 +166,12 @@ func (app *App) HandleRepoBlobDownloadGET(w http.ResponseWriter, r *http.Request
 
 func (app *App) serveRepoBlob(w http.ResponseWriter, r *http.Request, download bool) {
 	noStore(w)
+	ctx, cleanup, ok := app.beginRepoStream(w, r)
+	if !ok {
+		return
+	}
+	defer cleanup()
 	repoPath := GetRepoPath(r)
-	ctx := r.Context()
 	ref := requestRef(r)
 	path := requestRepoPath(r)
 	if strings.TrimSpace(path) == "" {
@@ -204,16 +205,52 @@ func (app *App) serveRepoBlob(w http.ResponseWriter, r *http.Request, download b
 }
 
 type fileSearchResponse struct {
-	Ref     string            `json:"ref"`
-	Results []fileSearchMatch `json:"results"`
+	Ref       string            `json:"ref"`
+	Results   []fileSearchMatch `json:"results"`
+	Truncated bool              `json:"truncated,omitempty"`
+}
+
+const (
+	defaultFileSearchMaxConcurrent      = 8
+	defaultFileSearchMaxConcurrentPerIP = 2
+	defaultFileSearchMaxFiles           = 100000
+	defaultFileSearchMaxBytes           = int64(32 * 1024 * 1024)
+	defaultFileSearchTimeout            = 5 * time.Second
+)
+
+func (app *App) fileSearchConcurrencyLimiter() *requestConcurrencyLimiter {
+	app.fileSearchOnce.Do(func() {
+		total := app.Config.FileSearchMaxConcurrent
+		if total <= 0 {
+			total = defaultFileSearchMaxConcurrent
+		}
+		perIP := app.Config.FileSearchMaxConcurrentPerIP
+		if perIP <= 0 {
+			perIP = defaultFileSearchMaxConcurrentPerIP
+		}
+		app.fileSearchLimiter = newRequestConcurrencyLimiter(total, perIP)
+	})
+	return app.fileSearchLimiter
 }
 
 func (app *App) HandleRepoFileSearchGET(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
+	releaseSlot, ok := app.fileSearchConcurrencyLimiter().tryAcquire(app.clientIP(r))
+	if !ok {
+		w.Header().Set("Retry-After", "1")
+		app.respondAPIError(w, r, apperr.New(apperr.KindUnavailable, "File search is busy; retry shortly"))
+		return
+	}
+	defer releaseSlot()
 	repoPath := GetRepoPath(r)
 	owner := GetRepoOwner(r)
 	repo := GetRepo(r)
-	ctx := r.Context()
+	timeout := app.Config.FileSearchTimeout
+	if timeout <= 0 {
+		timeout = defaultFileSearchTimeout
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
+	defer cancel()
 	isEmpty, err := git.IsEmpty(ctx, repoPath)
 	if err != nil {
 		app.respondAPIError(w, r, apperr.Wrap(apperr.KindUnavailable, "Repository data is temporarily unavailable", err))
@@ -232,14 +269,43 @@ func (app *App) HandleRepoFileSearchGET(w http.ResponseWriter, r *http.Request) 
 	if runes := []rune(query); len(runes) > 200 {
 		query = string(runes[:200])
 	}
-	files, err := git.ListFiles(ctx, repoPath, ref)
-	if err != nil {
-		app.respondAPIError(w, r, repositoryGitError(err, "revision not found"))
-		return
+	maxFiles := app.Config.FileSearchMaxFiles
+	if maxFiles <= 0 {
+		maxFiles = defaultFileSearchMaxFiles
 	}
+	maxBytes := app.Config.FileSearchMaxBytes
+	if maxBytes <= 0 {
+		maxBytes = defaultFileSearchMaxBytes
+	}
+	ownerPath := url.PathEscape(owner.Username)
+	repoPathPart := url.PathEscape(repo.Name)
+	matches := make([]fileSearchMatch, 0, 40)
+	truncated, err := git.WalkFiles(ctx, repoPath, ref, git.FileWalkLimits{
+		MaxFiles: maxFiles,
+		MaxBytes: maxBytes,
+	}, func(path string) error {
+		match, ok := fileSearchMatchForPath(path, query)
+		if ok {
+			matches = addFileSearchMatch(matches, match, 40)
+		}
+		return nil
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			truncated = true
+		case errors.Is(err, context.Canceled) && r.Context().Err() != nil:
+			return
+		default:
+			app.respondAPIError(w, r, repositoryGitError(err, "revision not found"))
+			return
+		}
+	}
+	finalizeFileSearchMatches(matches, ownerPath, repoPathPart, ref)
 	writeFileSearchJSON(w, fileSearchResponse{
-		Ref:     ref,
-		Results: rankFileMatches(files, query, url.PathEscape(owner.Username), url.PathEscape(repo.Name), ref, 40),
+		Ref:       ref,
+		Results:   matches,
+		Truncated: truncated,
 	})
 }
 

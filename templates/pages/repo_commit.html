@@ -16,14 +16,14 @@
 <dl class="commit-facts">
   <div><dt>Commit</dt><dd><code>{{.Commit.Hash}}</code><button class="copy-link js-only" type="button" data-copy-text="{{.Commit.Hash}}" data-copy-label="Copy">Copy</button></dd></div>
   <div><dt>{{if gt (len .Commit.Parents) 1}}Parents{{else}}Parent{{end}}</dt><dd>{{if .Commit.Parents}}{{range .Commit.Parents}}<a class="mono" href="/{{$.Owner.Username}}/{{$.Repository.Name}}/commit/{{.}}?ref={{urlquery $.CurrentRef}}">{{short . 8}}</a> {{end}}{{else}}Initial commit{{end}}</dd></div>
-  {{if or .Commit.Branches .Commit.Tags}}<div><dt>Refs</dt><dd>{{range .Commit.Branches}}<a href="/{{$.Owner.Username}}/{{$.Repository.Name}}/tree?ref={{urlquery .}}">{{.}}</a> {{end}}{{range .Commit.Tags}}<a href="/{{$.Owner.Username}}/{{$.Repository.Name}}/tree?ref={{urlquery .}}">tag {{.}}</a> {{end}}</dd></div>{{end}}
+  {{if or .Commit.Branches .Commit.Tags}}<div><dt>Refs</dt><dd>{{range .Commit.Branches}}<a href="/{{$.Owner.Username}}/{{$.Repository.Name}}/tree?ref={{urlquery .}}">{{.}}</a> {{end}}{{range .Commit.Tags}}<a href="/{{$.Owner.Username}}/{{$.Repository.Name}}/tree?ref={{urlquery .}}">tag {{.}}</a> {{end}}{{if .Commit.RefsTruncated}} <span class="muted">more refs omitted</span>{{end}}</dd></div>{{else if .Commit.RefsTruncated}}<div><dt>Refs</dt><dd><span class="muted">Ref list capped.</span></dd></div>{{end}}
 </dl>
 
 <div class="diff-heading">
-  <div><h2>{{.Diff.TotalFiles}} file{{if ne .Diff.TotalFiles 1}}s{{end}} changed <span class="diff-add">+{{.Diff.Additions}}</span> <span class="diff-del">−{{.Diff.Deletions}}</span></h2>{{if gt (len .Commit.Parents) 1}}<p>Compared with the first parent.</p>{{end}}</div>
+  <div><h2>{{.Diff.TotalFiles}}{{if .Diff.FilesTruncated}}+{{end}} file{{if ne .Diff.TotalFiles 1}}s{{end}} changed {{if .Diff.StatsTruncated}}<span class="muted">(statistics capped)</span>{{else}}<span class="diff-add">+{{.Diff.Additions}}</span> <span class="diff-del">−{{.Diff.Deletions}}</span>{{end}}</h2>{{if gt (len .Commit.Parents) 1}}<p>Compared with the first parent.</p>{{end}}</div>
   {{if .Diff.Files}}<div class="inline-actions js-only"><button class="secondary small" type="button" data-diff-expand>Expand all</button><button class="secondary small" type="button" data-diff-collapse>Collapse all</button></div>{{end}}
 </div>
-{{if .Diff.Truncated}}<div class="notice warning">This commit is large. Patch rendering was capped; file statistics still describe the full commit.</div>{{end}}
+{{if or .Diff.FilesTruncated .Diff.StatsTruncated}}<div class="notice warning">This commit is very large. File enumeration/statistics were capped, and patch rendering may also be partial.</div>{{else if .Diff.Truncated}}<div class="notice warning">This commit is large. Patch rendering was capped; file statistics still describe the full commit.</div>{{end}}
 
 {{if .Diff.Files}}
 <nav class="diff-index" aria-label="Changed files">{{range $index, $file := .Diff.Files}}<a href="#diff-{{$index}}"><span class="diff-status">{{$file.Status}}</span><span>{{if and $file.OldPath (ne $file.OldPath $file.Path)}}{{$file.OldPath}} → {{end}}{{$file.Path}}</span><span>{{if $file.Binary}}binary{{else}}<b class="diff-add">+{{$file.Additions}}</b> <b class="diff-del">−{{$file.Deletions}}</b>{{end}}</span></a>{{end}}</nav>
