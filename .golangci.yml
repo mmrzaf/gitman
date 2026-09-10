@@ -2,8 +2,6 @@ version: "2"
 
 run:
   timeout: 5m
-  skip-dirs:
-    - "crypto/internal/randutil"
 
 linters:
   default: none
@@ -16,6 +14,8 @@ linters:
 
   exclusions:
     warn-unused: true
+    paths:
+      - crypto/internal/randutil
     rules:
       - path: _test\.go
         linters:
