@@ -17,6 +17,7 @@ Gitman is aimed at small teams and private infrastructure. It is not a multi-ten
 
 ## Requirements
 
+- Linux server host.
 - Go `1.26.6` to build from source.
 - `git` available in `PATH` at runtime.
 - Docker only when the built-in CI worker is enabled.
@@ -59,7 +60,7 @@ mkdir -p "$GITMAN_DATA_DIR" && chmod 700 "$GITMAN_DATA_DIR"
 docker compose up -d --build
 ```
 
-Open `http://localhost:8080`. See [DOCKER_SETUP.md](DOCKER_SETUP.md) before exposing the service publicly or enabling SSH.
+Open `http://localhost:8080`. Read the [Docker deployment guide](docs/operator/docker.md) before exposing the service publicly or enabling SSH.
 
 ## CI configuration
 
@@ -84,7 +85,7 @@ steps:
 
 CI jobs run in Docker containers with network access disabled by default, a read-only root filesystem, dropped Linux capabilities, PID limits, CPU and memory limits, Docker log persistence disabled, bounded Gitman logs, bounded artifact staging, bounded workspace usage, and serialized per-repository cache writes. Manual runs can select a branch, tag, or reachable historical commit; Gitman always reads `.gitman-ci.yml` from the exact selected commit. Job images must already exist on the runner because CI uses `--pull never`. With `GITMAN_CI_NETWORK=none`, dependencies must come from the image, the repository, or an already-warmed `/gitman/cache` mount.
 
-Non-default branches and tags do not auto-run by default and do not receive CI secrets unless the repository owner adds a matching trust rule. Rules may be exact refs or glob patterns such as `v*` for version tags. Docker socket access requires both `GITMAN_CI_ALLOW_DOCKER_SOCKET=true` and matching ref approval. Treat Docker-enabled jobs as privileged host infrastructure. Application-level disk checks limit damage but are not hard quotas. Run the worker on a dedicated runner host or inside a VM with kernel-enforced filesystem quotas before accepting untrusted repository writers.
+Non-default branches and tags do not auto-run by default and do not receive CI secrets unless the repository owner adds a matching trust rule. Rules may be exact refs or glob patterns such as `v*` for version tags. Docker socket access requires both `GITMAN_CI_ALLOW_DOCKER_SOCKET=true` and matching ref approval. Treat Docker-enabled jobs as privileged host infrastructure. Application-level byte/entry checks and free-space/inode admission reserves limit damage but are not hard quotas. Run the worker on a dedicated runner host or inside a VM with kernel-enforced filesystem quotas before accepting untrusted repository writers.
 
 ## Admin CLI
 
@@ -106,6 +107,8 @@ gitman admin repos configure-all
 gitman version
 ```
 
+CI workers persist a liveness/admission heartbeat. Monitor `/ci-healthz` separately from web `/readyz`; a healthy web process does not imply that optional CI execution is available.
+
 Backup commands require Gitman's exclusive state lock. Stop the web and worker processes first; Gitman refuses the backup while another Gitman process is using mutable state. The destination must be absent or empty and must not be inside the repository or artifact trees.
 
 ## Configuration
@@ -125,6 +128,14 @@ Core environment variables:
 | `GITMAN_FORCE_SECURE_COOKIES` | `false` | Always mark browser cookies as secure. Enable behind HTTPS. |
 | `GITMAN_TRUST_PROXY_HEADERS` | `false` | Trust proxy HTTPS headers. Enable only behind a trusted reverse proxy. |
 | `GITMAN_GIT_RECEIVE_MAX_BYTES` | `536870912` | Git receive-pack input ceiling applied to new repos and `admin repos configure-all`. |
+| `GITMAN_GIT_HTTP_MAX_CONCURRENT` | `16` | Maximum concurrent Smart HTTP Git backend processes per web instance. |
+| `GITMAN_GIT_HTTP_MAX_CONCURRENT_PER_IP` | `4` | Maximum concurrent Smart HTTP operations from one resolved client IP. |
+| `GITMAN_GIT_HTTP_TIMEOUT` | `30m` | Maximum lifetime of one Smart HTTP Git operation. |
+| `GITMAN_FILE_SEARCH_MAX_CONCURRENT` | `8` | Maximum simultaneous Go-to-file searches per web instance. |
+| `GITMAN_FILE_SEARCH_MAX_CONCURRENT_PER_IP` | `2` | Maximum simultaneous Go-to-file searches from one resolved client IP. |
+| `GITMAN_FILE_SEARCH_MAX_FILES` | `100000` | Maximum blob paths inspected by one Go-to-file search. |
+| `GITMAN_FILE_SEARCH_MAX_BYTES` | `33554432` | Maximum `git ls-tree` output consumed by one file search. |
+| `GITMAN_FILE_SEARCH_TIMEOUT` | `5s` | Maximum time spent enumerating files for one search request. |
 
 CI limits:
 
@@ -139,10 +150,15 @@ CI limits:
 | `GITMAN_CI_NETWORK` | `none` |
 | `GITMAN_CI_ARTIFACT_MAX_BYTES` | `104857600` |
 | `GITMAN_CI_ARTIFACT_MAX_FILES` | `1000` |
+| `GITMAN_CI_ARTIFACT_MAX_ENTRIES` | `5000` |
 | `GITMAN_CI_LOG_MAX_BYTES` | `10485760` |
 | `GITMAN_CI_WORKSPACE_ROOT` | `.data/ci/workspaces` |
 | `GITMAN_CI_WORKSPACE_MAX_BYTES` | `1073741824` |
+| `GITMAN_CI_WORKSPACE_MAX_ENTRIES` | `200000` |
 | `GITMAN_CI_CACHE_MAX_BYTES` | `1073741824` |
+| `GITMAN_CI_CACHE_MAX_ENTRIES` | `100000` |
+| `GITMAN_CI_STORAGE_MIN_FREE_BYTES` | `1073741824` |
+| `GITMAN_CI_STORAGE_MIN_FREE_INODES` | `10000` |
 | `GITMAN_CI_CONTAINER_USER` | worker process numeric non-root UID:GID |
 | `GITMAN_CI_ALLOW_DOCKER_SOCKET` | `false` |
 | `GITMAN_CI_DOCKER_SOCKET_PATH` | `/var/run/docker.sock` |

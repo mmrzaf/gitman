@@ -37,7 +37,7 @@ printf '%s\n' "$ADMIN_PASSWORD" | docker compose exec -T web gitman admin users 
 unset ADMIN_PASSWORD
 ```
 
-Usernames must be 3 to 32 characters and contain only letters, numbers, dashes, and underscores. Passwords must be at least 8 characters and contain at least one letter and one digit.
+Usernames must be 3 to 32 characters and contain only letters, numbers, dashes, and underscores. Passwords must be 8 to 72 bytes and contain at least one letter and one digit. The maximum matches Gitman's bcrypt password-hashing limit.
 
 ## 3. Sign in and create a repository
 
@@ -45,7 +45,7 @@ Open `http://localhost:8080`, sign in, open **Repositories**, and create a repos
 
 ## 4. Push over HTTP
 
-Create a personal access token from **Access Tokens** for routine Git-over-HTTP use. The token is displayed once.
+Create a personal access token from **Access Tokens** and choose **Read & write (push)** for this walkthrough. New tokens default to read-only, which is sufficient for clone/fetch but intentionally cannot push. The token is displayed once.
 
 ```bash
 git remote add origin http://localhost:8080/admin/example.git

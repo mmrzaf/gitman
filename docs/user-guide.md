@@ -37,11 +37,13 @@ Create tokens from **Access Tokens**. A token:
 
 - Starts with `gm_`.
 - Is displayed only once.
+- Must expire after 30, 90, 180, or 365 days; new tokens default to 90 days.
+- Shows its expiration and approximate last-use time in the UI.
 - Is required for authenticated Git over HTTP.
 - Can authenticate artifact API downloads using `Authorization: Bearer <token>`.
 - Can be revoked from the UI.
 
-Store tokens in a credential manager. Do not commit them.
+Store tokens in a credential manager. Do not commit them. Tokens created before beta 18 receive a 90-day rotation deadline when the beta-18 database migration runs.
 
 ## SSH keys
 
@@ -64,3 +66,9 @@ Repository pages provide:
 Members can view exact run status, queue and execution timing, structured step logs with incremental live updates, raw-log search/follow/wrap controls, exact pipeline configuration, outcome reasons, retry history, and nested artifacts. Owners and write collaborators can run CI manually, cancel queued or running jobs, and retry completed jobs against the same commit. Gitman manages the durable post-receive trigger automatically; owners manage repository secrets and trusted-ref policy.
 
 Repository owners also have a dedicated **Settings** page for description, visibility, and safe deletion. Repositories with queued or running CI jobs—or a cancelled job whose worker is still stopping—must be settled before deletion.
+
+## Security activity
+
+The **Security** page shows recent security-relevant activity associated with your account, including sign-ins, failed sign-in attempts against your account, token and SSH-key changes, repository access/settings changes, CI secret/trusted-ref changes, and administrator password resets. Review entries you do not recognize and revoke affected credentials immediately.
+
+The **Tokens** page labels credentials as active, expiring soon, or expired, shows approximate last-use time when available, and shows the token's access scope. Read-only tokens can clone/fetch and use read-only repository APIs; read/write tokens can also push.

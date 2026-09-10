@@ -2,6 +2,7 @@
 
 ## Requirements
 
+- Linux. Gitman server releases target Linux; the managed CI hook also relies on Linux userspace tools.
 - Go `1.26.6`.
 - `git` in `PATH` for all Gitman commands after top-level help.
 - Docker CLI and Docker daemon access only for `gitman worker`.

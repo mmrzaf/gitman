@@ -15,7 +15,7 @@ gofmt -w .
 golangci-lint run
 ```
 
-The repository also includes `Makefile` and `Justfile` shortcuts. Prefer the explicit commands above when validating changes.
+The repository includes `Makefile` shortcuts. Prefer the explicit commands above when diagnosing CI or release failures.
 
 ## Local web process
 

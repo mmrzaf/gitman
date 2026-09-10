@@ -56,3 +56,21 @@ gitman admin repos configure-all
 See [backups and upgrades](../operator/backups-and-upgrades.md).
 
 `configure-all` verifies managed repository storage, applies the configured Git receive-pack input ceiling, and reconciles Gitman's managed CI post-receive hook. It refuses to overwrite an operator-owned hook.
+
+## Operational status
+
+```bash
+gitman admin status
+```
+
+Reports the Gitman version, current database schema, repository/artifact storage readiness, recent CI worker counts, active jobs, pending queue depth/oldest queued time, and production-configuration warnings. The command exits non-zero when core readiness checks fail, CI status cannot be queried, or pending CI work has no healthy worker.
+
+## Audit trail
+
+```bash
+gitman admin audit
+gitman admin audit --limit 250
+gitman admin audit --json
+```
+
+The audit command prints newest-first security events. `--json` emits newline-delimited JSON for ingestion into log tooling. Output can include usernames, source IPs, repository/token/key identifiers, and non-secret event metadata, so treat it as security-sensitive operational data.

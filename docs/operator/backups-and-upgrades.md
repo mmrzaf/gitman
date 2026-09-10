@@ -64,3 +64,19 @@ docker compose up -d --build
 ```
 
 Database migrations run forward-only during Gitman startup. Rolling back a Gitman release means restoring the matching database and filesystem backup; Gitman does not attempt reverse schema migrations.
+
+## Beta 17 to beta 18 migration
+
+Beta 18 applies migrations 008 through 012. They add personal-access-token expiration/last-use metadata and scopes, the durable audit trail, CI worker heartbeat state, and indexes for audit and CI queue queries.
+
+Existing beta-17 personal access tokens are preserved, keep write compatibility (`repo:write`), and receive an expiration approximately 90 days after the first beta-18 migration. Rotate long-lived automation credentials during that window. New tokens default to read-only and must have a finite lifetime.
+
+Before first starting beta 18:
+
+1. Stop the web and worker processes.
+2. Take a full backup and preserve the current `GITMAN_SECRET_KEY` separately.
+3. Start beta 18 and wait for migrations to finish.
+4. Run `gitman admin status` and verify schema 12, writable storage, and CI worker health when CI is in use.
+5. Verify login, clone/fetch, a write-scoped push, SSH when enabled, and one CI run.
+
+Restoring a beta-17 binary requires restoring the matching pre-upgrade database and filesystem backup; migrations are forward-only.

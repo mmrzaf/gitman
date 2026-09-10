@@ -28,7 +28,9 @@ Public repository source browsing does not make CI logs or artifacts public.
 
 ## CI trust model
 
-The CI worker executes repository-controlled shell commands in Docker containers. Gitman applies useful restrictions: no network by default, read-only container root filesystem, dropped Linux capabilities, `no-new-privileges`, PID limits, CPU and memory limits, numeric non-root user enforcement, bounded logs, bounded artifact staging, bounded workspace usage, and serialized per-repository cache writes.
+The CI worker executes repository-controlled shell commands in Docker containers. Gitman applies useful restrictions: no network by default, read-only container root filesystem, dropped Linux capabilities, `no-new-privileges`, PID limits, CPU and memory limits, numeric non-root user enforcement, bounded logs, byte and filesystem-entry limits for artifact/workspace/cache paths, minimum free-space/inode admission checks, and serialized per-repository cache writes.
+
+The worker also persists a liveness/admission heartbeat and pauses new claims while Docker, SQLite, or worker storage is unhealthy. Docker-daemon outages during an attempt are requeued against the exact lease instead of being reported as pipeline failures.
 
 Those controls reduce risk. They do not turn a Docker-socket-backed worker into a hardened multi-tenant sandbox. Operate it as privileged infrastructure.
 
