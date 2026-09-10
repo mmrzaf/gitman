@@ -3,9 +3,9 @@ ARG RUNTIME_IMAGE=debian:bookworm-slim
 
 FROM ${GO_IMAGE} AS builder
 
-ARG DEBIAN_MIRROR=http://linux-mirror.liara.ir/repository/debian
-ARG DEBIAN_SECURITY_MIRROR=http://linux-mirror.liara.ir/repository/debian-security
-ARG GOPROXY=https://mirror.abrha.net/repository/go/,direct
+ARG DEBIAN_MIRROR=http://deb.debian.org/debian
+ARG DEBIAN_SECURITY_MIRROR=http://security.debian.org/debian-security
+ARG GOPROXY=https://proxy.golang.org,direct
 ENV GOPROXY=${GOPROXY} \
 	GOTOOLCHAIN=local
 
@@ -27,8 +27,8 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION}"
 
 FROM ${RUNTIME_IMAGE}
 
-ARG DEBIAN_MIRROR=http://linux-mirror.liara.ir/repository/debian
-ARG DEBIAN_SECURITY_MIRROR=http://linux-mirror.liara.ir/repository/debian-security
+ARG DEBIAN_MIRROR=http://deb.debian.org/debian
+ARG DEBIAN_SECURITY_MIRROR=http://security.debian.org/debian-security
 ARG GIT_UID=1000
 
 RUN set -eu; \

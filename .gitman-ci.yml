@@ -9,9 +9,9 @@ env:
   GO_IMAGE: golang:1.26.6-bookworm
   RUNTIME_IMAGE: debian:bookworm-slim
 
-  DEBIAN_MIRROR: http://linux-mirror.liara.ir/repository/debian
-  DEBIAN_SECURITY_MIRROR: http://linux-mirror.liara.ir/repository/debian-security
-  GOPROXY: https://mirror.abrha.net/repository/go/,direct
+  DEBIAN_MIRROR: http://deb.debian.org/debian
+  DEBIAN_SECURITY_MIRROR: http://security.debian.org/debian-security
+  GOPROXY: https://proxy.golang.org,direct
 
 steps:
   - name: verify docker access

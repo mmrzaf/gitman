@@ -12,8 +12,7 @@ on:
         type: string
 
 permissions:
-  contents: write
-  packages: write
+  contents: read
 
 concurrency:
   group: release-${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
@@ -28,9 +27,9 @@ env:
   IMAGE_NAME: ${{ github.repository }}
   GO_IMAGE: golang:1.26.6-bookworm
   RUNTIME_IMAGE: debian:bookworm-slim
-  DEBIAN_MIRROR: http://linux-mirror.liara.ir/repository/debian
-  DEBIAN_SECURITY_MIRROR: http://linux-mirror.liara.ir/repository/debian-security
-  GOPROXY: https://mirror.abrha.net/repository/go/,direct
+  DEBIAN_MIRROR: http://deb.debian.org/debian
+  DEBIAN_SECURITY_MIRROR: http://security.debian.org/debian-security
+  GOPROXY: https://proxy.golang.org,direct
 
 jobs:
   release-metadata:
@@ -168,12 +167,6 @@ jobs:
           - goos: linux
             goarch: arm64
             ext: ''
-          - goos: darwin
-            goarch: amd64
-            ext: ''
-          - goos: darwin
-            goarch: arm64
-            ext: ''
     steps:
       - name: Checkout release tag
         uses: actions/checkout@v6
@@ -241,6 +234,9 @@ jobs:
     name: Publish Docker image
     runs-on: ubuntu-latest
     needs: [release-metadata, verify]
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Checkout release tag
         uses: actions/checkout@v6
@@ -332,6 +328,8 @@ jobs:
     name: Create GitHub release
     runs-on: ubuntu-latest
     needs: [release-metadata, build-binaries, source-archive, docker-image, docker-archive]
+    permissions:
+      contents: write
     steps:
       - name: Download release artifacts
         uses: actions/download-artifact@v8

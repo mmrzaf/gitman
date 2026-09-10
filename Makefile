@@ -1,35 +1,38 @@
-.PHONY: build test clean install run-web run-worker run-admin fmt lint deps dev verify release-source help
+.PHONY: help build build-all test test-coverage verify clean install run-web run-worker fmt lint deps release-source
 
-BINARY_NAME=gitman
-BUILD_DIR=bin
-GO=go
+BINARY_NAME := gitman
+BUILD_DIR := bin
+GO := go
 VERSION ?= dev
-GO_IMAGE ?= golang:1.26.6-bookworm
-RUNTIME_IMAGE ?= debian:bookworm-slim
-DEBIAN_MIRROR ?= http://linux-mirror.liara.ir/repository/debian
-DEBIAN_SECURITY_MIRROR ?= http://linux-mirror.liara.ir/repository/debian-security
-GOPROXY ?= https://mirror.abrha.net/repository/go/,direct
-LDFLAGS=-s -w -X main.version=$(VERSION)
+GOPROXY ?= https://proxy.golang.org,direct
+LDFLAGS := -s -w -X main.version=$(VERSION)
 
-# Default target
 .DEFAULT_GOAL := help
 
-# Colors for output
-GREEN := \033[0;32m
-RED := \033[0;31m
-NC := \033[0m # No Color
+help: ## Show available commands
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-15s %s\n", $$1, $$2}'
 
-help: ## Show this help message
-	@echo "$(GREEN)Available commands:$(NC)"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(GREEN)%-15s$(NC) %s\n", $$1, $$2}'
-
-build: ## Build the GitMan binary
-	@echo "Building GitMan $(VERSION)..."
+build: ## Build the Gitman binary
 	@mkdir -p $(BUILD_DIR)
 	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/gitman
 
-verify: ## Run release verification checks
-	$(GO) test ./...
+build-all: ## Build supported Linux binaries
+	@mkdir -p $(BUILD_DIR)
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/gitman
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 ./cmd/gitman
+	test -s $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64
+	test -s $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64
+	test "$$($(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 version)" = "$(VERSION)"
+
+test: ## Run the test suite with the race detector
+	$(GO) test -race ./...
+
+test-coverage: ## Run tests and write an HTML coverage report
+	$(GO) test -race -coverprofile=coverage.out ./...
+	$(GO) tool cover -html=coverage.out -o coverage.html
+
+verify: ## Run the local release verification set
+	$(GO) test -race ./...
 	$(GO) vet ./...
 	golangci-lint run
 	@mkdir -p $(BUILD_DIR)
@@ -37,85 +40,28 @@ verify: ## Run release verification checks
 	test "$$($(BUILD_DIR)/$(BINARY_NAME) version)" = "$(VERSION)"
 	test "$$($(BUILD_DIR)/$(BINARY_NAME) --version)" = "$(VERSION)"
 
-release-source: ## Create tracked-files-only source archive
-	scripts/release-source-archive.sh $${VERSION:?set VERSION}
+clean: ## Remove local build/test artifacts
+	rm -rf $(BUILD_DIR)
+	rm -f coverage.out coverage.html
 
-build-all: ## Build for multiple platforms
-	@echo "Building GitMan $(VERSION) for multiple platforms..."
-	@mkdir -p $(BUILD_DIR)
-	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/gitman
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 ./cmd/gitman
-	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64 ./cmd/gitman
-	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 ./cmd/gitman
-	test -s $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64
-	test -s $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64
-	test -s $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64
-	test -s $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64
-	test "$$($(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 version)" = "$(VERSION)"
-	test "$$($(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 --version)" = "$(VERSION)"
+install: build ## Install the binary to /usr/local/bin
+	install -m 0755 $(BUILD_DIR)/$(BINARY_NAME) /usr/local/bin/$(BINARY_NAME)
 
-test: ## Run tests
-	$(GO) test -v -race -coverprofile=coverage.out ./...
-
-test-coverage: ## Run tests with coverage report
-	$(GO) test -v -race -coverprofile=coverage.out ./...
-	$(GO) tool cover -html=coverage.out -o coverage.html
-	@echo "$(GREEN)Coverage report generated: coverage.html$(NC)"
-
-clean: ## Clean build artifacts
-	@echo "Cleaning..."
-	@rm -rf $(BUILD_DIR)
-	@rm -f coverage.out coverage.html
-
-install: build ## Install binary to /usr/local/bin
-	@echo "Installing..."
-	@cp $(BUILD_DIR)/$(BINARY_NAME) /usr/local/bin/
-	@echo "$(GREEN)Installed to /usr/local/bin/$(BINARY_NAME)$(NC)"
-
-run-web: ## Run web server
+run-web: ## Run the web server
 	$(GO) run ./cmd/gitman web
 
-run-worker: ## Run worker
+run-worker: ## Run the CI worker
 	$(GO) run ./cmd/gitman worker
 
-run-admin: ## Run admin commands
-	$(GO) run ./cmd/gitman admin
+fmt: ## Format tracked Go files
+	gofmt -w $$(git ls-files '*.go')
 
-run-serve: ## Run serve command
-	$(GO) run ./cmd/gitman serve
-
-dev: ## Run in development mode (web server)
-	$(GO) run ./cmd/gitman web
-
-fmt: ## Format code
-	$(GO) fmt ./...
-	@gofmt -w .
-
-lint: ## Run linter
+lint: ## Run golangci-lint
 	golangci-lint run
 
-deps: ## Download and tidy dependencies
+deps: ## Download and tidy Go modules
 	GOPROXY=$(GOPROXY) $(GO) mod download
 	GOPROXY=$(GOPROXY) $(GO) mod tidy
 
-mod-update: ## Update dependencies
-	$(GO) get -u ./...
-	$(GO) mod tidy
-
-watch: ## Run with hot reload (requires air)
-	@command -v air >/dev/null 2>&1 || { echo "$(RED)air is not installed. Run: go install github.com/cosmtrek/air@latest$(NC)"; exit 1; }
-	air
-
-# Development helper targets
-web-dev: ## Run web server with debug logging
-	$(GO) run ./cmd/gitman web --verbose
-
-worker-dev: ## Run worker with debug logging
-	$(GO) run ./cmd/gitman worker --verbose
-
-# Quick test targets
-test-short: ## Run short tests (no race detection)
-	$(GO) test -short ./...
-
-test-verbose: ## Run tests with verbose output
-	$(GO) test -v ./...
+release-source: ## Create the tracked-files-only source archive
+	scripts/release-source-archive.sh $${VERSION:?set VERSION}
