@@ -3,6 +3,7 @@ package worker
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -102,17 +103,50 @@ func TestRedactingWriterMasksSecretsAcrossWrites(t *testing.T) {
 	}
 }
 
-func TestDirectoryUsageExceeds(t *testing.T) {
+func TestMeasureDirectoryUsageCountsBytesAndEntries(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "payload"), []byte("12345"), 0o600); err != nil {
+	if err := os.Mkdir(filepath.Join(root, "nested"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	exceeded, err := directoryUsageExceeds(root, 4)
+	if err := os.WriteFile(filepath.Join(root, "nested", "payload"), []byte("12345"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	usage, err := measureDirectoryUsage(root, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !exceeded {
-		t.Fatal("expected directory limit to be exceeded")
+	if usage.bytes != 5 || usage.entries != 2 {
+		t.Fatalf("usage = %+v, want 5 bytes and 2 entries", usage)
+	}
+}
+
+func TestCheckDiskLimitsRejectsEntryExhaustion(t *testing.T) {
+	root := t.TempDir()
+	for i := 0; i < 4; i++ {
+		if err := os.Mkdir(filepath.Join(root, fmt.Sprintf("dir-%d", i)), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	err := checkDiskLimits([]diskLimit{{name: "workspace", path: root, maxEntries: 3}})
+	if !errors.Is(err, errDiskLimitExceeded) {
+		t.Fatalf("expected entry limit error, got %v", err)
+	}
+}
+
+func TestResetDirectoryIfOverEntryLimit(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "cache")
+	if err := os.MkdirAll(filepath.Join(root, "a", "b"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := resetDirectoryIfOverLimit(root, 0, 1); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("oversized cache was not reset: %v", entries)
 	}
 }
 
@@ -550,4 +584,332 @@ func (w *failAfterWriter) Write(p []byte) (int, error) {
 	n := len(p)
 	w.remaining -= n
 	return n, nil
+}
+
+func TestFilesystemAvailableReportsHeadroom(t *testing.T) {
+	headroom, err := filesystemAvailable(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if headroom.availableBytes <= 0 || headroom.availableInodes <= 0 {
+		t.Fatalf("unexpected filesystem headroom: %+v", headroom)
+	}
+}
+
+func TestCheckFilesystemHeadroomRejectsImpossibleReserve(t *testing.T) {
+	err := checkFilesystemHeadroom([]string{t.TempDir()}, int64(^uint64(0)>>1), 0)
+	if !errors.Is(err, errWorkerStorageUnavailable) {
+		t.Fatalf("expected storage admission error, got %v", err)
+	}
+}
+
+func TestWorkerRuntimeStateDrainingBlocksClaims(t *testing.T) {
+	state := newWorkerRuntimeState("worker")
+	state.setHealth(true, "ready")
+	if !state.readyForClaims() {
+		t.Fatal("healthy worker should accept claims")
+	}
+	state.beginDrain()
+	if state.readyForClaims() {
+		t.Fatal("draining worker accepted claims")
+	}
+	healthy, message, _ := state.snapshot()
+	if healthy || !strings.Contains(message, "draining") {
+		t.Fatalf("unexpected draining snapshot: healthy=%v message=%q", healthy, message)
+	}
+}
+
+func TestProbeWorkerAdmissionUsesDockerAndStorage(t *testing.T) {
+	root := t.TempDir()
+	for _, dir := range []string{"artifacts", "cache", "workspaces"} {
+		if err := os.Mkdir(filepath.Join(root, dir), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	binDir := t.TempDir()
+	dockerPath := filepath.Join(binDir, "docker")
+	if err := os.WriteFile(dockerPath, []byte(`#!/bin/sh
+[ "$1" = info ] || exit 2
+echo 29.0.0
+`), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fmt.Sprintf("%s%c%s", binDir, os.PathListSeparator, os.Getenv("PATH")))
+	cfg := &config.Config{
+		ArtifactsPath:          filepath.Join(root, "artifacts"),
+		CacheRoot:              filepath.Join(root, "cache"),
+		CIWorkspaceRoot:        filepath.Join(root, "workspaces"),
+		CIStorageMinFreeBytes:  1,
+		CIStorageMinFreeInodes: 1,
+	}
+	if err := probeWorkerAdmission(context.Background(), cfg); err != nil {
+		t.Fatalf("healthy admission probe failed: %v", err)
+	}
+}
+
+func TestClonePropagatesStorageAdmissionFailureWithoutFallback(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	j := &job{
+		cfg: &config.Config{
+			ReposPath:              filepath.Join(root, "repos"),
+			CIWorkspaceMaxBytes:    100 * 1024 * 1024,
+			CIStorageMinFreeBytes:  int64(^uint64(0) >> 1),
+			CIStorageMinFreeInodes: 1,
+			CIWorkspaceMaxEntries:  1000,
+		},
+		run:       &models.CIRun{Branch: "main", CommitHash: "0123456789abcdef"},
+		repo:      &repoInfo{name: "repo"},
+		owner:     "owner",
+		workspace: workspace,
+		checkout:  filepath.Join(workspace, "src"),
+		logWriter: io.Discard,
+	}
+	err := j.clone(context.Background())
+	if !errors.Is(err, errWorkerStorageUnavailable) {
+		t.Fatalf("expected storage admission error, got %v", err)
+	}
+	if _, statErr := os.Stat(j.checkout); !os.IsNotExist(statErr) {
+		t.Fatalf("checkout should not be created after admission failure; stat err=%v", statErr)
+	}
+}
+
+func TestPauseWorkerAdmissionPersistsStorageFailure(t *testing.T) {
+	database, err := db.InitDB("file::memory:?cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	state := newWorkerRuntimeState("worker-storage-test")
+	state.setHealth(true, "ready")
+	if err := database.RegisterCIWorker(context.Background(), models.CIWorker{
+		ID: state.id, Hostname: "runner", PID: 1, Concurrency: 1,
+		Healthy: true, StatusMessage: "ready", StartedAt: time.Now(), HeartbeatAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	j := &job{database: database, workerState: state}
+	j.pauseWorkerAdmission(fmt.Errorf("%w: low disk", errWorkerStorageUnavailable))
+	if state.readyForClaims() {
+		t.Fatal("worker remained ready after storage admission failure")
+	}
+	workers, err := database.ListCIWorkers(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(workers) != 1 || workers[0].Healthy || !strings.Contains(workers[0].StatusMessage, "low disk") {
+		t.Fatalf("storage failure heartbeat not persisted: %+v", workers)
+	}
+}
+
+func TestProcessNextRequeuesDockerOutageAndPausesClaims(t *testing.T) {
+	root := t.TempDir()
+	reposRoot := filepath.Join(root, "repos")
+	artifactsRoot := filepath.Join(root, "artifacts")
+	cacheRoot := filepath.Join(root, "cache")
+	workspaceRoot := filepath.Join(root, "workspaces")
+	for _, dir := range []string{reposRoot, artifactsRoot, cacheRoot, workspaceRoot} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	database, err := db.InitDB("file::memory:?cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	owner, err := database.CreateUser(ctx, "owner", "OwnerPass1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoID, err := database.CreateRepository(ctx, owner.ID, "repo", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	bare := filepath.Join(reposRoot, "owner", "repo.git")
+	if err := os.MkdirAll(filepath.Dir(bare), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runGitTest(t, "", "init", "--bare", bare)
+	source := filepath.Join(root, "source")
+	if err := os.MkdirAll(source, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runGitTest(t, source, "init")
+	runGitTest(t, source, "config", "user.email", "test@example.com")
+	runGitTest(t, source, "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(source, ciConfigFile), []byte("image: alpine:3.20\nsteps:\n  - name: test\n    run: echo ok\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGitTest(t, source, "add", ciConfigFile)
+	runGitTest(t, source, "commit", "-m", "add pipeline")
+	commit := strings.TrimSpace(runGitTest(t, source, "rev-parse", "HEAD"))
+	branch := strings.TrimSpace(runGitTest(t, source, "branch", "--show-current"))
+	runGitTest(t, source, "remote", "add", "origin", bare)
+	runGitTest(t, source, "push", "origin", branch)
+	runGitTest(t, "", "--git-dir="+bare, "symbolic-ref", "HEAD", "refs/heads/"+branch)
+
+	runID, err := database.CreateCIRun(ctx, repoID, commit, branch, "", models.CIEventManual)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	binDir := t.TempDir()
+	dockerPath := filepath.Join(binDir, "docker")
+	if err := os.WriteFile(dockerPath, []byte(`#!/bin/sh
+if [ "$1" = image ] && [ "$2" = inspect ]; then
+  echo 'image lookup unavailable' >&2
+  exit 1
+fi
+if [ "$1" = info ]; then
+  echo 'daemon unavailable' >&2
+  exit 1
+fi
+echo "unexpected docker invocation: $*" >&2
+exit 2
+`), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fmt.Sprintf("%s%c%s", binDir, os.PathListSeparator, os.Getenv("PATH")))
+
+	cfg := &config.Config{
+		ReposPath:              reposRoot,
+		ArtifactsPath:          artifactsRoot,
+		CacheRoot:              cacheRoot,
+		CIWorkspaceRoot:        workspaceRoot,
+		CIWorkspaceMaxBytes:    100 * 1024 * 1024,
+		CIWorkspaceMaxEntries:  10000,
+		CIArtifactMaxBytes:     10 * 1024 * 1024,
+		CIArtifactMaxFiles:     100,
+		CIArtifactMaxEntries:   1000,
+		CICacheMaxBytes:        10 * 1024 * 1024,
+		CICacheMaxEntries:      1000,
+		CIStorageMinFreeBytes:  1,
+		CIStorageMinFreeInodes: 1,
+		CILogMaxBytes:          1024 * 1024,
+		CILeaseTimeout:         30 * time.Second,
+		CIHeartbeatInterval:    10 * time.Second,
+		CIJobTimeout:           30 * time.Second,
+		CIContainerUser:        "1000:1000",
+		CINetwork:              "none",
+	}
+	state := newWorkerRuntimeState("worker-docker-test")
+	state.setHealth(true, "ready")
+	if err := database.RegisterCIWorker(ctx, models.CIWorker{
+		ID: state.id, Hostname: "runner", PID: 1, Concurrency: 1,
+		Healthy: true, StatusMessage: "ready", StartedAt: time.Now(), HeartbeatAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	processed, err := processNext(ctx, ctx, cfg, database, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !processed {
+		t.Fatal("pending run was not processed")
+	}
+	if state.readyForClaims() {
+		t.Fatal("worker remained ready after Docker outage")
+	}
+	got, err := database.GetCIRunByID(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != models.CIStatusPending || got.AttemptID != "" || got.StartedAt != nil || got.HeartbeatAt != nil || got.CompletedAt != nil {
+		t.Fatalf("run was not safely requeued: %+v", got)
+	}
+	if got.StatusReason != "Waiting for worker infrastructure" {
+		t.Fatalf("status reason = %q", got.StatusReason)
+	}
+	if got.LogFile != "" {
+		t.Fatalf("requeued run retained log path %q", got.LogFile)
+	}
+	if state.activeJobs.Load() != 0 {
+		t.Fatalf("active jobs leaked after requeue: %d", state.activeJobs.Load())
+	}
+}
+
+func TestArtifactPublicationHeadroomProtectsDestinationFilesystem(t *testing.T) {
+	root := t.TempDir()
+	staging := filepath.Join(root, "staging")
+	artifacts := filepath.Join(root, "published")
+	if err := os.MkdirAll(staging, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(artifacts, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(staging, "report.txt"), []byte("report"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	j := &job{
+		cfg: &config.Config{
+			ArtifactsPath:          artifacts,
+			CIArtifactMaxBytes:     1024,
+			CIArtifactMaxEntries:   10,
+			CIStorageMinFreeBytes:  int64(^uint64(0) >> 1),
+			CIStorageMinFreeInodes: 1,
+		},
+		artifactsStagingDir: staging,
+	}
+	err := j.checkArtifactPublicationHeadroom()
+	if !errors.Is(err, errWorkerStorageUnavailable) || !errors.Is(err, errArtifactPublication) {
+		t.Fatalf("expected artifact publication storage error, got %v", err)
+	}
+}
+
+func TestProcessNextReleasesClaimIfAdmissionPausesDuringClaim(t *testing.T) {
+	database, err := db.InitDB("file::memory:?cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	owner, err := database.CreateUser(ctx, "admission-owner", "OwnerPass1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoID, err := database.CreateRepository(ctx, owner.ID, "repo", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID, err := database.CreateCIRun(ctx, repoID, "0123456789abcdef", "main", "", models.CIEventManual)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := newWorkerRuntimeState("paused-worker") // unhealthy by default
+	processed, err := processNext(ctx, ctx, &config.Config{}, database, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !processed {
+		t.Fatal("claimed run was not released")
+	}
+	run, err := database.GetCIRunByID(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != models.CIStatusPending || run.AttemptID != "" || run.StatusReason != "Waiting for worker admission" {
+		t.Fatalf("run was not returned to pending cleanly: %+v", run)
+	}
+}
+
+func TestProbeDockerDaemonReturnsTypedUnavailableError(t *testing.T) {
+	binDir := t.TempDir()
+	dockerPath := filepath.Join(binDir, "docker")
+	if err := os.WriteFile(dockerPath, []byte("#!/bin/sh\necho 'daemon down' >&2\nexit 1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fmt.Sprintf("%s%c%s", binDir, os.PathListSeparator, os.Getenv("PATH")))
+	err := probeDockerDaemon(context.Background())
+	if !errors.Is(err, errDockerUnavailable) || !strings.Contains(err.Error(), "daemon down") {
+		t.Fatalf("unexpected Docker probe error: %v", err)
+	}
 }

@@ -36,6 +36,10 @@ func (j *job) collectArtifacts(ctx context.Context) (err error) {
 		return fmt.Errorf("%w: staging path is not a directory", errArtifactPublication)
 	}
 
+	if err := j.checkArtifactPublicationHeadroom(); err != nil {
+		return err
+	}
+
 	dstDir := filepath.Join(j.cfg.ArtifactsPath, "files", j.owner, j.repo.name, j.run.ID, j.run.AttemptID)
 	if err := ensurePrivateDir(dstDir); err != nil {
 		return fmt.Errorf("%w: create destination: %w", errArtifactPublication, err)
@@ -126,6 +130,35 @@ func (j *job) collectArtifacts(ctx context.Context) (err error) {
 		return fmt.Errorf("%w: %w", errArtifactPublication, err)
 	}
 	published = true
+	return nil
+}
+
+func (j *job) checkArtifactPublicationHeadroom() error {
+	// Artifacts are staged under the workspace and may be published to a
+	// different filesystem. Reserve enough space/inodes for the actual staged
+	// output before starting the copy so publication cannot knowingly consume
+	// the operator-configured emergency headroom on the artifact store.
+	usage, err := measureDirectoryUsage(j.artifactsStagingDir, 0, 0)
+	if err != nil {
+		return fmt.Errorf("%w: measure staged artifacts: %w", errArtifactPublication, err)
+	}
+	plannedBytes := usage.bytes
+	if j.cfg.CIArtifactMaxBytes > 0 && plannedBytes > j.cfg.CIArtifactMaxBytes {
+		plannedBytes = j.cfg.CIArtifactMaxBytes
+	}
+	plannedEntries := usage.entries
+	if j.cfg.CIArtifactMaxEntries > 0 && plannedEntries > int64(j.cfg.CIArtifactMaxEntries) {
+		plannedEntries = int64(j.cfg.CIArtifactMaxEntries)
+	}
+	// Directory entries and filesystem metadata consume blocks in addition to
+	// regular-file payload bytes. Four KiB per staged entry is a conservative
+	// portable allowance; the configured reserve remains untouched after it.
+	metadataBytes := saturatingProduct(uint64(plannedEntries), 4096)
+	requiredBytes := saturatingAdd(j.cfg.CIStorageMinFreeBytes, plannedBytes, metadataBytes)
+	requiredInodes := saturatingAdd(j.cfg.CIStorageMinFreeInodes, plannedEntries)
+	if err := checkFilesystemHeadroom([]string{j.cfg.ArtifactsPath}, requiredBytes, requiredInodes); err != nil {
+		return fmt.Errorf("%w: artifact store admission: %w", errArtifactPublication, err)
+	}
 	return nil
 }
 
