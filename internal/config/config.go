@@ -318,6 +318,9 @@ func (c *Config) Validate() error {
 	if c.RepoBrowseMaxConcurrentPerIP > c.RepoBrowseMaxConcurrent {
 		return fmt.Errorf("GITMAN_REPO_BROWSE_MAX_CONCURRENT_PER_IP cannot exceed GITMAN_REPO_BROWSE_MAX_CONCURRENT")
 	}
+	if c.GitReceiveMaxBytes > 10*1024*1024*1024 {
+		return fmt.Errorf("GITMAN_GIT_RECEIVE_MAX_BYTES cannot exceed 10737418240 (10 GiB)")
+	}
 	if c.RepoStreamMaxConcurrentPerIP > c.RepoStreamMaxConcurrent {
 		return fmt.Errorf("GITMAN_REPO_STREAM_MAX_CONCURRENT_PER_IP cannot exceed GITMAN_REPO_STREAM_MAX_CONCURRENT")
 	}
