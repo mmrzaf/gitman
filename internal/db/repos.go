@@ -240,9 +240,10 @@ func (db *DB) GetRepoAccessLevel(ctx context.Context, repoID, userID string) (mo
 	return level, nil
 }
 
-// RepositoryLocation is the minimal repository identity needed by operator
-// maintenance tasks that walk repositories on disk.
+// RepositoryLocation is the minimal repository identity needed by background
+// maintenance and trigger tasks that walk repositories on disk.
 type RepositoryLocation struct {
+	ID    string
 	Owner string
 	Name  string
 }
@@ -250,7 +251,7 @@ type RepositoryLocation struct {
 // ListRepositoryLocations returns every repository with its owning username.
 func (db *DB) ListRepositoryLocations(ctx context.Context) (locations []RepositoryLocation, err error) {
 	rows, err := db.sql.QueryContext(ctx, `
-		SELECT u.username, r.name
+		SELECT r.id, u.username, r.name
 		FROM repositories r
 		JOIN users u ON u.id = r.owner_id
 		ORDER BY u.username, r.name
@@ -265,7 +266,7 @@ func (db *DB) ListRepositoryLocations(ctx context.Context) (locations []Reposito
 	}()
 	for rows.Next() {
 		var location RepositoryLocation
-		if err := rows.Scan(&location.Owner, &location.Name); err != nil {
+		if err := rows.Scan(&location.ID, &location.Owner, &location.Name); err != nil {
 			return nil, err
 		}
 		locations = append(locations, location)

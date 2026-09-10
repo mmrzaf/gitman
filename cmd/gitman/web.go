@@ -29,6 +29,9 @@ func init() {
 }
 
 func runWeb(cfg *config.Config, database *db.DB, args []string) error {
+	for _, warning := range cfg.ProductionWarnings() {
+		slog.Warn("production configuration warning", "warning", warning)
+	}
 	fs := flag.NewFlagSet("web", flag.ContinueOnError)
 	port := fs.String("port", "", "")
 

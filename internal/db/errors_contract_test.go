@@ -20,7 +20,7 @@ func TestSingleObjectLookupsUseErrNotFound(t *testing.T) {
 		{"user by username", func() error { _, err := database.GetUserByUsername(ctx, "missing"); return err }},
 		{"user by id", func() error { _, err := database.GetUserByID(ctx, "missing"); return err }},
 		{"session", func() error { _, err := database.GetUserBySession(ctx, "missing"); return err }},
-		{"token", func() error { _, err := database.GetUserByTokenHash(ctx, "missing"); return err }},
+		{"token", func() error { _, err := database.AuthenticateAccessToken(ctx, "missing"); return err }},
 		{"repository by id", func() error { _, err := database.GetRepositoryByID(ctx, "missing"); return err }},
 		{"repository by owner/name", func() error { _, err := database.GetRepositoryByOwnerAndName(ctx, "missing", "repo"); return err }},
 		{"repository access", func() error { _, err := database.GetRepoAccessLevel(ctx, "missing", "missing"); return err }},

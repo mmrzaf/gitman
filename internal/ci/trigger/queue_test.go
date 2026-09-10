@@ -133,7 +133,7 @@ func queueDirForRepo(t *testing.T, manager *Manager, owner *models.User, repo *m
 
 func assertQueuedPushStates(t *testing.T, manager *Manager, repoID string, commits []string) {
 	t.Helper()
-	runs, err := manager.DB.GetCIRunsByRepo(context.Background(), repoID, len(commits)+10)
+	runs, err := manager.DB.GetCIRunsByRepoFiltered(context.Background(), repoID, "", "", len(commits)+10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +244,7 @@ func TestDurableQueueStopsAtTransientFailureAndResumesInOrder(t *testing.T) {
 	if err := manager.DrainRepository(ctx, owner, repo); err == nil {
 		t.Fatal("expected unresolved oldest event to stop the drain")
 	}
-	runs, err := manager.DB.GetCIRunsByRepo(ctx, repo.ID, 10)
+	runs, err := manager.DB.GetCIRunsByRepoFiltered(ctx, repo.ID, "", "", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -360,7 +360,7 @@ func TestQueuedAnnotatedTagSurvivesLaterRefDeletion(t *testing.T) {
 	if err != nil || !remove {
 		t.Fatalf("remove=%v err=%v", remove, err)
 	}
-	runs, err := manager.DB.GetCIRunsByRepo(ctx, repo.ID, 10)
+	runs, err := manager.DB.GetCIRunsByRepoFiltered(ctx, repo.ID, "", "", 10)
 	if err != nil {
 		t.Fatal(err)
 	}

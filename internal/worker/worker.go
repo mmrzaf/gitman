@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/mmrzaf/gitman/internal/config"
 	"github.com/mmrzaf/gitman/internal/db"
 	"github.com/mmrzaf/gitman/internal/models"
@@ -32,11 +33,15 @@ var (
 	errCISecretsRefNotTrusted      = errors.New("CI secrets not trusted for ref")
 	errCISecretStoreUnavailable    = errors.New("CI secret store unavailable")
 	errArtifactPublication         = errors.New("artifact publication failed")
+	errWorkerStorageUnavailable    = errors.New("worker storage unavailable")
 )
 
 func Run(cfg *config.Config, database *db.DB) error {
 	if err := validateWorkerConfig(cfg); err != nil {
 		return err
+	}
+	for _, warning := range cfg.ProductionWarnings() {
+		slog.Warn("production configuration warning", "warning", warning)
 	}
 	slog.Info("starting gitman worker",
 		"artifacts", cfg.ArtifactsPath,
@@ -49,15 +54,39 @@ func Run(cfg *config.Config, database *db.DB) error {
 	if err := prepareDirectories(cfg.ArtifactsPath, cfg.CacheRoot, cfg.CIWorkspaceRoot); err != nil {
 		return err
 	}
-	startupCtx, cancelStartup := context.WithTimeout(context.Background(), 30*time.Second)
-	requeued, err := reconcileAndRequeue(startupCtx, cfg, database)
-	cancelStartup()
+	hostname, err := os.Hostname()
 	if err != nil {
-		return fmt.Errorf("reconcile CI state: %w", err)
+		return fmt.Errorf("detect worker hostname: %w", err)
 	}
-	if requeued > 0 {
-		slog.Warn("requeued stale CI runs", "count", requeued)
+	workerID := uuid.New().String()
+	state := newWorkerRuntimeState(workerID)
+	registerCtx, cancelRegister := context.WithTimeout(context.Background(), 5*time.Second)
+	err = database.RegisterCIWorker(registerCtx, models.CIWorker{
+		ID:            workerID,
+		Hostname:      hostname,
+		PID:           os.Getpid(),
+		Concurrency:   cfg.WorkerConcurrency,
+		Healthy:       false,
+		StatusMessage: "starting",
+		StartedAt:     time.Now(),
+		HeartbeatAt:   time.Now(),
+	})
+	cancelRegister()
+	if err != nil {
+		return fmt.Errorf("register CI worker: %w", err)
 	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if stopErr := database.StopCIWorker(ctx, workerID); stopErr != nil && !errors.Is(stopErr, db.ErrNotFound) {
+			slog.Warn("failed to mark CI worker stopped", "worker_id", workerID, "error", stopErr)
+		}
+	}()
+
+	runtimeCtx, stopRuntime := context.WithCancel(context.Background())
+	defer stopRuntime()
+	refreshWorkerHealth(runtimeCtx, cfg, database, state)
+	go monitorWorkerHealth(runtimeCtx, cfg, database, state)
 
 	signals := make(chan os.Signal, 2)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
@@ -67,18 +96,20 @@ func Run(cfg *config.Config, database *db.DB) error {
 	defer stopPolling()
 	jobRootCtx, cancelJobs := context.WithCancel(context.Background())
 	defer cancelJobs()
-	go reapStaleRuns(pollCtx, cfg, database)
+	go reapStaleRuns(pollCtx, cfg, database, state)
 
 	var wg sync.WaitGroup
 
 	for i := 0; i < cfg.WorkerConcurrency; i++ {
 		wg.Add(1)
-		go worker(pollCtx, jobRootCtx, cfg, database, &wg)
+		go worker(pollCtx, jobRootCtx, cfg, database, state, &wg)
 	}
 
-	slog.Info("worker pool ready")
+	slog.Info("worker pool started", "worker_id", workerID)
 	sig := <-signals
 	slog.Info("shutdown signal received; draining active CI jobs", "signal", sig, "grace", shutdownGrace)
+	state.beginDrain()
+	persistWorkerHeartbeat(database, state)
 	stopPolling()
 
 	drainDone := make(chan struct{})
@@ -111,7 +142,7 @@ func Run(cfg *config.Config, database *db.DB) error {
 	return nil
 }
 
-func reapStaleRuns(ctx context.Context, cfg *config.Config, database *db.DB) {
+func reapStaleRuns(ctx context.Context, cfg *config.Config, database *db.DB, state *workerRuntimeState) {
 	interval := cfg.CILeaseTimeout / 2
 	if interval < 10*time.Second {
 		interval = 10 * time.Second
@@ -123,6 +154,9 @@ func reapStaleRuns(ctx context.Context, cfg *config.Config, database *db.DB) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if !state.readyForClaims() {
+				continue
+			}
 			requeued, err := reconcileAndRequeue(ctx, cfg, database)
 			if err != nil {
 				slog.Warn("failed to reconcile stale CI runs", "error", err)
@@ -135,13 +169,19 @@ func reapStaleRuns(ctx context.Context, cfg *config.Config, database *db.DB) {
 	}
 }
 
-func worker(pollCtx, jobParentCtx context.Context, cfg *config.Config, database *db.DB, wg *sync.WaitGroup) {
+func worker(pollCtx, jobParentCtx context.Context, cfg *config.Config, database *db.DB, state *workerRuntimeState, wg *sync.WaitGroup) {
 	defer wg.Done()
 	for {
 		if pollCtx.Err() != nil {
 			return
 		}
-		processed, err := processNext(pollCtx, jobParentCtx, cfg, database)
+		if !state.readyForClaims() {
+			if !waitForPoll(pollCtx) {
+				return
+			}
+			continue
+		}
+		processed, err := processNext(pollCtx, jobParentCtx, cfg, database, state)
 		if err != nil {
 			slog.Error("job processing error", "error", err)
 			if !waitForPoll(pollCtx) {
@@ -170,7 +210,7 @@ func waitForPoll(ctx context.Context) bool {
 	}
 }
 
-func processNext(claimCtx, jobParentCtx context.Context, cfg *config.Config, database *db.DB) (bool, error) {
+func processNext(claimCtx, jobParentCtx context.Context, cfg *config.Config, database *db.DB, state *workerRuntimeState) (bool, error) {
 	run, err := database.ClaimNextPendingRun(claimCtx)
 	if err != nil {
 		return false, fmt.Errorf("claim run: %w", err)
@@ -178,6 +218,20 @@ func processNext(claimCtx, jobParentCtx context.Context, cfg *config.Config, dat
 	if run == nil {
 		return false, nil
 	}
+	// Admission can become unhealthy while ClaimNextPendingRun is in flight.
+	// Never start a newly leased attempt after that transition; release this
+	// exact lease immediately so another healthy worker can pick it up later.
+	if !state.readyForClaims() {
+		requeueCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err := database.RequeueCIRunAttempt(requeueCtx, run.ID, run.AttemptID, "Waiting for worker admission")
+		cancel()
+		if err != nil && !errors.Is(err, db.ErrCIRunLeaseInactive) {
+			return true, fmt.Errorf("release CI run claimed during admission pause: %w", err)
+		}
+		return true, nil
+	}
+	state.activeJobs.Add(1)
+	defer state.activeJobs.Add(-1)
 
 	jobCtx, cancelJob := context.WithCancel(jobParentCtx)
 	if cfg.CIJobTimeout > 0 {
@@ -209,14 +263,34 @@ func processNext(claimCtx, jobParentCtx context.Context, cfg *config.Config, dat
 	}
 
 	j := &job{
-		cfg:      cfg,
-		database: database,
-		run:      run,
-		repo:     repo,
-		owner:    owner,
+		cfg:         cfg,
+		database:    database,
+		run:         run,
+		repo:        repo,
+		owner:       owner,
+		workerState: state,
 	}
 
 	if err := j.execute(jobCtx); err != nil {
+		if isRetriableWorkerInfrastructureFailure(err) {
+			state.setHealth(false, err.Error())
+			persistWorkerHeartbeat(database, state)
+			requeueCtx, cancelRequeue := context.WithTimeout(context.Background(), 5*time.Second)
+			requeueErr := database.RequeueCIRunAttempt(requeueCtx, run.ID, run.AttemptID, "Waiting for worker infrastructure")
+			cancelRequeue()
+			if requeueErr == nil {
+				if j.logFile != nil {
+					if removeErr := os.Remove(j.logFile.Name()); removeErr != nil && !os.IsNotExist(removeErr) {
+						slog.Warn("failed to remove transient CI attempt log", "run_id", run.ID, "attempt_id", run.AttemptID, "error", removeErr)
+					}
+				}
+				slog.Warn("requeued CI run after worker infrastructure failure", "run_id", run.ID, "attempt_id", run.AttemptID, "error", err)
+				return true, nil
+			}
+			if !errors.Is(requeueErr, db.ErrCIRunLeaseInactive) {
+				return true, fmt.Errorf("requeue CI run after worker infrastructure failure: %w", requeueErr)
+			}
+		}
 		readCtx, cancelRead := context.WithTimeout(context.Background(), 5*time.Second)
 		current, readErr := database.GetCIRunByID(readCtx, run.ID)
 		cancelRead()

@@ -1,17 +1,15 @@
 package handlers
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
-	"net/http/cgi"
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/mmrzaf/gitman/internal/apperr"
@@ -80,7 +78,7 @@ func (app *App) gitHTTPAuth(operation gitHTTPOperation, next http.Handler) http.
 			return
 		}
 
-		currentUser, credentialsPresent, err := app.gitHTTPUser(r)
+		currentUser, credentialsPresent, err := app.gitHTTPUser(r, operation)
 		if err != nil {
 			app.respondGitHTTPError(w, r, err)
 			return
@@ -131,13 +129,17 @@ func (app *App) gitHTTPAuth(operation gitHTTPOperation, next http.Handler) http.
 	})
 }
 
-func (app *App) gitHTTPUser(r *http.Request) (*models.User, bool, error) {
+func (app *App) gitHTTPUser(r *http.Request, operation gitHTTPOperation) (*models.User, bool, error) {
 	authUser, authPass, ok := r.BasicAuth()
 	if !ok {
 		return nil, false, nil
 	}
+	requiredScope := models.AccessTokenScopeRepoRead
+	if operation == gitHTTPWrite {
+		requiredScope = models.AccessTokenScopeRepoWrite
+	}
 	hash := sha256.Sum256([]byte(authPass))
-	user, err := app.DB.GetUserByTokenHash(r.Context(), hex.EncodeToString(hash[:]))
+	user, err := app.DB.AuthenticateAccessTokenForUserWithScope(r.Context(), hex.EncodeToString(hash[:]), authUser, requiredScope)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			return nil, true, nil
@@ -150,9 +152,39 @@ func (app *App) gitHTTPUser(r *http.Request) (*models.User, bool, error) {
 	return user, true, nil
 }
 
-// HandleGitHTTP delegates the Smart HTTP protocol to git-http-backend. Gitman
-// owns authentication/authorization; Git owns Git protocol semantics.
+const (
+	defaultGitHTTPMaxConcurrent      = 16
+	defaultGitHTTPMaxConcurrentPerIP = 4
+	defaultGitHTTPTimeout            = 30 * time.Minute
+)
+
+func (app *App) gitHTTPConcurrencyLimiter() *requestConcurrencyLimiter {
+	app.gitHTTPOnce.Do(func() {
+		total := app.Config.GitHTTPMaxConcurrent
+		if total <= 0 {
+			total = defaultGitHTTPMaxConcurrent
+		}
+		perIP := app.Config.GitHTTPMaxConcurrentPerIP
+		if perIP <= 0 {
+			perIP = defaultGitHTTPMaxConcurrentPerIP
+		}
+		app.gitHTTPLimiter = newRequestConcurrencyLimiter(total, perIP)
+	})
+	return app.gitHTTPLimiter
+}
+
+// HandleGitHTTP delegates Smart HTTP protocol semantics to git-http-backend,
+// but Gitman owns the process lifetime and concurrency boundary. Public clones
+// therefore cannot create an unbounded number of long-lived Git processes.
 func (app *App) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
+	releaseSlot, ok := app.gitHTTPConcurrencyLimiter().tryAcquire(app.clientIP(r))
+	if !ok {
+		w.Header().Set("Retry-After", "2")
+		app.respondGitHTTPError(w, r, apperr.New(apperr.KindUnavailable, "Git server is busy; retry shortly"))
+		return
+	}
+	defer releaseSlot()
+
 	repoPath := GetRepoPath(r)
 	gitBin, err := exec.LookPath("git")
 	if err != nil {
@@ -165,30 +197,57 @@ func (app *App) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	timeout := app.Config.GitHTTPTimeout
+	if timeout <= 0 {
+		timeout = defaultGitHTTPTimeout
+	}
+	deadline := time.Now().Add(timeout)
+	controller := http.NewResponseController(w)
+	defer func() {
+		_ = controller.SetReadDeadline(time.Time{})
+		_ = controller.SetWriteDeadline(time.Time{})
+	}()
+	if err := controller.SetReadDeadline(deadline); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		slog.Debug("could not set Git HTTP read deadline", "request_id", RequestID(r), "error", err)
+	}
+	if err := controller.SetWriteDeadline(deadline); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		slog.Debug("could not set Git HTTP write deadline", "request_id", RequestID(r), "error", err)
+	}
+
 	remoteUser := ""
 	if user := GetUser(r); user != nil {
 		remoteUser = user.Username
 	}
-	var stderr bytes.Buffer
-	handler := &cgi.Handler{
-		Path: gitBin,
-		Args: []string{"http-backend"},
-		Dir:  repoPath,
-		Env: []string{
-			"GIT_PROJECT_ROOT=" + absProjectRoot,
-			"GIT_HTTP_EXPORT_ALL=true",
-			fmt.Sprintf("PATH_INFO=%s", r.URL.Path),
-			"REMOTE_USER=" + remoteUser,
-		},
-		Stderr: &stderr,
-	}
-	handler.ServeHTTP(w, r)
-	if stderr.Len() > 0 {
+	backendCtx, cancel := context.WithTimeout(r.Context(), timeout)
+	defer cancel()
+	result, backendErr := serveGitHTTPBackend(backendCtx, w, r, gitBin, repoPath, absProjectRoot, remoteUser)
+	if result.Stderr != "" {
 		slog.Warn("git-http-backend stderr",
 			"request_id", RequestID(r),
 			"repo", repoPath,
 			"remote_user", remoteUser,
-			"stderr", stderr.String(),
+			"stderr", result.Stderr,
+			"truncated", result.StderrTruncated,
 		)
 	}
+	if backendErr == nil {
+		return
+	}
+	if result.Started {
+		slog.Warn("git-http-backend request ended with error",
+			"request_id", RequestID(r),
+			"repo", repoPath,
+			"remote_user", remoteUser,
+			"error", backendErr,
+		)
+		return
+	}
+	if errors.Is(backendErr, context.DeadlineExceeded) {
+		app.respondGitHTTPError(w, r, apperr.Wrap(apperr.KindUnavailable, "Git operation timed out", backendErr))
+		return
+	}
+	if errors.Is(backendErr, context.Canceled) && r.Context().Err() != nil {
+		return
+	}
+	app.respondGitHTTPError(w, r, apperr.Wrap(apperr.KindUnavailable, "Git backend is temporarily unavailable", backendErr))
 }

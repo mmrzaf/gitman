@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -62,7 +63,8 @@ func (app *App) HandleReposPOST(w http.ResponseWriter, r *http.Request) {
 		app.renderReposPage(w, r, user, "Description too long. Max 500 characters.", "")
 		return
 	}
-	if _, err := app.repositoryManager().Create(r.Context(), user, name, description, isPrivate); err != nil {
+	repoID, err := app.repositoryManager().Create(r.Context(), user, name, description, isPrivate)
+	if err != nil {
 		switch {
 		case errors.Is(err, db.ErrAlreadyExists), errors.Is(err, git.ErrRepoPathExists):
 			app.renderReposPage(w, r, user, "Repository name already exists.", "")
@@ -71,6 +73,10 @@ func (app *App) HandleReposPOST(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	app.recordAuditEvent(r, user, models.AuditActionRepositoryCreated, "repository", repoID, map[string]string{
+		"name":       name,
+		"is_private": strconv.FormatBool(isPrivate),
+	})
 	app.renderReposPage(w, r, user, "", "Repository created successfully.")
 }
 
@@ -85,6 +91,7 @@ func (app *App) HandleRepoDeletePOST(w http.ResponseWriter, r *http.Request) {
 	err := app.repositoryManager().Delete(r.Context(), user, repoID)
 	switch {
 	case err == nil:
+		app.recordAuditEvent(r, user, models.AuditActionRepositoryDeleted, "repository", repoID, nil)
 		app.renderReposPage(w, r, user, "", "Repository deleted.")
 	case errors.Is(err, db.ErrNotFound):
 		app.renderReposPage(w, r, user, "Repository not found or not accessible.", "")
@@ -150,5 +157,8 @@ func (app *App) HandleRepoSettingsPOST(w http.ResponseWriter, r *http.Request) {
 	}
 	repo.Description = description
 	repo.IsPrivate = isPrivate
+	app.recordAuditEvent(r, user, models.AuditActionRepositoryUpdated, "repository", repo.ID, map[string]string{
+		"is_private": strconv.FormatBool(isPrivate),
+	})
 	app.renderRepoSettings(w, r, "", "Repository settings saved.")
 }

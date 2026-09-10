@@ -666,3 +666,72 @@ func TestResolveRefDoesNotSubstituteAnotherBranchForMissingHEAD(t *testing.T) {
 		t.Fatalf("explicit develop = %q, %v", resolved, err)
 	}
 }
+
+func TestGetBranchesAndTagsLimited(t *testing.T) {
+	ctx := context.Background()
+	repoPath := setupTestRepo(t)
+	prepareRepoWithCommit(t, repoPath)
+	head, err := ResolveBranchCommitHash(ctx, repoPath, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ref := range []string{"refs/heads/a", "refs/heads/b", "refs/heads/c", "refs/tags/v1", "refs/tags/v2", "refs/tags/v3"} {
+		if _, err := run(ctx, repoPath, "update-ref", ref, head); err != nil {
+			t.Fatal(err)
+		}
+	}
+	branches, branchesTruncated, err := GetBranchesLimited(ctx, repoPath, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !branchesTruncated || len(branches) != 2 {
+		t.Fatalf("branches=%v truncated=%v, want 2 entries and truncation", branches, branchesTruncated)
+	}
+	tags, tagsTruncated, err := GetTagsLimited(ctx, repoPath, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tagsTruncated || len(tags) != 2 {
+		t.Fatalf("tags=%v truncated=%v, want 2 entries and truncation", tags, tagsTruncated)
+	}
+}
+
+func TestGetTreeLimitedCapsEntriesAndBytes(t *testing.T) {
+	ctx := context.Background()
+	repoPath := setupTestRepo(t)
+	prepareRepoWithCommit(t, repoPath)
+	work := t.TempDir()
+	if out, err := exec.Command("git", "clone", repoPath, work).CombinedOutput(); err != nil {
+		t.Fatalf("clone: %v\n%s", err, out)
+	}
+	for _, args := range [][]string{{"config", "user.email", "tree@example.com"}, {"config", "user.name", "Tree User"}} {
+		if out, err := exec.Command("git", append([]string{"-C", work}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	for i := 0; i < 8; i++ {
+		name := filepath.Join(work, "file-"+string(rune('a'+i))+".txt")
+		if err := os.WriteFile(name, []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, args := range [][]string{{"add", "."}, {"commit", "-m", "many files"}, {"push", "origin", "main"}} {
+		if out, err := exec.Command("git", append([]string{"-C", work}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	entries, truncated, err := GetTreeLimited(ctx, repoPath, "main", "", TreeListLimits{MaxEntries: 3, MaxBytes: 1 << 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !truncated || len(entries) != 3 {
+		t.Fatalf("entries=%d truncated=%v, want 3 and truncated", len(entries), truncated)
+	}
+	entries, truncated, err = GetTreeLimited(ctx, repoPath, "main", "", TreeListLimits{MaxEntries: 100, MaxBytes: 32})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !truncated || len(entries) != 0 {
+		t.Fatalf("byte-capped entries=%d truncated=%v, want 0 and truncated", len(entries), truncated)
+	}
+}

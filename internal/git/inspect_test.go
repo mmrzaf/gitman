@@ -3,6 +3,8 @@ package git
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -383,5 +385,92 @@ func TestGetCommitDiffCapsLargeTextPatches(t *testing.T) {
 	}
 	if len(diff.Files) != 1 || !diff.Files[0].Truncated || !diff.Truncated {
 		t.Fatalf("large patch was not capped: %+v", diff)
+	}
+}
+
+func TestWalkFilesHonorsFileAndByteLimits(t *testing.T) {
+	repoPath, _ := prepareInspectionRepo(t)
+
+	var files []string
+	truncated, err := WalkFiles(context.Background(), repoPath, "main", FileWalkLimits{MaxFiles: 2, MaxBytes: 1 << 20}, func(path string) error {
+		files = append(files, path)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !truncated {
+		t.Fatal("expected file-count limit to truncate enumeration")
+	}
+	if len(files) != 2 {
+		t.Fatalf("visited %d files, want exactly 2", len(files))
+	}
+
+	files = nil
+	truncated, err = WalkFiles(context.Background(), repoPath, "main", FileWalkLimits{MaxFiles: 100, MaxBytes: 1}, func(path string) error {
+		files = append(files, path)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !truncated {
+		t.Fatal("expected byte limit to truncate enumeration")
+	}
+	if len(files) != 0 {
+		t.Fatalf("byte limit should stop before visiting the first record, visited %d", len(files))
+	}
+}
+
+func TestWalkFilesHonorsContextCancellation(t *testing.T) {
+	repoPath, _ := prepareInspectionRepo(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := WalkFiles(ctx, repoPath, "main", FileWalkLimits{MaxFiles: 10, MaxBytes: 1 << 20}, nil)
+	if err == nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("WalkFiles canceled error = %v, want context.Canceled", err)
+	}
+}
+
+func TestGetCommitChangesLimitedReportsMetadataTruncation(t *testing.T) {
+	repoPath, _ := prepareInspectionRepo(t)
+	commits, err := GetCommits(context.Background(), repoPath, "main", 0, 1)
+	if err != nil || len(commits) != 1 {
+		t.Fatalf("commits: %v len=%d", err, len(commits))
+	}
+	detail, err := GetCommitDetail(context.Background(), repoPath, commits[0].Hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, filesTruncated, statsTruncated, err := GetCommitChangesLimited(context.Background(), repoPath, detail, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filesTruncated || !statsTruncated {
+		t.Fatalf("filesTruncated=%v statsTruncated=%v, want both true", filesTruncated, statsTruncated)
+	}
+}
+
+func TestGetCommitDetailCapsPointingRefs(t *testing.T) {
+	repoPath, _ := prepareInspectionRepo(t)
+	commits, err := GetCommits(context.Background(), repoPath, "main", 0, 1)
+	if err != nil || len(commits) != 1 {
+		t.Fatalf("commits: %v len=%d", err, len(commits))
+	}
+	for i := 0; i < defaultCommitPointingRefLimit+5; i++ {
+		ref := fmt.Sprintf("refs/heads/load-%03d", i)
+		if _, err := run(context.Background(), repoPath, "update-ref", ref, commits[0].Hash); err != nil {
+			t.Fatal(err)
+		}
+	}
+	detail, err := GetCommitDetail(context.Background(), repoPath, commits[0].Hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !detail.RefsTruncated {
+		t.Fatal("expected pointing refs to be truncated")
+	}
+	if len(detail.Branches)+len(detail.Tags) != defaultCommitPointingRefLimit {
+		t.Fatalf("returned refs=%d, want %d", len(detail.Branches)+len(detail.Tags), defaultCommitPointingRefLimit)
 	}
 }

@@ -44,6 +44,19 @@ func classifyRepoRef(ref string, branches, tags []string) string {
 	return ""
 }
 
+func repoRefKindLabel(kind git.RefKind) string {
+	switch kind {
+	case git.RefKindBranch:
+		return "branch"
+	case git.RefKindTag:
+		return "tag"
+	case git.RefKindCommit, git.RefKindHEAD:
+		return "commit"
+	default:
+		return ""
+	}
+}
+
 func repoBreadcrumbs(path string) []RepoBreadcrumb {
 	path = strings.Trim(path, "/")
 	if path == "" {
@@ -148,35 +161,62 @@ type fileSearchMatch struct {
 	score int
 }
 
+func fileSearchMatchForPath(path, query string) (fileSearchMatch, bool) {
+	score := fileSearchScore(path, query)
+	if score < 0 {
+		return fileSearchMatch{}, false
+	}
+	return fileSearchMatch{Path: path, score: score}, true
+}
+
+func finalizeFileSearchMatches(matches []fileSearchMatch, owner, repo, ref string) {
+	for i := range matches {
+		matches[i].URL = fmt.Sprintf("/%s/%s/blob?ref=%s&path=%s", owner, repo, url.QueryEscape(ref), url.QueryEscape(matches[i].Path))
+	}
+}
+
+func betterFileSearchMatch(a, b fileSearchMatch) bool {
+	if a.score == b.score {
+		if len(a.Path) == len(b.Path) {
+			return a.Path < b.Path
+		}
+		return len(a.Path) < len(b.Path)
+	}
+	return a.score > b.score
+}
+
+func addFileSearchMatch(matches []fileSearchMatch, match fileSearchMatch, limit int) []fileSearchMatch {
+	if limit <= 0 {
+		limit = 40
+	}
+	insertAt := sort.Search(len(matches), func(i int) bool {
+		return betterFileSearchMatch(match, matches[i])
+	})
+	if insertAt >= limit {
+		return matches
+	}
+	if len(matches) < limit {
+		matches = append(matches, fileSearchMatch{})
+	}
+	copy(matches[insertAt+1:], matches[insertAt:len(matches)-1])
+	matches[insertAt] = match
+	return matches
+}
+
 func rankFileMatches(files []string, query, owner, repo, ref string, limit int) []fileSearchMatch {
 	query = strings.TrimSpace(query)
 	if limit <= 0 {
 		limit = 40
 	}
-	matches := make([]fileSearchMatch, 0, minInt(limit*3, len(files)))
+	matches := make([]fileSearchMatch, 0, minInt(limit, len(files)))
 	for _, path := range files {
-		score := fileSearchScore(path, query)
-		if score < 0 {
+		match, ok := fileSearchMatchForPath(path, query)
+		if !ok {
 			continue
 		}
-		matches = append(matches, fileSearchMatch{
-			Path:  path,
-			URL:   fmt.Sprintf("/%s/%s/blob?ref=%s&path=%s", owner, repo, url.QueryEscape(ref), url.QueryEscape(path)),
-			score: score,
-		})
+		matches = addFileSearchMatch(matches, match, limit)
 	}
-	sort.SliceStable(matches, func(i, j int) bool {
-		if matches[i].score == matches[j].score {
-			if len(matches[i].Path) == len(matches[j].Path) {
-				return matches[i].Path < matches[j].Path
-			}
-			return len(matches[i].Path) < len(matches[j].Path)
-		}
-		return matches[i].score > matches[j].score
-	})
-	if len(matches) > limit {
-		matches = matches[:limit]
-	}
+	finalizeFileSearchMatches(matches, owner, repo, ref)
 	return matches
 }
 

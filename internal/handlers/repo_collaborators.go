@@ -48,7 +48,7 @@ func (app *App) HandleRepoCollaboratorsAddPOST(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if currentUser.ID != repo.OwnerID {
-		app.renderRepoCollaboratorsPage(w, r, "Only the repository owner can manage collaborators.", "")
+		app.respondWebError(w, r, apperr.New(apperr.KindForbidden, "Forbidden"))
 		return
 	}
 	if !app.parseWebForm(w, r) {
@@ -80,6 +80,11 @@ func (app *App) HandleRepoCollaboratorsAddPOST(w http.ResponseWriter, r *http.Re
 		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Collaborator data is temporarily unavailable", err))
 		return
 	}
+	app.recordAuditEvent(r, currentUser, models.AuditActionCollaboratorUpsert, "repository", repo.ID, map[string]string{
+		"collaborator_user_id":  targetUser.ID,
+		"collaborator_username": targetUser.Username,
+		"access_level":          string(accessLevel),
+	})
 
 	app.renderRepoCollaboratorsPage(w, r, "", "Collaborator added successfully.")
 }
@@ -94,7 +99,7 @@ func (app *App) HandleRepoCollaboratorsRemovePOST(w http.ResponseWriter, r *http
 		return
 	}
 	if currentUser.ID != repo.OwnerID {
-		app.renderRepoCollaboratorsPage(w, r, "Forbidden.", "")
+		app.respondWebError(w, r, apperr.New(apperr.KindForbidden, "Forbidden"))
 		return
 	}
 
@@ -112,6 +117,9 @@ func (app *App) HandleRepoCollaboratorsRemovePOST(w http.ResponseWriter, r *http
 		}
 		return
 	}
+	app.recordAuditEvent(r, currentUser, models.AuditActionCollaboratorRemoved, "repository", repo.ID, map[string]string{
+		"collaborator_user_id": targetUserID,
+	})
 
 	app.renderRepoCollaboratorsPage(w, r, "", "Collaborator removed successfully.")
 }

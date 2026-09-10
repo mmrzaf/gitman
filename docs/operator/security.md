@@ -13,7 +13,8 @@ Before allowing untrusted repository writers:
 - Pre-pull only approved images.
 - Run jobs as a numeric non-root UID:GID.
 - Leave `GITMAN_CI_ALLOW_DOCKER_SOCKET=false` unless Docker builds are restricted to trusted repositories on a dedicated runner.
-- Monitor Docker storage, Gitman data usage, and worker logs.
+- Monitor Docker storage, Gitman data usage, free filesystem inodes, and worker logs.
+- Keep the worker storage reserve (`GITMAN_CI_STORAGE_MIN_FREE_BYTES` / `GITMAN_CI_STORAGE_MIN_FREE_INODES`) enabled. Gitman pauses new claims below the reserve, but kernel-enforced quotas remain the real containment boundary.
 
 ## Repository-writer trust
 
@@ -21,9 +22,9 @@ A write collaborator can push a changed `.gitman-ci.yml` and manually trigger CI
 
 ## Git HTTP authentication
 
-Git Smart HTTP uses HTTP Basic for client compatibility, but the password field must be a personal access token. Account passwords are not accepted for Git clone, fetch, or push. Public read-only HTTP clones remain public for public repositories.
+Git Smart HTTP uses HTTP Basic for client compatibility, but the password field must be a personal access token. Account passwords are not accepted for Git clone, fetch, or push. Public read-only HTTP clones remain public for public repositories. New personal access tokens have a finite lifetime (30, 90, 180, or 365 days), an explicit repository scope, and an approximate last-use timestamp. `repo:read` tokens can clone/fetch and use read-only repository APIs; `repo:write` tokens can additionally push. New tokens default to read-only. Tokens that existed before beta 18 receive a 90-day rotation deadline and retain `repo:write` compatibility during migration. PATs are not accepted as browser-session credentials, preventing a read-only token from reaching HTML mutation flows through CSRF forms.
 
-Admin password resets revoke all existing browser sessions and personal access tokens for the user.
+Admin password resets revoke all existing browser sessions and personal access tokens for the user. Successful and failed login checks, self-registration, admin user/password operations, token and SSH-key changes, repository lifecycle/settings changes, collaborator changes, and CI secret/trusted-ref changes are written to Gitman's database audit trail. Audit metadata never includes token plaintext, passwords, SSH private material, or CI secret values. Requests rejected by the login rate limiter are not appended repeatedly after the source is already blocked.
 
 ## Public repositories
 
@@ -41,7 +42,7 @@ export GITMAN_TRUST_PROXY_HEADERS=true
 
 Enable proxy-header trust only when requests cannot bypass the trusted reverse proxy. Gitman sets strict SameSite cookies and sends security headers, including HSTS when HTTPS is detected or secure cookies are forced.
 
-Browser login attempts are throttled in memory per normalized username and per client IP. Proxy client IP headers are ignored unless `GITMAN_TRUST_PROXY_HEADERS=true`.
+Browser login attempts are throttled in memory per normalized username/client-IP pair and per client IP. Proxy client IP headers are ignored unless `GITMAN_TRUST_PROXY_HEADERS=true`.
 
 ## Registration
 
@@ -58,3 +59,21 @@ Full backups contain the SQLite database, repositories, and artifacts. Protect b
 ## Release hygiene
 
 Never distribute `.data/`, `data/`, SQLite files, repositories, artifacts, CI logs, generated `authorized_keys`, `.git/`, or local credentials in release archives. `.gitignore` is not a packaging control.
+
+## Security activity and audit review
+
+Authenticated users can open **Security** in the main navigation to review the most recent account-relevant events. The page includes actions performed by the account plus events that target it, such as failed sign-ins and administrator password resets. It deliberately renders a small allow-listed summary of audit metadata rather than dumping raw metadata into the browser.
+
+Operators can inspect the full bounded audit stream with:
+
+```bash
+gitman admin audit --limit 100
+```
+
+For log ingestion, use newline-delimited JSON:
+
+```bash
+gitman admin audit --limit 500 --json
+```
+
+Audit output is sensitive because it can contain usernames, source IPs, repository identifiers, token/key names, and CI secret **names**. It does not contain PAT plaintext, account passwords, SSH private material, or CI secret values.

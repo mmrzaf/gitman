@@ -33,6 +33,7 @@ type job struct {
 	checkout            string
 	artifactsStagingDir string
 	refPolicy           cipolicy.RefPolicy
+	workerState         *workerRuntimeState
 }
 
 func (j *job) execute(ctx context.Context) error {
@@ -89,6 +90,10 @@ func (j *job) execute(ctx context.Context) error {
 	j.checkout = filepath.Join(j.workspace, "src")
 	if err := j.clone(ctx); err != nil {
 		j.logRunnerFailure(ctx, err, nil)
+		j.pauseWorkerAdmission(err)
+		if isRetriableWorkerInfrastructureFailure(err) {
+			return err
+		}
 		return j.complete(models.CIStatusFailed, "Repository checkout failed")
 	}
 
@@ -153,10 +158,16 @@ func (j *job) execute(ctx context.Context) error {
 	}
 
 	dockerErr := j.runDocker(ctx, ciCfg, envFile, runnerPath)
+	j.pauseWorkerAdmission(dockerErr)
+	if isRetriableWorkerInfrastructureFailure(dockerErr) {
+		j.logRunnerFailure(ctx, dockerErr, ciCfg)
+		return dockerErr
+	}
 	if dockerErr == nil && ctx.Err() != nil {
 		dockerErr = ctx.Err()
 	}
 	artifactErr := j.collectArtifacts(ctx)
+	j.pauseWorkerAdmission(artifactErr)
 	if dockerErr == nil && ctx.Err() != nil {
 		dockerErr = ctx.Err()
 	}
@@ -262,6 +273,10 @@ func (j *job) logRunnerFailure(ctx context.Context, err error, cfg *CIConfig) {
 	case errors.Is(err, errDockerHostPathMisconfigured):
 		j.logError("The Gitman worker path mapping is misconfigured.")
 		j.logf("Fix        : ask the Gitman operator to verify the worker Docker path mapping.")
+	case errors.Is(err, errWorkerStorageUnavailable):
+		j.logError("The CI worker paused because host storage is critically low.")
+		j.logf("Details    : %v", err)
+		j.logf("Fix        : ask the Gitman operator to free worker disk space or inodes.")
 	case errors.Is(err, errDiskLimitExceeded):
 		j.logError("CI disk limit exceeded.")
 		j.logf("Details    : %v", err)
@@ -272,8 +287,23 @@ func (j *job) logRunnerFailure(ctx context.Context, err error, cfg *CIConfig) {
 	}
 }
 
+func (j *job) pauseWorkerAdmission(err error) {
+	if err == nil || j.workerState == nil || !errors.Is(err, errWorkerStorageUnavailable) {
+		return
+	}
+	if j.workerState.setHealth(false, err.Error()) {
+		slog.Warn("CI worker storage unavailable; pausing new claims", "worker_id", j.workerState.id, "error", err)
+	}
+	persistWorkerHeartbeat(j.database, j.workerState)
+}
+
+func isRetriableWorkerInfrastructureFailure(err error) bool {
+	return errors.Is(err, errDockerUnavailable)
+}
+
 func isOperatorFailure(err error) bool {
-	return errors.Is(err, errDockerUnavailable) ||
+	return isRetriableWorkerInfrastructureFailure(err) ||
+		errors.Is(err, errWorkerStorageUnavailable) ||
 		errors.Is(err, errDockerSocketUnavailable) ||
 		errors.Is(err, errDockerHostPathMisconfigured) ||
 		errors.Is(err, errCISecretStoreUnavailable)
@@ -302,6 +332,8 @@ func ciFailureSummary(ctx context.Context, err error) string {
 		return "This revision is not trusted to use CI secrets"
 	case errors.Is(err, errDockerHostPathMisconfigured):
 		return "Worker path mapping is misconfigured"
+	case errors.Is(err, errWorkerStorageUnavailable):
+		return "CI worker storage is temporarily unavailable"
 	case errors.Is(err, errDiskLimitExceeded):
 		return "CI storage limit exceeded"
 	case errors.As(err, &exitErr):
@@ -321,7 +353,7 @@ func (j *job) clone(ctx context.Context) error {
 		return fmt.Errorf("resolve bare repository path: %w", err)
 	}
 	repoURL := "file://" + bareRepo
-	cloneLimits := []diskLimit{{name: "workspace", path: j.workspace, maxBytes: j.cfg.CIWorkspaceMaxBytes}}
+	cloneLimits := []diskLimit{{name: "workspace", path: j.workspace, maxBytes: j.cfg.CIWorkspaceMaxBytes, maxEntries: int64(j.cfg.CIWorkspaceMaxEntries), minFreeBytes: j.cfg.CIStorageMinFreeBytes, minFreeInodes: j.cfg.CIStorageMinFreeInodes}}
 
 	j.logSection("Cloning repository")
 	usedFullClone := false
@@ -337,9 +369,12 @@ func (j *job) clone(ctx context.Context) error {
 			j.logf("ERROR: git clone exceeded workspace limit: %v", err)
 			return err
 		}
+		if errors.Is(err, errWorkerStorageUnavailable) || ctx.Err() != nil {
+			return err
+		}
 		j.logf("branch/tag clone failed, falling back to full clone")
 		if err := j.fullClone(ctx, repoURL, cloneLimits); err != nil {
-			if errors.Is(err, errDiskLimitExceeded) {
+			if errors.Is(err, errDiskLimitExceeded) || errors.Is(err, errWorkerStorageUnavailable) || ctx.Err() != nil {
 				return err
 			}
 			j.logf("full clone could not resolve the repository default ref; fetching the exact run commit")

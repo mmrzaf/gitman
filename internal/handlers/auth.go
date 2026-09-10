@@ -10,6 +10,7 @@ import (
 
 	"github.com/mmrzaf/gitman/internal/apperr"
 	"github.com/mmrzaf/gitman/internal/db"
+	"github.com/mmrzaf/gitman/internal/models"
 	"github.com/mmrzaf/gitman/internal/repository"
 	"github.com/mmrzaf/gitman/internal/validate"
 )
@@ -70,6 +71,7 @@ func (app *App) HandleLoginPOST(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			app.loginLimiter().recordFailure(username, clientIP)
+			app.recordAuditEvent(r, nil, models.AuditActionLoginFailed, "user", "", map[string]string{"username": normalizeLoginUsername(username)})
 			app.renderAuthPage(w, r, "login.html", "Login", username, "Invalid username or password", http.StatusOK)
 			return
 		}
@@ -83,10 +85,11 @@ func (app *App) HandleLoginPOST(w http.ResponseWriter, r *http.Request) {
 	}
 	if !passwordOK {
 		app.loginLimiter().recordFailure(username, clientIP)
+		app.recordAuditEvent(r, nil, models.AuditActionLoginFailed, "user", user.ID, map[string]string{"username": user.Username})
 		app.renderAuthPage(w, r, "login.html", "Login", username, "Invalid username or password", http.StatusOK)
 		return
 	}
-	app.loginLimiter().recordSuccess(username)
+	app.loginLimiter().recordSuccess(username, clientIP)
 
 	token, err := app.DB.CreateSession(r.Context(), user.ID)
 	if err != nil {
@@ -95,6 +98,7 @@ func (app *App) HandleLoginPOST(w http.ResponseWriter, r *http.Request) {
 	}
 
 	app.setSessionCookie(w, r, token, time.Now().Add(sessionDuration))
+	app.recordAuditEvent(r, user, models.AuditActionLoginSucceeded, "user", user.ID, nil)
 
 	http.Redirect(w, r, "/repos", http.StatusFound)
 }
@@ -144,7 +148,7 @@ func (app *App) HandleRegisterPOST(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	_, err = app.DB.CreateUser(r.Context(), username, password)
+	user, err := app.DB.CreateUser(r.Context(), username, password)
 	if err != nil {
 		if errors.Is(err, db.ErrAlreadyExists) {
 			app.renderAuthPage(w, r, "register.html", "Register", username, "Username is already taken.", http.StatusOK)
@@ -153,6 +157,7 @@ func (app *App) HandleRegisterPOST(w http.ResponseWriter, r *http.Request) {
 		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Registration is temporarily unavailable", err))
 		return
 	}
+	app.recordAuditEvent(r, user, models.AuditActionUserRegistered, "user", user.ID, nil)
 
 	http.Redirect(w, r, "/login?registered=1", http.StatusSeeOther)
 }

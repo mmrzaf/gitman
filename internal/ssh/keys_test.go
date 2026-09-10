@@ -70,8 +70,26 @@ func TestSyncAuthorizedKeys(t *testing.T) {
 	if len(lines) != 3 {
 		t.Errorf("expected 3 lines (header + 2 keys), got %d", len(lines))
 	}
-	if !strings.Contains(string(data), `command="/usr/local/bin/gitman serve`) {
+	if !strings.Contains(string(data), `command="'/usr/local/bin/gitman' serve '`) {
 		t.Error("forced command not found")
+	}
+}
+
+func TestSyncAuthorizedKeysShellQuotesBinaryPath(t *testing.T) {
+	database := setupTestDB(t)
+	dir := t.TempDir()
+	authFile := filepath.Join(dir, "authorized_keys")
+	cfg := &config.Config{AuthKeysPath: authFile, BinaryPath: "/opt/Git Man/gitman's/gitman"}
+	if err := SyncAuthorizedKeys(context.Background(), database, cfg); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(authFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `command="'/opt/Git Man/gitman'\\''s/gitman' serve '`
+	if !strings.Contains(string(data), want) {
+		t.Fatalf("authorized_keys command is not shell-quoted safely:\n%s", data)
 	}
 }
 

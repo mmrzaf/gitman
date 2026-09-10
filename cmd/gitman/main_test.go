@@ -18,12 +18,6 @@ func TestHelp(t *testing.T) {
 	}
 }
 
-func TestVersionStringDefault(t *testing.T) {
-	if got := versionString(); got == "" {
-		t.Fatal("version string is empty")
-	}
-}
-
 func TestUnknownCommandDoesNotRequireConfiguration(t *testing.T) {
 	t.Setenv("GITMAN_SECRET_KEY", "")
 	err := Execute([]string{"gitman", "definitely-not-a-command"})

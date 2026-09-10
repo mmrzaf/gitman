@@ -98,9 +98,9 @@ func (j *job) runDocker(ctx context.Context, cfg *CIConfig, envFile, runnerPath 
 	cmd.Stderr = j.logWriter
 
 	limits := []diskLimit{
-		{name: "workspace", path: j.checkout, maxBytes: j.cfg.CIWorkspaceMaxBytes},
-		{name: "artifacts", path: j.artifactsStagingDir, maxBytes: j.cfg.CIArtifactMaxBytes},
-		{name: "cache", path: cacheDir, maxBytes: j.cfg.CICacheMaxBytes},
+		{name: "workspace", path: j.checkout, maxBytes: j.cfg.CIWorkspaceMaxBytes, maxEntries: int64(j.cfg.CIWorkspaceMaxEntries), minFreeBytes: j.cfg.CIStorageMinFreeBytes, minFreeInodes: j.cfg.CIStorageMinFreeInodes},
+		{name: "artifacts", path: j.artifactsStagingDir, maxBytes: j.cfg.CIArtifactMaxBytes, maxEntries: int64(j.cfg.CIArtifactMaxEntries), minFreeBytes: j.cfg.CIStorageMinFreeBytes, minFreeInodes: j.cfg.CIStorageMinFreeInodes},
+		{name: "cache", path: cacheDir, maxBytes: j.cfg.CICacheMaxBytes, maxEntries: int64(j.cfg.CICacheMaxEntries), minFreeBytes: j.cfg.CIStorageMinFreeBytes, minFreeInodes: j.cfg.CIStorageMinFreeInodes},
 	}
 	if err := checkDiskLimits(limits); err != nil {
 		return err
@@ -124,8 +124,16 @@ func (j *job) runDocker(ctx context.Context, cfg *CIConfig, envFile, runnerPath 
 		}
 	default:
 	}
+	if err != nil && ctx.Err() == nil && !errors.Is(err, errDiskLimitExceeded) && !errors.Is(err, errWorkerStorageUnavailable) {
+		// The Docker CLI can start successfully and still fail because the daemon
+		// disappeared while the container was running. Confirm daemon health before
+		// treating a non-zero exit as a pipeline failure.
+		if daemonErr := probeDockerDaemon(ctx); daemonErr != nil {
+			err = errors.Join(err, daemonErr)
+		}
+	}
 	if cacheDir != "" {
-		if pruneErr := resetDirectoryIfOverLimit(cacheDir, j.cfg.CICacheMaxBytes); pruneErr != nil {
+		if pruneErr := resetDirectoryIfOverLimit(cacheDir, j.cfg.CICacheMaxBytes, int64(j.cfg.CICacheMaxEntries)); pruneErr != nil {
 			j.logf("WARN: CI cache cleanup failed; future runs may continue without cache")
 			slog.Warn("failed to prune oversized CI cache", "run_id", j.run.ID, "repo", j.owner+"/"+j.repo.name, "error", pruneErr)
 		}
@@ -154,20 +162,13 @@ func ensureDockerImageAvailable(ctx context.Context, image string) error {
 		return nil
 	}
 	if inspectCtx.Err() != nil {
-		return inspectCtx.Err()
+		return fmt.Errorf("%w: Docker image inspection: %v", errDockerUnavailable, inspectCtx.Err())
 	}
 	// A failed image lookup and an unavailable Docker daemon are different
 	// operational states. Ask Docker itself whether the daemon is reachable
 	// instead of interpreting its human-readable image-inspect error text.
-	probeCtx, probeCancel := context.WithTimeout(ctx, 5*time.Second)
-	defer probeCancel()
-	probe := exec.CommandContext(probeCtx, "docker", "info", "--format", "{{.ServerVersion}}")
-	probeOutput, probeErr := probe.CombinedOutput()
-	if probeErr != nil {
-		if probeCtx.Err() != nil {
-			return probeCtx.Err()
-		}
-		return fmt.Errorf("%w: docker info: %v%s", errDockerUnavailable, probeErr, commandOutputSuffix(probeOutput))
+	if err := probeDockerDaemon(ctx); err != nil {
+		return err
 	}
 	return fmt.Errorf("%w: %s%s", errDockerImageUnavailable, image, commandOutputSuffix(output))
 }
@@ -277,7 +278,7 @@ func (j *job) lockCache(ctx context.Context) (string, func(), error) {
 		}
 	}
 	cacheDir := filepath.Join(root, "current")
-	if err := resetDirectoryIfOverLimit(cacheDir, j.cfg.CICacheMaxBytes); err != nil {
+	if err := resetDirectoryIfOverLimit(cacheDir, j.cfg.CICacheMaxBytes, int64(j.cfg.CICacheMaxEntries)); err != nil {
 		release()
 		return "", nil, err
 	}

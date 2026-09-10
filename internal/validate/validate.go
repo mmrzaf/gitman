@@ -46,6 +46,9 @@ func Password(password string) error {
 	if len(password) < 8 {
 		return fmt.Errorf("password must be at least 8 characters")
 	}
+	if len([]byte(password)) > 72 {
+		return fmt.Errorf("password must be at most 72 bytes")
+	}
 	hasLetter := false
 	hasDigit := false
 	for _, r := range password {

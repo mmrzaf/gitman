@@ -65,8 +65,8 @@ func (db *DB) PingContext(ctx context.Context) error {
 	return db.sql.PingContext(ctx)
 }
 
-func (db *DB) Ping() error {
-	return db.sql.Ping()
+func (db *DB) SchemaVersion(ctx context.Context) (int, error) {
+	return currentVersion(ctx, db.sql)
 }
 
 func applyConnectionPragmas(ctx context.Context, conn *sql.DB) error {

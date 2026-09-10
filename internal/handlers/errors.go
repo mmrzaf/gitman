@@ -81,7 +81,7 @@ func quietSuccessfulAccessLog(r *http.Request) bool {
 		return false
 	}
 	path := r.URL.Path
-	if strings.HasPrefix(path, "/static/") || path == "/health" || path == "/healthz" || path == "/readyz" {
+	if strings.HasPrefix(path, "/static/") || path == "/health" || path == "/healthz" || path == "/readyz" || path == "/ci-healthz" {
 		return true
 	}
 	parts := strings.Split(strings.Trim(path, "/"), "/")
@@ -282,7 +282,7 @@ func requestSurface(r *http.Request) responseSurface {
 		if isGitHTTPRequest(r) {
 			return surfaceGitHTTP
 		}
-		if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/health" || r.URL.Path == "/healthz" || r.URL.Path == "/readyz" {
+		if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/health" || r.URL.Path == "/healthz" || r.URL.Path == "/readyz" || r.URL.Path == "/ci-healthz" {
 			return surfaceAPI
 		}
 		if surface, ok := repositoryMachineSurface(r.URL.Path); ok {

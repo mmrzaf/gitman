@@ -28,8 +28,10 @@ type RepoPageData struct {
 	ParentPath     string
 	Branches       []string
 	Tags           []string
+	RefsTruncated  bool
 	IsEmpty        bool
 	Tree           []git.TreeEntry
+	TreeTruncated  bool
 	Commits        []git.Commit
 	CommitViews    []CommitListItem
 	BlobContent    string
@@ -122,20 +124,64 @@ func (app *App) RequireRepoMember(next http.Handler) http.Handler {
 	})
 }
 
+// RequireRepoOwner centralizes the authorization boundary for repository
+// settings. Handlers keep their own owner checks as defense in depth, but no
+// settings renderer should be reachable before this middleware succeeds.
+func (app *App) RequireRepoOwner(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user := GetUser(r)
+		repo := GetRepo(r)
+		if user == nil || repo == nil || user.ID != repo.OwnerID {
+			app.respondForSurface(w, r, apperr.New(apperr.KindForbidden, "Forbidden"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // loadRefsIntoData populates Branches and Tags without turning a Git failure
 // into an apparently empty repository navigation state.
+const (
+	maxRepoRefDisplayEntries = 2000
+	maxRepoTreeEntries       = 10000
+	maxRepoTreeBytes         = 8 * 1024 * 1024
+)
+
 func loadRefsIntoData(ctx context.Context, repoPath string, data *RepoPageData) error {
-	branches, err := git.GetBranches(ctx, repoPath)
+	branches, branchesTruncated, err := git.GetBranchesLimited(ctx, repoPath, maxRepoRefDisplayEntries)
 	if err != nil {
 		return err
 	}
-	tags, err := git.GetTags(ctx, repoPath)
+	tags, tagsTruncated, err := git.GetTagsLimited(ctx, repoPath, maxRepoRefDisplayEntries)
 	if err != nil {
 		return err
 	}
 	data.Branches = branches
 	data.Tags = tags
+	data.RefsTruncated = branchesTruncated || tagsTruncated
+	// A direct URL may select a valid branch/tag beyond the bounded selector
+	// window. Keep that active ref visible even when the surrounding list is
+	// truncated, otherwise the browser would show a different selected option
+	// from the revision actually being rendered.
+	switch data.CurrentRefKind {
+	case "branch":
+		data.Branches = ensureRefVisible(data.Branches, data.CurrentRef)
+	case "tag":
+		data.Tags = ensureRefVisible(data.Tags, data.CurrentRef)
+	}
 	return nil
+}
+
+func ensureRefVisible(refs []string, current string) []string {
+	if current == "" {
+		return refs
+	}
+	for _, ref := range refs {
+		if ref == current {
+			return refs
+		}
+	}
+	return append(refs, current)
 }
 
 func requestRef(r *http.Request) string {
@@ -238,14 +284,16 @@ func (app *App) HandleRepoTreeGET(w http.ResponseWriter, r *http.Request) {
 
 	// 2. Resolve the requested revision exactly; missing/broken HEAD is not substituted.
 	refParam := requestRef(r)
-	ref, err := git.ResolveRef(ctx, repoPath, refParam)
+	refInfo, err := git.ResolveRefInfo(ctx, repoPath, refParam)
 	if err != nil {
 		app.respondWebError(w, r, repositoryGitError(err, "Path not found"))
 		return
 	}
+	ref := refInfo.Name
 
 	// 3. Collect basic data.
 	data.CurrentRef = ref
+	data.CurrentRefKind = repoRefKindLabel(refInfo.Kind)
 	data.CurrentPath = requestRepoPath(r)
 	data.Breadcrumbs = repoBreadcrumbs(data.CurrentPath)
 	if len(data.Breadcrumbs) > 1 {
@@ -260,15 +308,18 @@ func (app *App) HandleRepoTreeGET(w http.ResponseWriter, r *http.Request) {
 		app.respondWebError(w, r, repositoryGitError(err, "Revision not found"))
 		return
 	}
-	data.CurrentRefKind = classifyRepoRef(data.CurrentRef, data.Branches, data.Tags)
 
 	// 4. Fetch tree.
-	tree, err := git.GetTree(ctx, repoPath, ref, data.CurrentPath)
+	tree, treeTruncated, err := git.GetTreeLimited(ctx, repoPath, ref, data.CurrentPath, git.TreeListLimits{
+		MaxEntries: maxRepoTreeEntries,
+		MaxBytes:   maxRepoTreeBytes,
+	})
 	if err != nil {
 		app.respondWebError(w, r, repositoryGitError(err, "Path not found"))
 		return
 	}
 	data.Tree = tree
+	data.TreeTruncated = treeTruncated
 	if err := app.loadRepoRootOverview(ctx, repoPath, &data); err != nil {
 		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "Repository data is temporarily unavailable", err))
 		return
@@ -304,12 +355,14 @@ func (app *App) HandleRepoBlobGET(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ref, err := git.ResolveRef(ctx, repoPath, refParam)
+	refInfo, err := git.ResolveRefInfo(ctx, repoPath, refParam)
 	if err != nil {
 		app.respondWebError(w, r, repositoryGitError(err, "File not found"))
 		return
 	}
+	ref := refInfo.Name
 	data.CurrentRef = ref
+	data.CurrentRefKind = repoRefKindLabel(refInfo.Kind)
 	data.ResolvedCommit, err = git.ResolveRevisionCommitHash(ctx, repoPath, ref)
 	if err != nil {
 		app.respondWebError(w, r, repositoryGitError(err, "Revision not found"))
@@ -322,7 +375,6 @@ func (app *App) HandleRepoBlobGET(w http.ResponseWriter, r *http.Request) {
 		app.respondWebError(w, r, repositoryGitError(err, "Revision not found"))
 		return
 	}
-	data.CurrentRefKind = classifyRepoRef(data.CurrentRef, data.Branches, data.Tags)
 
 	size, err := git.GetBlobSize(ctx, repoPath, ref, path)
 	if err != nil {
@@ -386,12 +438,14 @@ func (app *App) HandleRepoCommitsGET(w http.ResponseWriter, r *http.Request) {
 	}
 
 	refParam := requestRef(r)
-	ref, err := git.ResolveRef(ctx, repoPath, refParam)
+	refInfo, err := git.ResolveRefInfo(ctx, repoPath, refParam)
 	if err != nil {
 		app.respondWebError(w, r, repositoryGitError(err, "Revision not found"))
 		return
 	}
+	ref := refInfo.Name
 	data.CurrentRef = ref
+	data.CurrentRefKind = repoRefKindLabel(refInfo.Kind)
 	data.ResolvedCommit, err = git.ResolveRevisionCommitHash(ctx, repoPath, ref)
 	if err != nil {
 		app.respondWebError(w, r, repositoryGitError(err, "Revision not found"))
@@ -404,7 +458,6 @@ func (app *App) HandleRepoCommitsGET(w http.ResponseWriter, r *http.Request) {
 		app.respondWebError(w, r, repositoryGitError(err, "Revision not found"))
 		return
 	}
-	data.CurrentRefKind = classifyRepoRef(data.CurrentRef, data.Branches, data.Tags)
 
 	commits, err := git.GetCommits(ctx, repoPath, ref, 0, 50)
 	if err != nil {
@@ -445,9 +498,13 @@ func (app *App) HandleRepoCommitsGET(w http.ResponseWriter, r *http.Request) {
 // Route: /archive/{format}?ref=<revision>.
 func (app *App) HandleRepoArchiveGET(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
+	ctx, cleanup, ok := app.beginRepoStream(w, r)
+	if !ok {
+		return
+	}
+	defer cleanup()
 	repo := GetRepo(r)
 	repoPath := GetRepoPath(r)
-	ctx := r.Context()
 
 	isEmpty, err := git.IsEmpty(ctx, repoPath)
 	if err != nil {
@@ -502,3 +559,5 @@ func (app *App) HandleRepoArchiveGET(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 }
+
+

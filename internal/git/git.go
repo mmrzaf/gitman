@@ -88,11 +88,6 @@ func ValidateRefNameContext(ctx context.Context, ref string) error {
 	return fmt.Errorf("validate ref name: %w", err)
 }
 
-// ValidateRefName is retained for callers without a request/job context.
-func ValidateRefName(ref string) error {
-	return ValidateRefNameContext(context.Background(), ref)
-}
-
 // SecureRepoPath guarantees the resulting path is safely inside the base directory
 func SecureRepoPath(basePath, username, repoName string) (string, error) {
 	if err := validate.StorageName(username); err != nil {
@@ -271,57 +266,79 @@ func GetDefaultBranch(ctx context.Context, repoPath string) (string, error) {
 
 // GetBranches lists local branches in the repo (bare or non-bare).
 func GetBranches(ctx context.Context, repoPath string) ([]string, error) {
-	out, err := run(ctx, repoPath,
-		"for-each-ref",
-		"--format=%(refname:short)",
-		"refs/heads/",
-	)
+	branches, _, err := GetBranchesLimited(ctx, repoPath, 0)
+	return branches, err
+}
+
+// GetBranchesLimited lists at most limit local branches. A non-positive limit
+// is unlimited. The bool result reports that more branches exist than were
+// returned, allowing public presentation code to stay bounded without
+// pretending the list is complete.
+func GetBranchesLimited(ctx context.Context, repoPath string, limit int) ([]string, bool, error) {
+	args := []string{"for-each-ref", "--format=%(refname:short)"}
+	if limit > 0 {
+		args = append(args, "--count="+strconv.Itoa(limit+1))
+	}
+	args = append(args, "refs/heads/")
+	out, err := run(ctx, repoPath, args...)
 	if err != nil {
-		return nil, fmt.Errorf("list branches: %w", err)
+		return nil, false, fmt.Errorf("list branches: %w", err)
 	}
 
 	out = bytes.TrimSpace(out)
 	if len(out) == 0 {
-		return []string{}, nil
+		return []string{}, false, nil
 	}
 
-	var branches []string
 	lines := bytes.Split(out, []byte{'\n'})
-	for _, line := range lines {
-		if len(line) == 0 {
-			continue
-		}
-		branches = append(branches, string(line))
+	truncated := limit > 0 && len(lines) > limit
+	if truncated {
+		lines = lines[:limit]
 	}
-
-	return branches, nil
+	branches := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if len(line) > 0 {
+			branches = append(branches, string(line))
+		}
+	}
+	return branches, truncated, nil
 }
 
 // GetTags lists all tags in the repo, sorted by version/refname.
 func GetTags(ctx context.Context, repoPath string) ([]string, error) {
-	out, err := run(ctx, repoPath,
-		"for-each-ref",
-		"--format=%(refname:short)",
-		"--sort=version:refname",
-		"refs/tags/",
-	)
+	tags, _, err := GetTagsLimited(ctx, repoPath, 0)
+	return tags, err
+}
+
+// GetTagsLimited lists at most limit tags, sorted by version/refname. A
+// non-positive limit is unlimited. The bool result reports truncation.
+func GetTagsLimited(ctx context.Context, repoPath string, limit int) ([]string, bool, error) {
+	args := []string{"for-each-ref", "--format=%(refname:short)", "--sort=version:refname"}
+	if limit > 0 {
+		args = append(args, "--count="+strconv.Itoa(limit+1))
+	}
+	args = append(args, "refs/tags/")
+	out, err := run(ctx, repoPath, args...)
 	if err != nil {
-		return nil, fmt.Errorf("list tags: %w", err)
+		return nil, false, fmt.Errorf("list tags: %w", err)
 	}
 
 	out = bytes.TrimSpace(out)
 	if len(out) == 0 {
-		return []string{}, nil
+		return []string{}, false, nil
 	}
-
-	var tags []string
-	for _, line := range bytes.Split(out, []byte{'\n'}) {
+	lines := bytes.Split(out, []byte{'\n'})
+	truncated := limit > 0 && len(lines) > limit
+	if truncated {
+		lines = lines[:limit]
+	}
+	tags := make([]string, 0, len(lines))
+	for _, line := range lines {
 		if len(line) > 0 {
 			tags = append(tags, string(line))
 		}
 	}
-
-	return tags, nil
+	return tags, truncated, nil
 }
 
 // refExists checks whether a fully-qualified git ref (e.g. refs/heads/main,
@@ -690,80 +707,101 @@ func GetCommits(ctx context.Context, repoPath, ref string, skip, limit int) ([]C
 	return commits, nil
 }
 
-// GetTree returns the tree entries for a given ref and path (directory inside repo).
-// If path is empty, it returns the root tree for that ref.
+// TreeListLimits bounds one directory listing returned by GetTreeLimited.
+// A zero value disables that individual limit.
+type TreeListLimits struct {
+	MaxEntries int
+	MaxBytes   int
+}
+
+// GetTree returns the complete tree entries for a given ref/path. Request
+// handlers serving untrusted repositories should prefer GetTreeLimited.
 func GetTree(ctx context.Context, repoPath, ref, path string) ([]TreeEntry, error) {
+	entries, _, err := GetTreeLimited(ctx, repoPath, ref, path, TreeListLimits{})
+	return entries, err
+}
+
+// GetTreeLimited returns a bounded directory listing. The bool result reports
+// whether output was capped by entry count or byte budget.
+func GetTreeLimited(ctx context.Context, repoPath, ref, path string, limits TreeListLimits) ([]TreeEntry, bool, error) {
 	resolvedRef, err := resolveRef(ctx, repoPath, ref)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	treeish := resolvedRef.spec
 	if path != "" {
 		path = strings.TrimPrefix(path, "/")
 		if path == "" || strings.ContainsRune(path, '\x00') {
-			return nil, ErrPathNotFound
+			return nil, false, ErrPathNotFound
 		}
 		probe, err := run(ctx, repoPath, "ls-tree", "-d", "-z", resolvedRef.spec, "--", ":(literal)"+path)
 		if err != nil {
-			return nil, fmt.Errorf("inspect tree %q at %q: %w", path, resolvedRef.display, err)
+			return nil, false, fmt.Errorf("inspect tree %q at %q: %w", path, resolvedRef.display, err)
 		}
 		if len(probe) == 0 {
-			return nil, ErrPathNotFound
+			return nil, false, ErrPathNotFound
 		}
 		treeish = fmt.Sprintf("%s:%s", resolvedRef.spec, path)
 	}
 
-	out, err := run(ctx, repoPath, "ls-tree", "-l", "-z", treeish)
+	var out []byte
+	truncated := false
+	if limits.MaxBytes > 0 {
+		out, truncated, err = runLimited(ctx, repoPath, limits.MaxBytes, "ls-tree", "-l", "-z", treeish)
+		if truncated {
+			// runLimited may stop the retained buffer in the middle of a record.
+			// Discard that incomplete tail rather than parsing attacker-controlled
+			// partial metadata as a valid tree entry.
+			if end := bytes.LastIndexByte(out, 0); end >= 0 {
+				out = out[:end+1]
+			} else {
+				out = nil
+			}
+		}
+	} else {
+		out, err = run(ctx, repoPath, "ls-tree", "-l", "-z", treeish)
+	}
 	if err != nil {
-		return nil, fmt.Errorf("read tree %q at %q: %w", path, resolvedRef.display, err)
+		return nil, truncated, fmt.Errorf("read tree %q at %q: %w", path, resolvedRef.display, err)
 	}
-
 	if len(out) == 0 {
-		return []TreeEntry{}, nil
+		return []TreeEntry{}, truncated, nil
 	}
 
-	var entries []TreeEntry
-	records := bytes.Split(out, []byte{0})
-
-	for _, record := range records {
+	entries := make([]TreeEntry, 0)
+	for _, record := range bytes.Split(out, []byte{0}) {
 		if len(record) == 0 {
 			continue
 		}
-
+		if limits.MaxEntries > 0 && len(entries) >= limits.MaxEntries {
+			truncated = true
+			break
+		}
 		tabIdx := bytes.IndexByte(record, '\t')
 		if tabIdx == -1 {
-			return nil, fmt.Errorf("parse tree %q at %q: malformed ls-tree record", path, resolvedRef.display)
+			return nil, truncated, fmt.Errorf("parse tree %q at %q: malformed ls-tree record", path, resolvedRef.display)
 		}
-
 		meta := record[:tabIdx]
 		name := record[tabIdx+1:]
-
 		parts := bytes.SplitN(meta, []byte{' '}, 4)
 		if len(parts) != 4 {
-			return nil, fmt.Errorf("parse tree %q at %q: malformed ls-tree metadata", path, resolvedRef.display)
+			return nil, truncated, fmt.Errorf("parse tree %q at %q: malformed ls-tree metadata", path, resolvedRef.display)
 		}
-
 		sizeStr := strings.TrimSpace(string(parts[3]))
 		var size int64
 		if sizeStr != "-" {
 			v, err := strconv.ParseInt(sizeStr, 10, 64)
 			if err != nil {
-				return nil, fmt.Errorf("parse tree size %q: %w", sizeStr, err)
+				return nil, truncated, fmt.Errorf("parse tree size %q: %w", sizeStr, err)
 			}
 			size = v
 		}
-
 		entries = append(entries, TreeEntry{
-			Mode: string(parts[0]),
-			Type: string(parts[1]),
-			Hash: string(parts[2]),
-			Size: size,
-			Name: string(name),
+			Mode: string(parts[0]), Type: string(parts[1]), Hash: string(parts[2]), Size: size, Name: string(name),
 		})
 	}
-
-	return entries, nil
+	return entries, truncated, nil
 }
 
 // BlobExists reports whether path resolves to a blob at ref without logging a

@@ -9,10 +9,10 @@ import (
 )
 
 const (
-	loginUsernameLimit  = 5
-	loginIPLimit        = 20
-	loginLimitWindow    = 15 * time.Minute
-	loginLimiterMaxKeys = 4096
+	loginUsernameIPLimit = 5
+	loginIPLimit         = 20
+	loginLimitWindow     = 15 * time.Minute
+	loginLimiterMaxKeys  = 4096
 )
 
 type loginLimiter struct {
@@ -44,7 +44,7 @@ func (l *loginLimiter) allow(username, ip string) (bool, time.Duration) {
 		key   string
 		limit int
 	}{
-		{"u:" + normalizeLoginUsername(username), loginUsernameLimit},
+		{loginUsernameIPKey(username, ip), loginUsernameIPLimit},
 		{"ip:" + ip, loginIPLimit},
 	} {
 		entry := l.entries[scope.key]
@@ -63,17 +63,21 @@ func (l *loginLimiter) recordFailure(username, ip string) {
 	defer l.mu.Unlock()
 	now := l.now()
 	l.pruneLocked(now)
-	l.incrementLocked("u:"+normalizeLoginUsername(username), now)
+	l.incrementLocked(loginUsernameIPKey(username, ip), now)
 	l.incrementLocked("ip:"+ip, now)
 	if len(l.entries) > loginLimiterMaxKeys {
 		l.dropOldestLocked()
 	}
 }
 
-func (l *loginLimiter) recordSuccess(username string) {
+func (l *loginLimiter) recordSuccess(username, ip string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	delete(l.entries, "u:"+normalizeLoginUsername(username))
+	delete(l.entries, loginUsernameIPKey(username, ip))
+}
+
+func loginUsernameIPKey(username, ip string) string {
+	return "uip:" + normalizeLoginUsername(username) + ":" + ip
 }
 
 func (l *loginLimiter) incrementLocked(key string, now time.Time) {

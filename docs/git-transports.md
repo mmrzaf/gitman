@@ -50,4 +50,4 @@ The browser UI exposes source archives for the selected ref:
 /<owner>/<repository>/archive/tar.gz?ref=<branch-or-tag>
 ```
 
-Archives follow repository visibility: public source archives are public; private source archives require repository access.
+Archives follow repository visibility: public source archives are public; private source archives require repository access. Archive and raw/download streams are protected by global/per-client concurrency limits and a finite stream lifetime so slow clients cannot retain Git subprocesses indefinitely.

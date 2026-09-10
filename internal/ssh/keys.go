@@ -22,6 +22,10 @@ const (
 	authorizedKeysRecoveryTimeout  = 5 * time.Second
 )
 
+func shellQuoteArg(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
 // SyncAuthorizedKeys atomically regenerates the authorized_keys file from the
 // database. A persistent flock serializes the complete DB-snapshot-to-publish
 // operation across Gitman processes, so a slower writer cannot publish an older
@@ -91,7 +95,7 @@ func SyncAuthorizedKeys(ctx context.Context, database *db.DB, cfg *config.Config
 		seenFingerprints[fingerprint] = key.ID
 		pubKey := strings.TrimSpace(string(crypto_ssh.MarshalAuthorizedKey(parsed)))
 
-		forcedCommand := strconv.Quote(fmt.Sprintf("%s serve %s", cfg.BinaryPath, key.ID))
+		forcedCommand := strconv.Quote(shellQuoteArg(cfg.BinaryPath) + " serve " + shellQuoteArg(key.ID))
 		options := fmt.Sprintf(
 			`command=%s,no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty`,
 			forcedCommand,

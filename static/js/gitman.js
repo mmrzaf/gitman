@@ -580,6 +580,7 @@
     const searchURL = dialog.dataset.searchUrl || "";
     let items = [];
     let activeIndex = 0;
+    let truncated = false;
     let timer = 0;
     let controller = null;
 
@@ -606,6 +607,12 @@
         button.textContent = item.path;
         results.appendChild(button);
       });
+      if (truncated) {
+        const limited = document.createElement("div");
+        limited.className = "file-finder-empty";
+        limited.textContent = "Search was limited; type more characters to narrow the results.";
+        results.appendChild(limited);
+      }
       const active = results.querySelector(".file-finder-result.active");
       active?.scrollIntoView({ block: "nearest" });
       if (input instanceof HTMLInputElement) input.setAttribute("aria-activedescendant", active?.id || "");
@@ -628,11 +635,13 @@
         if (!response.ok) throw new Error(`file search failed: ${response.status}`);
         const payload = await response.json();
         items = Array.isArray(payload.results) ? payload.results : [];
+        truncated = payload.truncated === true;
         activeIndex = 0;
-        render(items.length ? "" : "No matching files");
+        render(items.length ? "" : (truncated ? "Search was limited; type more characters to narrow the results." : "No matching files"));
       } catch (error) {
         if (error?.name === "AbortError") return;
         items = [];
+        truncated = false;
         render("Could not load repository files");
       }
     }

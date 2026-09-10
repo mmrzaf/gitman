@@ -99,16 +99,16 @@ func TestCILogPrefixAndANSIStripping(t *testing.T) {
 		t.Fatalf("OSC strip = %q", got)
 	}
 }
-func TestCIRunNavigationRefPrefersImmutableCommit(t *testing.T) {
-	run := &models.CIRun{CommitHash: "deadbeef", Branch: "main", Tag: "v1.0.0"}
-	if got := ciRunNavigationRef(run); got != "deadbeef" {
-		t.Fatalf("navigation ref = %q, want immutable commit", got)
+func TestCIRunNavigationRefPreservesNamedRefContext(t *testing.T) {
+	run := &models.CIRun{CommitHash: "deadbeef", Branch: "main"}
+	if got := ciRunNavigationRef(run); got != "main" {
+		t.Fatalf("branch navigation ref = %q, want main", got)
 	}
-	if got := ciRunNavigationRef(&models.CIRun{Branch: "main"}); got != "main" {
-		t.Fatalf("branch fallback = %q", got)
+	if got := ciRunNavigationRef(&models.CIRun{CommitHash: "deadbeef", Tag: "v1.0.0"}); got != "v1.0.0" {
+		t.Fatalf("tag navigation ref = %q, want v1.0.0", got)
 	}
-	if got := ciRunNavigationRef(&models.CIRun{Tag: "v1.0.0"}); got != "v1.0.0" {
-		t.Fatalf("tag fallback = %q", got)
+	if got := ciRunNavigationRef(&models.CIRun{CommitHash: "deadbeef"}); got != "deadbeef" {
+		t.Fatalf("detached navigation ref = %q, want commit", got)
 	}
 }
 

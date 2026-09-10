@@ -1,10 +1,13 @@
 package git
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"os/exec"
 	"regexp"
 	"sort"
 	"strconv"
@@ -13,25 +16,28 @@ import (
 )
 
 const (
-	defaultDiffFileLimit  = 200
-	defaultPatchFileLimit = 60
-	defaultPatchByteLimit = 512 * 1024
-	perFilePatchByteLimit = 192 * 1024
-	defaultPatchLineLimit = 3000
-	perFilePatchLineLimit = 1000
+	defaultDiffFileLimit           = 200
+	defaultPatchFileLimit          = 60
+	defaultPatchByteLimit          = 512 * 1024
+	perFilePatchByteLimit          = 192 * 1024
+	defaultPatchLineLimit          = 3000
+	perFilePatchLineLimit          = 1000
+	defaultCommitMetadataByteLimit = 4 * 1024 * 1024
+	defaultCommitPointingRefLimit  = 200
 )
 
 // CommitDetail is the full presentation metadata for one immutable revision.
 type CommitDetail struct {
-	Hash     string
-	Parents  []string
-	Author   string
-	Email    string
-	Date     time.Time
-	Subject  string
-	Body     string
-	Branches []string
-	Tags     []string
+	Hash          string
+	Parents       []string
+	Author        string
+	Email         string
+	Date          time.Time
+	Subject       string
+	Body          string
+	Branches      []string
+	Tags          []string
+	RefsTruncated bool
 }
 
 // ChangedFile describes how one path changed in a commit. Path is the path in
@@ -70,15 +76,16 @@ type FileDiff struct {
 	Truncated bool
 }
 
-// CommitDiff is the complete diff presentation model for a commit. Files may
-// be capped for pathological commits; TotalFiles always reports the true count
-// observed before the presentation cap.
+// CommitDiff is the bounded diff presentation model for a commit. FilesTruncated
+// and StatsTruncated explicitly distinguish partial metadata from patch-only caps.
 type CommitDiff struct {
-	Files      []FileDiff
-	TotalFiles int
-	Additions  int
-	Deletions  int
-	Truncated  bool
+	Files          []FileDiff
+	TotalFiles     int
+	Additions      int
+	Deletions      int
+	FilesTruncated bool
+	StatsTruncated bool
+	Truncated      bool
 }
 
 func ResolveRevisionCommitHash(ctx context.Context, repoPath, ref string) (string, error) {
@@ -129,33 +136,32 @@ func GetCommitDetail(ctx context.Context, repoPath, hash string) (CommitDetail, 
 	if parentText := strings.TrimSpace(string(parts[1])); parentText != "" {
 		detail.Parents = strings.Fields(parentText)
 	}
-	detail.Branches, detail.Tags, err = refsPointingAt(ctx, repoPath, detail.Hash)
+	detail.Branches, detail.Tags, detail.RefsTruncated, err = refsPointingAt(ctx, repoPath, detail.Hash)
 	if err != nil {
 		return CommitDetail{}, err
 	}
 	return detail, nil
 }
 
-func refsPointingAt(ctx context.Context, repoPath, hash string) ([]string, []string, error) {
-	out, err := run(ctx, repoPath, "for-each-ref", "--format=%(refname)%00%(objectname)%00%(*objectname)", "refs/heads", "refs/tags")
+func refsPointingAt(ctx context.Context, repoPath, hash string) ([]string, []string, bool, error) {
+	out, err := run(ctx, repoPath,
+		"for-each-ref",
+		"--count="+strconv.Itoa(defaultCommitPointingRefLimit+1),
+		"--points-at="+hash,
+		"--format=%(refname)",
+		"refs/heads", "refs/tags",
+	)
 	if err != nil {
-		return nil, nil, fmt.Errorf("list refs pointing at commit: %w", err)
+		return nil, nil, false, fmt.Errorf("list refs pointing at commit: %w", err)
+	}
+	lines := bytes.Split(bytes.TrimSpace(out), []byte{'\n'})
+	truncated := len(lines) > defaultCommitPointingRefLimit
+	if truncated {
+		lines = lines[:defaultCommitPointingRefLimit]
 	}
 	var branches, tags []string
-	for _, line := range bytes.Split(bytes.TrimSpace(out), []byte{'\n'}) {
-		if len(line) == 0 {
-			continue
-		}
-		parts := bytes.SplitN(line, []byte{0}, 3)
-		if len(parts) != 3 {
-			return nil, nil, fmt.Errorf("malformed ref metadata")
-		}
-		refName := string(parts[0])
-		object := string(parts[1])
-		peeled := string(parts[2])
-		if object != hash && peeled != hash {
-			continue
-		}
+	for _, line := range lines {
+		refName := string(line)
 		switch {
 		case strings.HasPrefix(refName, "refs/heads/"):
 			branches = append(branches, strings.TrimPrefix(refName, "refs/heads/"))
@@ -165,7 +171,7 @@ func refsPointingAt(ctx context.Context, repoPath, hash string) ([]string, []str
 	}
 	sort.Strings(branches)
 	sort.Strings(tags)
-	return branches, tags, nil
+	return branches, tags, truncated, nil
 }
 
 func commitDiffArgs(detail CommitDetail, args ...string) []string {
@@ -180,24 +186,48 @@ func commitDiffArgs(detail CommitDetail, args ...string) []string {
 }
 
 func GetCommitChanges(ctx context.Context, repoPath string, detail CommitDetail) ([]ChangedFile, error) {
+	changes, _, _, err := GetCommitChangesLimited(ctx, repoPath, detail, 0)
+	return changes, err
+}
+
+// GetCommitChangesLimited bounds the retained metadata produced by pathological
+// commits. A positive byteLimit applies independently to name/status and
+// numstat output. Truncation is surfaced separately for file enumeration and
+// statistics so callers never present partial totals as exact.
+func GetCommitChangesLimited(ctx context.Context, repoPath string, detail CommitDetail, byteLimit int) ([]ChangedFile, bool, bool, error) {
 	nameArgs := commitDiffArgs(detail, "--name-status", "-z", "--find-renames")
-	nameOut, err := run(ctx, repoPath, nameArgs...)
-	if err != nil {
-		return nil, fmt.Errorf("read changed paths: %w", err)
+	var nameOut []byte
+	var nameTruncated bool
+	var err error
+	if byteLimit > 0 {
+		nameOut, nameTruncated, err = runLimited(ctx, repoPath, byteLimit, nameArgs...)
+		nameOut = completeNULPrefix(nameOut, nameTruncated)
+	} else {
+		nameOut, err = run(ctx, repoPath, nameArgs...)
 	}
-	changes, err := parseNameStatusZ(nameOut)
 	if err != nil {
-		return nil, err
+		return nil, nameTruncated, nameTruncated, fmt.Errorf("read changed paths: %w", err)
+	}
+	changes, err := parseNameStatusZPartial(nameOut, nameTruncated)
+	if err != nil {
+		return nil, nameTruncated, nameTruncated, err
 	}
 
 	numArgs := commitDiffArgs(detail, "--numstat", "-z", "--find-renames")
-	numOut, err := run(ctx, repoPath, numArgs...)
-	if err != nil {
-		return nil, fmt.Errorf("read diff statistics: %w", err)
+	var numOut []byte
+	var numTruncated bool
+	if byteLimit > 0 {
+		numOut, numTruncated, err = runLimited(ctx, repoPath, byteLimit, numArgs...)
+		numOut = completeNULPrefix(numOut, numTruncated)
+	} else {
+		numOut, err = run(ctx, repoPath, numArgs...)
 	}
-	stats, err := parseNumstatZ(numOut)
 	if err != nil {
-		return nil, err
+		return nil, nameTruncated, nameTruncated || numTruncated, fmt.Errorf("read diff statistics: %w", err)
+	}
+	stats, err := parseNumstatZPartial(numOut, numTruncated)
+	if err != nil {
+		return nil, nameTruncated, nameTruncated || numTruncated, err
 	}
 	for i := range changes {
 		key := diffPathKey(changes[i].OldPath, changes[i].Path)
@@ -207,18 +237,26 @@ func GetCommitChanges(ctx context.Context, repoPath string, detail CommitDetail)
 			changes[i].Binary = stat.Binary
 			continue
 		}
-		// Some Git versions report a simple path in numstat after a low-similarity
-		// rename. Fall back to the destination path without weakening path parsing.
 		if stat, ok := stats[diffPathKey("", changes[i].Path)]; ok {
 			changes[i].Additions = stat.Additions
 			changes[i].Deletions = stat.Deletions
 			changes[i].Binary = stat.Binary
 		}
 	}
-	return changes, nil
+	return changes, nameTruncated, nameTruncated || numTruncated, nil
 }
 
-func parseNameStatusZ(out []byte) ([]ChangedFile, error) {
+func completeNULPrefix(out []byte, truncated bool) []byte {
+	if !truncated || len(out) == 0 || out[len(out)-1] == 0 {
+		return out
+	}
+	if end := bytes.LastIndexByte(out, 0); end >= 0 {
+		return out[:end+1]
+	}
+	return nil
+}
+
+func parseNameStatusZPartial(out []byte, allowIncompleteTail bool) ([]ChangedFile, error) {
 	records := bytes.Split(out, []byte{0})
 	var changes []ChangedFile
 	for i := 0; i < len(records); {
@@ -241,12 +279,18 @@ func parseNameStatusZ(out []byte) ([]ChangedFile, error) {
 			change.Similarity = similarity
 		}
 		if i >= len(records) || len(records[i]) == 0 {
+			if allowIncompleteTail {
+				return changes, nil
+			}
 			return nil, fmt.Errorf("malformed changed path record")
 		}
 		first := string(records[i])
 		i++
 		if code == "R" || code == "C" {
 			if i >= len(records) || len(records[i]) == 0 {
+				if allowIncompleteTail {
+					return changes, nil
+				}
 				return nil, fmt.Errorf("malformed rename/copy record")
 			}
 			change.OldPath = first
@@ -269,7 +313,7 @@ type diffStat struct {
 	Binary    bool
 }
 
-func parseNumstatZ(out []byte) (map[string]diffStat, error) {
+func parseNumstatZPartial(out []byte, allowIncompleteTail bool) (map[string]diffStat, error) {
 	records := bytes.Split(out, []byte{0})
 	stats := make(map[string]diffStat)
 	for i := 0; i < len(records); {
@@ -303,6 +347,9 @@ func parseNumstatZ(out []byte) (map[string]diffStat, error) {
 			continue
 		}
 		if i+1 >= len(records) || len(records[i]) == 0 || len(records[i+1]) == 0 {
+			if allowIncompleteTail {
+				return stats, nil
+			}
 			return nil, fmt.Errorf("malformed rename numstat record")
 		}
 		oldPath := string(records[i])
@@ -468,11 +515,14 @@ func capDiffHunks(hunks []DiffHunk, lineLimit int) ([]DiffHunk, int, bool) {
 }
 
 func GetCommitDiff(ctx context.Context, repoPath string, detail CommitDetail) (CommitDiff, error) {
-	changes, err := GetCommitChanges(ctx, repoPath, detail)
+	changes, filesTruncated, statsTruncated, err := GetCommitChangesLimited(ctx, repoPath, detail, defaultCommitMetadataByteLimit)
 	if err != nil {
 		return CommitDiff{}, err
 	}
-	result := CommitDiff{TotalFiles: len(changes)}
+	result := CommitDiff{TotalFiles: len(changes), FilesTruncated: filesTruncated, StatsTruncated: statsTruncated}
+	if filesTruncated || statsTruncated {
+		result.Truncated = true
+	}
 	for _, change := range changes {
 		result.Additions += change.Additions
 		result.Deletions += change.Deletions
@@ -516,36 +566,116 @@ func GetCommitDiff(ctx context.Context, repoPath string, detail CommitDetail) (C
 	return result, nil
 }
 
-// ListFiles returns blob paths at a revision. Gitlinks/submodules are excluded
-// so Go to File never routes a commit object through the blob viewer. The
-// output is NUL-delimited so unusual filenames survive intact.
-func ListFiles(ctx context.Context, repoPath, ref string) ([]string, error) {
+// FileWalkLimits bounds repository tree enumeration. A zero value disables
+// that individual limit; callers serving untrusted requests should always set
+// both limits and a context deadline.
+type FileWalkLimits struct {
+	MaxFiles int
+	MaxBytes int64
+}
+
+const maxTreeRecordBytes = 64 * 1024
+
+// WalkFiles streams blob paths at a revision without buffering the complete
+// tree in memory. Gitlinks/submodules are excluded. The bool result reports
+// whether enumeration stopped because one of the configured limits was hit.
+func WalkFiles(ctx context.Context, repoPath, ref string, limits FileWalkLimits, visit func(string) error) (bool, error) {
 	resolved, err := resolveRef(ctx, repoPath, ref)
 	if err != nil {
-		return nil, err
+		return false, err
 	}
-	out, err := run(ctx, repoPath, "ls-tree", "-r", "-z", resolved.spec)
+
+	args := repoArgs(repoPath, "ls-tree", "-r", "-z", resolved.spec)
+	cmd := exec.CommandContext(ctx, "git", args...)
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, fmt.Errorf("list repository files: %w", err)
+		return false, fmt.Errorf("list repository files: %w", err)
 	}
-	records := bytes.Split(out, []byte{0})
-	files := make([]string, 0, len(records))
-	for _, record := range records {
-		if len(record) == 0 {
-			continue
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		return false, fmt.Errorf("list repository files: %w", commandError(ctx, args, stderr.Bytes(), err))
+	}
+
+	killAndWait := func() {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
 		}
-		tab := bytes.IndexByte(record, '\t')
-		if tab < 0 {
-			return nil, fmt.Errorf("malformed tree record")
+		_ = cmd.Wait()
+	}
+
+	reader := bufio.NewReaderSize(stdout, maxTreeRecordBytes)
+	filesSeen := 0
+	var bytesSeen int64
+	for {
+		record, readErr := reader.ReadSlice(0)
+		if errors.Is(readErr, bufio.ErrBufferFull) {
+			killAndWait()
+			return false, fmt.Errorf("list repository files: tree record exceeds %d bytes", maxTreeRecordBytes)
 		}
-		meta := bytes.Fields(record[:tab])
-		if len(meta) < 3 {
-			return nil, fmt.Errorf("malformed tree metadata")
+		if len(record) > 0 {
+			bytesSeen += int64(len(record))
+			if limits.MaxBytes > 0 && bytesSeen > limits.MaxBytes {
+				killAndWait()
+				return true, nil
+			}
+
+			record = bytes.TrimSuffix(record, []byte{0})
+			if len(record) > 0 {
+				tab := bytes.IndexByte(record, '\t')
+				if tab < 0 {
+					killAndWait()
+					return false, fmt.Errorf("list repository files: malformed tree record")
+				}
+				meta := bytes.Fields(record[:tab])
+				if len(meta) < 3 {
+					killAndWait()
+					return false, fmt.Errorf("list repository files: malformed tree metadata")
+				}
+				if string(meta[1]) == "blob" {
+					if limits.MaxFiles > 0 && filesSeen >= limits.MaxFiles {
+						killAndWait()
+						return true, nil
+					}
+					filesSeen++
+					if visit != nil {
+						if err := visit(string(record[tab+1:])); err != nil {
+							killAndWait()
+							return false, err
+						}
+					}
+				}
+			}
 		}
-		if string(meta[1]) != "blob" {
-			continue
+
+		if readErr == io.EOF {
+			break
 		}
-		files = append(files, string(record[tab+1:]))
+		if readErr != nil {
+			killAndWait()
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return false, ctxErr
+			}
+			return false, fmt.Errorf("list repository files: %w", readErr)
+		}
+	}
+
+	if err := cmd.Wait(); err != nil {
+		return false, fmt.Errorf("list repository files: %w", commandError(ctx, args, stderr.Bytes(), err))
+	}
+	return false, nil
+}
+
+// ListFiles returns all blob paths at a revision. Request handlers should use
+// WalkFiles with explicit bounds when the repository is not trusted.
+func ListFiles(ctx context.Context, repoPath, ref string) ([]string, error) {
+	files := make([]string, 0)
+	_, err := WalkFiles(ctx, repoPath, ref, FileWalkLimits{}, func(path string) error {
+		files = append(files, path)
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return files, nil
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"time"
 
@@ -72,12 +71,6 @@ func (db *DB) DeleteSession(ctx context.Context, token string) error {
 	return err
 }
 
-func (db *DB) ExtendSession(ctx context.Context, token string, duration time.Duration) error {
-	newExpires := time.Now().Add(duration).Unix()
-	_, err := db.sql.ExecContext(ctx, "UPDATE sessions SET expires_at = ? WHERE token = ?", newExpires, hashSessionToken(token))
-	return err
-}
-
 func (db *DB) ExtendSessionIfExpiring(ctx context.Context, token string, duration, threshold time.Duration) (bool, error) {
 	now := time.Now()
 	newExpires := now.Add(duration).Unix()
@@ -95,10 +88,5 @@ func (db *DB) ExtendSessionIfExpiring(ctx context.Context, token string, duratio
 
 func (db *DB) DeleteExpiredSessions(ctx context.Context) error {
 	_, err := db.sql.ExecContext(ctx, "DELETE FROM sessions WHERE expires_at <= ?", time.Now().Unix())
-	return err
-}
-
-func (db *DB) DeleteUserSessions(ctx context.Context, tx *sql.Tx, userID string) error {
-	_, err := tx.ExecContext(ctx, "DELETE FROM sessions WHERE user_id = ?", userID)
 	return err
 }
