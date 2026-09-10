@@ -559,5 +559,3 @@ func (app *App) HandleRepoArchiveGET(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 }
-
-
