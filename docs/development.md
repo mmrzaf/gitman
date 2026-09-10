@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Go `1.26.6`.
+- Go `1.27`.
 - `git` in `PATH`.
 - Docker only for exercising the CI worker.
 
