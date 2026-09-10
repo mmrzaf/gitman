@@ -4,16 +4,35 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/mmrzaf/gitman/internal/config"
 	"github.com/mmrzaf/gitman/internal/db"
+	"github.com/mmrzaf/gitman/internal/models"
 	"github.com/mmrzaf/gitman/internal/repository"
 	sshhandler "github.com/mmrzaf/gitman/internal/ssh"
 	"github.com/mmrzaf/gitman/internal/validate"
 )
+
+func recordAdminAuditEvent(ctx context.Context, database *db.DB, action, targetType, targetID string, metadata map[string]string) {
+	if database == nil {
+		return
+	}
+	auditCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	if err := database.RecordAuditEvent(auditCtx, models.AuditEvent{
+		ActorUsername: "admin-cli",
+		Action:        action,
+		TargetType:    targetType,
+		TargetID:      targetID,
+		Metadata:      metadata,
+	}); err != nil {
+		slog.Error("record admin audit event", "action", action, "target_type", targetType, "target_id", targetID, "error", err)
+	}
+}
 
 func CreateUser(ctx context.Context, cfg *config.Config, database *db.DB, username, password string) (retErr error) {
 	if err := validate.Username(username); err != nil {
@@ -36,10 +55,11 @@ func CreateUser(ctx context.Context, cfg *config.Config, database *db.DB, userna
 		}
 	}()
 
-	_, err = database.CreateUser(ctx, username, password)
+	user, err := database.CreateUser(ctx, username, password)
 	if err != nil {
 		return fmt.Errorf("failed to create user: %w", err)
 	}
+	recordAdminAuditEvent(ctx, database, models.AuditActionUserCreated, "user", user.ID, map[string]string{"username": user.Username})
 
 	return nil
 }
@@ -48,9 +68,14 @@ func ResetPassword(ctx context.Context, database *db.DB, username, password stri
 	if err := validate.Password(password); err != nil {
 		return err
 	}
+	user, err := database.GetUserByUsername(ctx, username)
+	if err != nil {
+		return fmt.Errorf("look up user before password reset: %w", err)
+	}
 	if err := database.UpdateUserPassword(ctx, username, password); err != nil {
 		return fmt.Errorf("failed to reset password: %w", err)
 	}
+	recordAdminAuditEvent(ctx, database, models.AuditActionPasswordReset, "user", user.ID, map[string]string{"username": user.Username})
 
 	return nil
 }
@@ -127,6 +152,7 @@ func DeleteUser(ctx context.Context, cfg *config.Config, database *db.DB, userna
 		}
 		return primary
 	}
+	recordAdminAuditEvent(ctx, database, models.AuditActionUserDeleted, "user", user.ID, map[string]string{"username": user.Username})
 
 	cleanupPaths := make([]string, 0, 4)
 	if quarantinedRepos != "" {

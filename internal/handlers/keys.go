@@ -108,6 +108,7 @@ func (app *App) HandleKeysPOST(w http.ResponseWriter, r *http.Request) {
 		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "SSH key activation is temporarily unavailable", err))
 		return
 	}
+	app.recordAuditEvent(r, user, models.AuditActionSSHKeyCreated, "ssh_key", crypto_ssh.FingerprintSHA256(parsedKey), map[string]string{"name": name})
 
 	app.renderKeysPage(w, r, user, "", "SSH key added successfully.")
 }
@@ -145,6 +146,7 @@ func (app *App) HandleKeyDeletePOST(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	app.recordAuditEvent(r, user, models.AuditActionSSHKeyDeleted, "ssh_key", key.ID, map[string]string{"name": key.Name})
 
 	app.renderKeysPage(w, r, user, "", "SSH key deleted.")
 }
