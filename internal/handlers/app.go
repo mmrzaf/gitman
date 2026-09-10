@@ -27,6 +27,7 @@ import (
 	"github.com/mmrzaf/gitman/internal/config"
 	"github.com/mmrzaf/gitman/internal/db"
 	"github.com/mmrzaf/gitman/internal/models"
+	"golang.org/x/sys/unix"
 )
 
 type contextKey string
@@ -46,12 +47,20 @@ const (
 var embeddedFiles = gitman.FS
 
 type App struct {
-	Config       *config.Config
-	DB           *db.DB
-	Templates    map[string]*template.Template
-	StaticFS     http.FileSystem
-	LoginLimiter *loginLimiter
-	loginMu      sync.Mutex
+	Config            *config.Config
+	DB                *db.DB
+	Templates         map[string]*template.Template
+	StaticFS          http.FileSystem
+	LoginLimiter      *loginLimiter
+	loginMu           sync.Mutex
+	gitHTTPOnce       sync.Once
+	gitHTTPLimiter    *requestConcurrencyLimiter
+	fileSearchOnce    sync.Once
+	fileSearchLimiter *requestConcurrencyLimiter
+	repoBrowseOnce    sync.Once
+	repoBrowseLimiter *requestConcurrencyLimiter
+	repoStreamOnce    sync.Once
+	repoStreamLimiter *requestConcurrencyLimiter
 }
 
 func (app *App) loginLimiter() *loginLimiter {
@@ -191,9 +200,8 @@ func repoSettingsSection(requestPath string) string {
 }
 
 var templateFuncs = template.FuncMap{
-	"short":      shortString,
-	"pathEscape": escapePath,
-	"humanSize":  humanBytes,
+	"short":     shortString,
+	"humanSize": humanBytes,
 	"sub1": func(value int) int {
 		return value - 1
 	},
@@ -417,44 +425,76 @@ func bearerToken(header string) (string, bool) {
 	return token, true
 }
 
-// AuthMiddleware resolves the current user from either a session cookie OR a
-// Bearer token in the Authorization header.  Both paths are tried in order;
-// the first successful one wins and the user is stored in the request context.
-// Unauthenticated requests pass through — protected routes use RequireAuth.
+// resolveSessionUser resolves and refreshes a browser session. The handled
+// result is true only when a database failure has already been written to the
+// response and the middleware chain must stop.
+func (app *App) resolveSessionUser(w http.ResponseWriter, r *http.Request) (*models.User, bool) {
+	cookie, cookieErr := r.Cookie("session_token")
+	if cookieErr != nil {
+		return nil, false
+	}
+	user, err := app.DB.GetUserBySession(r.Context(), cookie.Value)
+	switch {
+	case err == nil:
+		extended, extendErr := app.DB.ExtendSessionIfExpiring(r.Context(), cookie.Value, sessionDuration, 12*time.Hour)
+		if extendErr != nil {
+			slog.Warn("failed to extend session", "request_id", RequestID(r), "error", extendErr)
+		} else if extended {
+			app.setSessionCookie(w, r, cookie.Value, time.Now().Add(sessionDuration))
+		}
+		return user, false
+	case errors.Is(err, db.ErrNotFound):
+		app.clearSessionCookie(w, r)
+		return nil, false
+	default:
+		app.respondForSurface(w, r, apperr.Wrap(apperr.KindUnavailable, "Gitman is temporarily unavailable", err))
+		return nil, true
+	}
+}
+
+// SessionAuthMiddleware resolves browser sessions only. Personal access tokens
+// are deliberately not accepted by browser UI routes, so a read-only token
+// cannot be upgraded into account/repository mutations by fetching a CSRF token
+// and replaying HTML forms.
+func (app *App) SessionAuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, handled := app.resolveSessionUser(w, r)
+		if handled {
+			return
+		}
+		if user != nil {
+			r = r.WithContext(context.WithValue(r.Context(), userContextKey, user))
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// AuthMiddleware resolves a browser session or a repo:read-capable Bearer PAT.
+// It is used only on machine/plain repository surfaces; browser HTML groups use
+// SessionAuthMiddleware so PAT scopes cannot be bypassed through form routes.
 func (app *App) AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if cookie, cookieErr := r.Cookie("session_token"); cookieErr == nil {
-			user, err := app.DB.GetUserBySession(r.Context(), cookie.Value)
-			switch {
-			case err == nil:
-				extended, extendErr := app.DB.ExtendSessionIfExpiring(r.Context(), cookie.Value, sessionDuration, 12*time.Hour)
-				if extendErr != nil {
-					slog.Warn("failed to extend session", "request_id", RequestID(r), "error", extendErr)
-				} else if extended {
-					app.setSessionCookie(w, r, cookie.Value, time.Now().Add(sessionDuration))
-				}
-				ctx := context.WithValue(r.Context(), userContextKey, user)
-				next.ServeHTTP(w, r.WithContext(ctx))
-				return
-			case errors.Is(err, db.ErrNotFound):
-				app.clearSessionCookie(w, r)
-			default:
-				app.respondForSurface(w, r, apperr.Wrap(apperr.KindUnavailable, "Gitman is temporarily unavailable", err))
-				return
-			}
+		user, handled := app.resolveSessionUser(w, r)
+		if handled {
+			return
+		}
+		if user != nil {
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userContextKey, user)))
+			return
 		}
 
 		if token, ok := bearerToken(r.Header.Get("Authorization")); ok {
 			hash := sha256.Sum256([]byte(token))
 			tokenHash := hex.EncodeToString(hash[:])
-			user, err := app.DB.GetUserByTokenHash(r.Context(), tokenHash)
+			user, err := app.DB.AuthenticateAccessTokenWithScope(r.Context(), tokenHash, models.AccessTokenScopeRepoRead)
 			switch {
 			case err == nil:
 				ctx := context.WithValue(r.Context(), userContextKey, user)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			case errors.Is(err, db.ErrNotFound):
-				// Invalid bearer credentials are handled by the protected surface.
+				// Invalid or insufficient Bearer credentials are handled by the
+				// protected response surface.
 			default:
 				app.respondForSurface(w, r, apperr.Wrap(apperr.KindUnavailable, "Gitman is temporarily unavailable", err))
 				return
@@ -547,7 +587,12 @@ func (app *App) HandleReadiness(w http.ResponseWriter, r *http.Request) {
 		"artifacts":    app.Config.ArtifactsPath,
 	} {
 		info, err := os.Stat(configuredPath)
-		if err != nil || !info.IsDir() {
+		if err == nil && info.IsDir() {
+			err = unix.Access(configuredPath, unix.W_OK)
+		} else if err == nil {
+			err = fmt.Errorf("not a directory")
+		}
+		if err != nil {
 			slog.Warn("readiness storage check failed", "request_id", RequestID(r), "component", name, "path", configuredPath, "error", err)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -562,6 +607,45 @@ func (app *App) HandleReadiness(w http.ResponseWriter, r *http.Request) {
 
 func (app *App) HandleHealth(w http.ResponseWriter, r *http.Request) {
 	app.HandleReadiness(w, r)
+}
+
+func (app *App) HandleCIHealth(w http.ResponseWriter, r *http.Request) {
+	noStore(w)
+	workers, err := app.DB.ListCIWorkers(r.Context())
+	if err != nil {
+		slog.Warn("CI health worker query failed", "request_id", RequestID(r), "error", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "not_ready", "component": "ci_worker"})
+		return
+	}
+	staleBefore := time.Now().Add(-models.CIWorkerStaleAfter)
+	recent := 0
+	healthy := 0
+	activeJobs := 0
+	for _, worker := range workers {
+		if worker.StoppedAt != nil || worker.HeartbeatAt.Before(staleBefore) {
+			continue
+		}
+		recent++
+		activeJobs += worker.ActiveJobs
+		if worker.Healthy {
+			healthy++
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if healthy == 0 {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "not_ready", "component": "ci_worker",
+			"workers": recent, "healthy_workers": healthy, "active_jobs": activeJobs,
+		})
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status": "ok", "workers": recent, "healthy_workers": healthy, "active_jobs": activeJobs,
+	})
 }
 
 func generateCSRFToken() (string, error) {

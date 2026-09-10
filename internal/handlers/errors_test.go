@@ -111,6 +111,7 @@ func TestRequestSurfaceFallbackForUnmatchedMachineRoutes(t *testing.T) {
 		{"/alice/project.git/info/refs", surfaceGitHTTP},
 		{"/api/missing", surfaceAPI},
 		{"/readyz", surfaceAPI},
+		{"/ci-healthz", surfaceAPI},
 		{"/alice/project/files/search", surfaceAPI},
 		{"/alice/project/raw", surfacePlain},
 		{"/alice/project/download", surfacePlain},
