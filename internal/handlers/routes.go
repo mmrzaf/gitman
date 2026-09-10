@@ -35,6 +35,7 @@ func SetupRouter(app *App) *chi.Mux {
 	r.With(responseSurfaceMiddleware(surfaceAPI), app.recoverer).Get("/health", app.HandleHealth)
 	r.With(responseSurfaceMiddleware(surfaceAPI), app.recoverer).Get("/healthz", app.HandleLiveness)
 	r.With(responseSurfaceMiddleware(surfaceAPI), app.recoverer).Get("/readyz", app.HandleReadiness)
+	r.With(responseSurfaceMiddleware(surfaceAPI), app.recoverer).Get("/ci-healthz", app.HandleCIHealth)
 
 	// ── Git Smart HTTP routes (NO CSRF) ─────────────────────────────
 	r.Route("/{username}/{repo_name}.git", func(r chi.Router) {
@@ -96,23 +97,34 @@ func SetupRouter(app *App) *chi.Mux {
 		r.Group(func(r chi.Router) {
 			r.Use(responseSurfaceMiddleware(surfaceWeb))
 			r.Use(app.recoverer)
-			r.Use(app.AuthMiddleware)
+			r.Use(app.SessionAuthMiddleware)
 			r.Use(app.limitRequestBody(maxUIRequestBodyBytes))
 			r.Use(app.CSRFMiddleware)
 			r.Use(app.RepoAccessMiddleware)
 
-			r.Get("/", app.HandleRepoTreeGET)
-			r.Get("/tree", app.HandleRepoTreeGET)
-			r.Get("/blob", app.HandleRepoBlobGET)
-			r.Get("/commits", app.HandleRepoCommitsGET)
-			r.Get("/commit/{commit_hash}", app.HandleRepoCommitGET)
+			r.With(app.RepoBrowseLimits).Get("/", app.HandleRepoTreeGET)
+			r.With(app.RepoBrowseLimits).Get("/tree", app.HandleRepoTreeGET)
+			r.With(app.RepoBrowseLimits).Get("/blob", app.HandleRepoBlobGET)
+			r.With(app.RepoBrowseLimits).Get("/commits", app.HandleRepoCommitsGET)
+			r.With(app.RepoBrowseLimits).Get("/commit/{commit_hash}", app.HandleRepoCommitGET)
 			r.Get("/archive/{format}", app.HandleRepoArchiveGET)
 
-			r.Get("/settings", app.HandleRepoSettingsGET)
-			r.Post("/settings", app.HandleRepoSettingsPOST)
-			r.Get("/settings/access", app.HandleRepoCollaboratorsGET)
-			r.Post("/settings/access/add", app.HandleRepoCollaboratorsAddPOST)
-			r.Post("/settings/access/remove", app.HandleRepoCollaboratorsRemovePOST)
+			// All repository settings are owner-only. Keep this boundary in routing
+			// as well as in individual handlers so a future error-rendering path cannot
+			// accidentally expose protected settings data.
+			r.Group(func(r chi.Router) {
+				r.Use(app.RequireRepoOwner)
+				r.Get("/settings", app.HandleRepoSettingsGET)
+				r.Post("/settings", app.HandleRepoSettingsPOST)
+				r.Get("/settings/access", app.HandleRepoCollaboratorsGET)
+				r.Post("/settings/access/add", app.HandleRepoCollaboratorsAddPOST)
+				r.Post("/settings/access/remove", app.HandleRepoCollaboratorsRemovePOST)
+				r.Get("/settings/ci", app.HandleRepoCISettingsGET)
+				r.Post("/settings/ci/secrets", app.HandleCISecretsAddPOST)
+				r.Post("/settings/ci/secrets/{id}/delete", app.HandleCISecretsDeletePOST)
+				r.Post("/settings/ci/rules", app.HandleCISettingsRulePOST)
+				r.Post("/settings/ci/rules/delete", app.HandleCISettingsRuleDeletePOST)
+			})
 
 			// CI output and artifacts may contain sensitive build data. Public source
 			// browsing does not imply public CI visibility.
@@ -124,12 +136,6 @@ func SetupRouter(app *App) *chi.Mux {
 				r.Post("/ci/{run_id}/cancel", app.HandleCIRunCancelPOST)
 				r.Post("/ci/{run_id}/retry", app.HandleCIRunRetryPOST)
 
-				// Repository CI settings live under Settings; CI itself remains run history/execution.
-				r.Get("/settings/ci", app.HandleRepoCISettingsGET)
-				r.Post("/settings/ci/secrets", app.HandleCISecretsAddPOST)
-				r.Post("/settings/ci/secrets/{id}/delete", app.HandleCISecretsDeletePOST)
-				r.Post("/settings/ci/rules", app.HandleCISettingsRulePOST)
-				r.Post("/settings/ci/rules/delete", app.HandleCISettingsRuleDeletePOST)
 			})
 		})
 	})
@@ -138,7 +144,7 @@ func SetupRouter(app *App) *chi.Mux {
 	r.Group(func(r chi.Router) {
 		r.Use(responseSurfaceMiddleware(surfaceWeb))
 		r.Use(app.recoverer)
-		r.Use(app.AuthMiddleware)
+		r.Use(app.SessionAuthMiddleware)
 		r.Use(app.limitRequestBody(maxUIRequestBodyBytes))
 		r.Use(app.CSRFMiddleware)
 
@@ -168,6 +174,8 @@ func SetupRouter(app *App) *chi.Mux {
 			r.Get("/tokens", app.HandleTokensGET)
 			r.Post("/tokens", app.HandleTokensPOST)
 			r.Post("/tokens/{id}/delete", app.HandleTokenDeletePOST)
+
+			r.Get("/security", app.HandleSecurityGET)
 
 			r.Get("/repos", app.HandleReposGET)
 			r.Post("/repos", app.HandleReposPOST)
