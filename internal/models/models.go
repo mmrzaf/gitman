@@ -88,13 +88,72 @@ type Collaborator struct {
 	CreatedAt   time.Time   `json:"created_at"`
 }
 
-// AccessToken represents a personal access token for Git HTTP auth.
+type AccessTokenScope string
+
+const (
+	AccessTokenScopeRepoRead  AccessTokenScope = "repo:read"
+	AccessTokenScopeRepoWrite AccessTokenScope = "repo:write"
+)
+
+func (scope AccessTokenScope) Valid() bool {
+	return scope == AccessTokenScopeRepoRead || scope == AccessTokenScopeRepoWrite
+}
+
+func AccessTokenScopeAllows(granted, required AccessTokenScope) bool {
+	if !granted.Valid() || !required.Valid() {
+		return false
+	}
+	if granted == AccessTokenScopeRepoWrite {
+		return true
+	}
+	return required == AccessTokenScopeRepoRead
+}
+
+// AccessToken represents a personal access token for Git HTTP and API auth.
 type AccessToken struct {
-	ID        string    `json:"id"`
-	UserID    string    `json:"user_id"`
-	Name      string    `json:"name"`
-	TokenHash string    `json:"-"`
-	CreatedAt time.Time `json:"created_at"`
+	ID         string           `json:"id"`
+	UserID     string           `json:"user_id"`
+	Name       string           `json:"name"`
+	TokenHash  string           `json:"-"`
+	Scope      AccessTokenScope `json:"scope"`
+	CreatedAt  time.Time        `json:"created_at"`
+	ExpiresAt  *time.Time       `json:"expires_at,omitempty"`
+	LastUsedAt *time.Time       `json:"last_used_at,omitempty"`
+}
+
+const (
+	AuditActionLoginSucceeded      = "auth.login.succeeded"
+	AuditActionLoginFailed         = "auth.login.failed"
+	AuditActionUserRegistered      = "auth.user.registered"
+	AuditActionPasswordReset       = "auth.password.reset"
+	AuditActionUserCreated         = "admin.user.created"
+	AuditActionUserDeleted         = "admin.user.deleted"
+	AuditActionTokenCreated        = "auth.token.created"
+	AuditActionTokenRevoked        = "auth.token.revoked"
+	AuditActionSSHKeyCreated       = "auth.ssh_key.created"
+	AuditActionSSHKeyDeleted       = "auth.ssh_key.deleted"
+	AuditActionCollaboratorUpsert  = "repo.collaborator.upserted"
+	AuditActionCollaboratorRemoved = "repo.collaborator.removed"
+	AuditActionRepositoryCreated   = "repo.created"
+	AuditActionRepositoryUpdated   = "repo.settings.updated"
+	AuditActionRepositoryDeleted   = "repo.deleted"
+	AuditActionCISecretUpserted    = "ci.secret.upserted"
+	AuditActionCISecretDeleted     = "ci.secret.deleted"
+	AuditActionCIRefRuleUpserted   = "ci.ref_rule.upserted"
+	AuditActionCIRefRuleDeleted    = "ci.ref_rule.deleted"
+)
+
+type AuditEvent struct {
+	ID            string            `json:"id"`
+	ActorUserID   string            `json:"actor_user_id,omitempty"`
+	ActorUsername string            `json:"actor_username,omitempty"`
+	Action        string            `json:"action"`
+	TargetType    string            `json:"target_type,omitempty"`
+	TargetID      string            `json:"target_id,omitempty"`
+	SourceIP      string            `json:"source_ip,omitempty"`
+	RequestID     string            `json:"request_id,omitempty"`
+	Metadata      map[string]string `json:"metadata,omitempty"`
+	CreatedAt     time.Time         `json:"created_at"`
 }
 
 // SSHKey represents an SSH public key attached to a user.
@@ -127,6 +186,24 @@ type CIRun struct {
 	StartedAt    *time.Time `json:"started_at,omitempty"`
 	HeartbeatAt  *time.Time `json:"heartbeat_at,omitempty"`
 	CompletedAt  *time.Time `json:"completed_at,omitempty"`
+}
+
+// CIWorker reports the durable liveness/admission state of one worker process.
+// A stale heartbeat means the process should be treated as offline even if its
+// last recorded healthy flag was true.
+const CIWorkerStaleAfter = 45 * time.Second
+
+type CIWorker struct {
+	ID            string     `json:"id"`
+	Hostname      string     `json:"hostname"`
+	PID           int        `json:"pid"`
+	Concurrency   int        `json:"concurrency"`
+	Healthy       bool       `json:"healthy"`
+	StatusMessage string     `json:"status_message,omitempty"`
+	ActiveJobs    int        `json:"active_jobs"`
+	StartedAt     time.Time  `json:"started_at"`
+	HeartbeatAt   time.Time  `json:"heartbeat_at"`
+	StoppedAt     *time.Time `json:"stopped_at,omitempty"`
 }
 
 // RepoCIRefRule stores per-repository trust settings for one exact CI ref or glob ref pattern.
