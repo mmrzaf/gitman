@@ -20,12 +20,12 @@ concurrency:
 
 env:
   APP_NAME: gitman
-  GO_VERSION: '1.26.6'
+  GO_VERSION: '1.27'
   GOLANGCI_LINT_VERSION: 'v2.12'
   GOVULNCHECK_VERSION: 'v1.6.0'
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  GO_IMAGE: golang:1.26.6-bookworm
+  GO_IMAGE: golang:1.27-bookworm
   RUNTIME_IMAGE: debian:bookworm-slim
   DEBIAN_MIRROR: http://deb.debian.org/debian
   DEBIAN_SECURITY_MIRROR: http://security.debian.org/debian-security
