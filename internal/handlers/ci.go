@@ -235,6 +235,13 @@ func (app *App) HandleCISettingsRulePOST(w http.ResponseWriter, r *http.Request)
 		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI settings are temporarily unavailable", err))
 		return
 	}
+	app.recordAuditEvent(r, currentUser, models.AuditActionCIRefRuleUpserted, "repository", repo.ID, map[string]string{
+		"ref_type":            string(rule.RefType),
+		"ref_name":            rule.RefName,
+		"auto_run":            strconv.FormatBool(rule.AutoRun),
+		"allow_secrets":       strconv.FormatBool(rule.AllowSecrets),
+		"allow_docker_socket": strconv.FormatBool(rule.AllowDockerSocket),
+	})
 	http.Redirect(w, r, fmt.Sprintf("/%s/%s/settings/ci?message=Trusted+ref+saved", owner.Username, repo.Name), http.StatusSeeOther)
 }
 
@@ -263,6 +270,10 @@ func (app *App) HandleCISettingsRuleDeletePOST(w http.ResponseWriter, r *http.Re
 		}
 		return
 	}
+	app.recordAuditEvent(r, currentUser, models.AuditActionCIRefRuleDeleted, "repository", repo.ID, map[string]string{
+		"ref_type": string(refType),
+		"ref_name": refName,
+	})
 	http.Redirect(w, r, fmt.Sprintf("/%s/%s/settings/ci?message=Trusted+ref+removed", owner.Username, repo.Name), http.StatusSeeOther)
 }
 
@@ -620,29 +631,17 @@ func (app *App) HandleCIRunRetryPOST(w http.ResponseWriter, r *http.Request) {
 	redirectCIRun(w, r, owner.Username, repo.Name, newRunID, "Retry queued.", "")
 }
 
-func listArtifacts(root string) ([]string, error) {
-	files, err := listArtifactFiles(root)
-	if err != nil {
-		return nil, err
-	}
-	artifacts := make([]string, 0, len(files))
-	for _, file := range files {
-		artifacts = append(artifacts, file.Path)
-	}
-	return artifacts, nil
-}
-
 func ciRunNavigationRef(run *models.CIRun) string {
 	if run == nil {
 		return ""
 	}
-	if run.CommitHash != "" {
-		return run.CommitHash
-	}
 	if run.Branch != "" {
 		return run.Branch
 	}
-	return run.Tag
+	if run.Tag != "" {
+		return run.Tag
+	}
+	return run.CommitHash
 }
 
 func lastMeaningfulCILogLine(output string) string {
@@ -1195,7 +1194,7 @@ func (app *App) HandleCISecretsAddPOST(w http.ResponseWriter, r *http.Request) {
 	currentUser := GetUser(r)
 
 	if currentUser == nil || currentUser.ID != repo.OwnerID {
-		app.renderRepoCISettingsPage(w, r, "Only the repository owner can manage secrets.", "")
+		app.respondWebError(w, r, apperr.New(apperr.KindForbidden, "Forbidden"))
 		return
 	}
 
@@ -1230,6 +1229,7 @@ func (app *App) HandleCISecretsAddPOST(w http.ResponseWriter, r *http.Request) {
 		app.respondWebError(w, r, apperr.Wrap(apperr.KindUnavailable, "CI secrets are temporarily unavailable", err))
 		return
 	}
+	app.recordAuditEvent(r, currentUser, models.AuditActionCISecretUpserted, "repository", repo.ID, map[string]string{"key": key})
 
 	app.renderRepoCISettingsPage(w, r, "", fmt.Sprintf("Secret %q saved.", key))
 }
@@ -1240,7 +1240,7 @@ func (app *App) HandleCISecretsDeletePOST(w http.ResponseWriter, r *http.Request
 	secretID := chi.URLParam(r, "id")
 
 	if currentUser == nil || currentUser.ID != repo.OwnerID {
-		app.renderRepoCISettingsPage(w, r, "Forbidden.", "")
+		app.respondWebError(w, r, apperr.New(apperr.KindForbidden, "Forbidden"))
 		return
 	}
 
@@ -1252,6 +1252,7 @@ func (app *App) HandleCISecretsDeletePOST(w http.ResponseWriter, r *http.Request
 		}
 		return
 	}
+	app.recordAuditEvent(r, currentUser, models.AuditActionCISecretDeleted, "repository", repo.ID, map[string]string{"secret_id": secretID})
 
 	app.renderRepoCISettingsPage(w, r, "", "Secret deleted.")
 }
