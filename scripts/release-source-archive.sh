@@ -14,6 +14,16 @@ trap 'rm -f "$tmp_list"' EXIT
 
 git ls-files >"$tmp_list"
 
+# Skip files that don't exist on disk (e.g. deleted from working tree)
+tmp_list2="$(mktemp)"
+trap 'rm -f "$tmp_list2"' EXIT
+while IFS= read -r path; do
+  if [[ -e "$path" ]]; then
+    echo "$path" >> "$tmp_list2"
+  fi
+done <"$tmp_list"
+mv "$tmp_list2" "$tmp_list"
+
 while IFS= read -r path; do
   case "$path" in
     ""|/*|../*|*/../*|.data/*|data/*|bin/*|dist/*|coverage.out|coverage.html|.env|*/.env|authorized_keys|*/authorized_keys|*.sqlite|*.sqlite-*|*.db|*.log)
