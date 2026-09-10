@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -75,30 +76,23 @@ func TestCreateAndClaimCIRun(t *testing.T) {
 	}
 
 	// Complete the run
-	err = db.CompleteCIRun(ctx, runID, run.AttemptID, "success")
+	err = db.CompleteCIRunWithReason(ctx, runID, run.AttemptID, "success", "")
 	if err != nil {
-		t.Fatalf("CompleteCIRun failed: %v", err)
+		t.Fatalf("CompleteCIRunWithReason failed: %v", err)
 	}
 
-	// Verify the update happened with a raw query
-	var status string
-	err = db.sql.QueryRowContext(ctx, "SELECT status FROM ci_runs WHERE id = ?", runID).Scan(&status)
-	if err != nil {
-		t.Fatalf("failed to query completed run: %v", err)
-	}
-	if status != "success" {
-		t.Errorf("expected status success, got %s", status)
-	}
-
-	// Also check GetCIRunByID for the completed run (should work but if not,
-	// the raw query already proved the row exists)
 	r, err = db.GetCIRunByID(ctx, runID)
-	if err != nil || r == nil {
-		t.Logf("GetCIRunByID returned nil after completion (raw query succeeded)")
-	} else {
-		if r.CompletedAt == nil {
-			t.Error("completed_at should not be nil")
-		}
+	if err != nil {
+		t.Fatalf("GetCIRunByID after completion: %v", err)
+	}
+	if r == nil {
+		t.Fatal("completed run disappeared")
+	}
+	if r.Status != "success" {
+		t.Fatalf("completed run status = %q, want success", r.Status)
+	}
+	if r.CompletedAt == nil {
+		t.Error("completed_at should not be nil")
 	}
 }
 
@@ -124,7 +118,7 @@ func TestGetCIRunsByRepo(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runs, err := db.GetCIRunsByRepo(ctx, repoID, 10)
+	runs, err := db.GetCIRunsByRepoFiltered(ctx, repoID, "", "", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +219,7 @@ func TestCIRunOrderingUsesInsertionOrderForTimestampTies(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runs, err := database.GetCIRunsByRepo(ctx, repoID, 10)
+	runs, err := database.GetCIRunsByRepoFiltered(ctx, repoID, "", "", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -381,7 +375,7 @@ func TestRequeueStaleCIRuns(t *testing.T) {
 	if err := database.HeartbeatCIRun(ctx, runID, oldAttempt); err == nil {
 		t.Fatal("stale attempt renewed replacement lease")
 	}
-	if err := database.CompleteCIRun(ctx, runID, oldAttempt, "success"); err == nil {
+	if err := database.CompleteCIRunWithReason(ctx, runID, oldAttempt, "success", ""); err == nil {
 		t.Fatal("stale attempt completed replacement lease")
 	}
 }
@@ -493,7 +487,7 @@ func TestCreatePushCIRunWithTriggerKeyIsIdempotent(t *testing.T) {
 	if first != second {
 		t.Fatalf("duplicate delivery created a different run: %s != %s", first, second)
 	}
-	runs, err := database.GetCIRunsByRepo(ctx, repoID, 10)
+	runs, err := database.GetCIRunsByRepoFiltered(ctx, repoID, "", "", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -586,5 +580,111 @@ func TestReleaseStaleCancelledCIRuns(t *testing.T) {
 	}
 	if err := database.AcknowledgeCancelledCIRun(ctx, runID, claimed.AttemptID); !errors.Is(err, ErrCIRunLeaseInactive) {
 		t.Fatalf("expected inactive attempt after release, got %v", err)
+	}
+}
+
+func TestRequeueCIRunAttemptRequiresExactActiveLease(t *testing.T) {
+	database, err := InitDB("file::memory:?cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	user, err := database.CreateUser(ctx, "requeue_owner", "OwnerPass1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoID, err := database.CreateRepository(ctx, user.ID, "requeue-repo", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID, err := database.CreateCIRun(ctx, repoID, "0123456789012345678901234567890123456789", "main", "", models.CIEventManual)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := database.ClaimNextPendingRun(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed == nil || claimed.ID != runID {
+		t.Fatalf("unexpected claim: %+v", claimed)
+	}
+	if err := database.RequeueCIRunAttempt(ctx, runID, "wrong-attempt", "waiting"); !errors.Is(err, ErrCIRunLeaseInactive) {
+		t.Fatalf("stale attempt requeue = %v, want ErrCIRunLeaseInactive", err)
+	}
+	if err := database.RequeueCIRunAttempt(ctx, runID, claimed.AttemptID, "Waiting for worker infrastructure"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := database.GetCIRunByID(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != models.CIStatusPending || got.AttemptID != "" || got.HeartbeatAt != nil || got.StartedAt != nil {
+		t.Fatalf("run was not cleanly requeued: %+v", got)
+	}
+	if got.StatusReason != "Waiting for worker infrastructure" {
+		t.Fatalf("status reason = %q", got.StatusReason)
+	}
+}
+
+func TestRequeueCIRunAttemptDoesNotReviveCancellation(t *testing.T) {
+	database, err := InitDB("file::memory:?cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	user, err := database.CreateUser(ctx, "cancel_requeue_owner", "OwnerPass1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoID, err := database.CreateRepository(ctx, user.ID, "cancel-requeue", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID, err := database.CreateCIRun(ctx, repoID, "0123456789012345678901234567890123456789", "main", "", models.CIEventManual)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := database.ClaimNextPendingRun(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.CancelCIRun(ctx, repoID, runID, "stop"); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.RequeueCIRunAttempt(ctx, runID, claimed.AttemptID, "waiting"); !errors.Is(err, ErrCIRunLeaseInactive) {
+		t.Fatalf("cancelled attempt requeue = %v, want ErrCIRunLeaseInactive", err)
+	}
+	got, err := database.GetCIRunByID(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != models.CIStatusCancelled {
+		t.Fatalf("cancelled run revived as %q", got.Status)
+	}
+}
+
+func TestGetCIQueueSummary(t *testing.T) {
+	database := setupTestDB(t)
+	defer database.Close()
+	ctx := context.Background()
+	user, err := database.CreateUser(ctx, "queue_summary_owner", "OwnerPass1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoID, err := database.CreateRepository(ctx, user.ID, "queue-summary", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.CreateCIRun(ctx, repoID, strings.Repeat("b", 40), "main", "", models.CIEventManual); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := database.GetCIQueueSummary(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Pending != 1 || summary.OldestPendingAt == nil {
+		t.Fatalf("queue summary = %+v", summary)
 	}
 }
