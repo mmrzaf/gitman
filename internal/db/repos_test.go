@@ -171,3 +171,32 @@ func TestUpdateRepositorySettings(t *testing.T) {
 		t.Fatalf("settings = (%q, %t), want (%q, true)", repo.Description, repo.IsPrivate, "after")
 	}
 }
+
+func TestListRepositoryLocationsIncludesRepositoryID(t *testing.T) {
+	database := setupTestDB(t)
+	defer database.Close()
+	ctx := context.Background()
+
+	owner, err := database.CreateUser(ctx, "location-owner", "OwnerPass1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoID, err := database.CreateRepository(ctx, owner.ID, "location-repo", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	locations, err := database.ListRepositoryLocations(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, location := range locations {
+		if location.ID == repoID {
+			if location.Owner != owner.Username || location.Name != "location-repo" {
+				t.Fatalf("unexpected location: %+v", location)
+			}
+			return
+		}
+	}
+	t.Fatalf("repository %s missing from locations: %+v", repoID, locations)
+}

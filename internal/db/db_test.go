@@ -6,8 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/mmrzaf/gitman"
+	"github.com/mmrzaf/gitman/internal/models"
 )
 
 func TestInitDBNew(t *testing.T) {
@@ -81,7 +83,7 @@ func TestInitDBInvalidPath(t *testing.T) {
 func TestPing(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
-	if err := db.Ping(); err != nil {
+	if err := db.PingContext(context.Background()); err != nil {
 		t.Errorf("ping failed: %v", err)
 	}
 }
@@ -131,7 +133,7 @@ func TestInitDBMemoryDSN(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	if err := database.Ping(); err != nil {
+	if err := database.PingContext(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -258,5 +260,83 @@ func TestInitDBRejectsIncompleteMigrationHistory(t *testing.T) {
 	}
 	if _, err := InitDB(dbPath); err == nil {
 		t.Fatal("InitDB accepted an incomplete migration history")
+	}
+}
+
+func TestSecurityHardeningMigrationPreservesLegacyAccessTokens(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "beta17.sqlite")
+	raw, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	migrations, err := loadMigrationFiles(gitman.FS, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, migration := range migrations {
+		if migration.version > 7 {
+			break
+		}
+		if _, err := raw.Exec(migration.up); err != nil {
+			t.Fatalf("apply beta17 migration %d: %v", migration.version, err)
+		}
+	}
+	if _, err := raw.Exec(`
+		CREATE TABLE schema_migrations (
+			version INTEGER PRIMARY KEY,
+			applied_at INTEGER DEFAULT (strftime('%s', 'now'))
+		);
+		INSERT INTO schema_migrations (version) VALUES (1), (2), (3), (4), (5), (6), (7);
+		INSERT INTO users (id, username, password_hash) VALUES ('user-1', 'legacy_pat_user', 'unused-hash');
+		INSERT INTO access_tokens (id, user_id, name, token_hash)
+		VALUES ('token-1', 'user-1', 'pre-beta18', 'legacy-token-hash');
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	database, err := InitDB(dbPath)
+	if err != nil {
+		t.Fatalf("upgrade beta17 database: %v", err)
+	}
+	defer database.Close()
+
+	var expiresAt, lastUsedAt sql.NullInt64
+	var scope string
+	if err := database.sql.QueryRow(`
+		SELECT expires_at, last_used_at, scope FROM access_tokens WHERE id = 'token-1'
+	`).Scan(&expiresAt, &lastUsedAt, &scope); err != nil {
+		t.Fatal(err)
+	}
+	if !expiresAt.Valid {
+		t.Fatal("beta17 access token did not receive a rotation deadline")
+	}
+	remaining := time.Until(time.Unix(expiresAt.Int64, 0))
+	if remaining < 89*24*time.Hour || remaining > 91*24*time.Hour {
+		t.Fatalf("beta17 access token rotation window = %s, want about 90 days", remaining)
+	}
+	if lastUsedAt.Valid {
+		t.Fatalf("legacy access token unexpectedly gained last_used_at %d", lastUsedAt.Int64)
+	}
+	if scope != string(models.AccessTokenScopeRepoWrite) {
+		t.Fatalf("legacy access token scope = %q, want repo:write", scope)
+	}
+	user, err := database.AuthenticateAccessToken(context.Background(), "legacy-token-hash")
+	if err != nil {
+		t.Fatalf("legacy token stopped authenticating after upgrade: %v", err)
+	}
+	if user.Username != "legacy_pat_user" {
+		t.Fatalf("legacy token resolved %q", user.Username)
+	}
+	var auditTable int
+	if err := database.sql.QueryRow(`
+		SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'audit_events'
+	`).Scan(&auditTable); err != nil {
+		t.Fatal(err)
+	}
+	if auditTable != 1 {
+		t.Fatal("audit_events table was not created")
 	}
 }
