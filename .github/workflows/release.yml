@@ -21,7 +21,7 @@ concurrency:
 env:
   APP_NAME: gitman
   GO_VERSION: '1.27'
-  GOLANGCI_LINT_VERSION: 'v2.12'
+  GOLANGCI_LINT_VERSION: 'v2.13.2'
   GOVULNCHECK_VERSION: 'v1.6.0'
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
