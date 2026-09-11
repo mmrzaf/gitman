@@ -6,7 +6,7 @@ env:
   IMAGE_NAME: gitman
   DOCKER_BUILDKIT: "1"
 
-  GO_IMAGE: golang:1.26.6-bookworm
+  GO_IMAGE: golang:1.27-bookworm
   RUNTIME_IMAGE: debian:bookworm-slim
 
   DEBIAN_MIRROR: http://linux-mirror.liara.ir/repository/debian
