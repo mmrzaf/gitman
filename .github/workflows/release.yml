@@ -92,8 +92,9 @@ jobs:
           set -euo pipefail
           go version
           goversion="$(go env GOVERSION)"
-          if [[ "$goversion" != "go${GO_VERSION}" ]]; then
-            echo "Expected Go ${GO_VERSION}, got ${goversion}" >&2
+          expected="go${GO_VERSION}"
+          if [[ "$goversion" != "$expected"* ]]; then
+            echo "Expected Go ${expected}.x, got ${goversion}" >&2
             exit 1
           fi
 
