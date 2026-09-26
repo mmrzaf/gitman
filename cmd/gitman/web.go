@@ -74,5 +74,6 @@ func runWeb(args []string) error {
 		return err
 	}
 	go runRetention(ctx, people, runs, cfg.RetentionDays, log)
+	go runLostRunSweep(ctx, database, runs, log)
 	return app.Run(ctx)
 }

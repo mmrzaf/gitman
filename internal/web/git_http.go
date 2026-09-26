@@ -181,7 +181,7 @@ func (a *App) infoRefs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Gitman only speaks Git's smart HTTP protocol; upgrade your Git client.", http.StatusForbidden)
 		return
 	}
-	req, ok := a.resolveGit(w, r, svc, func(message string, _ int) { gitError(w, svc, message) })
+	req, ok := a.resolveGit(w, r, svc, func(message string, _ int) { a.gitError(w, svc, message) })
 	if !ok {
 		return
 	}
@@ -267,10 +267,13 @@ func challenge(w http.ResponseWriter, message string) {
 // gitError reports an error Git shows to the person verbatim, as
 // "remote error: <message>". A plain HTTP error status would reach them
 // only as a bare status code.
-func gitError(w http.ResponseWriter, svc git.Service, message string) {
+func (a *App) gitError(w http.ResponseWriter, svc git.Service, message string) {
 	noCache(w)
 	w.Header().Set("Content-Type", "application/x-"+string(svc)+"-advertisement")
-	fmt.Fprint(w, git.PktLine("# service="+string(svc)+"\n")+"0000"+git.PktLine("ERR "+message+"\n"))
+	body := git.PktLine("# service="+string(svc)+"\n") + "0000" + git.PktLine("ERR "+message+"\n")
+	if _, err := fmt.Fprint(w, body); err != nil {
+		a.log.Warn("could not write git error response", "service", svc, "error", err)
+	}
 }
 
 func noCache(w http.ResponseWriter) {

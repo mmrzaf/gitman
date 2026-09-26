@@ -57,16 +57,18 @@ func (h *Hook) Serve(ctx context.Context, name string, stdin io.Reader) error {
 
 // Explain tells the pusher, on out, why the named hook failed with err,
 // and returns err. A refusal needs no more: PreReceive has already given
-// its reasons.
+// its reasons. A failure writing to out is left unchecked: out is the
+// pusher's own connection, the only place such a failure could be
+// reported, so there is nowhere to report it to.
 func Explain(out io.Writer, name string, err error) error {
 	if err == nil || errors.Is(err, ErrRejected) {
 		return err
 	}
 	if name == PostReceive {
-		fmt.Fprintf(out, "Gitman accepted the push but could not record it: %v\n", err)
-		fmt.Fprintln(out, "The next push to this repository brings its branch and tag list up to date.")
+		_, _ = fmt.Fprintf(out, "Gitman accepted the push but could not record it: %v\n", err)
+		_, _ = fmt.Fprintln(out, "The next push to this repository brings its branch and tag list up to date.")
 	} else {
-		fmt.Fprintf(out, "Gitman could not check this push: %v\n", err)
+		_, _ = fmt.Fprintf(out, "Gitman could not check this push: %v\n", err)
 	}
 	return err
 }

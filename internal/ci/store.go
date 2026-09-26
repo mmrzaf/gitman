@@ -374,10 +374,16 @@ func settleOpenSteps(ctx context.Context, q postgres.Querier, runID string, runn
 
 // insertLogChunk stores one chunk. Storing the same chunk again is not an
 // error: a worker that timed out waiting for the answer retries it
-// without knowing whether the first attempt was stored.
+// without knowing whether the first attempt was stored. It silently does
+// nothing once its run has ended — failed as lost while its worker kept
+// writing, say — the same way setStepFinished leaves an ended run's
+// steps alone.
 func insertLogChunk(ctx context.Context, q postgres.Querier, stepID string, sequence int, content string) error {
 	if _, err := q.Exec(ctx, `
-		INSERT INTO step_logs (step_id, sequence, content, byte_len) VALUES ($1, $2, $3, $4)
+		INSERT INTO step_logs (step_id, sequence, content, byte_len)
+		SELECT $1, $2, $3, $4
+		WHERE EXISTS (SELECT 1 FROM steps JOIN runs ON runs.id = steps.run_id
+		              WHERE steps.id = $1 AND runs.status = 'running')
 		ON CONFLICT (step_id, sequence) DO NOTHING
 	`, stepID, sequence, content, len(content)); err != nil {
 		return fmt.Errorf("append log: %w", err)

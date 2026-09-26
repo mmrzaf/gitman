@@ -68,6 +68,41 @@ func TestLogWriterMasksSecretsSplitAcrossWrites(t *testing.T) {
 	}
 }
 
+// TestLogWriterMasksASecretStraddlingAForcedSplit reproduces a secret
+// that arrives, unterminated, straddling the point where a line longer
+// than maxLineBytes is force-split into pieces before the rest of the
+// line — and so the rest of the secret — has even been written yet.
+// Without holding back the overlap, the first piece is masked and stored
+// with only the secret's first bytes in it, which is not a match, and by
+// the time the rest arrives the first bytes are already gone: the secret
+// is never whole in front of a masking pass, even though it is whole
+// (just split across two stored chunks) in the log the pieces add up to.
+func TestLogWriterMasksASecretStraddlingAForcedSplit(t *testing.T) {
+	const secret = "SPLITSECRETVALUE1234567890"
+	prefix := strings.Repeat("x", maxLineBytes-10)
+
+	rec := &recordedLog{}
+	w := newLogWriter(context.Background(), rec.sink, newSecretMasker(map[string]string{"TOKEN": secret}))
+	// This alone is already longer than maxLineBytes, forcing a split
+	// before the line's newline — or the rest of the secret — exists.
+	if _, err := w.Write([]byte(prefix + secret)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte(strings.Repeat("y", 100) + "\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	got := rec.text()
+	if strings.Contains(got, secret) {
+		t.Fatalf("log still contains the secret in full: %q", got)
+	}
+	if n := strings.Count(got, mask); n != 1 {
+		t.Fatalf("log has %d masked spans, want 1: %q", n, got)
+	}
+}
+
 func TestLogWriterFlushesQuietOutputOnATimer(t *testing.T) {
 	rec := &recordedLog{}
 	w := newLogWriter(context.Background(), rec.sink, newSecretMasker(nil))

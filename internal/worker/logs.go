@@ -79,6 +79,19 @@ func (m *secretMasker) mask(s string) string {
 	return s
 }
 
+// holdBackLen is the longest secret's length minus one. A force-split
+// line is masked and emitted a piece at a time, and masking a piece
+// cannot see past its own end — so that many trailing bytes of a piece
+// are kept back for the next one rather than masked immediately.
+// Without it, a secret straddling the split point would never appear
+// whole in either piece, and so would never be masked at all.
+func (m *secretMasker) holdBackLen() int {
+	if len(m.values) == 0 {
+		return 0
+	}
+	return len(m.values[0]) - 1 // values is sorted longest first
+}
+
 // storable makes text written by a step safe to store as PostgreSQL
 // text, which holds neither NUL bytes nor invalid UTF-8: each of those is
 // replaced by U+FFFD, so the rest of the output is kept rather than the
@@ -188,6 +201,12 @@ func (w *logWriter) Write(p []byte) (int, error) {
 		n := len(cutAtRune(string(w.line[:maxLineBytes+1]), maxLineBytes))
 		if n == 0 {
 			n = maxLineBytes
+		}
+		if holdBack := w.masker.holdBackLen(); holdBack > 0 {
+			if holdBack > n-1 {
+				holdBack = n - 1
+			}
+			n -= holdBack
 		}
 		w.emitLocked(string(w.line[:n]))
 		w.line = w.line[n:]

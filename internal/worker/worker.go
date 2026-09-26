@@ -22,11 +22,12 @@ import (
 )
 
 // LostAfter is how long a worker may go without a heartbeat before its
-// running runs are failed. It is several heartbeats long, so a briefly
-// slow database does not fail healthy runs. "gitman admin worker
-// cleanup" uses the same threshold, so an operator running it by hand
-// fails a run exactly when a live worker would have.
-const LostAfter = 60 * time.Second
+// running runs are failed. It is minutes, not seconds, so a Postgres
+// restart or failover — which can itself take a minute or two — reads as
+// a database blip to wait out, not a lost worker to fail runs for.
+// "gitman admin worker cleanup" uses the same threshold, so an operator
+// running it by hand fails a run exactly when a live worker would have.
+const LostAfter = 5 * time.Minute
 
 // Timing of a worker's background duties.
 const (

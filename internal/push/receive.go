@@ -90,8 +90,11 @@ type Hook struct {
 	Out io.Writer
 }
 
+// say writes one line for the pusher to see. A failure writing it is
+// left unchecked: Out is the pusher's own connection, the only place
+// such a failure could be reported, so there is nowhere to report it to.
 func (h *Hook) say(format string, args ...any) {
-	fmt.Fprintf(h.Out, format+"\n", args...)
+	_, _ = fmt.Fprintf(h.Out, format+"\n", args...)
 }
 
 // pushContext is what both hooks load before looking at the updates.

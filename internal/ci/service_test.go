@@ -617,6 +617,45 @@ func TestALostRunStopsItsWorker(t *testing.T) {
 	}
 }
 
+// TestAppendLogIsIgnoredOnceItsRunHasEnded covers a worker that kept
+// writing a step's output after its run was already failed as lost: the
+// chunk must not appear in the log, the same way the step's own status
+// stays as the run ended it rather than what the worker reports after.
+func TestAppendLogIsIgnoredOnceItsRunHasEnded(t *testing.T) {
+	ctx := context.Background()
+	database := pgtest.Open(t)
+	seedRepo(t, database, "r1", "demo")
+	svc := NewService(database)
+	run := createQueuedRun(t, database, svc, false)
+	if err := svc.RegisterWorker(ctx, "w1", "host"); err != nil {
+		t.Fatal(err)
+	}
+	claim, err := svc.ClaimNext(ctx, "w1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	step := claim.Steps[0]
+	if err := svc.AppendLog(ctx, run.ID, step.ID, 0, "before\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.StopWorker(ctx, "w1"); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := svc.FailLostRuns(ctx, time.Minute); err != nil || n != 1 {
+		t.Fatalf("FailLostRuns = %d, %v", n, err)
+	}
+	if err := svc.AppendLog(ctx, run.ID, step.ID, 1, "after\n"); err != nil {
+		t.Fatal(err)
+	}
+	chunks, err := svc.LogChunks(ctx, step.ID, -1, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chunks) != 1 || chunks[0].Content != "before\n" {
+		t.Fatalf("LogChunks after the run ended = %+v, want only the chunk written before it ended", chunks)
+	}
+}
+
 // TestAppendLogAcceptsTheSameChunkTwice covers a worker retrying a chunk
 // whose first attempt was stored but not acknowledged.
 func TestAppendLogAcceptsTheSameChunkTwice(t *testing.T) {
