@@ -7,6 +7,7 @@
     <a class="tab" id="tab-general" href="{{$base}}" data-tab="general"{{if eq $d.Tab "general"}} aria-current="page"{{end}}>{{template "icon" "settings"}}General</a>
     <a class="tab" id="tab-rules" href="{{$base}}?tab=rules" data-tab="rules"{{if eq $d.Tab "rules"}} aria-current="page"{{end}}>{{template "icon" "shield"}}Ref rules <span class="tab-count">{{len $d.Rules}}</span></a>
     <a class="tab" id="tab-secrets" href="{{$base}}?tab=secrets" data-tab="secrets"{{if eq $d.Tab "secrets"}} aria-current="page"{{end}}>{{template "icon" "key"}}Secrets <span class="tab-count">{{len $d.Secrets}}</span></a>
+    <a class="tab" id="tab-access" href="{{$base}}?tab=access" data-tab="access"{{if eq $d.Tab "access"}} aria-current="page"{{end}}>{{template "icon" "lock"}}Access</a>
     <a class="tab" id="tab-danger" href="{{$base}}?tab=danger" data-tab="danger"{{if eq $d.Tab "danger"}} aria-current="page"{{end}}>{{template "icon" "warning"}}Danger zone</a>
   </nav>
 
@@ -123,6 +124,44 @@
       {{- else}}
       {{template "empty" (dict "Icon" "key" "Title" "No secrets yet")}}
       {{- end}}
+    </section>
+
+    <section class="panel" id="panel-access" data-tab-panel="access" aria-labelledby="access-title"{{if ne $d.Tab "access"}} hidden{{end}}>
+      <header class="panel-header"><h2 class="panel-title" id="access-title">Access</h2></header>
+      <p class="panel-intro">A restricted repository does not exist to anyone but its readers and admins: it never appears on Home, in search, in activity, or over Git.</p>
+      <form method="post" action="{{$base}}/access" class="panel-body form">
+        {{$af := $d.AccessForm}}
+        {{template "form-error" $af.Error}}
+        <fieldset class="choices">
+          <legend>Who may read this repository</legend>
+          {{- $visibility := $af.Get "visibility"}}
+          <label class="choice"><input type="radio" name="visibility" value="everyone"{{if or (eq $visibility "") (eq $visibility "everyone")}} checked{{end}}><span class="choice-label">Everyone</span><span class="choice-hint">Any enabled person.</span></label>
+          <label class="choice"><input type="radio" name="visibility" value="restricted"{{if eq $visibility "restricted"}} checked{{end}}><span class="choice-label">Restricted</span><span class="choice-hint">Only its readers and admins.</span></label>
+        </fieldset>
+        <fieldset class="choices choices-inline" data-show-when="visibility=restricted">
+          <legend>Readers</legend>
+          {{- range $d.People}}
+          <label class="choice"><input type="checkbox" name="readers" value="{{.ID}}"{{if $af.Picked "readers" .ID}} checked{{end}}><span class="choice-label mono">{{.Username}}</span></label>
+          {{- end}}
+        </fieldset>
+
+        <fieldset class="choices">
+          <legend>Who may push a branch or tag no rule matches</legend>
+          {{- $pushPolicy := $af.Get "default_push_policy"}}
+          <label class="choice"><input type="radio" name="default_push_policy" value="everyone"{{if or (eq $pushPolicy "") (eq $pushPolicy "everyone")}} checked{{end}}><span class="choice-label">Everyone</span><span class="choice-hint">Any enabled person who can read this repository.</span></label>
+          <label class="choice"><input type="radio" name="default_push_policy" value="admins"{{if eq $pushPolicy "admins"}} checked{{end}}><span class="choice-label">Admins</span><span class="choice-hint">Only people with the admin role.</span></label>
+          <label class="choice"><input type="radio" name="default_push_policy" value="people"{{if eq $pushPolicy "people"}} checked{{end}}><span class="choice-label">Named people</span><span class="choice-hint">The people picked below, and admins.</span></label>
+        </fieldset>
+        <fieldset class="choices choices-inline" data-show-when="default_push_policy=people">
+          <legend>Named people</legend>
+          {{- range $d.People}}
+          <label class="choice"><input type="checkbox" name="default_push_people" value="{{.ID}}"{{if $af.Picked "default_push_people" .ID}} checked{{end}}><span class="choice-label mono">{{.Username}}</span></label>
+          {{- end}}
+        </fieldset>
+        <p class="field-hint">A rule for the branch or tag itself overrides this. Force-push and delete on an unmatched ref are unaffected.</p>
+
+        <div class="form-actions"><button type="submit" class="btn btn-primary">Save access</button></div>
+      </form>
     </section>
 
     <section class="panel panel-danger" id="panel-danger" data-tab-panel="danger" aria-labelledby="danger-title"{{if ne $d.Tab "danger"}} hidden{{end}}>

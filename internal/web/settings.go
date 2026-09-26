@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/url"
@@ -85,23 +86,34 @@ type settingsState struct {
 	// ReplaceKey is the secret whose value the "secret-replace" dialog
 	// replaces.
 	ReplaceKey string
-	// Tab is "general", "rules", "secrets" or "danger"; Dialog is
-	// "rule-new", "rule-edit", "secret-new", "secret-replace", or empty.
+	AccessForm *form
+	// Tab is "general", "rules", "secrets", "access" or "danger"; Dialog
+	// is "rule-new", "rule-edit", "secret-new", "secret-replace", or
+	// empty.
 	Tab    string
 	Dialog string
 }
 
-var settingsTabs = []string{"general", "rules", "secrets", "danger"}
+var settingsTabs = []string{"general", "rules", "secrets", "access", "danger"}
 
-// freshSettings is the settings page with nothing submitted: the
-// description form pre-filled with the saved value, the same way any
-// other field starts from what is already saved.
-func freshSettings(repo *reposvc.Repo, tab string) settingsState {
+// freshSettings is the settings page with nothing submitted: every form
+// pre-filled with what is already saved, the same way any other field
+// starts from its saved value.
+func (a *App) freshSettings(ctx context.Context, repo *reposvc.Repo, tab string) (settingsState, error) {
+	readers, err := a.repos.ListReaders(ctx, repo.ID)
+	if err != nil {
+		return settingsState{}, err
+	}
+	access := url.Values{
+		"visibility": {string(repo.Visibility)}, "readers": readers,
+		"default_push_policy": {string(repo.DefaultPushPolicy)}, "default_push_people": repo.DefaultPushPeople,
+	}
 	return settingsState{
 		DescForm: newForm(url.Values{"description": {repo.Description}}),
 		RuleForm: newForm(nil), SecretForm: newForm(nil), DeleteForm: newForm(nil),
-		Tab: tab,
-	}
+		AccessForm: newForm(access),
+		Tab:        tab,
+	}, nil
 }
 
 // ruleValues is a saved rule as the rule form's values, for editing it.
@@ -149,7 +161,10 @@ func (a *App) repoSettings(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	state := freshSettings(repo, tabFrom(r, settingsTabs...))
+	state, err := a.freshSettings(r.Context(), repo, tabFrom(r, settingsTabs...))
+	if err != nil {
+		return err
+	}
 	state.Dialog = dialogFrom(r, "rule-new", "rule-edit", "secret-new", "secret-replace")
 	data, err := a.repoSettingsData(r, repo, state)
 	if err != nil {
@@ -200,7 +215,10 @@ func (a *App) repoSettingsDescription(w http.ResponseWriter, r *http.Request) er
 	err = a.repos.SetDescription(r.Context(), repo.ID, description, personFrom(r).ID)
 	switch {
 	case failForm(f, "description", err):
-		state := freshSettings(repo, "general")
+		state, err := a.freshSettings(r.Context(), repo, "general")
+		if err != nil {
+			return err
+		}
 		state.DescForm = f
 		return a.reRenderRepoSettings(w, r, repo, state)
 	case err != nil:
@@ -239,7 +257,10 @@ func (a *App) repoSettingsRuleSet(w http.ResponseWriter, r *http.Request) error 
 		}
 	}
 	if !f.Valid() {
-		state := freshSettings(repo, "rules")
+		state, err := a.freshSettings(r.Context(), repo, "rules")
+		if err != nil {
+			return err
+		}
 		if f.Get("mode") == "edit" {
 			state.EditForm, state.Dialog = f, "rule-edit"
 		} else {
@@ -286,7 +307,10 @@ func (a *App) repoSettingsSecretSet(w http.ResponseWriter, r *http.Request) erro
 	err = a.repos.SetSecret(r.Context(), repo.ID, key, r.PostForm.Get("value"), personFrom(r).ID)
 	switch {
 	case failForm(f, "", err):
-		state := freshSettings(repo, "secrets")
+		state, err := a.freshSettings(r.Context(), repo, "secrets")
+		if err != nil {
+			return err
+		}
 		if f.Get("mode") == "replace" {
 			state.ReplaceKey, state.Dialog = key, "secret-replace"
 		} else {
@@ -322,6 +346,92 @@ func (a *App) repoSettingsSecretDelete(w http.ResponseWriter, r *http.Request) e
 	return nil
 }
 
+// repoSettingsAccess saves who may read a repository and, for a branch
+// or tag no rule matches, who may push to it.
+func (a *App) repoSettingsAccess(w http.ResponseWriter, r *http.Request) error {
+	repo, err := a.repoSettingsRepo(r)
+	if err != nil {
+		return err
+	}
+	if err := parseForm(w, r); err != nil {
+		return err
+	}
+	f := newForm(r.PostForm)
+
+	visibility := reposvc.Visibility(f.Get("visibility"))
+	if err := reposvc.ValidateVisibility(visibility); err != nil {
+		failForm(f, "visibility", err)
+	}
+	policy := reposvc.PushPolicy(f.Get("default_push_policy"))
+	var people []string
+	if policy == reposvc.PushPeople {
+		people = r.PostForm["default_push_people"]
+	}
+	if err := reposvc.ValidateDefaultPush(policy, people); err != nil {
+		failForm(f, "", err)
+	}
+
+	if f.Valid() {
+		actorID := personFrom(r).ID
+		if err := a.repos.SetVisibility(r.Context(), repo.ID, visibility, actorID); err != nil && !failForm(f, "visibility", err) {
+			return err
+		}
+	}
+	if f.Valid() {
+		if err := a.setReaders(r.Context(), repo.ID, r.PostForm["readers"], personFrom(r).ID); err != nil {
+			return err
+		}
+	}
+	if f.Valid() {
+		if err := a.repos.SetDefaultPush(r.Context(), repo.ID, policy, people, personFrom(r).ID); err != nil && !failForm(f, "", err) {
+			return err
+		}
+	}
+
+	if !f.Valid() {
+		state, err := a.freshSettings(r.Context(), repo, "access")
+		if err != nil {
+			return err
+		}
+		state.AccessForm = f
+		return a.reRenderRepoSettings(w, r, repo, state)
+	}
+	a.redirect(w, r, "/"+repo.Name+"/settings?tab=access", flashSuccess, "Saved.")
+	return nil
+}
+
+// setReaders makes a repository's explicit readers match exactly the
+// given person IDs, adding and removing only what changed.
+func (a *App) setReaders(ctx context.Context, repoID string, people []string, actorID string) error {
+	current, err := a.repos.ListReaders(ctx, repoID)
+	if err != nil {
+		return err
+	}
+	currentSet := make(map[string]bool, len(current))
+	for _, id := range current {
+		currentSet[id] = true
+	}
+	wantSet := make(map[string]bool, len(people))
+	for _, id := range people {
+		wantSet[id] = true
+	}
+	for _, id := range people {
+		if !currentSet[id] {
+			if err := a.repos.AddReader(ctx, repoID, id, actorID); err != nil {
+				return err
+			}
+		}
+	}
+	for _, id := range current {
+		if !wantSet[id] {
+			if err := a.repos.RemoveReader(ctx, repoID, id, actorID); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (a *App) repoSettingsDelete(w http.ResponseWriter, r *http.Request) error {
 	repo, err := a.repoSettingsRepo(r)
 	if err != nil {
@@ -333,7 +443,10 @@ func (a *App) repoSettingsDelete(w http.ResponseWriter, r *http.Request) error {
 	f := newForm(r.PostForm)
 	if f.Get("confirm_name") != repo.Name {
 		f.Fail("confirm_name", "Type the repository's name exactly to confirm.")
-		state := freshSettings(repo, "danger")
+		state, err := a.freshSettings(r.Context(), repo, "danger")
+		if err != nil {
+			return err
+		}
 		state.DeleteForm = f
 		return a.reRenderRepoSettings(w, r, repo, state)
 	}

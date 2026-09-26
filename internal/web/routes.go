@@ -70,6 +70,7 @@ func (a *App) register(mux *http.ServeMux) {
 	mux.Handle("POST /{repo}/settings/rules/delete", a.page(member, a.repoSettingsRuleDelete))
 	mux.Handle("POST /{repo}/settings/secrets", a.page(member, a.repoSettingsSecretSet))
 	mux.Handle("POST /{repo}/settings/secrets/delete", a.page(member, a.repoSettingsSecretDelete))
+	mux.Handle("POST /{repo}/settings/access", a.page(member, a.repoSettingsAccess))
 	mux.Handle("POST /{repo}/settings/delete", a.page(member, a.repoSettingsDelete))
 
 	// Every other path is a page that does not exist, rendered inside the
