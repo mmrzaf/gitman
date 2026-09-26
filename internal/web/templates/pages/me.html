@@ -53,7 +53,7 @@
   <form method="post" action="/me/password" class="panel-body form form-narrow">
     {{template "form-error" $d.PasswordForm.Error}}
     {{template "field" field $d.PasswordForm "current_password" "Current password" "password" "required" "autocomplete:current-password"}}
-    {{template "field" field $d.PasswordForm "new_password" "New password" "password" "required" "autocomplete:new-password"}}
+    {{template "field" field $d.PasswordForm "new_password" "New password" "password" "required" "autocomplete:new-password" "hint:At least 8 characters."}}
     {{template "field" field $d.PasswordForm "confirm_password" "Confirm new password" "password" "required" "autocomplete:new-password"}}
     <p class="field-hint">Changing it signs you out everywhere else.</p>
     <div class="form-actions form-actions-start"><button type="submit" class="btn btn-primary">Change password</button></div>

@@ -190,10 +190,7 @@
     <div class="dialog-body">
       {{template "form-error" $d.SecretForm.Error}}
       {{template "field" field $d.SecretForm "key" "Key" "text" "required" "autofocus" "autocomplete:off" "hint:Uppercase letters, digits and underscores, e.g. DEPLOY_TOKEN."}}
-      <div class="field">
-        <label class="field-label" for="f-value">Value</label>
-        <input class="input input-mono" id="f-value" name="value" type="password" required autocomplete="off">
-      </div>
+      {{template "field" field $d.SecretForm "value" "Value" "password" "required" "autocomplete:off" "id:secret-new-value"}}
     </div>
     <footer class="dialog-footer"><button type="button" class="btn js-only" data-dialog-close>Cancel</button><button type="submit" class="btn btn-primary">Save secret</button></footer>
   </form>
@@ -206,11 +203,7 @@
     <header class="dialog-header"><h2 class="dialog-title" id="secret-replace-title">Replace <span class="mono">{{.}}</span></h2>{{template "dialog-close" (printf "%s?tab=secrets" $base)}}</header>
     <div class="dialog-body">
       {{template "form-error" $d.SecretForm.Error}}
-      <div class="field">
-        <label class="field-label" for="f-replace-value">New value</label>
-        <input class="input input-mono" id="f-replace-value" name="value" type="password" required autofocus autocomplete="off">
-        <p class="field-hint">Runs that start from now on get the new value.</p>
-      </div>
+      {{template "field" field $d.SecretForm "value" "New value" "password" "required" "autofocus" "autocomplete:off" "id:secret-replace-value" "hint:Runs that start from now on get the new value."}}
     </div>
     <footer class="dialog-footer"><button type="button" class="btn js-only" data-dialog-close>Cancel</button><button type="submit" class="btn btn-primary">Replace value</button></footer>
   </form>

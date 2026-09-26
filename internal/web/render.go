@@ -251,15 +251,18 @@ func (f *form) Picked(name, value string) bool {
 
 // formField is one labelled input, rendered by the "field" partial.
 type formField struct {
-	Name, Label, Type, Value, Error, Hint, Autocomplete string
-	Required, Autofocus                                 bool
+	Name, ID, Label, Type, Value, Error, Hint, Autocomplete string
+	Required, Autofocus                                     bool
 }
 
 // newField builds a field from a form. Options are "required",
-// "autofocus", "autocomplete:<value>" and "hint:<text>". A password field
-// never echoes its value back into the page.
+// "autofocus", "autocomplete:<value>", "hint:<text>" and "id:<value>". A
+// password field never echoes its value back into the page. ID defaults
+// to Name; set it explicitly when two fields on the same page share a
+// POST field name — two forms posting to the same handler, say — so
+// their generated element ids do not collide.
 func newField(f *form, name, label, typ string, options ...string) formField {
-	field := formField{Name: name, Label: label, Type: typ}
+	field := formField{Name: name, ID: name, Label: label, Type: typ}
 	if f != nil {
 		field.Error = f.Errors[name]
 		if typ != "password" {
@@ -276,6 +279,8 @@ func newField(f *form, name, label, typ string, options ...string) formField {
 			field.Autocomplete = strings.TrimPrefix(opt, "autocomplete:")
 		case strings.HasPrefix(opt, "hint:"):
 			field.Hint = strings.TrimPrefix(opt, "hint:")
+		case strings.HasPrefix(opt, "id:"):
+			field.ID = strings.TrimPrefix(opt, "id:")
 		}
 	}
 	return field

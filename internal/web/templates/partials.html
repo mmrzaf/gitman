@@ -81,14 +81,14 @@
 {{/* field: a labelled input with its hint and inline error. */}}
 {{define "field"}}
 <div class="field">
-  <label class="field-label" for="f-{{.Name}}">{{.Label}}</label>
-  <input class="input{{if eq .Type "password"}} input-mono{{end}}" id="f-{{.Name}}" name="{{.Name}}" type="{{.Type}}" value="{{.Value}}"
+  <label class="field-label" for="f-{{.ID}}">{{.Label}}</label>
+  <input class="input{{if eq .Type "password"}} input-mono{{end}}" id="f-{{.ID}}" name="{{.Name}}" type="{{.Type}}" value="{{.Value}}"
     {{- with .Autocomplete}} autocomplete="{{.}}"{{end}}
     {{- if .Required}} required{{end}}
     {{- if .Autofocus}} autofocus{{end}}
-    {{- if .Error}} aria-invalid="true" aria-describedby="f-{{.Name}}-error"{{else if .Hint}} aria-describedby="f-{{.Name}}-hint"{{end}}>
-  {{- if .Error}}<p class="field-error" id="f-{{.Name}}-error">{{template "icon" "warning"}}<span>{{.Error}}</span></p>
-  {{- else if .Hint}}<p class="field-hint" id="f-{{.Name}}-hint">{{.Hint}}</p>{{end}}
+    {{- if .Error}} aria-invalid="true" aria-describedby="f-{{.ID}}-error"{{else if .Hint}} aria-describedby="f-{{.ID}}-hint"{{end}}>
+  {{- if .Error}}<p class="field-error" id="f-{{.ID}}-error">{{template "icon" "warning"}}<span>{{.Error}}</span></p>
+  {{- else if .Hint}}<p class="field-hint" id="f-{{.ID}}-hint">{{.Hint}}</p>{{end}}
 </div>
 {{end}}
 
