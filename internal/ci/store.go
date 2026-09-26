@@ -148,6 +148,31 @@ func selectInProgressForRepos(ctx context.Context, q postgres.Querier, repoIDs [
 	return result, rows.Err()
 }
 
+func selectRunsForRepo(ctx context.Context, q postgres.Querier, repoID string, before int64, limit int) ([]Summary, error) {
+	rows, err := q.Query(ctx, `
+		SELECT `+summaryColumns+`
+		FROM runs r
+		JOIN repos ON repos.id = r.repo_id
+		LEFT JOIN people p ON p.id = r.triggered_by
+		WHERE r.repo_id = $1 AND ($2 = 0 OR r.number < $2)
+		ORDER BY r.number DESC
+		LIMIT $3
+	`, repoID, before, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list runs for %s: %w", repoID, err)
+	}
+	defer rows.Close()
+	var result []Summary
+	for rows.Next() {
+		s, err := scanSummary(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan run: %w", err)
+		}
+		result = append(result, s)
+	}
+	return result, rows.Err()
+}
+
 // refKey identifies one branch or tag within a repository, for keying a
 // map of per-ref results.
 func refKey(kind git.Kind, name string) string { return string(kind) + "/" + name }

@@ -43,6 +43,13 @@ func (s *Service) LatestRunPerRef(ctx context.Context, repoID string) (map[strin
 	return selectLatestRunPerRef(ctx, s.db.Pool, repoID)
 }
 
+// RunsForRepo returns a page of a repository's runs, newest first. before,
+// when nonzero, limits it to runs numbered lower than it, for paging
+// backward through history.
+func (s *Service) RunsForRepo(ctx context.Context, repoID string, before int64, limit int) ([]Summary, error) {
+	return selectRunsForRepo(ctx, s.db.Pool, repoID, before, limit)
+}
+
 // Live returns, for every repository and target, the latest deployment:
 // what is live there now, ordered by repository, then target.
 func (s *Service) Live(ctx context.Context) ([]Deployment, error) {

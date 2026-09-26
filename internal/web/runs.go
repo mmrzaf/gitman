@@ -81,6 +81,41 @@ func (p runPage) LiveEvents() string {
 	return "/events?run=" + p.Run.ID
 }
 
+// runsPageSize is how many runs a repository's Runs page shows at once.
+const runsPageSize = 30
+
+type runsPage struct {
+	repoFrame
+	Runs []ci.Summary
+	// Before is the ?before= value that produced this page, for the
+	// "Older" link to keep going from.
+	Before int64
+	// More is the run number the "Older" link continues from, or 0 when
+	// this is the last page.
+	More int64
+}
+
+// LiveEvents keeps the Runs page's in-progress rows current.
+func (runsPage) LiveEvents() string { return "/events" }
+
+func (a *App) runs(w http.ResponseWriter, r *http.Request) error {
+	repo, err := a.repoByName(r)
+	if err != nil {
+		return err
+	}
+	before, _ := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
+	runs, err := a.ci.RunsForRepo(r.Context(), repo.ID, before, runsPageSize)
+	if err != nil {
+		return err
+	}
+	page := runsPage{repoFrame: repoFrame{Repo: repo, Section: "runs"}, Runs: runs, Before: before}
+	if len(runs) == runsPageSize {
+		page.More = runs[len(runs)-1].Number
+	}
+	a.render(w, r, http.StatusOK, "runs", repo.Name+" runs", page)
+	return nil
+}
+
 // runByNumber resolves the {repo} and {n} path values.
 func (a *App) runByNumber(r *http.Request) (*reposvc.Repo, *ci.RunDetail, error) {
 	repo, err := a.repoByName(r)

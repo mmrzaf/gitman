@@ -122,6 +122,7 @@ func (f *matrixFixture) routes() []struct {
 		{"run log", http.MethodGet, func(r string) string {
 			return "/" + r + "/runs/" + strconv.FormatInt(f.runNumber, 10) + "/log?step=0"
 		}},
+		{"runs list", http.MethodGet, func(r string) string { return "/" + r + "/runs" }},
 		{"settings", http.MethodGet, func(r string) string { return "/" + r + "/settings" }},
 	}
 }

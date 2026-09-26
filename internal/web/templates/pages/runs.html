@@ -1,0 +1,37 @@
+{{define "content"}}
+{{$d := .Data}}{{$repo := $d.Repo}}
+<div class="page">
+<h1 class="visually-hidden" id="runs-title">Runs for {{$repo.Name}}</h1>
+<section class="panel" aria-labelledby="runs-title">
+  {{- if $d.Runs}}
+  <div class="table-scroll">
+    <table class="table">
+      <thead>
+        <tr>
+          <th scope="col">Run</th>
+          <th scope="col">Branch or tag</th>
+          <th scope="col">Triggered</th>
+          <th scope="col">Queued</th>
+        </tr>
+      </thead>
+      <tbody data-live-region="runs">
+      {{- range $d.Runs}}
+        <tr>
+          <th scope="row" class="table-rowheader"><a class="run-ref" href="/{{$repo.Name}}/runs/{{.Number}}">{{template "status" .Status}}<span>#{{.Number}}</span></a></th>
+          <td>{{if .RefName}}{{template "ref" (dict "Kind" .RefKind "Name" .RefName "Href" (refURL $repo.Name .RefName ""))}}{{else}}<span class="muted">—</span>{{end}}</td>
+          <td>{{if eq .Trigger "push"}}{{template "icon" "push"}}Pushed{{else}}{{template "icon" "play"}}Started{{end}} by {{template "person" .Actor}}</td>
+          <td class="cell-shrink cell-muted">{{template "time" .QueuedAt}}</td>
+        </tr>
+      {{- end}}
+      </tbody>
+    </table>
+  </div>
+  {{- if $d.More}}
+  <div class="panel-body"><a class="btn" href="/{{$repo.Name}}/runs?before={{$d.More}}">Older runs</a></div>
+  {{- end}}
+  {{- else}}
+  {{template "empty" (dict "Icon" "play" "Title" "No runs yet")}}
+  {{- end}}
+</section>
+</div>
+{{end}}
