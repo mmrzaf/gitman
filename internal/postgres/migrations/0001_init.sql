@@ -1,6 +1,6 @@
--- People: named individuals, not accounts with per-repository membership.
--- Everyone who exists can read every repository; ref_rules is the only
--- permission system for writing.
+-- People: named individuals. Whether one can read a given repository
+-- follows that repository's visibility and, for a restricted one, the
+-- repo_readers table; ref_rules is the permission system for writing.
 CREATE TABLE people (
     id            text PRIMARY KEY,
     username      text NOT NULL UNIQUE,
@@ -47,6 +47,15 @@ CREATE TABLE repos (
     -- run_counter hands out repository-local run numbers atomically:
     -- UPDATE ... SET run_counter = run_counter + 1 RETURNING run_counter.
     run_counter    bigint NOT NULL DEFAULT 0,
+    -- visibility: "everyone" means every signed-in person can read it;
+    -- "restricted" means only its repo_readers rows, and admins, can.
+    visibility     text NOT NULL DEFAULT 'everyone' CHECK (visibility IN ('everyone', 'restricted')),
+    -- default_push_policy/default_push_people are who may push to a ref
+    -- no ref_rules row matches, the same shape as a rule's own push
+    -- policy below.
+    default_push_policy text NOT NULL DEFAULT 'everyone' CHECK (default_push_policy IN ('everyone', 'admins', 'people')),
+    default_push_people text[] NOT NULL DEFAULT '{}',
+    CHECK (default_push_policy != 'people' OR cardinality(default_push_people) > 0),
     created_by     text REFERENCES people(id) ON DELETE SET NULL,
     created_at     timestamptz NOT NULL DEFAULT now()
 );
@@ -54,6 +63,15 @@ CREATE TABLE repos (
 -- Repository names differ by more than case, so /App and /app never name
 -- two repositories.
 CREATE UNIQUE INDEX idx_repos_name_lower ON repos (lower(name));
+
+-- The explicit readers of a restricted repository. Irrelevant, but
+-- harmless, for one visible to everyone.
+CREATE TABLE repo_readers (
+    repo_id    text NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
+    person_id  text NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    added_at   timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (repo_id, person_id)
+);
 
 -- The current position of every branch and tag, kept current by the push
 -- hooks rather than recomputed from Git on every page view.

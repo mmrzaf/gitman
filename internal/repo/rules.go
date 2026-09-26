@@ -31,10 +31,11 @@ type Rule struct {
 }
 
 // Decision is what a rule set resolves to for one ref and one person. When
-// no rule matches, the ref is unprotected: anyone may push to it,
-// force-push it or delete it, and pushes to it do not run pipelines. A
-// brand-new repository is fully usable immediately; rules only ever add
-// protection or grant CI capabilities.
+// no rule matches, force-push and delete are allowed and pushes do not
+// run pipelines, exactly as always; push instead follows the
+// repository's default push policy ("everyone" until changed, so a
+// brand-new repository is fully usable immediately). Rules only ever add
+// protection or grant CI capabilities beyond that default.
 type Decision struct {
 	CanPush      bool
 	AllowForce   bool
@@ -49,10 +50,21 @@ type Decision struct {
 // Evaluate resolves the rule that applies to kind/name for one person.
 // isAdmin overrides PushAdmins and PushPeople: an admin may always push,
 // as the safety valve that lets an admin fix a misconfigured rule.
-func Evaluate(rules []Rule, kind git.Kind, name string, personID string, isAdmin bool) Decision {
+// defaultPush and defaultPushPeople are the repository's default push
+// policy, used when no rule matches.
+func Evaluate(rules []Rule, kind git.Kind, name string, personID string, isAdmin bool, defaultPush PushPolicy, defaultPushPeople []string) Decision {
 	matched := selectRule(rules, kind, name)
 	if matched == nil {
-		return Decision{CanPush: true, AllowForce: true, AllowDelete: true}
+		d := Decision{AllowForce: true, AllowDelete: true}
+		switch defaultPush {
+		case PushEveryone:
+			d.CanPush = true
+		case PushAdmins:
+			d.CanPush = isAdmin
+		case PushPeople:
+			d.CanPush = isAdmin || containsID(defaultPushPeople, personID)
+		}
+		return d
 	}
 
 	d := Decision{
@@ -112,17 +124,31 @@ func ValidateRule(r Rule) error {
 	if err := git.ValidatePattern(r.Pattern); err != nil {
 		return err
 	}
-	switch r.PushPolicy {
+	return validatePushPolicy(r.PushPolicy, r.PushPeople)
+}
+
+// ValidateDefaultPush checks a repository's default push policy before
+// it is saved, the same way a rule's own push policy is checked: a
+// repository with no matching rule is pushed to under exactly this
+// policy.
+func ValidateDefaultPush(policy PushPolicy, people []string) error {
+	return validatePushPolicy(policy, people)
+}
+
+// validatePushPolicy checks that a push policy and the people it names
+// agree: only "people" may name anyone, and it must name at least one.
+func validatePushPolicy(policy PushPolicy, people []string) error {
+	switch policy {
 	case PushEveryone, PushAdmins:
-		if len(r.PushPeople) > 0 {
+		if len(people) > 0 {
 			return apperr.New(apperr.KindInvalid, fmt.Sprintf("people can only be listed when the push policy is %q", PushPeople))
 		}
 	case PushPeople:
-		if len(r.PushPeople) == 0 {
+		if len(people) == 0 {
 			return apperr.New(apperr.KindInvalid, fmt.Sprintf("a %q push policy must list at least one person", PushPeople))
 		}
 	default:
-		return apperr.New(apperr.KindInvalid, fmt.Sprintf("unknown push policy %q", r.PushPolicy))
+		return apperr.New(apperr.KindInvalid, fmt.Sprintf("unknown push policy %q", policy))
 	}
 	return nil
 }

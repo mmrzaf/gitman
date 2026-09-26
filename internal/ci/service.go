@@ -30,6 +30,13 @@ func (s *Service) InProgress(ctx context.Context, limit int) ([]Summary, error) 
 	return selectInProgress(ctx, s.db.Pool, limit)
 }
 
+// InProgressForRepos is InProgress, restricted to repoIDs — the
+// instance-wide "running now" list for someone who cannot necessarily
+// see every repository.
+func (s *Service) InProgressForRepos(ctx context.Context, repoIDs []string, limit int) ([]Summary, error) {
+	return selectInProgressForRepos(ctx, s.db.Pool, repoIDs, limit)
+}
+
 // LatestRunPerRef returns, for a repository, the most recent run on each
 // of its refs, keyed by "<kind>/<name>".
 func (s *Service) LatestRunPerRef(ctx context.Context, repoID string) (map[string]Summary, error) {
@@ -45,6 +52,11 @@ func (s *Service) Live(ctx context.Context) ([]Deployment, error) {
 // LiveForRepo is Live, scoped to one repository.
 func (s *Service) LiveForRepo(ctx context.Context, repoID string) ([]Deployment, error) {
 	return selectLiveDeployments(ctx, s.db.Pool, &repoID)
+}
+
+// LiveForRepos is Live, restricted to repoIDs.
+func (s *Service) LiveForRepos(ctx context.Context, repoIDs []string) ([]Deployment, error) {
+	return selectLiveDeploymentsForRepos(ctx, s.db.Pool, repoIDs)
 }
 
 // LatestDeploymentPerRef returns, for a repository, the most recent
@@ -352,6 +364,17 @@ func (s *Service) FailLostRuns(ctx context.Context, staleAfter time.Duration) (i
 		return nil
 	})
 	return len(lost), err
+}
+
+// RepoIDForRun returns the repository ID a run belongs to, for a caller
+// that has only the run's ID, such as a notification's payload.
+func (s *Service) RepoIDForRun(ctx context.Context, runID string) (string, error) {
+	return selectRepoIDForRun(ctx, s.db.Pool, runID)
+}
+
+// RepoIDForStep returns the repository ID a step's run belongs to.
+func (s *Service) RepoIDForStep(ctx context.Context, stepID string) (string, error) {
+	return selectRepoIDForStep(ctx, s.db.Pool, stepID)
 }
 
 // InstanceID returns the ID naming this Gitman instance, which workers

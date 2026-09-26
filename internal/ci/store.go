@@ -123,6 +123,31 @@ func selectInProgress(ctx context.Context, q postgres.Querier, limit int) ([]Sum
 	return result, rows.Err()
 }
 
+func selectInProgressForRepos(ctx context.Context, q postgres.Querier, repoIDs []string, limit int) ([]Summary, error) {
+	rows, err := q.Query(ctx, `
+		SELECT `+summaryColumns+`
+		FROM runs r
+		JOIN repos ON repos.id = r.repo_id
+		LEFT JOIN people p ON p.id = r.triggered_by
+		WHERE r.status IN ('queued', 'running') AND r.repo_id = ANY($1)
+		ORDER BY COALESCE(r.started_at, r.queued_at) DESC
+		LIMIT $2
+	`, repoIDs, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list in-progress runs: %w", err)
+	}
+	defer rows.Close()
+	var result []Summary
+	for rows.Next() {
+		s, err := scanSummary(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan run: %w", err)
+		}
+		result = append(result, s)
+	}
+	return result, rows.Err()
+}
+
 // refKey identifies one branch or tag within a repository, for keying a
 // map of per-ref results.
 func refKey(kind git.Kind, name string) string { return string(kind) + "/" + name }
@@ -164,6 +189,35 @@ func selectLiveDeployments(ctx context.Context, q postgres.Querier, repoID *stri
 		WHERE $1::text IS NULL OR d.repo_id = $1
 		ORDER BY d.repo_id, d.target, d.created_at DESC
 	`, repoID)
+	if err != nil {
+		return nil, fmt.Errorf("list live deployments: %w", err)
+	}
+	defer rows.Close()
+	var result []Deployment
+	for rows.Next() {
+		var d Deployment
+		if err := rows.Scan(&d.RepoID, &d.Target, &d.Version, &d.Commit, &d.RunNumber, &d.Person, &d.At); err != nil {
+			return nil, fmt.Errorf("scan deployment: %w", err)
+		}
+		result = append(result, d)
+	}
+	return result, rows.Err()
+}
+
+// selectLiveDeploymentsForRepos is selectLiveDeployments, restricted to
+// repoIDs — the instance-wide board for someone who cannot necessarily
+// see every repository.
+func selectLiveDeploymentsForRepos(ctx context.Context, q postgres.Querier, repoIDs []string) ([]Deployment, error) {
+	rows, err := q.Query(ctx, `
+		SELECT DISTINCT ON (d.repo_id, d.target)
+		       d.repo_id, d.target, d.version, d.commit_hash,
+		       COALESCE(r.number, 0), COALESCE(p.username, ''), d.created_at
+		FROM deployments d
+		LEFT JOIN runs r ON r.id = d.run_id
+		LEFT JOIN people p ON p.id = d.person_id
+		WHERE d.repo_id = ANY($1)
+		ORDER BY d.repo_id, d.target, d.created_at DESC
+	`, repoIDs)
 	if err != nil {
 		return nil, fmt.Errorf("list live deployments: %w", err)
 	}
@@ -318,6 +372,20 @@ func selectRunState(ctx context.Context, q postgres.Querier, runID string) (Stat
 	var cancelRequested bool
 	err := q.QueryRow(ctx, `SELECT status, cancel_requested FROM runs WHERE id = $1`, runID).Scan(&status, &cancelRequested)
 	return status, cancelRequested, postgres.NormalizeNotFound(err)
+}
+
+func selectRepoIDForRun(ctx context.Context, q postgres.Querier, runID string) (string, error) {
+	var repoID string
+	err := q.QueryRow(ctx, `SELECT repo_id FROM runs WHERE id = $1`, runID).Scan(&repoID)
+	return repoID, postgres.NormalizeNotFound(err)
+}
+
+func selectRepoIDForStep(ctx context.Context, q postgres.Querier, stepID string) (string, error) {
+	var repoID string
+	err := q.QueryRow(ctx, `
+		SELECT runs.repo_id FROM steps JOIN runs ON runs.id = steps.run_id WHERE steps.id = $1
+	`, stepID).Scan(&repoID)
+	return repoID, postgres.NormalizeNotFound(err)
 }
 
 // lockRunRepo takes the lock recording a deployment needs on a run's

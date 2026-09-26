@@ -12,11 +12,12 @@ import (
 	"github.com/mmrzaf/gitman/internal/postgres"
 )
 
-const repoColumns = `id, name, description, default_branch, created_by, created_at`
+const repoColumns = `id, name, description, default_branch, visibility, default_push_policy, default_push_people, created_by, created_at`
 
 func scanRepo(row interface{ Scan(...any) error }) (*Repo, error) {
 	r := &Repo{}
-	if err := row.Scan(&r.ID, &r.Name, &r.Description, &r.DefaultBranch, &r.CreatedBy, &r.CreatedAt); err != nil {
+	if err := row.Scan(&r.ID, &r.Name, &r.Description, &r.DefaultBranch, &r.Visibility,
+		&r.DefaultPushPolicy, &r.DefaultPushPeople, &r.CreatedBy, &r.CreatedAt); err != nil {
 		return nil, err
 	}
 	return r, nil
@@ -66,6 +67,103 @@ func selectRepos(ctx context.Context, q postgres.Querier) ([]*Repo, error) {
 		result = append(result, repo)
 	}
 	return result, rows.Err()
+}
+
+func selectReadableRepos(ctx context.Context, q postgres.Querier, personID string) ([]*Repo, error) {
+	rows, err := q.Query(ctx, `
+		SELECT `+repoColumns+` FROM repos
+		WHERE visibility = 'everyone'
+		   OR EXISTS (SELECT 1 FROM repo_readers WHERE repo_readers.repo_id = repos.id AND repo_readers.person_id = $1)
+		ORDER BY name
+	`, personID)
+	if err != nil {
+		return nil, fmt.Errorf("list readable repositories: %w", err)
+	}
+	defer rows.Close()
+	var result []*Repo
+	for rows.Next() {
+		repo, err := scanRepo(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan repository: %w", err)
+		}
+		result = append(result, repo)
+	}
+	return result, rows.Err()
+}
+
+func selectIsReader(ctx context.Context, q postgres.Querier, repoID, personID string) (bool, error) {
+	var exists bool
+	if err := q.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM repo_readers WHERE repo_id = $1 AND person_id = $2)
+	`, repoID, personID).Scan(&exists); err != nil {
+		return false, fmt.Errorf("check reader: %w", err)
+	}
+	return exists, nil
+}
+
+func updateVisibilityRow(ctx context.Context, q postgres.Querier, repoID string, v Visibility) error {
+	tag, err := q.Exec(ctx, `UPDATE repos SET visibility = $2 WHERE id = $1`, repoID, v)
+	if err != nil {
+		return fmt.Errorf("update visibility: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return postgres.ErrNotFound
+	}
+	return nil
+}
+
+func insertReaderRow(ctx context.Context, q postgres.Querier, repoID, personID string) error {
+	if _, err := q.Exec(ctx, `
+		INSERT INTO repo_readers (repo_id, person_id) VALUES ($1, $2)
+		ON CONFLICT (repo_id, person_id) DO NOTHING
+	`, repoID, personID); err != nil {
+		return fmt.Errorf("add reader: %w", err)
+	}
+	return nil
+}
+
+func deleteReaderRow(ctx context.Context, q postgres.Querier, repoID, personID string) error {
+	tag, err := q.Exec(ctx, `DELETE FROM repo_readers WHERE repo_id = $1 AND person_id = $2`, repoID, personID)
+	if err != nil {
+		return fmt.Errorf("remove reader: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return postgres.ErrNotFound
+	}
+	return nil
+}
+
+func selectReaderIDs(ctx context.Context, q postgres.Querier, repoID string) ([]string, error) {
+	rows, err := q.Query(ctx, `SELECT person_id FROM repo_readers WHERE repo_id = $1 ORDER BY added_at`, repoID)
+	if err != nil {
+		return nil, fmt.Errorf("list readers: %w", err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var personID string
+		if err := rows.Scan(&personID); err != nil {
+			return nil, fmt.Errorf("scan reader: %w", err)
+		}
+		ids = append(ids, personID)
+	}
+	return ids, rows.Err()
+}
+
+func updateDefaultPushRow(ctx context.Context, q postgres.Querier, repoID string, policy PushPolicy, people []string) error {
+	if people == nil {
+		people = []string{}
+	}
+	tag, err := q.Exec(ctx, `
+		UPDATE repos SET default_push_policy = $2, default_push_people = $3 WHERE id = $1
+	`, repoID, policy, people)
+	if err != nil {
+		return fmt.Errorf("update default push: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return postgres.ErrNotFound
+	}
+	return nil
 }
 
 func deleteRepoRow(ctx context.Context, tx postgres.Tx, repoID string) (name string, err error) {

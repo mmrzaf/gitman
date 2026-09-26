@@ -1,7 +1,8 @@
 // Package repo manages repositories: the record that names one and the
-// bare Git repository on disk that holds its content, its ref rules
-// (the only permission system for writing to it), its ref index, its
-// encrypted secrets, and the settings-change events those generate.
+// bare Git repository on disk that holds its content, who may read it,
+// its ref rules and default push policy (together, the only permission
+// system for writing to it), its ref index, its encrypted secrets, and
+// the settings-change events those generate.
 //
 // service.go holds the package's rules and orchestration; store.go holds
 // every SQL statement the package runs. Nothing outside this package
@@ -21,14 +22,42 @@ import (
 // characters.
 const MaxDescriptionLen = 500
 
+// Visibility controls who may read a repository.
+type Visibility string
+
+const (
+	// VisibilityEveryone lets every signed-in person read it.
+	VisibilityEveryone Visibility = "everyone"
+	// VisibilityRestricted limits reading to its explicit readers and
+	// admins; to anyone else it does not exist.
+	VisibilityRestricted Visibility = "restricted"
+)
+
+// ValidateVisibility checks a visibility value.
+func ValidateVisibility(v Visibility) error {
+	switch v {
+	case VisibilityEveryone, VisibilityRestricted:
+		return nil
+	default:
+		return apperr.New(apperr.KindInvalid, fmt.Sprintf("visibility must be %q or %q", VisibilityEveryone, VisibilityRestricted))
+	}
+}
+
 // Repo is a repository record.
 type Repo struct {
 	ID            string
 	Name          string
 	Description   string
 	DefaultBranch string
-	CreatedBy     *string
-	CreatedAt     time.Time
+	// Visibility controls who may read this repository.
+	Visibility Visibility
+	// DefaultPushPolicy and DefaultPushPeople are who may push to a ref
+	// no rule matches — the same shape, and the same meaning, as a
+	// rule's own push policy.
+	DefaultPushPolicy PushPolicy
+	DefaultPushPeople []string
+	CreatedBy         *string
+	CreatedAt         time.Time
 }
 
 // IndexedRef is one row of the ref index: where a branch or tag points,

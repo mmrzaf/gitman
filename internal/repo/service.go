@@ -90,9 +90,45 @@ func (s *Service) GetByID(ctx context.Context, repoID string) (*Repo, error) {
 	return selectRepoByID(ctx, s.db.Pool, repoID)
 }
 
-// List returns every repository, ordered by name.
+// List returns every repository, ordered by name, regardless of
+// visibility. It is for the command line, which acts with full
+// authority and has no person to check readability against.
 func (s *Service) List(ctx context.Context) ([]*Repo, error) {
 	return selectRepos(ctx, s.db.Pool)
+}
+
+// ListReadable returns, ordered by name, every repository personID may
+// read: every repository for an admin, otherwise those visible to
+// everyone plus those personID is an explicit reader of. It filters in
+// SQL, not by loading every repository and discarding some.
+func (s *Service) ListReadable(ctx context.Context, personID string, isAdmin bool) ([]*Repo, error) {
+	if isAdmin {
+		return s.List(ctx)
+	}
+	return selectReadableRepos(ctx, s.db.Pool, personID)
+}
+
+// CanRead reports whether personID may read r: always for an admin or a
+// repository visible to everyone, otherwise only if personID is one of
+// its explicit readers.
+func (s *Service) CanRead(ctx context.Context, r *Repo, personID string, isAdmin bool) (bool, error) {
+	if isAdmin || r.Visibility == VisibilityEveryone {
+		return true, nil
+	}
+	if personID == "" {
+		return false, nil
+	}
+	return selectIsReader(ctx, s.db.Pool, r.ID, personID)
+}
+
+// CanReadID is CanRead for a caller that has a repository's ID but has
+// not loaded the repository itself, such as an event naming it.
+func (s *Service) CanReadID(ctx context.Context, repoID, personID string, isAdmin bool) (bool, error) {
+	r, err := s.GetByID(ctx, repoID)
+	if err != nil {
+		return false, err
+	}
+	return s.CanRead(ctx, r, personID, isAdmin)
 }
 
 // Open returns the bare Git repository behind a repository record. A
@@ -146,6 +182,59 @@ func (s *Service) SetDescription(ctx context.Context, repoID, description, actor
 			return err
 		}
 		return activity.Record(ctx, tx, repoID, actorID, activity.RepoDescribed, "")
+	})
+}
+
+// SetVisibility changes who may read a repository.
+func (s *Service) SetVisibility(ctx context.Context, repoID string, v Visibility, actorID string) error {
+	if err := ValidateVisibility(v); err != nil {
+		return err
+	}
+	return s.db.Tx(ctx, func(tx postgres.Tx) error {
+		if err := updateVisibilityRow(ctx, tx, repoID, v); err != nil {
+			return err
+		}
+		return activity.Record(ctx, tx, repoID, actorID, activity.RepoVisibilityChanged, string(v))
+	})
+}
+
+// AddReader grants personID read access to a repository, regardless of
+// its current visibility.
+func (s *Service) AddReader(ctx context.Context, repoID, personID, actorID string) error {
+	return s.db.Tx(ctx, func(tx postgres.Tx) error {
+		if err := insertReaderRow(ctx, tx, repoID, personID); err != nil {
+			return err
+		}
+		return activity.Record(ctx, tx, repoID, actorID, activity.RepoReaderAdded, personID)
+	})
+}
+
+// RemoveReader revokes personID's explicit read access to a repository.
+func (s *Service) RemoveReader(ctx context.Context, repoID, personID, actorID string) error {
+	return s.db.Tx(ctx, func(tx postgres.Tx) error {
+		if err := deleteReaderRow(ctx, tx, repoID, personID); err != nil {
+			return err
+		}
+		return activity.Record(ctx, tx, repoID, actorID, activity.RepoReaderRemoved, personID)
+	})
+}
+
+// ListReaders returns the person IDs of a repository's explicit readers,
+// in the order they were added.
+func (s *Service) ListReaders(ctx context.Context, repoID string) ([]string, error) {
+	return selectReaderIDs(ctx, s.db.Pool, repoID)
+}
+
+// SetDefaultPush changes who may push to a ref no rule matches.
+func (s *Service) SetDefaultPush(ctx context.Context, repoID string, policy PushPolicy, people []string, actorID string) error {
+	if err := ValidateDefaultPush(policy, people); err != nil {
+		return err
+	}
+	return s.db.Tx(ctx, func(tx postgres.Tx) error {
+		if err := updateDefaultPushRow(ctx, tx, repoID, policy, people); err != nil {
+			return err
+		}
+		return activity.Record(ctx, tx, repoID, actorID, activity.RepoDefaultPushChanged, string(policy))
 	})
 }
 

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/mmrzaf/gitman/internal/apperr"
+	"github.com/mmrzaf/gitman/internal/auth"
 	"github.com/mmrzaf/gitman/internal/git"
 	"github.com/mmrzaf/gitman/internal/postgres"
 	"github.com/mmrzaf/gitman/internal/postgres/pgtest"
@@ -335,6 +336,148 @@ func TestSetDescription(t *testing.T) {
 	}
 	if err := svc.SetDescription(ctx, "no-such-repo", "x", ""); !errors.Is(err, postgres.ErrNotFound) {
 		t.Fatalf("SetDescription(unknown repo) = %v, want ErrNotFound", err)
+	}
+}
+
+func TestVisibilityAndReaders(t *testing.T) {
+	ctx := context.Background()
+	database := pgtest.Open(t)
+	store := newStore(t)
+	svc := NewService(database, store, testSecretKey)
+	people := auth.NewService(database)
+	person, err := people.Create(ctx, "darius", "correct-horse-battery", false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := svc.Create(ctx, "demo", "", "main", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Visibility != VisibilityEveryone {
+		t.Fatalf("Create: Visibility = %q, want %q", r.Visibility, VisibilityEveryone)
+	}
+	if ok, err := svc.CanRead(ctx, r, person.ID, false); err != nil || !ok {
+		t.Fatalf("CanRead on a new repository = %v, %v, want true", ok, err)
+	}
+
+	if err := svc.SetVisibility(ctx, r.ID, VisibilityRestricted, ""); err != nil {
+		t.Fatalf("SetVisibility: %v", err)
+	}
+	r, err = svc.GetByID(ctx, r.ID)
+	if err != nil || r.Visibility != VisibilityRestricted {
+		t.Fatalf("GetByID after SetVisibility = %+v, %v", r, err)
+	}
+	if ok, err := svc.CanRead(ctx, r, person.ID, false); err != nil || ok {
+		t.Fatalf("CanRead(non-reader) = %v, %v, want false", ok, err)
+	}
+	if ok, err := svc.CanRead(ctx, r, person.ID, true); err != nil || !ok {
+		t.Fatalf("CanRead(admin) = %v, %v, want true", ok, err)
+	}
+
+	if err := svc.AddReader(ctx, r.ID, person.ID, ""); err != nil {
+		t.Fatalf("AddReader: %v", err)
+	}
+	if err := svc.AddReader(ctx, r.ID, person.ID, ""); err != nil {
+		t.Fatalf("AddReader (again): %v", err)
+	}
+	if ok, err := svc.CanRead(ctx, r, person.ID, false); err != nil || !ok {
+		t.Fatalf("CanRead(reader) = %v, %v, want true", ok, err)
+	}
+	readers, err := svc.ListReaders(ctx, r.ID)
+	if err != nil || len(readers) != 1 || readers[0] != person.ID {
+		t.Fatalf("ListReaders = %v, %v", readers, err)
+	}
+
+	if err := svc.RemoveReader(ctx, r.ID, person.ID, ""); err != nil {
+		t.Fatalf("RemoveReader: %v", err)
+	}
+	if ok, err := svc.CanRead(ctx, r, person.ID, false); err != nil || ok {
+		t.Fatalf("CanRead after RemoveReader = %v, %v, want false", ok, err)
+	}
+	if err := svc.RemoveReader(ctx, r.ID, person.ID, ""); !errors.Is(err, postgres.ErrNotFound) {
+		t.Fatalf("second RemoveReader = %v, want ErrNotFound", err)
+	}
+
+	if err := svc.SetVisibility(ctx, r.ID, "unknown", ""); err == nil {
+		t.Error("expected an invalid visibility to be rejected")
+	}
+	if err := svc.SetVisibility(ctx, "no-such-repo", VisibilityEveryone, ""); !errors.Is(err, postgres.ErrNotFound) {
+		t.Fatalf("SetVisibility(unknown repo) = %v, want ErrNotFound", err)
+	}
+}
+
+func TestListReadable(t *testing.T) {
+	ctx := context.Background()
+	database := pgtest.Open(t)
+	store := newStore(t)
+	svc := NewService(database, store, testSecretKey)
+	people := auth.NewService(database)
+	reader, err := people.Create(ctx, "darius", "correct-horse-battery", false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := people.Create(ctx, "mmrzaf", "correct-horse-battery", true, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	open, err := svc.Create(ctx, "open", "", "main", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	restricted, err := svc.Create(ctx, "restricted", "", "main", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.SetVisibility(ctx, restricted.ID, VisibilityRestricted, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	nonReader, err := svc.ListReadable(ctx, reader.ID, false)
+	if err != nil || len(nonReader) != 1 || nonReader[0].ID != open.ID {
+		t.Fatalf("ListReadable(non-reader) = %+v, %v, want only %q", nonReader, err, open.Name)
+	}
+
+	if err := svc.AddReader(ctx, restricted.ID, reader.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	readable, err := svc.ListReadable(ctx, reader.ID, false)
+	if err != nil || len(readable) != 2 {
+		t.Fatalf("ListReadable(reader) = %+v, %v, want both repositories", readable, err)
+	}
+
+	admin, err := svc.ListReadable(ctx, other.ID, true)
+	if err != nil || len(admin) != 2 {
+		t.Fatalf("ListReadable(admin) = %+v, %v, want both repositories", admin, err)
+	}
+}
+
+func TestSetDefaultPush(t *testing.T) {
+	ctx := context.Background()
+	database := pgtest.Open(t)
+	store := newStore(t)
+	svc := NewService(database, store, testSecretKey)
+	r, err := svc.Create(ctx, "demo", "", "main", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.DefaultPushPolicy != PushEveryone {
+		t.Fatalf("Create: DefaultPushPolicy = %q, want %q", r.DefaultPushPolicy, PushEveryone)
+	}
+
+	if err := svc.SetDefaultPush(ctx, r.ID, PushPeople, []string{"person-1"}, ""); err != nil {
+		t.Fatalf("SetDefaultPush: %v", err)
+	}
+	r, err = svc.GetByID(ctx, r.ID)
+	if err != nil || r.DefaultPushPolicy != PushPeople || len(r.DefaultPushPeople) != 1 || r.DefaultPushPeople[0] != "person-1" {
+		t.Fatalf("GetByID after SetDefaultPush = %+v, %v", r, err)
+	}
+
+	if err := svc.SetDefaultPush(ctx, r.ID, PushPeople, nil, ""); err == nil {
+		t.Error("expected a people policy naming nobody to be rejected")
+	}
+	if err := svc.SetDefaultPush(ctx, "no-such-repo", PushEveryone, nil, ""); !errors.Is(err, postgres.ErrNotFound) {
+		t.Fatalf("SetDefaultPush(unknown repo) = %v, want ErrNotFound", err)
 	}
 }
 

@@ -275,7 +275,7 @@ func (a *App) mayRun(r *http.Request, repo *reposvc.Repo, kind git.Kind, name, a
 	if err != nil {
 		return reposvc.Decision{}, err
 	}
-	decision := reposvc.Evaluate(rules, kind, name, person.ID, person.IsAdmin)
+	decision := reposvc.Evaluate(rules, kind, name, person.ID, person.IsAdmin, repo.DefaultPushPolicy, repo.DefaultPushPeople)
 	if !decision.CanPush {
 		return decision, apperr.New(apperr.KindForbidden, fmt.Sprintf("You may not push to %s %s, so you may not %s.", kind, name, action))
 	}

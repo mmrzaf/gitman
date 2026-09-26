@@ -27,19 +27,33 @@ func notifyChanged(ctx context.Context, q postgres.Querier, repoID string) error
 	return nil
 }
 
-func repoFilter(repoID *string, column string) (clause string, args []any) {
-	if repoID == nil {
+// filter is which repositories a recentX query includes: every
+// repository (repoID and repoIDs both nil), exactly one (repoID set —
+// a repository's own page), or a set of them plus any row naming no
+// repository at all (repoIDs set, possibly empty — the repositories one
+// particular person may read, for the instance-wide feed).
+type filter struct {
+	repoID  *string
+	repoIDs []string
+}
+
+func (f filter) clause(column string) (clause string, args []any) {
+	switch {
+	case f.repoID != nil:
+		return " AND " + column + " = $2", []any{fetchLimit, *f.repoID}
+	case f.repoIDs != nil:
+		return " AND (" + column + " = ANY($2) OR " + column + " IS NULL)", []any{fetchLimit, f.repoIDs}
+	default:
 		return "", []any{fetchLimit}
 	}
-	return " AND " + column + " = $2", []any{fetchLimit, *repoID}
 }
 
 // recentPushes summarizes one entry per push: the ref it updated, or how
 // many if it updated more than one — the push_updates rows for the
 // fetched pushes are looked up in a second, batched query rather than
 // one query per push.
-func recentPushes(ctx context.Context, q postgres.Querier, repoID *string) ([]Entry, error) {
-	clause, args := repoFilter(repoID, "p.repo_id")
+func recentPushes(ctx context.Context, q postgres.Querier, f filter) ([]Entry, error) {
+	clause, args := f.clause("p.repo_id")
 	rows, err := q.Query(ctx, `
 		SELECT p.id, repos.name, p.created_at, COALESCE(pe.username, '')
 		FROM pushes p
@@ -118,8 +132,8 @@ func recentPushes(ctx context.Context, q postgres.Querier, repoID *string) ([]En
 	return entries, nil
 }
 
-func recentRuns(ctx context.Context, q postgres.Querier, repoID *string) ([]Entry, error) {
-	clause, args := repoFilter(repoID, "r.repo_id")
+func recentRuns(ctx context.Context, q postgres.Querier, f filter) ([]Entry, error) {
+	clause, args := f.clause("r.repo_id")
 	rows, err := q.Query(ctx, `
 		SELECT repos.name, r.finished_at, COALESCE(p.username, ''), r.number, r.status, r.trigger
 		FROM runs r
@@ -144,8 +158,8 @@ func recentRuns(ctx context.Context, q postgres.Querier, repoID *string) ([]Entr
 	return entries, rows.Err()
 }
 
-func recentDeployments(ctx context.Context, q postgres.Querier, repoID *string) ([]Entry, error) {
-	clause, args := repoFilter(repoID, "d.repo_id")
+func recentDeployments(ctx context.Context, q postgres.Querier, f filter) ([]Entry, error) {
+	clause, args := f.clause("d.repo_id")
 	rows, err := q.Query(ctx, `
 		SELECT repos.name, d.created_at, COALESCE(p.username, ''), d.target, d.version, d.commit_hash
 		FROM deployments d
@@ -172,14 +186,10 @@ func recentDeployments(ctx context.Context, q postgres.Querier, repoID *string) 
 
 // recentEvents lists settings changes: people, rules, secrets and
 // repositories. A person-level event (adding or disabling someone) has
-// no repository and is included only in the unscoped, cross-repo feed.
-func recentEvents(ctx context.Context, q postgres.Querier, repoID *string) ([]Entry, error) {
-	clause := ""
-	args := []any{fetchLimit}
-	if repoID != nil {
-		clause = " AND e.repo_id = $2"
-		args = append(args, *repoID)
-	}
+// no repository and is included whenever the feed is not scoped to one
+// particular repository.
+func recentEvents(ctx context.Context, q postgres.Querier, f filter) ([]Entry, error) {
+	clause, args := f.clause("e.repo_id")
 	rows, err := q.Query(ctx, `
 		SELECT COALESCE(repos.name, ''), e.created_at, COALESCE(p.username, ''), e.action, e.detail
 		FROM events e

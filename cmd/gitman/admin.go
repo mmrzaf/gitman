@@ -42,6 +42,8 @@ type adminAction struct {
 
 const ruleSetUsage = "[--push everyone|admins|people] [--people a,b] [--force] [--delete] [--run] [--docker] [--secrets] [--ship] <repo> branch|tag <pattern>"
 
+const defaultPushUsage = "[--push everyone|admins|people] [--people a,b] <name>"
+
 // adminGroups maps "admin <group> <action>" to its implementation.
 var adminGroups = map[string]map[string]adminAction{
 	"person": {
@@ -59,15 +61,22 @@ var adminGroups = map[string]map[string]adminAction{
 		"cancel": {"<repo> <number>", adminRunCancel},
 	},
 	"repo": {
-		"create": {"[--description TEXT] [--default-branch NAME] <name>", adminRepoCreate},
-		"list":   {"", adminRepoList},
-		"delete": {"<name>", adminRepoDelete},
-		"sync":   {"<name>", adminRepoSync},
+		"create":       {"[--description TEXT] [--default-branch NAME] <name>", adminRepoCreate},
+		"list":         {"", adminRepoList},
+		"delete":       {"<name>", adminRepoDelete},
+		"sync":         {"<name>", adminRepoSync},
+		"visibility":   {"<name> everyone|restricted", adminRepoVisibility},
+		"default-push": {defaultPushUsage, adminRepoDefaultPush},
 	},
 	"rule": {
 		"list":   {"<repo>", adminRuleList},
 		"set":    {ruleSetUsage, adminRuleSet},
 		"delete": {"<repo> branch|tag <pattern>", adminRuleDelete},
+	},
+	"reader": {
+		"add":    {"<repo> <username>", adminReaderAdd},
+		"remove": {"<repo> <username>", adminReaderRemove},
+		"list":   {"<repo>", adminReaderList},
 	},
 	"worker": {
 		"cleanup": {"", adminWorkerCleanup},
@@ -405,6 +414,120 @@ func adminRepoSync(ctx context.Context, env *adminEnv, args []string) error {
 		return err
 	}
 	fmt.Fprintf(env.out, "Synced %d branches and tags of %s.\n", n, repo.Name)
+	return nil
+}
+
+func adminRepoVisibility(ctx context.Context, env *adminEnv, args []string) error {
+	pos, err := parseArgs(flag.NewFlagSet("repo visibility", flag.ContinueOnError), args, 2, "gitman admin repo visibility <name> everyone|restricted")
+	if err != nil {
+		return err
+	}
+	repo, err := repoByName(ctx, env, pos[0])
+	if err != nil {
+		return err
+	}
+	visibility := reposvc.Visibility(pos[1])
+	if err := env.repos.SetVisibility(ctx, repo.ID, visibility, ""); err != nil {
+		return err
+	}
+	fmt.Fprintf(env.out, "%s is now %s.\n", repo.Name, visibility)
+	return nil
+}
+
+func adminRepoDefaultPush(ctx context.Context, env *adminEnv, args []string) error {
+	fs := flag.NewFlagSet("repo default-push", flag.ContinueOnError)
+	push := fs.String("push", string(reposvc.PushEveryone), "")
+	pushPeople := fs.String("people", "", "")
+	pos, err := parseArgs(fs, args, 1, "gitman admin repo default-push "+defaultPushUsage)
+	if err != nil {
+		return err
+	}
+	repo, err := repoByName(ctx, env, pos[0])
+	if err != nil {
+		return err
+	}
+	var people []string
+	if *pushPeople != "" {
+		for _, username := range strings.Split(*pushPeople, ",") {
+			p, err := personByName(ctx, env, strings.TrimSpace(username))
+			if err != nil {
+				return err
+			}
+			people = append(people, p.ID)
+		}
+	}
+	policy := reposvc.PushPolicy(*push)
+	if err := env.repos.SetDefaultPush(ctx, repo.ID, policy, people, ""); err != nil {
+		return err
+	}
+	fmt.Fprintf(env.out, "Set %s's default push policy to %s.\n", repo.Name, policy)
+	return nil
+}
+
+func adminReaderAdd(ctx context.Context, env *adminEnv, args []string) error {
+	pos, err := parseArgs(flag.NewFlagSet("reader add", flag.ContinueOnError), args, 2, "gitman admin reader add <repo> <username>")
+	if err != nil {
+		return err
+	}
+	repo, err := repoByName(ctx, env, pos[0])
+	if err != nil {
+		return err
+	}
+	person, err := personByName(ctx, env, pos[1])
+	if err != nil {
+		return err
+	}
+	if err := env.repos.AddReader(ctx, repo.ID, person.ID, ""); err != nil {
+		return err
+	}
+	fmt.Fprintf(env.out, "%s can now read %s.\n", person.Username, repo.Name)
+	return nil
+}
+
+func adminReaderRemove(ctx context.Context, env *adminEnv, args []string) error {
+	pos, err := parseArgs(flag.NewFlagSet("reader remove", flag.ContinueOnError), args, 2, "gitman admin reader remove <repo> <username>")
+	if err != nil {
+		return err
+	}
+	repo, err := repoByName(ctx, env, pos[0])
+	if err != nil {
+		return err
+	}
+	person, err := personByName(ctx, env, pos[1])
+	if err != nil {
+		return err
+	}
+	if err := env.repos.RemoveReader(ctx, repo.ID, person.ID, ""); err != nil {
+		return err
+	}
+	fmt.Fprintf(env.out, "Removed %s's read access to %s.\n", person.Username, repo.Name)
+	return nil
+}
+
+func adminReaderList(ctx context.Context, env *adminEnv, args []string) error {
+	pos, err := parseArgs(flag.NewFlagSet("reader list", flag.ContinueOnError), args, 1, "gitman admin reader list <repo>")
+	if err != nil {
+		return err
+	}
+	repo, err := repoByName(ctx, env, pos[0])
+	if err != nil {
+		return err
+	}
+	ids, err := env.repos.ListReaders(ctx, repo.ID)
+	if err != nil {
+		return err
+	}
+	if len(ids) == 0 {
+		fmt.Fprintln(env.out, "No explicit readers.")
+		return nil
+	}
+	for _, personID := range ids {
+		person, err := env.people.GetByID(ctx, personID)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(env.out, person.Username)
+	}
 	return nil
 }
 

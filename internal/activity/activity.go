@@ -22,18 +22,22 @@ import (
 // Actions recorded directly to the events table: settings changes with
 // no table of their own to be read back from.
 const (
-	RepoCreated    = "repo.created"
-	RepoDeleted    = "repo.deleted"
-	RepoDescribed  = "repo.description_changed"
-	RuleSaved      = "rule.saved"
-	RuleDeleted    = "rule.deleted"
-	SecretSet      = "secret.set"
-	SecretDeleted  = "secret.deleted"
-	PersonAdded    = "person.added"
-	PersonDisabled = "person.disabled"
-	PersonEnabled  = "person.enabled"
-	PersonRole     = "person.role"
-	PasswordReset  = "person.password_reset"
+	RepoCreated            = "repo.created"
+	RepoDeleted            = "repo.deleted"
+	RepoDescribed          = "repo.description_changed"
+	RepoVisibilityChanged  = "repo.visibility_changed"
+	RepoReaderAdded        = "repo.reader_added"
+	RepoReaderRemoved      = "repo.reader_removed"
+	RepoDefaultPushChanged = "repo.default_push_changed"
+	RuleSaved              = "rule.saved"
+	RuleDeleted            = "rule.deleted"
+	SecretSet              = "secret.set"
+	SecretDeleted          = "secret.deleted"
+	PersonAdded            = "person.added"
+	PersonDisabled         = "person.disabled"
+	PersonEnabled          = "person.enabled"
+	PersonRole             = "person.role"
+	PasswordReset          = "person.password_reset"
 )
 
 // NotifyChannel is the PostgreSQL channel that carries a repository's ID
@@ -122,28 +126,42 @@ func NewService(db *postgres.DB) *Service {
 
 // Recent returns the most recent entries, most recent first, across
 // every repository (repoID nil) or scoped to one (repoID set).
-//
+func (s *Service) Recent(ctx context.Context, repoID *string, limit int) ([]Entry, error) {
+	return s.recent(ctx, filter{repoID: repoID}, limit)
+}
+
+// RecentForRepos is Recent for the instance-wide feed shown to someone
+// who cannot necessarily read every repository: entries are restricted
+// to repoIDs, plus any entry naming no repository at all. Pass every
+// repository's ID to get everything an admin would see.
+func (s *Service) RecentForRepos(ctx context.Context, repoIDs []string, limit int) ([]Entry, error) {
+	if repoIDs == nil {
+		repoIDs = []string{}
+	}
+	return s.recent(ctx, filter{repoIDs: repoIDs}, limit)
+}
+
 // The four kinds come from different tables with different shapes, so
 // each is fetched with its own query — simpler and cheaper than a
 // UNION ALL across mismatched columns — and merged here.
-func (s *Service) Recent(ctx context.Context, repoID *string, limit int) ([]Entry, error) {
+func (s *Service) recent(ctx context.Context, f filter, limit int) ([]Entry, error) {
 	q := s.db.Pool
 	if limit > fetchLimit {
 		limit = fetchLimit
 	}
-	pushes, err := recentPushes(ctx, q, repoID)
+	pushes, err := recentPushes(ctx, q, f)
 	if err != nil {
 		return nil, err
 	}
-	runs, err := recentRuns(ctx, q, repoID)
+	runs, err := recentRuns(ctx, q, f)
 	if err != nil {
 		return nil, err
 	}
-	deploys, err := recentDeployments(ctx, q, repoID)
+	deploys, err := recentDeployments(ctx, q, f)
 	if err != nil {
 		return nil, err
 	}
-	events, err := recentEvents(ctx, q, repoID)
+	events, err := recentEvents(ctx, q, f)
 	if err != nil {
 		return nil, err
 	}

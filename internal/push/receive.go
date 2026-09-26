@@ -118,7 +118,7 @@ func (h *Hook) load(ctx context.Context) (*pushContext, error) {
 }
 
 func (pc *pushContext) decide(u Update) repo.Decision {
-	return repo.Evaluate(pc.rules, u.Kind, u.Name, pc.person.ID, pc.person.IsAdmin)
+	return repo.Evaluate(pc.rules, u.Kind, u.Name, pc.person.ID, pc.person.IsAdmin, pc.repo.DefaultPushPolicy, pc.repo.DefaultPushPeople)
 }
 
 // ruleLabel names the rule behind a decision in a rejection message.
