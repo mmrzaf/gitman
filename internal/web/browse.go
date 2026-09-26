@@ -20,6 +20,16 @@ import (
 	reposvc "github.com/mmrzaf/gitman/internal/repo"
 )
 
+// tooLargeToShow turns a git operation that ran out of time into a
+// message the person can act on: the repository state itself is too
+// large to compute in time, not a broken request or a failing server.
+func tooLargeToShow(err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return apperr.New(apperr.KindTooLarge, "This is too large for Gitman to show.")
+	}
+	return err
+}
+
 // splitRepoRef splits a route's combined "{repo}" path value into the
 // repository name and, if present, what follows an "@": a ref, or a ref
 // with a file path glued to it. Gitman's file-browsing URLs put the ref
@@ -262,7 +272,7 @@ func (a *App) files(w http.ResponseWriter, r *http.Request, name, refAndPath str
 		page.IsDir = true
 		children, err := gitRepo.Tree(ctx, entry.Hash)
 		if err != nil {
-			return err
+			return tooLargeToShow(err)
 		}
 		page.Entries = make([]fileEntry, len(children))
 		for i, c := range children {
@@ -443,7 +453,7 @@ func (w *treeWalk) dir(ctx context.Context, treeHash, prefix string) error {
 	}
 	entries, err := w.git.Tree(ctx, treeHash)
 	if err != nil {
-		return err
+		return tooLargeToShow(err)
 	}
 	for _, e := range entries {
 		if w.full() {
@@ -498,7 +508,7 @@ func (a *App) commitView(w http.ResponseWriter, r *http.Request) error {
 	}
 	diff, err := gitRepo.Diff(ctx, parent, hash, git.DefaultDiffLimits)
 	if err != nil {
-		return err
+		return tooLargeToShow(err)
 	}
 
 	a.render(w, r, http.StatusOK, "commit", commit.ShortHash()+" \u00b7 "+repo.Name,
@@ -571,7 +581,7 @@ func (a *App) compareView(w http.ResponseWriter, r *http.Request) error {
 		if errors.Is(err, git.ErrNotFound) {
 			return notFound("%s and %s share no history.", baseRef, headRef)
 		}
-		return err
+		return tooLargeToShow(err)
 	}
 
 	a.render(w, r, http.StatusOK, "compare", baseRef+"...\u200b"+headRef+" \u00b7 "+repo.Name,

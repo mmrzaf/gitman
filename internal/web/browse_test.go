@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -14,10 +15,29 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mmrzaf/gitman/internal/apperr"
 	"github.com/mmrzaf/gitman/internal/git"
 	"github.com/mmrzaf/gitman/internal/postgres"
 	reposvc "github.com/mmrzaf/gitman/internal/repo"
 )
+
+// TestTooLargeToShow covers R2-5: a git operation that ran out of time
+// reaches the person as "too large to show," even wrapped inside a
+// *git.Error the way a real timeout from run or stream is; any other
+// error passes through unchanged.
+func TestTooLargeToShow(t *testing.T) {
+	if err := tooLargeToShow(context.DeadlineExceeded); apperr.KindOf(err) != apperr.KindTooLarge {
+		t.Errorf("a deadline exceeded error = %v, want KindTooLarge", err)
+	}
+	wrapped := &git.Error{Args: []string{"diff-tree"}, Err: context.DeadlineExceeded}
+	if err := tooLargeToShow(wrapped); apperr.KindOf(err) != apperr.KindTooLarge {
+		t.Errorf("a wrapped deadline exceeded error = %v, want KindTooLarge", err)
+	}
+	other := errors.New("boom")
+	if err := tooLargeToShow(other); !errors.Is(err, other) {
+		t.Errorf("an unrelated error = %v, want it passed through unchanged", err)
+	}
+}
 
 func TestSplitRepoRef(t *testing.T) {
 	cases := []struct {

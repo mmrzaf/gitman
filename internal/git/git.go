@@ -178,6 +178,9 @@ func stream(ctx context.Context, o cmdOptions, consume func(io.Reader) error, ar
 
 	consumeErr := consume(stdout)
 	stopped := errors.Is(consumeErr, errStopStream)
+	// Read before our own cancel below, which would otherwise put its
+	// own reason here instead of a real timeout's.
+	ctxErr := ctx.Err()
 	if stopped || consumeErr != nil {
 		cancel()
 	}
@@ -187,6 +190,13 @@ func stream(ctx context.Context, o cmdOptions, consume func(io.Reader) error, ar
 	switch {
 	case stopped:
 		return nil
+	case ctxErr != nil:
+		code := -1
+		var exitErr *exec.ExitError
+		if errors.As(waitErr, &exitErr) {
+			code = exitErr.ExitCode()
+		}
+		return &Error{Args: args, ExitCode: code, Stderr: stderr.String(), Err: ctxErr}
 	case consumeErr != nil:
 		return consumeErr
 	case waitErr != nil:
