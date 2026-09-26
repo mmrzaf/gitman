@@ -47,6 +47,10 @@ type Config struct {
 	// Port is the HTTP listen port for the web process.
 	Port int
 
+	// DatabaseMaxConns caps the size of the web and worker processes'
+	// connection pools. 0 keeps each process's own default.
+	DatabaseMaxConns int
+
 	// TrustedProxies are the addresses of reverse proxies whose
 	// X-Forwarded-For header is believed. Empty means the connection's
 	// own peer address is the client, which is right when nothing sits
@@ -82,6 +86,9 @@ const (
 	EnvWebURL      = "GITMAN_WEB_URL"
 	EnvSecretKey   = "GITMAN_SECRET_KEY"
 	EnvPort        = "GITMAN_PORT"
+	// EnvDatabaseMaxConns caps the web and worker processes' connection
+	// pool sizes; 0 (the default) keeps each process's own default.
+	EnvDatabaseMaxConns = "GITMAN_DATABASE_MAX_CONNS"
 	// EnvRetentionDays is how many days finished runs and their logs are
 	// kept; 0 keeps them forever.
 	EnvRetentionDays = "GITMAN_RETENTION_DAYS"
@@ -106,6 +113,10 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	cfg.Port = port
+
+	if cfg.DatabaseMaxConns, err = getEnvInt(EnvDatabaseMaxConns, 0); err != nil {
+		return nil, err
+	}
 
 	if cfg.RetentionDays, err = getEnvInt(EnvRetentionDays, 90); err != nil {
 		return nil, err
@@ -151,6 +162,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Port < 1 || c.Port > 65535 {
 		return fmt.Errorf("%s must be between 1 and 65535", EnvPort)
+	}
+	if c.DatabaseMaxConns < 0 || c.DatabaseMaxConns > 1000 {
+		return fmt.Errorf("%s must be between 0 (the process's own default) and 1000", EnvDatabaseMaxConns)
 	}
 	if c.RetentionDays < 0 || c.RetentionDays > 36500 {
 		return fmt.Errorf("%s must be between 0 (keep forever) and 36500 days", EnvRetentionDays)

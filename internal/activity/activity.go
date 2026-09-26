@@ -145,7 +145,7 @@ func (s *Service) RecentForRepos(ctx context.Context, repoIDs []string, limit in
 // each is fetched with its own query — simpler and cheaper than a
 // UNION ALL across mismatched columns — and merged here.
 func (s *Service) recent(ctx context.Context, f filter, limit int) ([]Entry, error) {
-	q := s.db.Pool
+	q := s.db.Q
 	if limit > fetchLimit {
 		limit = fetchLimit
 	}

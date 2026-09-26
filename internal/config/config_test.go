@@ -17,6 +17,7 @@ func setBase(t *testing.T) string {
 	t.Setenv(EnvSecretKey, "")
 	t.Setenv(EnvWebURL, "")
 	t.Setenv(EnvRetentionDays, "")
+	t.Setenv(EnvDatabaseMaxConns, "")
 	return dir
 }
 
@@ -24,6 +25,8 @@ func TestLoadValid(t *testing.T) {
 	setBase(t)
 	t.Setenv(EnvPublicURL, "https://git.example.com/")
 	t.Setenv(EnvPort, "8090")
+
+	t.Setenv(EnvDatabaseMaxConns, "25")
 
 	cfg, err := Load()
 	if err != nil {
@@ -34,6 +37,9 @@ func TestLoadValid(t *testing.T) {
 	}
 	if cfg.Port != 8090 {
 		t.Errorf("Port = %d, want 8090", cfg.Port)
+	}
+	if cfg.DatabaseMaxConns != 25 {
+		t.Errorf("DatabaseMaxConns = %d, want 25", cfg.DatabaseMaxConns)
 	}
 }
 
@@ -48,6 +54,9 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.Port != 8080 {
 		t.Errorf("Port default = %d", cfg.Port)
+	}
+	if cfg.DatabaseMaxConns != 0 {
+		t.Errorf("DatabaseMaxConns default = %d, want 0 (the process's own default)", cfg.DatabaseMaxConns)
 	}
 }
 
@@ -65,12 +74,15 @@ func TestLoadMakesDataDirAbsolute(t *testing.T) {
 
 func TestLoadRejects(t *testing.T) {
 	cases := map[string]map[string]string{
-		"missing database URL":  {EnvDatabaseURL: ""},
-		"invalid public URL":    {EnvPublicURL: "not-a-url"},
-		"public URL with user":  {EnvPublicURL: "https://user@git.example.com"},
-		"public URL with query": {EnvPublicURL: "https://git.example.com/?x=1"},
-		"non-numeric port":      {EnvPort: "eighty"},
-		"out-of-range port":     {EnvPort: "70000"},
+		"missing database URL":   {EnvDatabaseURL: ""},
+		"invalid public URL":     {EnvPublicURL: "not-a-url"},
+		"public URL with user":   {EnvPublicURL: "https://user@git.example.com"},
+		"public URL with query":  {EnvPublicURL: "https://git.example.com/?x=1"},
+		"non-numeric port":       {EnvPort: "eighty"},
+		"out-of-range port":      {EnvPort: "70000"},
+		"non-numeric max conns":  {EnvDatabaseMaxConns: "many"},
+		"negative max conns":     {EnvDatabaseMaxConns: "-1"},
+		"out-of-range max conns": {EnvDatabaseMaxConns: "1001"},
 	}
 	for name, env := range cases {
 		t.Run(name, func(t *testing.T) {

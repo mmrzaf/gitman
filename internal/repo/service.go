@@ -82,19 +82,19 @@ func (s *Service) Create(ctx context.Context, name, description, defaultBranch, 
 
 // GetByName looks up a repository by name.
 func (s *Service) GetByName(ctx context.Context, name string) (*Repo, error) {
-	return selectRepoByName(ctx, s.db.Pool, name)
+	return selectRepoByName(ctx, s.db.Q, name)
 }
 
 // GetByID looks up a repository by ID.
 func (s *Service) GetByID(ctx context.Context, repoID string) (*Repo, error) {
-	return selectRepoByID(ctx, s.db.Pool, repoID)
+	return selectRepoByID(ctx, s.db.Q, repoID)
 }
 
 // List returns every repository, ordered by name, regardless of
 // visibility. It is for the command line, which acts with full
 // authority and has no person to check readability against.
 func (s *Service) List(ctx context.Context) ([]*Repo, error) {
-	return selectRepos(ctx, s.db.Pool)
+	return selectRepos(ctx, s.db.Q)
 }
 
 // ListReadable returns, ordered by name, every repository personID may
@@ -105,7 +105,7 @@ func (s *Service) ListReadable(ctx context.Context, personID string, isAdmin boo
 	if isAdmin {
 		return s.List(ctx)
 	}
-	return selectReadableRepos(ctx, s.db.Pool, personID)
+	return selectReadableRepos(ctx, s.db.Q, personID)
 }
 
 // CanRead reports whether personID may read r: always for an admin or a
@@ -118,7 +118,7 @@ func (s *Service) CanRead(ctx context.Context, r *Repo, personID string, isAdmin
 	if personID == "" {
 		return false, nil
 	}
-	return selectIsReader(ctx, s.db.Pool, r.ID, personID)
+	return selectIsReader(ctx, s.db.Q, r.ID, personID)
 }
 
 // CanReadID is CanRead for a caller that has a repository's ID but has
@@ -222,7 +222,7 @@ func (s *Service) RemoveReader(ctx context.Context, repoID, personID, actorID st
 // ListReaders returns the person IDs of a repository's explicit readers,
 // in the order they were added.
 func (s *Service) ListReaders(ctx context.Context, repoID string) ([]string, error) {
-	return selectReaderIDs(ctx, s.db.Pool, repoID)
+	return selectReaderIDs(ctx, s.db.Q, repoID)
 }
 
 // SetDefaultPush changes who may push to a ref no rule matches.
@@ -240,7 +240,7 @@ func (s *Service) SetDefaultPush(ctx context.Context, repoID string, policy Push
 
 // ListRules returns a repository's ref rules.
 func (s *Service) ListRules(ctx context.Context, repoID string) ([]Rule, error) {
-	return selectRules(ctx, s.db.Pool, repoID)
+	return selectRules(ctx, s.db.Q, repoID)
 }
 
 // SaveRule creates or replaces the rule for (kind, pattern).
@@ -269,7 +269,7 @@ func (s *Service) DeleteRule(ctx context.Context, repoID string, kind git.Kind, 
 // ListRefs returns a repository's indexed refs, most recently updated
 // first.
 func (s *Service) ListRefs(ctx context.Context, repoID string) ([]IndexedRef, error) {
-	return selectRefs(ctx, s.db.Pool, repoID)
+	return selectRefs(ctx, s.db.Q, repoID)
 }
 
 // SyncRefs rebuilds a repository's ref index from what Git has, for a
@@ -364,7 +364,7 @@ func (s *Service) SecretsAvailable() bool {
 
 // ListSecrets returns a repository's secrets, without their values.
 func (s *Service) ListSecrets(ctx context.Context, repoID string) ([]Secret, error) {
-	return selectSecrets(ctx, s.db.Pool, repoID)
+	return selectSecrets(ctx, s.db.Q, repoID)
 }
 
 // SetSecret encrypts value and creates or replaces the repository secret
@@ -409,7 +409,7 @@ func (s *Service) DeleteSecret(ctx context.Context, repoID, key, actorID string)
 // decrypted — typically because GITMAN_SECRET_KEY changed — rather than
 // running with some secrets silently missing.
 func (s *Service) RunSecrets(ctx context.Context, repoID string) (map[string]string, error) {
-	sealed, err := selectSecretValues(ctx, s.db.Pool, repoID)
+	sealed, err := selectSecretValues(ctx, s.db.Q, repoID)
 	if err != nil {
 		return nil, err
 	}

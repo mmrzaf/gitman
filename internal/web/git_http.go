@@ -36,13 +36,39 @@ const (
 	maxPushBodyBytes    = git.MaxPushBytes + 64<<20
 )
 
+// gitConcurrencyLimit bounds how many Git HTTP requests — cloning,
+// fetching or pushing — run at once. Each one can hold open a Git
+// subprocess, a database connection and a sizable buffer for as long as
+// a slow client takes to finish, so a large enough burst of them would
+// exhaust those before anything else does; refusing the request past
+// this limit costs a client only a retry.
+const gitConcurrencyLimit = 32
+
 // registerGitRoutes adds the Git routes to mux. A repository may be
 // addressed with or without the ".git" suffix, since Git clients accept
 // both.
 func (a *App) registerGitRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /{repo}/info/refs", a.infoRefs)
-	mux.HandleFunc("POST /{repo}/git-upload-pack", a.gitRPC(git.UploadPack))
-	mux.HandleFunc("POST /{repo}/git-receive-pack", a.gitRPC(git.ReceivePack))
+	mux.HandleFunc("GET /{repo}/info/refs", a.limitGitConcurrency(a.infoRefs))
+	mux.HandleFunc("POST /{repo}/git-upload-pack", a.limitGitConcurrency(a.gitRPC(git.UploadPack)))
+	mux.HandleFunc("POST /{repo}/git-receive-pack", a.limitGitConcurrency(a.gitRPC(git.ReceivePack)))
+}
+
+// limitGitConcurrency wraps a Git HTTP handler with the shared limit on
+// how many may run at once, answering 503 with Retry-After the instant
+// it is full rather than queuing behind whichever ones already hold a
+// slot — those can each run for as long as a large clone or push takes.
+func (a *App) limitGitConcurrency(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case a.gitSlots <- struct{}{}:
+		default:
+			w.Header().Set("Retry-After", "5")
+			http.Error(w, "Gitman is handling too many Git requests right now. Try again shortly.", http.StatusServiceUnavailable)
+			return
+		}
+		defer func() { <-a.gitSlots }()
+		next(w, r)
+	}
 }
 
 // requiredScope is the token scope a service needs.

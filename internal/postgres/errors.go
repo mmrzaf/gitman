@@ -15,6 +15,11 @@ var ErrNotFound = errors.New("not found")
 // or a token hash that is already taken.
 var ErrAlreadyExists = errors.New("already exists")
 
+// ErrUnavailable is returned when a call could not even get a connection
+// from the pool within its acquire timeout: every connection is busy, so
+// waiting for one is refused rather than left to hang indefinitely.
+var ErrUnavailable = errors.New("database is too busy right now")
+
 // IsUniqueViolation reports whether err is a PostgreSQL unique-constraint
 // violation, regardless of which constraint it was.
 func IsUniqueViolation(err error) bool {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"testing"
+	"time"
 )
 
 func testDB(t *testing.T) *DB {
@@ -113,5 +114,41 @@ func TestTxRollsBackOnError(t *testing.T) {
 	}
 	if n != 0 {
 		t.Fatal("expected the insert to be rolled back")
+	}
+}
+
+// TestAcquireTimeoutFailsFastWhenThePoolIsExhausted covers R2-4: a caller
+// that cannot even get a connection within AcquireTimeout fails with
+// ErrUnavailable in bounded time, on both Q and Tx, rather than waiting
+// as long as its own (here, unbounded) context would otherwise allow.
+func TestAcquireTimeoutFailsFastWhenThePoolIsExhausted(t *testing.T) {
+	ctx := context.Background()
+	url := os.Getenv("GITMAN_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("GITMAN_TEST_DATABASE_URL not set; skipping a test that requires PostgreSQL")
+	}
+	database, err := Connect(ctx, url, Options{MaxConns: 1, AcquireTimeout: 200 * time.Millisecond})
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	t.Cleanup(database.Close)
+
+	held, err := database.Pool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Release()
+
+	start := time.Now()
+	_, err = database.Q.Query(ctx, "SELECT 1")
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("Query took %s to fail, want it bounded by the acquire timeout", elapsed)
+	}
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("Query while the pool is exhausted = %v, want ErrUnavailable", err)
+	}
+
+	if err := database.Tx(ctx, func(tx Tx) error { return nil }); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("Tx while the pool is exhausted = %v, want ErrUnavailable", err)
 	}
 }

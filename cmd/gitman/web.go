@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/mmrzaf/gitman/internal/activity"
 	"github.com/mmrzaf/gitman/internal/auth"
@@ -19,6 +20,13 @@ import (
 	reposvc "github.com/mmrzaf/gitman/internal/repo"
 	"github.com/mmrzaf/gitman/internal/web"
 )
+
+// dbAcquireTimeout bounds how long the web process waits for a
+// connection from an exhausted pool before answering 503 rather than
+// leaving the request to hang: long enough that a brief burst of
+// concurrent requests is never the cause, short enough that a person
+// waiting on a page is not left staring at it for long either.
+const dbAcquireTimeout = 5 * time.Second
 
 // runWeb runs the web process until it receives SIGINT or SIGTERM.
 func runWeb(args []string) error {
@@ -34,7 +42,9 @@ func runWeb(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	database, err := postgres.Connect(ctx, cfg.DatabaseURL, postgres.Options{})
+	database, err := postgres.Connect(ctx, cfg.DatabaseURL, postgres.Options{
+		MaxConns: int32(cfg.DatabaseMaxConns), AcquireTimeout: dbAcquireTimeout,
+	})
 	if err != nil {
 		return err
 	}

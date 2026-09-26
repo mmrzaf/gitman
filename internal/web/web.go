@@ -38,6 +38,8 @@ type App struct {
 	assets   *assets
 	limiter  *loginLimiter
 	handler  http.Handler
+	// gitSlots bounds how many Git HTTP requests run at once.
+	gitSlots chan struct{}
 	// origin is the scheme and host of the public URL, which every
 	// state-changing request must come from.
 	origin string
@@ -93,6 +95,7 @@ func New(cfg *config.Config, services Services, log *slog.Logger) (*App, error) 
 		hub:      newHub(),
 		log:      log,
 		limiter:  newLoginLimiter(time.Now),
+		gitSlots: make(chan struct{}, gitConcurrencyLimit),
 		origin:   public.Scheme + "://" + public.Host,
 		secure:   public.Scheme == "https",
 		now:      time.Now,
@@ -197,6 +200,8 @@ func statusFor(kind apperr.Kind) int {
 		return http.StatusConflict
 	case apperr.KindTooLarge:
 		return http.StatusRequestEntityTooLarge
+	case apperr.KindUnavailable:
+		return http.StatusServiceUnavailable
 	}
 	return http.StatusInternalServerError
 }
@@ -204,6 +209,7 @@ func statusFor(kind apperr.Kind) int {
 var errorTitles = map[int]string{
 	http.StatusNotFound:            "Not found",
 	http.StatusForbidden:           "Not allowed",
+	http.StatusServiceUnavailable:  "Too busy",
 	http.StatusInternalServerError: "Something went wrong",
 }
 
@@ -212,10 +218,15 @@ var errorTitles = map[int]string{
 // a generic failure, so internal details never reach the page.
 func (a *App) renderError(w http.ResponseWriter, r *http.Request, err error) {
 	status := statusFor(apperr.KindOf(err))
-	if errors.Is(err, postgres.ErrNotFound) {
-		status = http.StatusNotFound
-	}
 	message := apperr.PublicMessage(err)
+	switch {
+	case errors.Is(err, postgres.ErrNotFound):
+		status = http.StatusNotFound
+	case errors.Is(err, postgres.ErrUnavailable):
+		status = http.StatusServiceUnavailable
+		message = "Gitman is too busy right now. Try again in a moment."
+		w.Header().Set("Retry-After", "5")
+	}
 	if status == http.StatusInternalServerError {
 		a.log.Error("page failed", "method", r.Method, "path", r.URL.Path, "error", err)
 		message = "The server could not finish this request. It has been logged."

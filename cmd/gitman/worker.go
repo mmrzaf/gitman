@@ -38,7 +38,11 @@ func runWorker(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	database, err := postgres.Connect(ctx, cfg.DatabaseURL, postgres.Options{MaxConns: 4})
+	maxConns := int32(4)
+	if cfg.DatabaseMaxConns > 0 {
+		maxConns = int32(cfg.DatabaseMaxConns)
+	}
+	database, err := postgres.Connect(ctx, cfg.DatabaseURL, postgres.Options{MaxConns: maxConns})
 	if err != nil {
 		return err
 	}

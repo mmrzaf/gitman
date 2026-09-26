@@ -27,43 +27,43 @@ func NewService(db *postgres.DB) *Service {
 // InProgress returns queued and running runs across every repository,
 // most recently active first.
 func (s *Service) InProgress(ctx context.Context, limit int) ([]Summary, error) {
-	return selectInProgress(ctx, s.db.Pool, limit)
+	return selectInProgress(ctx, s.db.Q, limit)
 }
 
 // InProgressForRepos is InProgress, restricted to repoIDs — the
 // instance-wide "running now" list for someone who cannot necessarily
 // see every repository.
 func (s *Service) InProgressForRepos(ctx context.Context, repoIDs []string, limit int) ([]Summary, error) {
-	return selectInProgressForRepos(ctx, s.db.Pool, repoIDs, limit)
+	return selectInProgressForRepos(ctx, s.db.Q, repoIDs, limit)
 }
 
 // LatestRunPerRef returns, for a repository, the most recent run on each
 // of its refs, keyed by "<kind>/<name>".
 func (s *Service) LatestRunPerRef(ctx context.Context, repoID string) (map[string]Summary, error) {
-	return selectLatestRunPerRef(ctx, s.db.Pool, repoID)
+	return selectLatestRunPerRef(ctx, s.db.Q, repoID)
 }
 
 // RunsForRepo returns a page of a repository's runs, newest first. before,
 // when nonzero, limits it to runs numbered lower than it, for paging
 // backward through history.
 func (s *Service) RunsForRepo(ctx context.Context, repoID string, before int64, limit int) ([]Summary, error) {
-	return selectRunsForRepo(ctx, s.db.Pool, repoID, before, limit)
+	return selectRunsForRepo(ctx, s.db.Q, repoID, before, limit)
 }
 
 // Live returns, for every repository and target, the latest deployment:
 // what is live there now, ordered by repository, then target.
 func (s *Service) Live(ctx context.Context) ([]Deployment, error) {
-	return selectLiveDeployments(ctx, s.db.Pool, nil)
+	return selectLiveDeployments(ctx, s.db.Q, nil)
 }
 
 // LiveForRepo is Live, scoped to one repository.
 func (s *Service) LiveForRepo(ctx context.Context, repoID string) ([]Deployment, error) {
-	return selectLiveDeployments(ctx, s.db.Pool, &repoID)
+	return selectLiveDeployments(ctx, s.db.Q, &repoID)
 }
 
 // LiveForRepos is Live, restricted to repoIDs.
 func (s *Service) LiveForRepos(ctx context.Context, repoIDs []string) ([]Deployment, error) {
-	return selectLiveDeploymentsForRepos(ctx, s.db.Pool, repoIDs)
+	return selectLiveDeploymentsForRepos(ctx, s.db.Q, repoIDs)
 }
 
 // LatestDeploymentPerRef returns, for a repository, the most recent
@@ -72,7 +72,7 @@ func (s *Service) LiveForRepos(ctx context.Context, repoIDs []string) ([]Deploym
 // since been pruned cannot be attributed to a ref and is left out;
 // LiveForRepo, not this, is the source of truth for what is live.
 func (s *Service) LatestDeploymentPerRef(ctx context.Context, repoID string) (map[string]Deployment, error) {
-	return selectLatestDeploymentPerRef(ctx, s.db.Pool, repoID)
+	return selectLatestDeploymentPerRef(ctx, s.db.Q, repoID)
 }
 
 // CreateTx records a new run inside the caller's transaction, cancels
@@ -212,7 +212,7 @@ func (s *Service) AuthenticateFetch(ctx context.Context, fetchToken string) (rep
 	if fetchToken == "" {
 		return "", ErrInvalidFetchToken
 	}
-	repoID, err = selectRunningRepoByFetchToken(ctx, s.db.Pool, token.Hash(fetchToken))
+	repoID, err = selectRunningRepoByFetchToken(ctx, s.db.Q, token.Hash(fetchToken))
 	if errors.Is(err, postgres.ErrNotFound) {
 		return "", ErrInvalidFetchToken
 	}
@@ -257,7 +257,7 @@ func (s *Service) AppendLog(ctx context.Context, runID, stepID string, sequence 
 // ended without that worker — failed as lost by another worker — or its
 // repository was deleted.
 func (s *Service) StopReason(ctx context.Context, runID string) (string, error) {
-	status, cancelRequested, err := selectRunState(ctx, s.db.Pool, runID)
+	status, cancelRequested, err := selectRunState(ctx, s.db.Q, runID)
 	switch {
 	case errors.Is(err, postgres.ErrNotFound):
 		return "the run no longer exists", nil
@@ -333,17 +333,17 @@ func (s *Service) Cancel(ctx context.Context, repoID string, number int64, by st
 
 // RegisterWorker records a worker process starting.
 func (s *Service) RegisterWorker(ctx context.Context, workerID, hostname string) error {
-	return upsertWorker(ctx, s.db.Pool, workerID, hostname)
+	return upsertWorker(ctx, s.db.Q, workerID, hostname)
 }
 
 // Heartbeat records that a worker is alive and how many runs it has.
 func (s *Service) Heartbeat(ctx context.Context, workerID string, activeRuns int) error {
-	return touchWorker(ctx, s.db.Pool, workerID, activeRuns)
+	return touchWorker(ctx, s.db.Q, workerID, activeRuns)
 }
 
 // StopWorker records a worker process shutting down.
 func (s *Service) StopWorker(ctx context.Context, workerID string) error {
-	return markWorkerStopped(ctx, s.db.Pool, workerID)
+	return markWorkerStopped(ctx, s.db.Q, workerID)
 }
 
 // FailLostRuns fails every running run whose worker stopped, or has not
@@ -376,35 +376,35 @@ func (s *Service) FailLostRuns(ctx context.Context, staleAfter time.Duration) (i
 // RepoIDForRun returns the repository ID a run belongs to, for a caller
 // that has only the run's ID, such as a notification's payload.
 func (s *Service) RepoIDForRun(ctx context.Context, runID string) (string, error) {
-	return selectRepoIDForRun(ctx, s.db.Pool, runID)
+	return selectRepoIDForRun(ctx, s.db.Q, runID)
 }
 
 // RepoIDForStep returns the repository ID a step's run belongs to.
 func (s *Service) RepoIDForStep(ctx context.Context, stepID string) (string, error) {
-	return selectRepoIDForStep(ctx, s.db.Pool, stepID)
+	return selectRepoIDForStep(ctx, s.db.Q, stepID)
 }
 
 // InstanceID returns the ID naming this Gitman instance, which workers
 // label their step containers with.
 func (s *Service) InstanceID(ctx context.Context) (string, error) {
-	return selectInstanceID(ctx, s.db.Pool)
+	return selectInstanceID(ctx, s.db.Q)
 }
 
 // RunningRunIDs returns the IDs of every running run, for a worker to
 // tell its own leftover containers from those of live runs.
 func (s *Service) RunningRunIDs(ctx context.Context) (map[string]bool, error) {
-	return selectRunningRunIDs(ctx, s.db.Pool)
+	return selectRunningRunIDs(ctx, s.db.Q)
 }
 
 // Run returns run number of a repository, with its steps and summary.
 func (s *Service) Run(ctx context.Context, repoID string, number int64) (*RunDetail, error) {
-	return selectRunDetail(ctx, s.db.Pool, repoID, number)
+	return selectRunDetail(ctx, s.db.Q, repoID, number)
 }
 
 // LogChunks returns up to limit chunks of a step's output with a
 // sequence number above after. Pass -1 to read from the start.
 func (s *Service) LogChunks(ctx context.Context, stepID string, after, limit int) ([]LogChunk, error) {
-	return selectLogChunks(ctx, s.db.Pool, stepID, after, limit)
+	return selectLogChunks(ctx, s.db.Q, stepID, after, limit)
 }
 
 // StartParams describes a run a person starts by hand.
@@ -454,7 +454,7 @@ const pruneBatch = 500
 func (s *Service) PruneRuns(ctx context.Context, before time.Time) (int64, error) {
 	var total int64
 	for {
-		n, err := deleteOldRuns(ctx, s.db.Pool, before, pruneBatch)
+		n, err := deleteOldRuns(ctx, s.db.Q, before, pruneBatch)
 		total += n
 		if err != nil || n < pruneBatch {
 			return total, err
@@ -465,5 +465,5 @@ func (s *Service) PruneRuns(ctx context.Context, before time.Time) (int64, error
 // PruneWorkers forgets workers that stopped, or were last heard from,
 // before `before` and have no running run.
 func (s *Service) PruneWorkers(ctx context.Context, before time.Time) (int64, error) {
-	return deleteGoneWorkers(ctx, s.db.Pool, before)
+	return deleteGoneWorkers(ctx, s.db.Q, before)
 }

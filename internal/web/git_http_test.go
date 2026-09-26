@@ -486,3 +486,44 @@ func TestRestrictedRepositoryOverGitHTTP(t *testing.T) {
 		}
 	}
 }
+
+// TestGitConcurrencyLimitAnswersBusyWithRetryAfter covers R2-4's Git HTTP
+// concurrency limit: once every slot is taken, the next request is
+// refused at once with 503 and Retry-After rather than left to queue
+// behind requests that could each run for as long as a large clone or
+// push takes; freeing a slot lets the next request through again.
+func TestGitConcurrencyLimitAnswersBusyWithRetryAfter(t *testing.T) {
+	app, err := New(&config.Config{PublicURL: "http://gitman.test", Port: 8080}, Services{},
+		slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := 0
+	h := app.limitGitConcurrency(func(w http.ResponseWriter, r *http.Request) {
+		called++
+		w.WriteHeader(http.StatusOK)
+	})
+
+	for i := 0; i < gitConcurrencyLimit; i++ {
+		app.gitSlots <- struct{}{}
+	}
+
+	w := httptest.NewRecorder()
+	h(w, httptest.NewRequest(http.MethodGet, "/w/info/refs", nil))
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status while every slot is taken = %d, want 503", w.Code)
+	}
+	if w.Header().Get("Retry-After") == "" {
+		t.Error("expected a Retry-After header while every slot is taken")
+	}
+	if called != 0 {
+		t.Error("the handler must not run once every slot is taken")
+	}
+
+	<-app.gitSlots
+	w = httptest.NewRecorder()
+	h(w, httptest.NewRequest(http.MethodGet, "/w/info/refs", nil))
+	if w.Code != http.StatusOK || called != 1 {
+		t.Fatalf("status = %d, called = %d, want 200 and 1 once a slot frees up", w.Code, called)
+	}
+}

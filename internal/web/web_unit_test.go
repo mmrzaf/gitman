@@ -2,6 +2,7 @@ package web
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -15,10 +16,12 @@ import (
 	"time"
 
 	"github.com/mmrzaf/gitman/internal/activity"
+	"github.com/mmrzaf/gitman/internal/apperr"
 	"github.com/mmrzaf/gitman/internal/auth"
 	"github.com/mmrzaf/gitman/internal/ci"
 	"github.com/mmrzaf/gitman/internal/config"
 	"github.com/mmrzaf/gitman/internal/git"
+	"github.com/mmrzaf/gitman/internal/postgres"
 )
 
 func TestSafeNext(t *testing.T) {
@@ -278,6 +281,39 @@ func TestPartialsRead(t *testing.T) {
 	if !strings.Contains(out, `Run #7</a>
               <span class="chip">a commit</span>`) {
 		t.Errorf("a bare commit's run in progress reads:\n%s", out)
+	}
+}
+
+// TestRenderErrorMapsPoolExhaustionToServiceUnavailable covers R2-4: a
+// database call refused for want of a free connection reaches the person
+// as 503 with a Retry-After header, distinct from an ordinary 500.
+func TestRenderErrorMapsPoolExhaustionToServiceUnavailable(t *testing.T) {
+	a := renderingApp(t)
+	cases := []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantRetry  bool
+	}{
+		{"pool exhausted", fmt.Errorf("list repos: %w", postgres.ErrUnavailable), http.StatusServiceUnavailable, true},
+		{"kind unavailable directly", apperr.New(apperr.KindUnavailable, "try again"), http.StatusServiceUnavailable, false},
+		{"not found stays not found", postgres.ErrNotFound, http.StatusNotFound, false},
+		{"a plain error stays internal", errors.New("boom"), http.StatusInternalServerError, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			r := httptest.NewRequest(http.MethodGet, "/", nil)
+			a.renderError(w, r, c.err)
+			if w.Code != c.wantStatus {
+				t.Fatalf("status = %d, want %d", w.Code, c.wantStatus)
+			}
+			if got := w.Header().Get("Retry-After"); c.wantRetry && got == "" {
+				t.Error("expected a Retry-After header")
+			} else if !c.wantRetry && got != "" {
+				t.Errorf("unexpected Retry-After header: %q", got)
+			}
+		})
 	}
 }
 

@@ -64,17 +64,17 @@ func (s *Service) Create(ctx context.Context, username, password string, isAdmin
 
 // GetByUsername looks up a person by username.
 func (s *Service) GetByUsername(ctx context.Context, username string) (*Person, error) {
-	return selectPersonByUsername(ctx, s.db.Pool, username)
+	return selectPersonByUsername(ctx, s.db.Q, username)
 }
 
 // GetByID looks up a person by ID.
 func (s *Service) GetByID(ctx context.Context, personID string) (*Person, error) {
-	return selectPersonByID(ctx, s.db.Pool, personID)
+	return selectPersonByID(ctx, s.db.Q, personID)
 }
 
 // List returns every person, ordered by username.
 func (s *Service) List(ctx context.Context) ([]Person, error) {
-	return selectPeople(ctx, s.db.Pool)
+	return selectPeople(ctx, s.db.Q)
 }
 
 // isOnlyEnabledAdmin locks the enabled admins (see lockEnabledAdmins)
@@ -251,7 +251,7 @@ func (s *Service) CreateSession(ctx context.Context, personID string, ttl time.D
 		return "", time.Time{}, fmt.Errorf("generate session token: %w", err)
 	}
 	expiresAt = time.Now().Add(ttl)
-	if err := insertSession(ctx, s.db.Pool, token.Hash(plain), personID, expiresAt); err != nil {
+	if err := insertSession(ctx, s.db.Q, token.Hash(plain), personID, expiresAt); err != nil {
 		return "", time.Time{}, err
 	}
 	return plain, expiresAt, nil
@@ -262,7 +262,7 @@ func (s *Service) CreateSession(ctx context.Context, personID string, ttl time.D
 // their sessions, as defense against a session created concurrently
 // with the disable.
 func (s *Service) SessionPerson(ctx context.Context, sessionToken string) (*Person, error) {
-	p, err := selectSessionPerson(ctx, s.db.Pool, token.Hash(sessionToken))
+	p, err := selectSessionPerson(ctx, s.db.Q, token.Hash(sessionToken))
 	if err != nil {
 		if errors.Is(err, postgres.ErrNotFound) {
 			return nil, ErrInvalidSession
@@ -279,13 +279,13 @@ func (s *Service) SessionPerson(ctx context.Context, sessionToken string) (*Pers
 // it is within extendWithin of expiring, so an active browser does not
 // write to the database on every request. It reports whether it did.
 func (s *Service) ExtendSession(ctx context.Context, sessionToken string, ttl, extendWithin time.Duration) (bool, error) {
-	return extendSessionRow(ctx, s.db.Pool, token.Hash(sessionToken), time.Now().Add(ttl), extendWithin)
+	return extendSessionRow(ctx, s.db.Q, token.Hash(sessionToken), time.Now().Add(ttl), extendWithin)
 }
 
 // DeleteSession ends one session. Deleting a session that does not exist
 // is not an error: the end state the caller wants is already true.
 func (s *Service) DeleteSession(ctx context.Context, sessionToken string) error {
-	return deleteSession(ctx, s.db.Pool, token.Hash(sessionToken))
+	return deleteSession(ctx, s.db.Q, token.Hash(sessionToken))
 }
 
 // CreateToken generates an access token and returns its plain value,
@@ -307,7 +307,7 @@ func (s *Service) CreateToken(ctx context.Context, personID, name string, scope 
 		expiresAt := time.Now().Add(*ttl)
 		created.ExpiresAt = &expiresAt
 	}
-	if err := insertToken(ctx, s.db.Pool, created, token.Hash(plain)); err != nil {
+	if err := insertToken(ctx, s.db.Q, created, token.Hash(plain)); err != nil {
 		return "", nil, err
 	}
 	return plain, created, nil
@@ -315,7 +315,7 @@ func (s *Service) CreateToken(ctx context.Context, personID, name string, scope 
 
 // ListTokens returns a person's access tokens, oldest first.
 func (s *Service) ListTokens(ctx context.Context, personID string) ([]AccessToken, error) {
-	return selectTokens(ctx, s.db.Pool, personID)
+	return selectTokens(ctx, s.db.Q, personID)
 }
 
 // RevokeToken deletes one of personID's own access tokens and returns
@@ -347,12 +347,12 @@ func (s *Service) Authenticate(ctx context.Context, plain string) (*Person, Scop
 	if plain == "" {
 		return nil, "", ErrInvalidToken
 	}
-	return useToken(ctx, s.db.Pool, token.Hash(plain))
+	return useToken(ctx, s.db.Q, token.Hash(plain))
 }
 
 // PruneExpiredSessions deletes sessions past their expiry and returns
 // how many. Expired sessions already fail to authenticate; this only
 // keeps the table from growing.
 func (s *Service) PruneExpiredSessions(ctx context.Context) (int64, error) {
-	return deleteExpiredSessions(ctx, s.db.Pool)
+	return deleteExpiredSessions(ctx, s.db.Q)
 }
