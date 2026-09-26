@@ -71,6 +71,8 @@ func setupGitHTTP(t *testing.T) *gitHTTPEnv {
 		DataDir:     dataDir,
 		PublicURL:   "https://git.example.com",
 		Port:        8080,
+		LogLevel:    "info",
+		LogFormat:   "text",
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)

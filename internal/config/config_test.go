@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -18,6 +19,8 @@ func setBase(t *testing.T) string {
 	t.Setenv(EnvWebURL, "")
 	t.Setenv(EnvRetentionDays, "")
 	t.Setenv(EnvDatabaseMaxConns, "")
+	t.Setenv(EnvLogLevel, "")
+	t.Setenv(EnvLogFormat, "")
 	return dir
 }
 
@@ -58,6 +61,12 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.DatabaseMaxConns != 0 {
 		t.Errorf("DatabaseMaxConns default = %d, want 0 (the process's own default)", cfg.DatabaseMaxConns)
 	}
+	if cfg.LogLevel != "info" {
+		t.Errorf("LogLevel default = %q, want %q", cfg.LogLevel, "info")
+	}
+	if cfg.LogFormat != "text" {
+		t.Errorf("LogFormat default = %q, want %q", cfg.LogFormat, "text")
+	}
 }
 
 func TestLoadMakesDataDirAbsolute(t *testing.T) {
@@ -83,6 +92,8 @@ func TestLoadRejects(t *testing.T) {
 		"non-numeric max conns":  {EnvDatabaseMaxConns: "many"},
 		"negative max conns":     {EnvDatabaseMaxConns: "-1"},
 		"out-of-range max conns": {EnvDatabaseMaxConns: "1001"},
+		"invalid log level":      {EnvLogLevel: "verbose"},
+		"invalid log format":     {EnvLogFormat: "xml"},
 	}
 	for name, env := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -150,5 +161,27 @@ func TestRetentionDays(t *testing.T) {
 	t.Setenv(EnvRetentionDays, "0")
 	if cfg, err = Load(); err != nil || cfg.RetentionDays != 0 {
 		t.Fatalf("RetentionDays=0 (keep forever) = %d, %v", cfg.RetentionDays, err)
+	}
+}
+
+func TestNewLogger(t *testing.T) {
+	var buf bytes.Buffer
+	cfg := &Config{LogLevel: "warn", LogFormat: "json"}
+	log := cfg.NewLogger(&buf)
+	log.Info("should not appear, below warn")
+	log.Warn("should appear", "key", "value")
+	out := buf.String()
+	if strings.Contains(out, "should not appear") {
+		t.Errorf("info-level message logged despite LogLevel=warn: %s", out)
+	}
+	if !strings.Contains(out, `"msg":"should appear"`) || !strings.Contains(out, `"key":"value"`) {
+		t.Errorf("expected a JSON-formatted warn line, got: %s", out)
+	}
+
+	buf.Reset()
+	cfg = &Config{LogLevel: "info", LogFormat: "text"}
+	cfg.NewLogger(&buf).Info("hello", "key", "value")
+	if out := buf.String(); !strings.Contains(out, "msg=hello") || !strings.Contains(out, "key=value") {
+		t.Errorf("expected a text-formatted info line, got: %s", out)
 	}
 }

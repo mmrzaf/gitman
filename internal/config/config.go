@@ -7,6 +7,8 @@ package config
 
 import (
 	"fmt"
+	"io"
+	"log/slog"
 	"net/netip"
 	"net/url"
 	"os"
@@ -56,6 +58,11 @@ type Config struct {
 	// own peer address is the client, which is right when nothing sits
 	// in front of Gitman.
 	TrustedProxies []netip.Prefix
+
+	// LogLevel is one of "debug", "info", "warn" or "error".
+	LogLevel string
+	// LogFormat is "text" or "json".
+	LogFormat string
 }
 
 // ReposPath is the directory bare repositories are stored under, one
@@ -96,6 +103,13 @@ const (
 	// CIDR ranges, such as "172.16.0.0/12" for a proxy on a Docker
 	// network.
 	EnvTrustedProxies = "GITMAN_TRUSTED_PROXIES"
+	// EnvLogLevel is one of "debug", "info" (the default), "warn" or
+	// "error".
+	EnvLogLevel = "GITMAN_LOG_LEVEL"
+	// EnvLogFormat is "text" (the default, for a terminal or a log
+	// collector that parses lines itself) or "json" (for one that wants
+	// structured fields).
+	EnvLogFormat = "GITMAN_LOG_FORMAT"
 )
 
 // Load reads configuration from the environment and validates it.
@@ -106,6 +120,8 @@ func Load() (*Config, error) {
 		PublicURL:   strings.TrimRight(getEnv(EnvPublicURL, "http://localhost:8080"), "/"),
 		WebURL:      strings.TrimRight(strings.TrimSpace(os.Getenv(EnvWebURL)), "/"),
 		SecretKey:   os.Getenv(EnvSecretKey),
+		LogLevel:    getEnv(EnvLogLevel, "info"),
+		LogFormat:   getEnv(EnvLogFormat, "text"),
 	}
 
 	port, err := getEnvInt(EnvPort, 8080)
@@ -172,7 +188,41 @@ func (c *Config) Validate() error {
 	if c.SecretKey != "" && len(c.SecretKey) < 32 {
 		return fmt.Errorf("%s must be at least 32 characters", EnvSecretKey)
 	}
+	switch c.LogLevel {
+	case "debug", "info", "warn", "error":
+	default:
+		return fmt.Errorf("%s must be \"debug\", \"info\", \"warn\" or \"error\"", EnvLogLevel)
+	}
+	switch c.LogFormat {
+	case "text", "json":
+	default:
+		return fmt.Errorf("%s must be \"text\" or \"json\"", EnvLogFormat)
+	}
 	return nil
+}
+
+// NewLogger builds the process's logger per LogLevel and LogFormat,
+// writing to w.
+func (c *Config) NewLogger(w io.Writer) *slog.Logger {
+	var level slog.Level
+	switch c.LogLevel {
+	case "debug":
+		level = slog.LevelDebug
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		level = slog.LevelInfo
+	}
+	opts := &slog.HandlerOptions{Level: level}
+	var handler slog.Handler
+	if c.LogFormat == "json" {
+		handler = slog.NewJSONHandler(w, opts)
+	} else {
+		handler = slog.NewTextHandler(w, opts)
+	}
+	return slog.New(handler)
 }
 
 func validateBaseURL(raw string) error {

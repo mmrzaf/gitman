@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -29,7 +28,7 @@ func runWorker(args []string) error {
 	if err != nil {
 		return err
 	}
-	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	log := cfg.NewLogger(os.Stderr)
 	hostname, err := os.Hostname()
 	if err != nil {
 		return fmt.Errorf("read hostname: %w", err)
