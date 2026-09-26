@@ -1,30 +1,37 @@
-# CI secrets
+# Secrets
 
-Repository owners manage CI secrets from the repository **Settings → CI** page. Secret storage is disabled until the operator configures `GITMAN_SECRET_KEY` on both web and worker processes.
+Repository secrets are encrypted at rest with `GITMAN_SECRET_KEY`. If
+that variable is empty, secret storage is disabled instance-wide — there
+is no per-repository way to turn it on regardless of key.
 
-## Reference a secret
+## Setting a key
 
-Store a key such as `DEPLOY_TOKEN`, then reference it as an environment variable:
+`GITMAN_SECRET_KEY` must be at least 32 characters:
 
-```yaml
-env:
-  DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+```sh
+openssl rand -base64 48
 ```
 
-Secret keys must start with an uppercase letter and contain only uppercase letters, digits, and underscores.
+Changing the key after secrets have been stored makes them unreadable —
+treat it like any other encryption key, not a rotatable password.
 
-## Trust boundary
+## Who can add secrets
 
-A repository writer can change `.gitman-ci.yml`, run shell commands, and exfiltrate any secret injected into that repository's jobs. Only store a secret when every user with write access is trusted with the plaintext value.
+Only an admin, or someone with access to a repository's **Settings**
+page, can add or change its secrets.
 
-## Encryption and recovery
+## Whether a run gets them
 
-Gitman encrypts stored values at rest before saving them in SQLite. `GITMAN_SECRET_KEY` is deployment state and is not stored in Gitman backups. Preserve it in an external secret manager. Losing or changing it makes existing stored values unreadable until the original key is restored.
+A ref rule must explicitly allow secrets (`--secrets` on
+`gitman admin rule set`) for a run on that ref to receive them. A ref no
+rule matches gets no secrets, the same as it gets no Docker access.
 
-## Log masking is defense in depth
+## How they reach a step
 
-The worker masks exact configured plaintext secret values in logs. This is not a complete data-loss prevention mechanism. Encoded, transformed, split, truncated, or indirectly transmitted values may still escape masking. Jobs must not print secrets.
+- Secrets are injected as environment variables into every step of a run
+  that's allowed to receive them.
+- They never appear on a command line.
+- Their values are masked wherever run output is stored and displayed.
 
-## Value limitations
-
-Secrets are injected through an environment file. Values containing NUL, carriage-return, or newline characters are not supported.
+See [Security model](../operator/security.md) for how this fits with the
+rest of the ref-rule permission system.

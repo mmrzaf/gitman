@@ -1,66 +1,55 @@
-name: CI
+name: ci
 
 on:
-  pull_request:
   push:
-    branches:
-      - main
-      - develop
-
-permissions:
-  contents: read
+  pull_request:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
-  GO_VERSION: '1.27'
-  GOLANGCI_LINT_VERSION: 'v2.13'
+  GOLANGCI_LINT_VERSION: 'v2.13.2'
   GOVULNCHECK_VERSION: 'v1.6.0'
 
 jobs:
-  verify:
-    name: Verify
+  test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: gitman_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      GITMAN_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/gitman_test?sslmode=disable
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Set up Go
-        uses: actions/setup-go@v6
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Download modules
-        run: go mod download
-
-      - name: Check formatting
-        shell: bash
-        run: |
-          set -euo pipefail
-          files="$(gofmt -l $(git ls-files '*.go'))"
-          if [[ -n "$files" ]]; then
-            echo "Go files need formatting:" >&2
-            echo "$files" >&2
-            exit 1
-          fi
-
-      - name: Test with race detector
-        run: go test -race ./...
-
+          go-version-file: go.mod
+      - name: Formatting
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - name: Vet
         run: go vet ./...
-
       - name: Lint
         uses: golangci/golangci-lint-action@v9
         with:
           version: ${{ env.GOLANGCI_LINT_VERSION }}
           args: --timeout=5m
-
       - name: Vulnerability scan
         run: go run golang.org/x/vuln/cmd/govulncheck@${{ env.GOVULNCHECK_VERSION }} ./...
-
-      - name: Build
-        run: go build ./cmd/gitman
+      # Database tests share one database, so packages run one at a time.
+      - name: Test
+        run: go test -p 1 -count=1 ./...
+      - name: Test with the race detector
+        run: go test -race -p 1 -count=1 ./...
+      - name: Build the image
+        run: docker build --build-arg VERSION="${GITHUB_SHA::12}" -t gitman:ci .

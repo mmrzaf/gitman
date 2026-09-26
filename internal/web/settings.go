@@ -1,0 +1,315 @@
+package web
+
+import (
+	"errors"
+	"net/http"
+	"net/url"
+
+	"github.com/mmrzaf/gitman/internal/apperr"
+	"github.com/mmrzaf/gitman/internal/auth"
+	"github.com/mmrzaf/gitman/internal/git"
+	"github.com/mmrzaf/gitman/internal/postgres"
+	reposvc "github.com/mmrzaf/gitman/internal/repo"
+)
+
+// repoByName resolves the {repo} path value, or a not-found page for a
+// name that no longer exists.
+func (a *App) repoByName(r *http.Request) (*reposvc.Repo, error) {
+	return a.repoNamed(r, r.PathValue("repo"))
+}
+
+// repoNamed resolves an explicit repository name, for callers that must
+// split it out of a path value themselves — the files-at-ref routes,
+// whose {repo} value is "name@ref" glued together.
+func (a *App) repoNamed(r *http.Request, name string) (*reposvc.Repo, error) {
+	repo, err := a.repos.GetByName(r.Context(), name)
+	if err != nil {
+		if errors.Is(err, postgres.ErrNotFound) {
+			return nil, apperr.New(apperr.KindNotFound, "There is no repository named \u201c"+name+"\u201d.")
+		}
+		return nil, err
+	}
+	return repo, nil
+}
+
+type repoSettingsPage struct {
+	repoFrame
+	settingsState
+	CloneURL     string
+	Rules        []reposvc.Rule
+	Secrets      []reposvc.Secret
+	People       []auth.Person
+	SecretsReady bool
+}
+
+// settingsState is what differs between the settings page shown fresh
+// and shown again after a submission failed: what each form holds, and
+// which tab and dialog are open.
+type settingsState struct {
+	DescForm   *form
+	RuleForm   *form
+	SecretForm *form
+	DeleteForm *form
+	// EditForm is the rule being edited, in the "rule-edit" dialog.
+	EditForm *form
+	// ReplaceKey is the secret whose value the "secret-replace" dialog
+	// replaces.
+	ReplaceKey string
+	// Tab is "general", "rules", "secrets" or "danger"; Dialog is
+	// "rule-new", "rule-edit", "secret-new", "secret-replace", or empty.
+	Tab    string
+	Dialog string
+}
+
+var settingsTabs = []string{"general", "rules", "secrets", "danger"}
+
+// freshSettings is the settings page with nothing submitted: the
+// description form pre-filled with the saved value, the same way any
+// other field starts from what is already saved.
+func freshSettings(repo *reposvc.Repo, tab string) settingsState {
+	return settingsState{
+		DescForm: newForm(url.Values{"description": {repo.Description}}),
+		RuleForm: newForm(nil), SecretForm: newForm(nil), DeleteForm: newForm(nil),
+		Tab: tab,
+	}
+}
+
+// ruleValues is a saved rule as the rule form's values, for editing it.
+func ruleValues(rule reposvc.Rule) url.Values {
+	v := url.Values{
+		"kind": {string(rule.Kind)}, "pattern": {rule.Pattern},
+		"push_policy": {string(rule.PushPolicy)}, "push_people": rule.PushPeople,
+	}
+	for name, on := range map[string]bool{
+		"allow_force": rule.AllowForce, "allow_delete": rule.AllowDelete, "run_on_push": rule.RunOnPush,
+		"allow_docker": rule.AllowDocker, "allow_secrets": rule.AllowSecrets, "allow_ship": rule.AllowShip,
+	} {
+		if on {
+			v.Set(name, "on")
+		}
+	}
+	return v
+}
+
+func (a *App) repoSettingsData(r *http.Request, repo *reposvc.Repo, state settingsState) (repoSettingsPage, error) {
+	rules, err := a.repos.ListRules(r.Context(), repo.ID)
+	if err != nil {
+		return repoSettingsPage{}, err
+	}
+	secrets, err := a.repos.ListSecrets(r.Context(), repo.ID)
+	if err != nil {
+		return repoSettingsPage{}, err
+	}
+	everyone, err := a.people.List(r.Context())
+	if err != nil {
+		return repoSettingsPage{}, err
+	}
+	return repoSettingsPage{
+		repoFrame: repoFrame{Repo: repo, Section: "settings"}, settingsState: state,
+		CloneURL: a.cloneURL(repo), Rules: rules, Secrets: secrets, People: everyone, SecretsReady: a.repos.SecretsAvailable(),
+	}, nil
+}
+
+// repoSettings shows the settings page, at the tab ?tab= names, with the
+// dialog ?dialog= names open: a link can lead straight to editing a rule
+// (?dialog=rule-edit&kind=branch&pattern=main) or replacing a secret
+// (?dialog=secret-replace&key=DEPLOY_TOKEN).
+func (a *App) repoSettings(w http.ResponseWriter, r *http.Request) error {
+	repo, err := a.repoByName(r)
+	if err != nil {
+		return err
+	}
+	state := freshSettings(repo, tabFrom(r, settingsTabs...))
+	state.Dialog = dialogFrom(r, "rule-new", "rule-edit", "secret-new", "secret-replace")
+	data, err := a.repoSettingsData(r, repo, state)
+	if err != nil {
+		return err
+	}
+	q := r.URL.Query()
+	switch data.Dialog {
+	case "rule-edit":
+		data.Dialog = ""
+		for _, rule := range data.Rules {
+			if string(rule.Kind) == q.Get("kind") && rule.Pattern == q.Get("pattern") {
+				data.EditForm, data.Dialog = newForm(ruleValues(rule)), "rule-edit"
+			}
+		}
+	case "secret-replace":
+		data.Dialog = ""
+		for _, secret := range data.Secrets {
+			if secret.Key == q.Get("key") {
+				data.ReplaceKey, data.Dialog = secret.Key, "secret-replace"
+			}
+		}
+	}
+	a.render(w, r, http.StatusOK, "repo_settings", repo.Name+" settings", data)
+	return nil
+}
+
+// reRenderRepoSettings shows the settings page again after a failed
+// action, with the failed form's input and its tab and dialog open.
+func (a *App) reRenderRepoSettings(w http.ResponseWriter, r *http.Request, repo *reposvc.Repo, state settingsState) error {
+	data, err := a.repoSettingsData(r, repo, state)
+	if err != nil {
+		return err
+	}
+	a.render(w, r, http.StatusUnprocessableEntity, "repo_settings", repo.Name+" settings", data)
+	return nil
+}
+
+func (a *App) repoSettingsDescription(w http.ResponseWriter, r *http.Request) error {
+	repo, err := a.repoByName(r)
+	if err != nil {
+		return err
+	}
+	if err := parseForm(w, r); err != nil {
+		return err
+	}
+	f := newForm(r.PostForm)
+	description := f.Get("description")
+	err = a.repos.SetDescription(r.Context(), repo.ID, description, personFrom(r).ID)
+	switch {
+	case failForm(f, "description", err):
+		state := freshSettings(repo, "general")
+		state.DescForm = f
+		return a.reRenderRepoSettings(w, r, repo, state)
+	case err != nil:
+		return err
+	}
+	a.redirect(w, r, "/"+repo.Name+"/settings", flashSuccess, "Saved.")
+	return nil
+}
+
+func (a *App) repoSettingsRuleSet(w http.ResponseWriter, r *http.Request) error {
+	repo, err := a.repoByName(r)
+	if err != nil {
+		return err
+	}
+	if err := parseForm(w, r); err != nil {
+		return err
+	}
+	f := newForm(r.PostForm)
+	kind := git.Kind(f.Get("kind"))
+	pattern := f.Get("pattern")
+	if kind != git.KindBranch && kind != git.KindTag {
+		f.Fail("kind", "Choose branch or tag.")
+	}
+	rule := reposvc.Rule{
+		Kind: kind, Pattern: pattern, PushPolicy: reposvc.PushPolicy(f.Get("push_policy")),
+		AllowForce: r.PostForm.Has("allow_force"), AllowDelete: r.PostForm.Has("allow_delete"),
+		RunOnPush: r.PostForm.Has("run_on_push"), AllowDocker: r.PostForm.Has("allow_docker"),
+		AllowSecrets: r.PostForm.Has("allow_secrets"), AllowShip: r.PostForm.Has("allow_ship"),
+	}
+	if rule.PushPolicy == reposvc.PushPeople {
+		rule.PushPeople = r.PostForm["push_people"]
+	}
+	if f.Valid() {
+		if err := a.repos.SaveRule(r.Context(), repo.ID, rule, personFrom(r).ID); err != nil && !failForm(f, "", err) {
+			return err
+		}
+	}
+	if !f.Valid() {
+		state := freshSettings(repo, "rules")
+		if f.Get("mode") == "edit" {
+			state.EditForm, state.Dialog = f, "rule-edit"
+		} else {
+			state.RuleForm, state.Dialog = f, "rule-new"
+		}
+		return a.reRenderRepoSettings(w, r, repo, state)
+	}
+	a.redirect(w, r, "/"+repo.Name+"/settings?tab=rules", flashSuccess, "Saved the rule for "+string(kind)+" \u201c"+pattern+"\u201d.")
+	return nil
+}
+
+func (a *App) repoSettingsRuleDelete(w http.ResponseWriter, r *http.Request) error {
+	repo, err := a.repoByName(r)
+	if err != nil {
+		return err
+	}
+	if err := parseForm(w, r); err != nil {
+		return err
+	}
+	kind := git.Kind(r.PostForm.Get("kind"))
+	pattern := r.PostForm.Get("pattern")
+	err = a.repos.DeleteRule(r.Context(), repo.ID, kind, pattern, personFrom(r).ID)
+	switch {
+	case errors.Is(err, postgres.ErrNotFound):
+		a.redirect(w, r, "/"+repo.Name+"/settings?tab=rules", flashInfo, "There was no rule for "+string(kind)+" \u201c"+pattern+"\u201d.")
+		return nil
+	case err != nil:
+		return err
+	}
+	a.redirect(w, r, "/"+repo.Name+"/settings?tab=rules", flashSuccess, "Removed the rule for "+string(kind)+" \u201c"+pattern+"\u201d.")
+	return nil
+}
+
+func (a *App) repoSettingsSecretSet(w http.ResponseWriter, r *http.Request) error {
+	repo, err := a.repoByName(r)
+	if err != nil {
+		return err
+	}
+	if err := parseForm(w, r); err != nil {
+		return err
+	}
+	f := newForm(r.PostForm)
+	key := f.Get("key")
+	err = a.repos.SetSecret(r.Context(), repo.ID, key, r.PostForm.Get("value"), personFrom(r).ID)
+	switch {
+	case failForm(f, "", err):
+		state := freshSettings(repo, "secrets")
+		if f.Get("mode") == "replace" {
+			state.ReplaceKey, state.Dialog = key, "secret-replace"
+		} else {
+			state.Dialog = "secret-new"
+		}
+		state.SecretForm = f
+		return a.reRenderRepoSettings(w, r, repo, state)
+	case err != nil:
+		return err
+	}
+	a.redirect(w, r, "/"+repo.Name+"/settings?tab=secrets", flashSuccess, "Saved "+key+".")
+	return nil
+}
+
+func (a *App) repoSettingsSecretDelete(w http.ResponseWriter, r *http.Request) error {
+	repo, err := a.repoByName(r)
+	if err != nil {
+		return err
+	}
+	if err := parseForm(w, r); err != nil {
+		return err
+	}
+	key := r.PostForm.Get("key")
+	err = a.repos.DeleteSecret(r.Context(), repo.ID, key, personFrom(r).ID)
+	switch {
+	case errors.Is(err, postgres.ErrNotFound):
+		a.redirect(w, r, "/"+repo.Name+"/settings?tab=secrets", flashInfo, "There was no secret named "+key+".")
+		return nil
+	case err != nil:
+		return err
+	}
+	a.redirect(w, r, "/"+repo.Name+"/settings?tab=secrets", flashSuccess, "Removed "+key+".")
+	return nil
+}
+
+func (a *App) repoSettingsDelete(w http.ResponseWriter, r *http.Request) error {
+	repo, err := a.repoByName(r)
+	if err != nil {
+		return err
+	}
+	if err := parseForm(w, r); err != nil {
+		return err
+	}
+	f := newForm(r.PostForm)
+	if f.Get("confirm_name") != repo.Name {
+		f.Fail("confirm_name", "Type the repository's name exactly to confirm.")
+		state := freshSettings(repo, "danger")
+		state.DeleteForm = f
+		return a.reRenderRepoSettings(w, r, repo, state)
+	}
+	if err := a.repos.Delete(r.Context(), repo.ID, personFrom(r).ID); err != nil {
+		return err
+	}
+	a.redirect(w, r, "/", flashSuccess, "Deleted "+repo.Name+", with its history, runs and deployments.")
+	return nil
+}

@@ -1,0 +1,82 @@
+# Gitman: PostgreSQL, the web process and one worker, behind a Traefik
+# that already runs on this host. Copy .env.example to .env, fill it in,
+# then: docker compose up -d --build
+name: gitman
+
+x-gitman-environment: &gitman-environment
+  GITMAN_DATABASE_URL: postgres://gitman:${POSTGRES_PASSWORD}@postgres:5432/gitman?sslmode=disable
+  GITMAN_DATA_DIR: ${GITMAN_DATA_DIR:-/srv/gitman}
+  GITMAN_PUBLIC_URL: https://${GITMAN_HOST}
+  # Workers fetch run checkouts from web directly, not through Traefik.
+  GITMAN_WEB_URL: http://web:8080
+  GITMAN_SECRET_KEY: ${GITMAN_SECRET_KEY:-}
+  GITMAN_TRUSTED_PROXIES: ${GITMAN_TRUSTED_PROXIES:-172.16.0.0/12}
+  GITMAN_RETENTION_DAYS: ${GITMAN_RETENTION_DAYS:-90}
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:16-alpine}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: gitman
+      POSTGRES_USER: gitman
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gitman -d gitman"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web:
+    image: ${GITMAN_IMAGE:-gitman:latest}
+    build: .
+    restart: unless-stopped
+    command: ["web"]
+    environment: *gitman-environment
+    volumes:
+      # The same path inside and out: repositories, hooks and workspaces
+      # live here, and step containers mount workspaces by host path.
+      - ${GITMAN_DATA_DIR:-/srv/gitman}:${GITMAN_DATA_DIR:-/srv/gitman}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [internal, traefik]
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=${TRAEFIK_NETWORK:-traefik}
+      - traefik.http.routers.gitman.rule=Host(`${GITMAN_HOST:?set GITMAN_HOST in .env}`)
+      - traefik.http.routers.gitman.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}
+      - traefik.http.routers.gitman.tls.certresolver=${TRAEFIK_CERTRESOLVER:-letsencrypt}
+      - traefik.http.services.gitman.loadbalancer.server.port=8080
+
+  worker:
+    image: ${GITMAN_IMAGE:-gitman:latest}
+    restart: unless-stopped
+    command: ["worker"]
+    # Root, to use the host's Docker socket. Step containers run as
+    # whatever user their image says.
+    user: root
+    environment: *gitman-environment
+    volumes:
+      - ${GITMAN_DATA_DIR:-/srv/gitman}:${GITMAN_DATA_DIR:-/srv/gitman}
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      postgres:
+        condition: service_healthy
+      web:
+        condition: service_started
+    networks: [internal]
+    healthcheck:
+      disable: true
+
+networks:
+  internal: {}
+  traefik:
+    external: true
+    name: ${TRAEFIK_NETWORK:-traefik}
+
+volumes:
+  postgres: {}

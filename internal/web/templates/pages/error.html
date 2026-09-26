@@ -1,0 +1,13 @@
+{{define "content"}}
+<div class="centered">
+  <section class="error-card" aria-labelledby="error-title">
+    <p class="error-code">ERROR {{.Data.Status}}</p>
+    <h1 id="error-title">{{.Title}}</h1>
+    <p>{{.Data.Message}}</p>
+    <p class="cluster">
+      <a class="btn btn-primary" href="/">{{template "icon" "home"}}Go to Home</a>
+      {{- if .Person}}<button type="button" class="btn js-only" data-palette-open>{{template "icon" "search"}}Jump to…</button>{{end}}
+    </p>
+  </section>
+</div>
+{{end}}

@@ -1,50 +1,44 @@
-ARG GO_IMAGE=golang:1.27-bookworm
-ARG RUNTIME_IMAGE=debian:bookworm-slim
+# One image for Gitman's web process, worker and Git hooks; the command
+# picks which ("web" by default, "worker" for a worker).
+#
+# Every source the build downloads from is a build argument, so the image
+# builds behind registry and module mirrors:
+#
+#   docker build \
+#     --build-arg GO_IMAGE=registry.example.com/library/golang:1.27-alpine \
+#     --build-arg RUNTIME_IMAGE=registry.example.com/library/alpine:3.20 \
+#     --build-arg GOPROXY=https://goproxy.example.com,direct \
+#     --build-arg ALPINE_MIRROR=https://alpine.example.com/alpine \
+#     --build-arg VERSION=1.0.0 \
+#     -t gitman:1.0.0 .
+ARG GO_IMAGE=golang:1.27-alpine
+ARG RUNTIME_IMAGE=alpine:3.20
 
-FROM ${GO_IMAGE} AS builder
-
-ARG DEBIAN_MIRROR=http://deb.debian.org/debian
-ARG DEBIAN_SECURITY_MIRROR=http://security.debian.org/debian-security
+FROM ${GO_IMAGE} AS build
 ARG GOPROXY=https://proxy.golang.org,direct
-ENV GOPROXY=${GOPROXY} \
-	GOTOOLCHAIN=local
-
-RUN set -eu; \
-	rm -f /etc/apt/sources.list.d/debian.sources; \
-	printf 'deb %s bookworm main\ndeb %s bookworm-updates main\ndeb %s bookworm-security main\n' \
-		"$DEBIAN_MIRROR" "$DEBIAN_MIRROR" "$DEBIAN_SECURITY_MIRROR" > /etc/apt/sources.list; \
-	apt-get update; \
-	apt-get install -y --no-install-recommends git ca-certificates; \
-	rm -rf /var/lib/apt/lists/*
-
+ARG VERSION=dev
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
-
-COPY . .
-ARG VERSION=dev
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /gitman ./cmd/gitman
+COPY cmd ./cmd
+COPY internal ./internal
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/gitman ./cmd/gitman
 
 FROM ${RUNTIME_IMAGE}
-
-ARG DEBIAN_MIRROR=http://deb.debian.org/debian
-ARG DEBIAN_SECURITY_MIRROR=http://security.debian.org/debian-security
-ARG GIT_UID=1000
-
-RUN set -eu; \
-	rm -f /etc/apt/sources.list.d/debian.sources; \
-	printf 'deb %s bookworm main\ndeb %s bookworm-updates main\ndeb %s bookworm-security main\n' \
-		"$DEBIAN_MIRROR" "$DEBIAN_MIRROR" "$DEBIAN_SECURITY_MIRROR" > /etc/apt/sources.list; \
-	apt-get update; \
-	apt-get install -y --no-install-recommends git curl bash docker.io ca-certificates; \
-	rm -rf /var/lib/apt/lists/*; \
-	useradd --create-home --home-dir /data --uid "${GIT_UID}" --shell /bin/bash git; \
-	mkdir -p /data; \
-	chown -R git:git /data
-
-COPY --from=builder /gitman /usr/local/bin/gitman
-
-USER git
-WORKDIR /data
-
-CMD ["gitman", "web"]
+ARG ALPINE_MIRROR=
+# git serves repositories and fetches run checkouts; the docker client is
+# how a worker runs steps. No Go toolchain, compiler or shell tooling
+# beyond what these need.
+RUN if [ -n "$ALPINE_MIRROR" ]; then \
+      sed -i "s#https\?://dl-cdn.alpinelinux.org/alpine#${ALPINE_MIRROR}#" /etc/apk/repositories; \
+    fi \
+ && apk add --no-cache git docker-cli ca-certificates tzdata \
+ && addgroup -S -g 1000 gitman \
+ && adduser -S -D -u 1000 -G gitman -h /home/gitman gitman
+COPY --from=build /out/gitman /usr/local/bin/gitman
+USER gitman
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
+  CMD wget -q -O /dev/null "http://127.0.0.1:${GITMAN_PORT:-8080}/healthz" || exit 1
+ENTRYPOINT ["gitman"]
+CMD ["web"]

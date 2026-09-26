@@ -1,53 +1,38 @@
 # Git transports
 
-## Git over HTTP
+Gitman supports Git over HTTPS only — the smart HTTP protocol
+(`git-upload-pack`/`git-receive-pack`), served by the `web` process. There
+is no SSH transport; this is a deliberate scope decision (see
+[Not added, on purpose](../README.md#not-added-on-purpose)), not a gap.
 
-Git smart HTTP is available from the web process:
+## Authentication
 
-```text
-<public-url>/<owner>/<repository>.git
+Use your Gitman username and an access token (from **Access tokens**, or
+`gitman admin token create`) as the HTTP password:
+
+```sh
+git clone https://git.example.com/waiotech.git
+Username: darius
+Password: <access token>
 ```
 
-Example:
+Most Git clients and credential helpers cache this the same way they
+would a personal access token on any other Git host.
 
-```bash
-git clone https://git.example.com/alice/project.git
-```
+- A **read** token can clone and fetch.
+- A **write** token can also push.
 
-Authentication rules:
+## Push behavior
 
-| Operation | Public repository | Private repository |
-| --- | --- | --- |
-| Clone and fetch | Anonymous allowed | Owner or `read`/`write` collaborator |
-| Push | Owner or `write` collaborator | Owner or `write` collaborator |
+A push is rejected before anything is written if a matching ref rule
+forbids it (who may push, whether force-push or deletion is allowed). If
+the ref's rule allows running the pipeline, `web`'s `post-receive` hook
+queues a run and the push output prints a link to it.
 
-For authenticated operations, Git uses HTTP Basic authentication. Use your Gitman username and a personal access token as the password. Account passwords are not accepted for Git Smart HTTP.
+## Large clones and pushes
 
-## Git over SSH
-
-SSH transport is optional and depends on host OpenSSH configuration. The clone form is:
-
-```bash
-git clone git@git.example.com:alice/project.git
-```
-
-The SSH username defaults to `git` and is controlled by `GITMAN_SSH_USER`. The hostname displayed in the UI comes from `GITMAN_SERVER_HOST`.
-
-SSH keys authenticate Gitman users through generated OpenSSH forced commands. There is no shell access. The allowed commands are:
-
-- `git-upload-pack`
-- `git-receive-pack`
-- `git-upload-archive`
-
-Unlike public HTTP clone, SSH always uses an authenticated key.
-
-## Source archives
-
-The browser UI exposes source archives for the selected ref:
-
-```text
-/<owner>/<repository>/archive/zip?ref=<branch-or-tag>
-/<owner>/<repository>/archive/tar.gz?ref=<branch-or-tag>
-```
-
-Archives follow repository visibility: public source archives are public; private source archives require repository access. Archive and raw/download streams are protected by global/per-client concurrency limits and a finite stream lifetime so slow clients cannot retain Git subprocesses indefinitely.
+If Gitman sits behind a reverse proxy (see
+[Docker deployment](operator/docker.md)), a large clone or push can
+outlast the proxy's own read timeout before Gitman's smart-HTTP handler
+finishes. Raise the proxy's timeout for Gitman's route rather than
+Gitman's own configuration, which has no separate knob for this.

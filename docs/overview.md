@@ -1,54 +1,19 @@
-# Product overview
+# Overview
 
-## What Gitman is
+Gitman is a self-hosted Git server with built-in pipelines, for one person
+or a small team running it on their own server. It provides:
 
-Gitman is an opinionated small-team Git forge. Metadata is stored in SQLite. Bare Git repositories are stored on disk. Git transport operations are delegated to the system `git` executable. The web UI, database migrations, templates, and static assets are embedded into the Go binary.
+- Git over HTTPS, with per-person access tokens as the only credential.
+- A web interface for browsing code, diffs, commits and pipeline runs.
+- Pipelines that build and ship with Docker on the same host the worker
+  runs on.
 
-The product has two independently runnable processes:
+It deliberately stays small: one binary (`gitman`), one PostgreSQL
+database, and a handful of ideas — people, repositories, ref rules, and
+pipelines. See [Not added, on purpose](../README.md#not-added-on-purpose)
+in the top-level README for what it explicitly leaves out (SSH, pull
+requests/issues/wikis, organizations, anonymous access, image pulling,
+CI artifacts/caches, webhooks, and more).
 
-| Process | Purpose | Required dependencies |
-| --- | --- | --- |
-| `gitman web` | Browser UI, Git smart HTTP, durable CI trigger drain, health endpoint | `git` |
-| `gitman worker` | Polls queued CI runs and starts restricted Docker containers | `git`, Docker CLI, access to Docker daemon |
-
-Optional SSH Git transport uses the host OpenSSH server and a host-visible `gitman` wrapper. It is not implemented by an embedded SSH daemon.
-
-## Access model
-
-A repository has one owner and can have collaborators:
-
-| Role | Browse private source | Pull | Push | View CI logs and artifacts | Run CI manually | Manage collaborators | Manage CI settings |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| Owner | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| `write` collaborator | Yes | Yes | Yes | Yes | Yes | No | No |
-| `read` collaborator | Yes | Yes | No | Yes | No | No | No |
-| Anonymous visitor to public repo | Yes | Yes over HTTP | No | No | No | No | No |
-
-Public repository source browsing does not make CI logs or artifacts public.
-
-## CI trust model
-
-The CI worker executes repository-controlled shell commands in Docker containers. Gitman applies useful restrictions: no network by default, read-only container root filesystem, dropped Linux capabilities, `no-new-privileges`, PID limits, CPU and memory limits, numeric non-root user enforcement, bounded logs, byte and filesystem-entry limits for artifact/workspace/cache paths, minimum free-space/inode admission checks, and serialized per-repository cache writes.
-
-The worker also persists a liveness/admission heartbeat and pauses new claims while Docker, SQLite, or worker storage is unhealthy. Docker-daemon outages during an attempt are requeued against the exact lease instead of being reported as pipeline failures.
-
-Those controls reduce risk. They do not turn a Docker-socket-backed worker into a hardened multi-tenant sandbox. Operate it as privileged infrastructure.
-
-## Storage model
-
-Default source-mode paths are relative to the working directory:
-
-```text
-.data/
-├── db/gitman.sqlite
-├── repos/<owner>/<repo>.git
-├── authorized_keys
-├── artifacts/
-│   ├── logs/<owner>/<repo>/<run-id>/<attempt-id>.log
-│   └── files/<owner>/<repo>/<run-id>/<attempt-id>/...
-└── ci/
-    ├── cache/<owner>/<repo>/current
-    └── workspaces/...
-```
-
-The Docker Compose deployment maps the same data under `/data` inside the containers.
+For how the pieces run together, see [Architecture](architecture.md). To
+get an instance running, see [Getting started](getting-started.md).

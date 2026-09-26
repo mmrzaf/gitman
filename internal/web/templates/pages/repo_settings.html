@@ -1,0 +1,239 @@
+{{define "content"}}
+{{$d := .Data}}{{$repo := $d.Repo}}{{$base := printf "/%s/settings" $repo.Name}}
+<div class="page">
+<h1 class="visually-hidden" id="settings-title">Settings for {{$repo.Name}}</h1>
+<div class="with-sidenav">
+  <nav class="sidenav tabs tabs-vertical" data-tabs aria-label="Settings" aria-orientation="vertical">
+    <a class="tab" id="tab-general" href="{{$base}}" data-tab="general"{{if eq $d.Tab "general"}} aria-current="page"{{end}}>{{template "icon" "settings"}}General</a>
+    <a class="tab" id="tab-rules" href="{{$base}}?tab=rules" data-tab="rules"{{if eq $d.Tab "rules"}} aria-current="page"{{end}}>{{template "icon" "shield"}}Ref rules <span class="tab-count">{{len $d.Rules}}</span></a>
+    <a class="tab" id="tab-secrets" href="{{$base}}?tab=secrets" data-tab="secrets"{{if eq $d.Tab "secrets"}} aria-current="page"{{end}}>{{template "icon" "key"}}Secrets <span class="tab-count">{{len $d.Secrets}}</span></a>
+    <a class="tab" id="tab-danger" href="{{$base}}?tab=danger" data-tab="danger"{{if eq $d.Tab "danger"}} aria-current="page"{{end}}>{{template "icon" "warning"}}Danger zone</a>
+  </nav>
+
+  <div>
+    <section class="panel" id="panel-general" data-tab-panel="general" aria-labelledby="general-title"{{if ne $d.Tab "general"}} hidden{{end}}>
+      <header class="panel-header"><h2 class="panel-title" id="general-title">General</h2></header>
+      <div class="panel-body stack">
+        <div class="inline-edit" data-inline-edit{{if not $d.DescForm.Valid}} data-inline-editing{{end}}>
+          <div class="inline-edit-view" data-inline-view>
+            <p class="field-label">Description</p>
+            <p class="inline-edit-value">{{with $repo.Description}}{{.}}{{else}}<span class="muted">No description.</span>{{end}}</p>
+            <button type="button" class="btn btn-sm" data-inline-start aria-label="Edit the description">{{template "icon" "edit"}}Edit</button>
+          </div>
+          <form method="post" action="{{$base}}/description" class="form" data-inline-form>
+            {{template "form-error" $d.DescForm.Error}}
+            {{template "field" field $d.DescForm "description" "Description" "text" "hint:Shown under the repository's name."}}
+            <div class="form-actions">
+              <button type="button" class="btn js-only" data-inline-cancel>Cancel</button>
+              <button type="submit" class="btn btn-primary">Save description</button>
+            </div>
+          </form>
+        </div>
+        {{template "copy-field" (dict "ID" "clone-url" "Label" "Clone URL" "Value" $d.CloneURL)}}
+        <dl class="facts">
+          <dt>Default branch</dt><dd>{{template "ref" (dict "Kind" "branch" "Name" $repo.DefaultBranch)}}</dd>
+          <dt>Created</dt><dd>{{template "time" $repo.CreatedAt}}</dd>
+        </dl>
+      </div>
+    </section>
+
+    <section class="panel" id="panel-rules" data-tab-panel="rules" aria-labelledby="rules-title"{{if ne $d.Tab "rules"}} hidden{{end}}>
+      <header class="panel-header">
+        <h2 class="panel-title" id="rules-title">Ref rules</h2>
+        <span class="panel-actions"><a class="btn btn-sm btn-primary" href="{{$base}}?tab=rules&amp;dialog=rule-new" data-dialog-open="rule-new" data-command="Add a ref rule to {{$repo.Name}}">{{template "icon" "plus"}}New rule</a></span>
+      </header>
+      <p class="panel-intro">A branch or tag no rule matches is unprotected: anyone may push, force-push or delete it, and pushing to it never starts a run.</p>
+      {{- if $d.Rules}}
+      <div class="table-scroll">
+        <table class="table">
+          <thead><tr><th scope="col">Branch or tag</th><th scope="col">Who may push</th><th scope="col">Allows</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+          <tbody>
+          {{- range $d.Rules}}
+            <tr>
+              <th scope="row" class="table-rowheader">{{template "ref" (dict "Kind" .Kind "Name" .Pattern)}}</th>
+              <td>{{if eq .PushPolicy "everyone"}}Everyone{{else if eq .PushPolicy "admins"}}Admins{{else}}{{len .PushPeople}} named {{if eq (len .PushPeople) 1}}person{{else}}people{{end}}{{end}}</td>
+              <td><span class="cluster">
+                {{- if .RunOnPush}}<span class="chip">{{template "icon" "play"}}run</span>{{end}}
+                {{- if .AllowShip}}<span class="chip">{{template "icon" "ship"}}ship</span>{{end}}
+                {{- if .AllowSecrets}}<span class="chip">{{template "icon" "key"}}secrets</span>{{end}}
+                {{- if .AllowDocker}}<span class="chip chip-warning">{{template "icon" "warning"}}docker</span>{{end}}
+                {{- if .AllowForce}}<span class="chip">force-push</span>{{end}}
+                {{- if .AllowDelete}}<span class="chip">delete</span>{{end}}
+                {{- if not (or .RunOnPush .AllowShip .AllowSecrets .AllowDocker .AllowForce .AllowDelete)}}<span class="muted">pushing only</span>{{end}}
+              </span></td>
+              <td class="cell-shrink cell-end">
+                <details class="menu" data-menu>
+                  <summary class="btn btn-ghost btn-icon btn-sm" aria-label="Actions for the {{.Kind}} rule {{.Pattern}}">{{template "icon" "more"}}</summary>
+                  <div class="menu-list">
+                    <a class="menu-item" href="{{$base}}?tab=rules&amp;dialog=rule-edit&amp;kind={{.Kind}}&amp;pattern={{.Pattern}}">{{template "icon" "edit"}}Edit rule</a>
+                    <form method="post" action="{{$base}}/rules/delete" data-confirm="Remove the rule for {{.Kind}} {{.Pattern}}?" data-confirm-detail="Matching refs become unprotected: anyone may push, force-push or delete them, and pushes stop starting runs." data-confirm-action="Remove rule">
+                      <input type="hidden" name="kind" value="{{.Kind}}">
+                      <input type="hidden" name="pattern" value="{{.Pattern}}">
+                      <button type="submit" class="menu-item menu-item-danger">{{template "icon" "trash"}}Remove rule</button>
+                    </form>
+                  </div>
+                </details>
+              </td>
+            </tr>
+          {{- end}}
+          </tbody>
+        </table>
+      </div>
+      {{- else}}
+      {{template "empty" (dict "Icon" "shield" "Title" "No rules yet" "Text" "Every branch and tag is unprotected, and no push starts a run.")}}
+      {{- end}}
+    </section>
+
+    <section class="panel" id="panel-secrets" data-tab-panel="secrets" aria-labelledby="secrets-title"{{if ne $d.Tab "secrets"}} hidden{{end}}>
+      <header class="panel-header">
+        <h2 class="panel-title" id="secrets-title">Secrets</h2>
+        {{- if $d.SecretsReady}}
+        <span class="panel-actions"><a class="btn btn-sm btn-primary" href="{{$base}}?tab=secrets&amp;dialog=secret-new" data-dialog-open="secret-new" data-command="Add a secret to {{$repo.Name}}">{{template "icon" "plus"}}New secret</a></span>
+        {{- end}}
+      </header>
+      <p class="panel-intro">Put into a run's environment when its ref's rule allows secrets. A value can be replaced, never read back.</p>
+      {{- if not $d.SecretsReady}}
+      <div class="panel-body"><div class="callout is-queued" role="note">{{template "icon" "warning"}}<p class="callout-body">GITMAN_SECRET_KEY is not configured on this instance, so secrets can't be stored.</p></div></div>
+      {{- else if $d.Secrets}}
+      <div class="table-scroll">
+        <table class="table">
+          <thead><tr><th scope="col">Key</th><th scope="col">Set</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+          <tbody>
+          {{- range $d.Secrets}}
+            <tr>
+              <th scope="row" class="table-rowheader mono">{{.Key}}</th>
+              <td class="cell-muted">{{template "time" .CreatedAt}}</td>
+              <td class="cell-shrink cell-end">
+                <details class="menu" data-menu>
+                  <summary class="btn btn-ghost btn-icon btn-sm" aria-label="Actions for the secret {{.Key}}">{{template "icon" "more"}}</summary>
+                  <div class="menu-list">
+                    <a class="menu-item" href="{{$base}}?tab=secrets&amp;dialog=secret-replace&amp;key={{.Key}}">{{template "icon" "edit"}}Replace value</a>
+                    <form method="post" action="{{$base}}/secrets/delete" data-confirm="Remove the secret {{.Key}}?" data-confirm-detail="Runs stop getting it at once." data-confirm-action="Remove secret">
+                      <input type="hidden" name="key" value="{{.Key}}">
+                      <button type="submit" class="menu-item menu-item-danger">{{template "icon" "trash"}}Remove secret</button>
+                    </form>
+                  </div>
+                </details>
+              </td>
+            </tr>
+          {{- end}}
+          </tbody>
+        </table>
+      </div>
+      {{- else}}
+      {{template "empty" (dict "Icon" "key" "Title" "No secrets yet")}}
+      {{- end}}
+    </section>
+
+    <section class="panel panel-danger" id="panel-danger" data-tab-panel="danger" aria-labelledby="danger-title"{{if ne $d.Tab "danger"}} hidden{{end}}>
+      <header class="panel-header"><h2 class="panel-title" id="danger-title">Delete this repository</h2></header>
+      <form method="post" action="{{$base}}/delete" class="panel-body form">
+        <p>Deletes <strong>{{$repo.Name}}</strong> with its whole history, every run and every deployment record. This can't be undone.</p>
+        {{template "field" field $d.DeleteForm "confirm_name" (printf "Type %s to confirm" $repo.Name) "text" "required" "autocomplete:off"}}
+        <div class="form-actions"><button type="submit" class="btn btn-danger-solid">{{template "icon" "trash"}}Delete {{$repo.Name}}</button></div>
+      </form>
+    </section>
+  </div>
+</div>
+
+<dialog class="dialog dialog-wide" id="rule-new" aria-labelledby="rule-new-title" data-dialog{{if eq $d.Dialog "rule-new"}} open{{end}}>
+  {{template "rule-form" (dict "ID" "rule-new" "Title" "New rule" "Form" $d.RuleForm "People" $d.People "Action" (printf "%s/rules" $base) "Close" (printf "%s?tab=rules" $base) "Edit" false)}}
+</dialog>
+{{- with $d.EditForm}}
+<dialog class="dialog dialog-wide" id="rule-edit" aria-labelledby="rule-edit-title" data-dialog data-dialog-params="kind pattern"{{if eq $d.Dialog "rule-edit"}} open{{end}}>
+  {{template "rule-form" (dict "ID" "rule-edit" "Title" "Edit rule" "Form" . "People" $d.People "Action" (printf "%s/rules" $base) "Close" (printf "%s?tab=rules" $base) "Edit" true)}}
+</dialog>
+{{- end}}
+{{- if $d.SecretsReady}}
+<dialog class="dialog" id="secret-new" aria-labelledby="secret-new-title" data-dialog{{if eq $d.Dialog "secret-new"}} open{{end}}>
+  <form method="post" action="{{$base}}/secrets" class="form">
+    <header class="dialog-header"><h2 class="dialog-title" id="secret-new-title">New secret</h2>{{template "dialog-close" (printf "%s?tab=secrets" $base)}}</header>
+    <div class="dialog-body">
+      {{template "form-error" $d.SecretForm.Error}}
+      {{template "field" field $d.SecretForm "key" "Key" "text" "required" "autofocus" "autocomplete:off" "hint:Uppercase letters, digits and underscores, e.g. DEPLOY_TOKEN."}}
+      <div class="field">
+        <label class="field-label" for="f-value">Value</label>
+        <input class="input input-mono" id="f-value" name="value" type="password" required autocomplete="off">
+      </div>
+    </div>
+    <footer class="dialog-footer"><button type="button" class="btn js-only" data-dialog-close>Cancel</button><button type="submit" class="btn btn-primary">Save secret</button></footer>
+  </form>
+</dialog>
+{{- with $d.ReplaceKey}}
+<dialog class="dialog" id="secret-replace" aria-labelledby="secret-replace-title" data-dialog data-dialog-params="key"{{if eq $d.Dialog "secret-replace"}} open{{end}}>
+  <form method="post" action="{{$base}}/secrets" class="form">
+    <input type="hidden" name="mode" value="replace">
+    <input type="hidden" name="key" value="{{.}}">
+    <header class="dialog-header"><h2 class="dialog-title" id="secret-replace-title">Replace <span class="mono">{{.}}</span></h2>{{template "dialog-close" (printf "%s?tab=secrets" $base)}}</header>
+    <div class="dialog-body">
+      {{template "form-error" $d.SecretForm.Error}}
+      <div class="field">
+        <label class="field-label" for="f-replace-value">New value</label>
+        <input class="input input-mono" id="f-replace-value" name="value" type="password" required autofocus autocomplete="off">
+        <p class="field-hint">Runs that start from now on get the new value.</p>
+      </div>
+    </div>
+    <footer class="dialog-footer"><button type="button" class="btn js-only" data-dialog-close>Cancel</button><button type="submit" class="btn btn-primary">Replace value</button></footer>
+  </form>
+</dialog>
+{{- end}}
+{{- end}}
+</div>
+{{end}}
+
+{{/* rule-form: the form that adds or edits a ref rule. Takes (dict "ID"
+     "Title" "Form" "People" "Action" "Close" "Edit"). An edited rule keeps
+     its branch or tag pattern: a rule is known by it. */}}
+{{define "rule-form"}}
+{{$f := .Form}}{{$id := .ID}}
+<form method="post" action="{{.Action}}" class="form">
+  <header class="dialog-header"><h2 class="dialog-title" id="{{$id}}-title">{{.Title}}</h2>{{template "dialog-close" .Close}}</header>
+  <div class="dialog-body">
+    {{template "form-error" $f.Error}}
+    {{- if .Edit}}
+    <input type="hidden" name="mode" value="edit">
+    <input type="hidden" name="kind" value="{{$f.Get "kind"}}">
+    <input type="hidden" name="pattern" value="{{$f.Get "pattern"}}">
+    <p>For {{$f.Get "kind"}} {{template "ref" (dict "Kind" ($f.Get "kind") "Name" ($f.Get "pattern"))}}</p>
+    {{- else}}
+    <fieldset class="choices choices-inline">
+      <legend>Applies to</legend>
+      <label class="choice"><input type="radio" name="kind" value="branch"{{if ne ($f.Get "kind") "tag"}} checked{{end}}><span class="choice-label">{{template "icon" "branch"}} Branches</span></label>
+      <label class="choice"><input type="radio" name="kind" value="tag"{{if eq ($f.Get "kind") "tag"}} checked{{end}}><span class="choice-label">{{template "icon" "tag"}} Tags</span></label>
+    </fieldset>
+    <div class="field">
+      <label class="field-label" for="{{$id}}-pattern">Name or pattern</label>
+      <input class="input input-mono" id="{{$id}}-pattern" name="pattern" value="{{$f.Get "pattern"}}" required autofocus autocomplete="off"
+        {{- with index $f.Errors "pattern"}} aria-invalid="true" aria-describedby="{{$id}}-pattern-error"{{else}} aria-describedby="{{$id}}-pattern-hint"{{end}}>
+      {{- with index $f.Errors "pattern"}}<p class="field-error" id="{{$id}}-pattern-error">{{template "icon" "warning"}}<span>{{.}}</span></p>
+      {{- else}}<p class="field-hint" id="{{$id}}-pattern-hint">An exact name like <code>main</code>, or a pattern like <code>release/*</code> or <code>v*</code>.</p>{{end}}
+    </div>
+    {{- end}}
+
+    <fieldset class="choices">
+      <legend>Who may push</legend>
+      {{- $policy := $f.Get "push_policy"}}
+      <label class="choice"><input type="radio" name="push_policy" value="everyone"{{if or (eq $policy "") (eq $policy "everyone")}} checked{{end}}><span class="choice-label">Everyone</span><span class="choice-hint">Any enabled person.</span></label>
+      <label class="choice"><input type="radio" name="push_policy" value="admins"{{if eq $policy "admins"}} checked{{end}}><span class="choice-label">Admins</span><span class="choice-hint">Only people with the admin role.</span></label>
+      <label class="choice"><input type="radio" name="push_policy" value="people"{{if eq $policy "people"}} checked{{end}}><span class="choice-label">Named people</span><span class="choice-hint">The people picked below, and admins.</span></label>
+    </fieldset>
+    <fieldset class="choices choices-inline" data-show-when="push_policy=people">
+      <legend>Named people</legend>
+      {{- range .People}}
+      <label class="choice"><input type="checkbox" name="push_people" value="{{.ID}}"{{if $f.Picked "push_people" .ID}} checked{{end}}><span class="choice-label mono">{{.Username}}</span></label>
+      {{- end}}
+    </fieldset>
+
+    <fieldset class="choices">
+      <legend>Allow</legend>
+      <label class="choice"><input type="checkbox" name="run_on_push"{{if $f.Has "run_on_push"}} checked{{end}}><span class="choice-label">Run on push</span><span class="choice-hint">Every push starts a run of the pipeline.</span></label>
+      <label class="choice"><input type="checkbox" name="allow_ship"{{if $f.Has "allow_ship"}} checked{{end}}><span class="choice-label">Ship</span><span class="choice-hint">A passing run deploys to the pipeline's matching target.</span></label>
+      <label class="choice"><input type="checkbox" name="allow_secrets"{{if $f.Has "allow_secrets"}} checked{{end}}><span class="choice-label">Secrets</span><span class="choice-hint">Runs get this repository's secrets in their environment.</span></label>
+      <label class="choice choice-danger"><input type="checkbox" name="allow_docker"{{if $f.Has "allow_docker"}} checked{{end}}><span class="choice-label">{{template "icon" "warning"}} Docker</span><span class="choice-hint">Steps may use the worker's Docker daemon, which is root on the worker's host.</span></label>
+      <label class="choice"><input type="checkbox" name="allow_force"{{if $f.Has "allow_force"}} checked{{end}}><span class="choice-label">Force-push</span><span class="choice-hint">Pushes may rewrite history.</span></label>
+      <label class="choice"><input type="checkbox" name="allow_delete"{{if $f.Has "allow_delete"}} checked{{end}}><span class="choice-label">Delete</span><span class="choice-hint">Pushes may delete it.</span></label>
+    </fieldset>
+  </div>
+  <footer class="dialog-footer"><button type="button" class="btn js-only" data-dialog-close>Cancel</button><button type="submit" class="btn btn-primary">Save rule</button></footer>
+</form>
+{{end}}

@@ -1,0 +1,10 @@
+{
+  "name": "gitman-browser-check",
+  "private": true,
+  "type": "module",
+  "description": "Playwright and axe-core, for scripts/browser.mjs only. Run npm install here before scripts/browser.sh.",
+  "devDependencies": {
+    "@axe-core/playwright": "^4.10.0",
+    "playwright": "^1.48.0"
+  }
+}

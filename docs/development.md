@@ -1,52 +1,51 @@
-# Development guide
+# Development
 
 ## Prerequisites
 
-- Go `1.27`.
-- `git` in `PATH`.
-- Docker only for exercising the CI worker.
+Go 1.27 and Git. Most of the test suite needs a reachable PostgreSQL;
+tests that need it skip themselves when `GITMAN_TEST_DATABASE_URL` isn't
+set.
 
-## Common commands
+## Building and testing
 
-```bash
-go test ./...
-go build -o bin/gitman ./cmd/gitman
-gofmt -w .
-golangci-lint run
+```sh
+go build ./...
+go test ./...        # DB-dependent tests self-skip without a database
 ```
 
-The repository includes `Makefile` shortcuts. Prefer the explicit commands above when diagnosing CI or release failures.
+To run every test, including the DB-dependent ones:
 
-## Local web process
-
-```bash
-mkdir -p .data
-printf '%s\n' 'replace-with-a-strong-password' | ./bin/gitman admin users create admin
-GITMAN_LOG_LEVEL=debug ./bin/gitman web
+```sh
+export GITMAN_TEST_DATABASE_URL='postgres://postgres@localhost/gitman_test?sslmode=disable'
+go test -p 1 -count=1 ./...     # one package at a time: DB tests share one database
 ```
 
-## Local worker
+`make verify` runs the same local checks the release pipeline does:
+tests with the race detector, `go vet`, `golangci-lint`, and a build with
+a version smoke check. See the [`Makefile`](../Makefile) for the full
+target list (`build`, `build-all`, `test`, `test-coverage`, `lint`,
+`fmt`, `deps`, `release-source`).
 
-```bash
-docker pull debian:bookworm-slim
-GITMAN_LOG_LEVEL=debug ./bin/gitman worker
+## End-to-end and browser tests
+
+`scripts/e2e.sh` builds the binary and drives it against a real
+PostgreSQL and Docker daemon, covering pipeline runs, cancellation, and
+worker-crash cleanup. `scripts/browser.sh` (via `scripts/browser.mjs`)
+drives the web UI with Playwright and axe-core for functional,
+accessibility (WCAG 2.1 A/AA), and responsive checks. Both need their
+own runtime (a real Postgres/Docker for the former, Node.js and the
+dependencies in `scripts/package.json` for the latter) and are not part
+of `go test`.
+
+## Linting
+
+`.golangci.yml` enables `errcheck`, `govet`, `staticcheck`, `ineffassign`
+and `unused`. Run it locally with `make lint` or `golangci-lint run`.
+
+## Validating a pipeline file
+
+```sh
+gitman check .gitman.yml
 ```
 
-Run workers only on development hosts where Docker execution is acceptable.
-
-## Areas requiring regression coverage
-
-- Path containment and symlink rejection.
-- Session, token, and collaborator access checks.
-- Public source versus member-only CI output.
-- CSRF enforcement for browser mutations.
-- SSH forced-command parsing and generated `authorized_keys` output.
-- CI config strict parsing.
-- Secret redaction across chunk boundaries.
-- Attempt lease reclamation after worker crashes.
-- Artifact file-count, byte, symlink, and traversal handling.
-- Backup destination containment and snapshot layout.
-
-## Packaging
-
-Use [the release checklist](maintainers/release-checklist.md). Do not rely on `.gitignore` to keep runtime state out of archives.
+See [Pipeline configuration](ci/configuration.md) for the schema.

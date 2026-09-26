@@ -1,0 +1,112 @@
+{{define "content"}}
+{{$repo := .Data.Repo}}
+<div class="page">
+<h1 class="visually-hidden" id="repo-title">{{$repo.Name}}</h1>
+<div class="split">
+  <div class="split-main">
+    <section aria-labelledby="targets-title">
+      <h2 class="section-title" id="targets-title">{{template "icon" "ship"}}Deployed</h2>
+      <div data-live-region="targets">
+        {{- if .Data.Targets}}
+        <div class="targets">
+          {{- range .Data.Targets}}
+          <article class="target" aria-label="{{.Target}}">
+            <p class="target-name">{{.Target}}</p>
+            <p class="target-version" title="{{.Version}}">{{.Version}}</p>
+            <p class="target-meta">
+              {{template "commit" (dict "Repo" $repo.Name "Hash" .Commit)}}
+              <span>{{template "time" .At}}{{if .Person}} by {{.Person}}{{end}}</span>
+              {{- if .RunNumber}}<a href="/{{$repo.Name}}/runs/{{.RunNumber}}">run #{{.RunNumber}}</a>{{end}}
+            </p>
+          </article>
+          {{- end}}
+        </div>
+        {{- else}}
+        <div class="panel">{{template "empty" (dict "Icon" "ship" "Title" "Nothing shipped yet" "Text" "A passing run of a ref whose rule allows shipping, with a target in its pipeline, shows here.")}}</div>
+        {{- end}}
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="refs-title">
+      <h2 class="visually-hidden" id="refs-title">Branches and tags</h2>
+      <nav class="tabs" data-tabs aria-label="Branches and tags">
+        <a class="tab" id="tab-branches" href="/{{$repo.Name}}?tab=branches" data-tab="branches"{{if eq .Data.Tab "branches"}} aria-current="page"{{end}}>{{template "icon" "branch"}}Branches <span class="tab-count">{{len .Data.Branches}}</span></a>
+        <a class="tab" id="tab-tags" href="/{{$repo.Name}}?tab=tags" data-tab="tags"{{if eq .Data.Tab "tags"}} aria-current="page"{{end}}>{{template "icon" "tag"}}Tags <span class="tab-count">{{len .Data.Tags}}</span></a>
+      </nav>
+      <div id="panel-branches" data-tab-panel="branches"{{if ne .Data.Tab "branches"}} hidden{{end}}>
+        <div data-live-region="branches">{{template "refs" (dict "Refs" .Data.Branches "Repo" $repo "Clone" .Data.CloneURL "Kind" "branch")}}</div>
+      </div>
+      <div id="panel-tags" data-tab-panel="tags"{{if ne .Data.Tab "tags"}} hidden{{end}}>
+        <div data-live-region="tags">{{template "refs" (dict "Refs" .Data.Tags "Repo" $repo "Clone" .Data.CloneURL "Kind" "tag")}}</div>
+      </div>
+    </section>
+  </div>
+
+  <aside class="split-side">
+    <section class="panel" aria-labelledby="clone-title">
+      <header class="panel-header"><h2 class="panel-title" id="clone-title">{{template "icon" "code"}}Clone</h2></header>
+      <div class="panel-body stack">
+        {{template "copy-field" (dict "ID" "clone-url" "Label" "HTTPS" "Value" .Data.CloneURL)}}
+        <p class="field-hint">Sign in with your username and an <a href="/me">access token</a> as the password.</p>
+        <dl class="facts">
+          <dt>Default branch</dt><dd>{{template "ref" (dict "Kind" "branch" "Name" $repo.DefaultBranch "Href" (refURL $repo.Name $repo.DefaultBranch ""))}}</dd>
+          <dt>Created</dt><dd>{{template "time" $repo.CreatedAt}}</dd>
+        </dl>
+      </div>
+    </section>
+    <section class="panel" aria-labelledby="repo-timeline-title">
+      <header class="panel-header"><h2 class="panel-title" id="repo-timeline-title">{{template "icon" "history"}}Activity</h2>
+        <span class="panel-actions"><span class="live js-only" data-live-status data-state="connecting" role="status">{{template "icon" "live"}}<span data-live-label>Connecting…</span></span></span>
+      </header>
+      <div class="feed-scroll" data-live-region="timeline">{{template "feed" (dict "Entries" .Data.Timeline "ShowRepo" false)}}</div>
+    </section>
+  </aside>
+</div>
+</div>
+{{end}}
+
+{{/* refs: a repository's branches or its tags, each with its last run and
+     what it last shipped. Takes (dict "Refs" "Repo" "Clone" "Kind"). */}}
+{{define "refs"}}
+{{$repo := .Repo}}
+{{if .Refs}}
+<div class="table-scroll">
+  <table class="table">
+    <thead>
+      <tr>
+        <th scope="col">{{if eq .Kind "tag"}}Tag{{else}}Branch{{end}}</th>
+        <th scope="col">Last run</th>
+        <th scope="col">Last shipped</th>
+        <th scope="col">Commit</th>
+        <th scope="col">Updated</th>
+        {{if eq .Kind "branch"}}<th scope="col"><span class="visually-hidden">Compare</span></th>{{end}}
+      </tr>
+    </thead>
+    <tbody>
+    {{range .Refs}}
+      <tr>
+        <th scope="row" class="table-rowheader">
+          <span class="cluster">{{template "ref" (dict "Kind" .Kind "Name" .Name "Href" (refURL $repo.Name .Name ""))}}{{if .IsDefault}}<span class="chip">default</span>{{end}}</span>
+        </th>
+        <td class="cell-shrink">{{with .LatestRun}}<a class="run-ref" href="/{{$repo.Name}}/runs/{{.Number}}">{{template "status" .Status}}<span>#{{.Number}}</span></a>{{else}}<span class="muted">—</span>{{end}}</td>
+        <td class="cell-shrink">{{with .LatestDeployment}}<span class="version">{{.Version}}</span> <span class="muted">→</span> {{.Target}}{{else}}<span class="muted">—</span>{{end}}</td>
+        <td class="cell-shrink">{{template "commit" (dict "Repo" $repo.Name "Hash" .Commit)}}</td>
+        <td class="cell-shrink cell-muted">{{template "time" .UpdatedAt}}{{if .UpdatedByUsername}} by {{.UpdatedByUsername}}{{end}}</td>
+        {{if eq .Kind "branch"}}<td class="cell-shrink cell-end">{{if not .IsDefault}}<a href="{{compareURL $repo.Name $repo.DefaultBranch .Name}}" aria-label="Compare {{.Name}} with {{$repo.DefaultBranch}}">{{template "icon" "compare"}}</a>{{end}}</td>{{end}}
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+{{else if eq .Kind "tag"}}
+{{template "empty" (dict "Icon" "tag" "Title" "No tags yet" "Text" "Push a tag and it shows here with its runs and what it shipped.")}}
+{{else}}
+<div class="empty">
+  {{template "icon" "push"}}
+  <p class="empty-title">Nothing pushed yet</p>
+  <p>Push an existing repository to start:</p>
+  <pre class="secret-value"><code>git remote add origin {{.Clone}}
+git push -u origin {{$repo.DefaultBranch}}</code></pre>
+</div>
+{{end}}
+{{end}}

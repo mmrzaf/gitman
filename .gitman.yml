@@ -1,0 +1,22 @@
+image: golang:1.27-alpine
+docker: true
+timeout: 20m
+requires:
+  - postgres:16-alpine
+env:
+  GOPROXY: https://package-mirror.liara.ir/repository/go/,direct
+targets:
+  release:
+    tag: "v*"
+steps:
+  - name: test
+    run: |
+      set -eu
+      export GITMAN_TEST_DATABASE_URL="postgres://postgres:postgres@postgres:5432/gitman_test?sslmode=disable"
+      go test -race -p 1 -count=1 ./...
+  - name: build image
+    when: release
+    run: |
+      set -eu
+      docker build --build-arg GOPROXY="$GOPROXY" --build-arg VERSION="$GITMAN_VERSION" -t "gitman:$GITMAN_VERSION" .
+      docker run --rm "gitman:$GITMAN_VERSION" gitman version

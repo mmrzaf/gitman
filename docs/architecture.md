@@ -1,63 +1,43 @@
 # Architecture
 
-## Binary modes
+Gitman is a single binary (`cmd/gitman`) that runs as one of a few
+processes, selected by its first argument:
 
-Gitman builds one binary with four top-level commands:
+- **`gitman web`** serves Git over HTTP (the smart HTTP protocol) and the
+  web interface. Git's push hooks (`pre-receive`/`post-receive`) invoke the
+  same binary as `gitman hook ...`, generated fresh at every start.
+- **`gitman worker`** polls PostgreSQL for queued pipeline runs, fetches
+  each run's commit from `web` over Git HTTP, and runs every pipeline step
+  in its own Docker container on the host, using the host's Docker socket.
+- **`gitman admin ...`** is the operator CLI: people, tokens, repositories,
+  ref rules, run cancellation and worker cleanup. See the
+  [CLI reference](reference/cli.md).
 
-| Command | Package entry | Responsibility |
-| --- | --- | --- |
-| `web` | `cmd/gitman/web.go` | HTTP server and browser application |
-| `worker` | `cmd/gitman/worker.go` | CI polling and Docker execution |
-| `serve` | `cmd/gitman/serve.go` | OpenSSH forced-command adapter |
-| `admin` | `cmd/gitman/admin.go` | Account and backup administration |
+## State
 
-## Internal packages
+- **PostgreSQL** holds everything except the repositories themselves:
+  people, sessions, tokens, repositories, ref rules, pipeline runs,
+  deployments, and encrypted secrets. `web` and workers share nothing
+  else — no cache, no message queue — so any number of workers can run,
+  and PostgreSQL's `LISTEN`/`NOTIFY` plus row locking is what lets them
+  coordinate without talking to each other directly.
+- **Bare Git repositories** live on disk under `GITMAN_DATA_DIR/repos`.
+- **Run workspaces** are ephemeral checkouts under
+  `GITMAN_DATA_DIR/workspaces`, used only while a run is in progress.
+- **Git hook scripts** are regenerated under `GITMAN_DATA_DIR/hooks` on
+  every start of `web` or `worker`, so they never need to survive an
+  upgrade on disk.
 
-| Package | Responsibility |
-| --- | --- |
-| `internal/config` | Environment-based configuration |
-| `internal/ci` | Shared CI configuration parsing and trusted-ref policy |
-| `internal/ci/trigger` | Managed post-receive hook and durable push-trigger queue |
-| `internal/db` | SQLite initialization, migrations, and persistence |
-| `internal/git` | Safe Git repository paths, Git subprocess calls, commits, diffs, browsing, refs, and archives |
-| `internal/handlers` | Router, auth, CSRF, repository UI, Git smart HTTP, live CI logs, and artifact serving |
-| `internal/repository` | Repository namespace locking and database/filesystem lifecycle coordination |
-| `internal/ssh` | Managed `authorized_keys` generation and SSH command authorization |
-| `internal/state` | Shared process-state lock and exclusive backup consistency boundary |
-| `internal/worker` | CI config validation, leases, workspaces, Docker containers, caches, logs, redaction, and artifacts |
-| `internal/admin` | Operator user lifecycle, repository maintenance, and backups |
+## Why one PostgreSQL and no cache
 
-## Embedded assets
+Earlier designs used SQLite and a single web process. The rewrite uses
+PostgreSQL specifically so `web` and any number of `worker` processes can
+run against the same database without their own coordination layer —
+queued runs are claimed with row-level locking, and completion/queue
+events are pushed with `LISTEN`/`NOTIFY` instead of polling loops or a
+separate broker.
 
-`embed.go` embeds:
-
-- `migrations/*.up.sql`
-- `templates/**/*.html`
-- `static/**/*`
-
-A source-release package must retain those directories.
-
-## Data flow: HTTP Git
-
-1. Router resolves `<owner>/<repo>.git`.
-2. Middleware checks repository visibility and HTTP Basic credentials when required.
-3. Handler delegates to `git http-backend` through CGI.
-
-## Data flow: SSH Git
-
-1. OpenSSH reads Gitman's managed `authorized_keys` file.
-2. The forced command invokes `gitman serve <keyID>` through the configured wrapper.
-3. Gitman validates the original Git command, key owner, repository, and required access level.
-4. Gitman starts `git-upload-pack`, `git-receive-pack`, or `git-upload-archive` for the safe bare-repository path.
-
-## Data flow: CI
-
-1. A manual action or the durable repository-local trigger queue creates an idempotent pending row. Push events use a locked monotonic repository sequence; the web process claims and replays them strictly in that order, restoring an interrupted claim before later events.
-2. Worker claims the row with a new attempt ID and heartbeat lease.
-3. Worker clones from the local bare repository.
-4. Worker validates `.gitman-ci.yml`, resolves secrets, and creates an environment file outside the checkout.
-5. Worker starts a labeled sibling Docker container with restrictions and bind mounts.
-6. Worker collects regular artifacts, records final status, and removes the temporary workspace.
-7. Reconciliation removes stale managed containers and requeues stale attempts after crashes.
-8. User cancellation invalidates the active lease. A running attempt remains deletion-blocking until its worker acknowledges that file activity has stopped; stale acknowledgements are released after the lease timeout following a crash.
-9. Graceful worker shutdown stops claiming new work and drains current attempts before force cancellation.
+See [Operating it](../README.md#operating-it) in the top-level README for
+backup, retention and upgrade behavior, and
+[Docker deployment](operator/docker.md) for how `web`, `worker` and
+PostgreSQL are wired together in the supported Compose setup.

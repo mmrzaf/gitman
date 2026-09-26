@@ -1,0 +1,208 @@
+package web
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"regexp"
+	"strconv"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/mmrzaf/gitman/internal/activity"
+	"github.com/mmrzaf/gitman/internal/apperr"
+	"github.com/mmrzaf/gitman/internal/ci"
+)
+
+// Pages update themselves over one Server-Sent Events stream. A
+// notification from PostgreSQL is only a hint to look again. One that a
+// stream could not take in time is not lost: the stream remembers it
+// missed something and sends a change on its next poll.
+const (
+	livePollInterval = 5 * time.Second
+	// liveLifetime ends a stream after a while; the browser reconnects
+	// on its own, so no connection is held open forever.
+	liveLifetime = time.Hour
+	// liveLogBatch is how many log chunks one read sends at most.
+	liveLogBatch = 64
+)
+
+// liveChannels are the notifications live pages follow: runs changing,
+// run output, and everything else the activity feed shows — pushes,
+// repositories and settings.
+var liveChannels = []string{ci.NotifyChannel, ci.LogChannel, activity.NotifyChannel}
+
+// notice is one notification: which channel, and its payload — the run,
+// or for activity the repository, it is about. An empty channel means
+// anything may have changed — sent after the listener (re)connects.
+type notice struct {
+	channel string
+	payload string
+}
+
+// subscriber is one open event stream's inbox. missed is set when a
+// notice was dropped because the inbox was full.
+type subscriber struct {
+	notices chan notice
+	missed  atomic.Bool
+}
+
+// hub fans PostgreSQL notifications out to every open event stream.
+type hub struct {
+	mu   sync.Mutex
+	subs map[*subscriber]struct{}
+}
+
+func newHub() *hub {
+	return &hub{subs: map[*subscriber]struct{}{}}
+}
+
+func (h *hub) subscribe() (*subscriber, func()) {
+	s := &subscriber{notices: make(chan notice, 32)}
+	h.mu.Lock()
+	h.subs[s] = struct{}{}
+	h.mu.Unlock()
+	return s, func() {
+		h.mu.Lock()
+		delete(h.subs, s)
+		h.mu.Unlock()
+	}
+}
+
+// publish never blocks: a subscriber too slow to keep up misses the
+// notice, and is marked so that it catches up on its next poll.
+func (h *hub) publish(n notice) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for s := range h.subs {
+		select {
+		case s.notices <- n:
+		default:
+			s.missed.Store(true)
+		}
+	}
+}
+
+// run feeds the hub until ctx ends.
+func (h *hub) run(ctx context.Context, listen ListenFunc, failed func(error)) {
+	listen(ctx, liveChannels, func(channel, payload string) {
+		h.publish(notice{channel: channel, payload: payload})
+	}, failed)
+}
+
+// runIDPattern is the shape of a run ID, which a stream echoes back in
+// its events.
+var runIDPattern = regexp.MustCompile(`^[A-Za-z0-9-]{1,64}$`)
+
+// Once a stream has started, a failure cannot become an error page: it
+// is logged and the stream ends, and the browser reconnects.
+//
+// events serves GET /events: a "change" event whenever a run or anything
+// else in the activity feed changes — only the run named by ?run=, if
+// given — and, with ?step=, that step's
+// output as "log" events, each carrying its sequence number as its event
+// ID so a reconnecting browser resumes exactly where it stopped.
+func (a *App) events(w http.ResponseWriter, r *http.Request) error {
+	runID := r.URL.Query().Get("run")
+	stepID := r.URL.Query().Get("step")
+	if (runID != "" && !runIDPattern.MatchString(runID)) || (stepID != "" && !runIDPattern.MatchString(stepID)) {
+		return apperr.New(apperr.KindInvalid, "That is not a run or a step.")
+	}
+	after := -1
+	if v, err := strconv.Atoi(r.URL.Query().Get("after")); err == nil {
+		after = v
+	}
+	if v, err := strconv.Atoi(r.Header.Get("Last-Event-ID")); err == nil {
+		after = v
+	}
+
+	h := w.Header()
+	h.Set("Content-Type", "text/event-stream")
+	h.Set("Cache-Control", "no-cache")
+	h.Set("X-Accel-Buffering", "no")
+	rc := http.NewResponseController(w)
+	// A stream outlives the page deadlines; it ends after liveLifetime.
+	_ = rc.SetReadDeadline(time.Time{})
+	_ = rc.SetWriteDeadline(time.Time{})
+	sub, unsubscribe := a.hub.subscribe()
+	defer unsubscribe()
+
+	ctx, cancel := context.WithTimeout(r.Context(), liveLifetime)
+	defer cancel()
+	fmt.Fprint(w, "retry: 3000\n\n")
+
+	// sendLogs writes the step's output written since the last send, and
+	// reports whether the stream can go on.
+	sendLogs := func() bool {
+		if stepID == "" {
+			return true
+		}
+		for {
+			chunks, err := a.ci.LogChunks(ctx, stepID, after, liveLogBatch)
+			if err != nil {
+				if ctx.Err() == nil {
+					a.log.Warn("event stream ended", "step", stepID, "error", err)
+				}
+				return false
+			}
+			for _, c := range chunks {
+				data, _ := json.Marshal(map[string]string{"content": ansiEscape.ReplaceAllString(c.Content, "")})
+				fmt.Fprintf(w, "id: %d\nevent: log\ndata: %s\n\n", c.Sequence, data)
+				after = c.Sequence
+			}
+			if len(chunks) < liveLogBatch {
+				return true
+			}
+		}
+	}
+	changed := func(id string) {
+		fmt.Fprintf(w, "event: change\ndata: %s\n\n", id)
+	}
+
+	if !sendLogs() || rc.Flush() != nil {
+		return nil
+	}
+	poll := time.NewTicker(livePollInterval)
+	defer poll.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case n := <-sub.notices:
+			switch {
+			case n.channel == "":
+				changed(runID)
+				if !sendLogs() {
+					return nil
+				}
+			case n.channel == activity.NotifyChannel:
+				if runID != "" {
+					continue
+				}
+				changed("")
+			case runID != "" && n.payload != runID:
+				continue
+			case n.channel == ci.NotifyChannel:
+				changed(n.payload)
+			case n.channel == ci.LogChannel:
+				if !sendLogs() {
+					return nil
+				}
+			}
+		case <-poll.C:
+			if sub.missed.Swap(false) {
+				changed(runID)
+			}
+			// A comment line keeps proxies from closing an idle stream.
+			fmt.Fprint(w, ": ping\n\n")
+			if !sendLogs() {
+				return nil
+			}
+		}
+		if err := rc.Flush(); err != nil {
+			return nil
+		}
+	}
+}

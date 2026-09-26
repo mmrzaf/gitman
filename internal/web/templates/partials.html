@@ -1,0 +1,203 @@
+{{/* icon: a named icon from gitman.css, hidden from assistive technology —
+     whatever it stands for is always said in words next to it. */}}
+{{define "icon"}}<span class="icon icon-{{.}}" aria-hidden="true"></span>{{end}}
+
+{{/* status: a run or step status as a badge — shape, word and colour. */}}
+{{define "status"}}<span class="status is-{{.}}">{{template "icon" .}}{{.}}</span>{{end}}
+{{define "status-lg"}}<span class="status status-lg is-{{.}}">{{template "icon" .}}{{.}}</span>{{end}}
+
+{{/* status-icon: a status as its shape alone, where the word would crowd
+     a list; the word is still there for screen readers. */}}
+{{define "status-icon"}}<span class="status-icon is-{{.}}" title="{{.}}">{{template "icon" .}}<span class="visually-hidden">{{.}}</span></span>{{end}}
+
+{{/* ref: a branch or tag, cut short when long with the whole name on
+     hover. Takes (dict "Kind" "Name" and, to link it, "Href"). */}}
+{{define "ref"}}
+{{- if .Href}}<a class="ref" href="{{.Href}}" title="{{.Kind}} {{.Name}}">{{else}}<span class="ref" title="{{.Kind}} {{.Name}}">{{end -}}
+{{template "icon" .Kind}}<span class="ref-name">{{.Name}}</span>
+{{- if .Href}}</a>{{else}}</span>{{end}}
+{{- end}}
+
+{{/* commit: a shortened commit hash linking to the commit. Takes (dict
+     "Repo" name "Hash" hash). */}}
+{{define "commit"}}<a class="hash" href="/{{.Repo}}/commit/{{.Hash}}" title="{{.Hash}}">{{short .Hash}}</a>{{end}}
+
+{{/* person: a username, or "someone" when there is none to show. */}}
+{{define "person"}}{{if .}}<span class="person">{{.}}</span>{{else}}<span class="person person-unknown">someone</span>{{end}}{{end}}
+
+{{/* time: a relative time that stays current, with the exact time on hover. */}}
+{{define "time"}}<time datetime="{{iso .}}" title="{{datetime .}}" data-relative>{{ago .}}</time>{{end}}
+
+{{/* empty: what a list says when it has nothing to show. Takes (dict
+     "Icon" "Title" and optionally "Text"). */}}
+{{define "empty"}}
+<div class="empty">
+  {{template "icon" .Icon}}
+  <p class="empty-title">{{.Title}}</p>
+  {{with .Text}}<p>{{.}}</p>{{end}}
+</div>
+{{end}}
+
+{{/* toast: the outcome of the last action. */}}
+{{define "toast"}}
+<div class="toast toast-{{.Kind}}" role="{{if eq .Kind "error"}}alert{{else}}status{{end}}" data-toast>
+  {{template "icon" .Icon}}
+  <p class="toast-message">{{.Message}}</p>
+  <button type="button" class="btn btn-ghost btn-icon btn-sm js-only" data-toast-close aria-label="Dismiss">{{template "icon" "close"}}</button>
+</div>
+{{end}}
+
+{{/* reveal: a secret shown once — a generated password or a new token.
+     Takes (dict "Label" "Value" "Note"). */}}
+{{define "reveal"}}
+<div class="callout is-passed" role="status">
+  {{template "icon" "key"}}
+  <div class="callout-body">
+    <p class="callout-title">{{.Label}}</p>
+    <div class="secret-value">
+      <code>{{.Value}}</code>
+      <button type="button" class="btn btn-sm js-only" data-copy="{{.Value}}">{{template "icon" "copy"}}Copy</button>
+    </div>
+    <p>{{.Note}}</p>
+  </div>
+</div>
+{{end}}
+
+{{/* copy-field: a read-only value with a button that copies it. Takes
+     (dict "ID" "Label" "Value"). */}}
+{{define "copy-field"}}
+<div class="field">
+  <label class="field-label" for="{{.ID}}">{{.Label}}</label>
+  <div class="copy-field">
+    <input class="input" id="{{.ID}}" value="{{.Value}}" readonly>
+    <button type="button" class="btn js-only" data-copy="{{.Value}}" aria-label="Copy {{.Label}}">{{template "icon" "copy"}}</button>
+  </div>
+</div>
+{{end}}
+
+{{/* form-error: a problem with a submission as a whole. */}}
+{{define "form-error"}}{{with .}}<p class="form-error" role="alert">{{template "icon" "warning"}}<span>{{.}}</span></p>{{end}}{{end}}
+
+{{/* field: a labelled input with its hint and inline error. */}}
+{{define "field"}}
+<div class="field">
+  <label class="field-label" for="f-{{.Name}}">{{.Label}}</label>
+  <input class="input{{if eq .Type "password"}} input-mono{{end}}" id="f-{{.Name}}" name="{{.Name}}" type="{{.Type}}" value="{{.Value}}"
+    {{- with .Autocomplete}} autocomplete="{{.}}"{{end}}
+    {{- if .Required}} required{{end}}
+    {{- if .Autofocus}} autofocus{{end}}
+    {{- if .Error}} aria-invalid="true" aria-describedby="f-{{.Name}}-error"{{else if .Hint}} aria-describedby="f-{{.Name}}-hint"{{end}}>
+  {{- if .Error}}<p class="field-error" id="f-{{.Name}}-error">{{template "icon" "warning"}}<span>{{.Error}}</span></p>
+  {{- else if .Hint}}<p class="field-hint" id="f-{{.Name}}-hint">{{.Hint}}</p>{{end}}
+</div>
+{{end}}
+
+{{/* dialog-close: the close control of a dialog's header. Without
+     scripting a dialog is part of the page, so this is a link away. */}}
+{{define "dialog-close"}}
+<button type="button" class="btn btn-ghost btn-icon btn-sm dialog-close js-only" data-dialog-close aria-label="Close">{{template "icon" "close"}}</button>
+<a class="btn btn-ghost btn-sm dialog-close no-js-only" href="{{.}}">Close</a>
+{{end}}
+
+{{/* feed: pushes, runs, deployments and settings changes, newest first.
+     Takes (dict "Entries" []activity.Entry "ShowRepo" bool). */}}
+{{define "feed"}}
+{{if .Entries}}
+<ol class="feed">
+  {{range .Entries}}
+  <li class="feed-item">
+    {{- if eq .Kind "run"}}{{template "status-icon" .Status}}
+    {{- else if eq .Kind "push"}}{{template "icon" "push"}}
+    {{- else if eq .Kind "deployment"}}{{template "icon" "ship"}}
+    {{- else}}{{template "icon" "settings"}}{{end}}
+    <p class="feed-text">
+      {{- if $.ShowRepo}}<a class="feed-repo" href="/{{.RepoName}}">{{.RepoName}}</a> · {{end}}
+      {{- if eq .Kind "push"}}
+        {{template "person" .Actor}} pushed
+        {{- if gt .UpdateCount 1}} {{.UpdateCount}} refs
+        {{- else if .IsDelete}} and deleted {{template "ref" (dict "Kind" .RefKind "Name" .RefName)}}
+        {{- else if .IsCreate}} {{template "ref" (dict "Kind" .RefKind "Name" .RefName)}} <span class="muted">(new)</span> at {{template "commit" (dict "Repo" .RepoName "Hash" .NewCommit)}}
+        {{- else}} {{template "ref" (dict "Kind" .RefKind "Name" .RefName)}} to {{template "commit" (dict "Repo" .RepoName "Hash" .NewCommit)}}
+        {{- end}}
+      {{- else if eq .Kind "run"}}
+        <a href="/{{.RepoName}}/runs/{{.RunNumber}}">Run #{{.RunNumber}}</a> {{.Status}}{{if .Actor}} <span class="muted">· {{template "person" .Actor}}</span>{{end}}
+      {{- else if eq .Kind "deployment"}}
+        {{template "person" .Actor}} shipped <span class="version">{{.Version}}</span> to <strong>{{.Target}}</strong>
+      {{- else if eq .Kind "event"}}
+        {{template "person" .Actor}} {{eventText .Action .Detail}}
+      {{- end}}
+    </p>
+    <span class="feed-time">{{template "time" .At}}</span>
+  </li>
+  {{end}}
+</ol>
+{{else}}
+{{template "empty" (dict "Icon" "history" "Title" "Nothing has happened yet")}}
+{{end}}
+{{end}}
+
+{{/* diff: a git.Diff — a commit's or a comparison's changes — as a list of
+     the files it touches followed by each file's changes. Takes (dict
+     "Diff" *git.Diff "Repo" name "Commit" hash for file links, or ""). */}}
+{{define "diff"}}
+{{$d := .Diff}}
+{{if $d.Files}}
+{{$total := diffTotals $d}}
+<section class="panel" aria-labelledby="diff-summary-title">
+  <header class="panel-header">
+    <h2 class="panel-title" id="diff-summary-title">{{$total.Files}} changed file{{if ne $total.Files 1}}s{{end}}</h2>
+    <span class="diffstat"><span class="diffstat-add">+{{$total.Additions}}</span><span class="diffstat-del">−{{$total.Deletions}}</span></span>
+  </header>
+  <ol class="diff-summary">
+    {{range $i, $f := $d.Files}}
+    <li class="diff-summary-item">
+      <span class="chip diff-change">{{$f.Status}}</span>
+      <a href="#diff-{{$i}}">{{if eq $f.Status "renamed"}}{{$f.OldPath}} → {{$f.NewPath}}{{else if $f.NewPath}}{{$f.NewPath}}{{else}}{{$f.OldPath}}{{end}}</a>
+      {{if not $f.Binary}}<span class="diffstat"><span class="diffstat-add">+{{$f.Additions}}</span><span class="diffstat-del">−{{$f.Deletions}}</span></span>{{else}}<span class="muted">binary</span>{{end}}
+    </li>
+    {{end}}
+  </ol>
+  {{if $d.MoreFiles}}<p class="panel-footer">{{$d.MoreFiles}} more changed file{{if ne $d.MoreFiles 1}}s{{end}} not shown: the diff reached its size limit.</p>{{end}}
+</section>
+<div class="diff-files">
+  {{range $i, $f := $d.Files}}
+  <details class="diff-file" id="diff-{{$i}}" open>
+    <summary>
+      {{template "icon" "chevron-down"}}
+      <span class="diff-path">{{if eq $f.Status "renamed"}}{{$f.OldPath}} → {{$f.NewPath}}{{else if $f.NewPath}}{{$f.NewPath}}{{else}}{{$f.OldPath}}{{end}}</span>
+      <span class="chip diff-change">{{$f.Status}}</span>
+      {{if not $f.Binary}}<span class="diffstat"><span class="diffstat-add">+{{$f.Additions}}</span><span class="diffstat-del">−{{$f.Deletions}}</span></span>{{end}}
+    </summary>
+    {{if $f.Binary}}
+    <p class="diff-note">Binary file — its changes can't be shown as text.</p>
+    {{else if $f.Hunks}}
+    <div class="diff-body">
+      <table class="diff-table">
+        <tbody>
+        {{range $f.Hunks}}
+          <tr class="diff-hunk"><td colspan="4">{{.Header}}</td></tr>
+          {{range .Lines}}{{$kind := lineKind .Kind}}
+          <tr class="diff-{{$kind}}">
+            <td class="diff-num">{{if .OldNumber}}{{.OldNumber}}{{end}}</td>
+            <td class="diff-num">{{if .NewNumber}}{{.NewNumber}}{{end}}</td>
+            <td class="diff-marker">{{if eq $kind "add"}}+<span class="visually-hidden"> added</span>{{else if eq $kind "del"}}−<span class="visually-hidden"> removed</span>{{end}}</td>
+            <td class="diff-text">{{.Text}}</td>
+          </tr>
+          {{end}}
+        {{end}}
+        </tbody>
+      </table>
+      {{if $f.PatchTruncated}}<p class="diff-note">The rest of this file's changes are not shown: the diff reached its size limit.</p>{{end}}
+    </div>
+    {{else if $f.PatchTruncated}}
+    <p class="diff-note">This file's changes are not shown: the diff reached its size limit.</p>
+    {{else}}
+    <p class="diff-note">No line changes to show.</p>
+    {{end}}
+  </details>
+  {{end}}
+</div>
+{{else}}
+<div class="panel">{{template "empty" (dict "Icon" "compare" "Title" "No changes")}}</div>
+{{end}}
+{{end}}

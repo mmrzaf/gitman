@@ -1,456 +1,215 @@
+// Package config loads and validates the small set of environment
+// variables Gitman needs to run. Behavior that other tools expose as a
+// tunable is a fixed constant here, chosen for the single-team,
+// self-hosted deployments Gitman targets, so there is little left to
+// configure.
 package config
 
 import (
 	"fmt"
-	"log/slog"
-	"math"
-	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
-	"time"
 )
 
+// Config holds every setting Gitman reads from its environment.
 type Config struct {
-	Port                         string
-	DBPath                       string
-	ReposPath                    string
-	AuthKeysPath                 string
-	BinaryPath                   string
-	SSHUser                      string
-	ServerHost                   string
-	PublicURL                    string
-	ArtifactsPath                string
-	SecretKey                    string
-	LogLevel                     string
-	AllowRegister                bool
-	WorkerConcurrency            int
-	ForceSecureCookies           bool
-	TrustProxyHeaders            bool
-	GitReceiveMaxBytes           int64
-	GitHTTPMaxConcurrent         int
-	GitHTTPMaxConcurrentPerIP    int
-	GitHTTPTimeout               time.Duration
-	FileSearchMaxConcurrent      int
-	FileSearchMaxConcurrentPerIP int
-	FileSearchMaxFiles           int
-	FileSearchMaxBytes           int64
-	FileSearchTimeout            time.Duration
-	RepoBrowseMaxConcurrent      int
-	RepoBrowseMaxConcurrentPerIP int
-	RepoBrowseTimeout            time.Duration
-	RepoStreamMaxConcurrent      int
-	RepoStreamMaxConcurrentPerIP int
-	RepoStreamTimeout            time.Duration
+	// DatabaseURL is a PostgreSQL connection string, as accepted by pgx.
+	// PostgreSQL is Gitman's only store.
+	DatabaseURL string
 
-	CacheRoot              string
-	MemoryLimit            string
-	CPULimit               string
-	CIJobTimeout           time.Duration
-	CILeaseTimeout         time.Duration
-	CIHeartbeatInterval    time.Duration
-	CINetwork              string
-	CIArtifactMaxBytes     int64
-	CIArtifactMaxFiles     int
-	CIArtifactMaxEntries   int
-	CILogMaxBytes          int64
-	CIWorkspaceRoot        string
-	CIWorkspaceMaxBytes    int64
-	CIWorkspaceMaxEntries  int
-	CICacheMaxBytes        int64
-	CICacheMaxEntries      int
-	CIStorageMinFreeBytes  int64
-	CIStorageMinFreeInodes int64
-	CIContainerUser        string
-	CIAllowDockerSocket    bool
-	CIDockerSocketPath     string
-	CIWorkerPathPrefix     string
-	CIHostPathPrefix       string
+	// DataDir is the root directory for everything Gitman keeps on disk:
+	// bare repositories, the generated Git hook scripts, and CI job
+	// workspaces.
+	DataDir string
+
+	// PublicURL is the externally reachable base URL, used to build clone
+	// URLs and the links printed in push output.
+	PublicURL string
+
+	// WebURL is where a worker reaches the web process to fetch a run's
+	// commit over Git HTTP. It defaults to PublicURL; inside a Docker
+	// network it is usually the web container's internal address.
+	WebURL string
+
+	// RetentionDays is how many days finished runs and their logs are
+	// kept. Each ref's latest run and every deployment record are kept
+	// regardless. 0 keeps everything.
+	RetentionDays int
+
+	// SecretKey encrypts repository secrets at rest. Secret storage is
+	// unavailable when this is empty.
+	SecretKey string
+
+	// Port is the HTTP listen port for the web process.
+	Port int
+
+	// TrustedProxies are the addresses of reverse proxies whose
+	// X-Forwarded-For header is believed. Empty means the connection's
+	// own peer address is the client, which is right when nothing sits
+	// in front of Gitman.
+	TrustedProxies []netip.Prefix
 }
 
-var dockerMemoryLimitRegex = regexp.MustCompile(`^[1-9][0-9]*(?:[bkmgBKMG])?$`)
+// ReposPath is the directory bare repositories are stored under, one
+// directory per repository ID.
+func (c *Config) ReposPath() string {
+	return filepath.Join(c.DataDir, "repos")
+}
 
-func LoadConfig() (*Config, error) {
-	if err := ValidateEnvironment(); err != nil {
+// HooksPath is the directory holding the Git hook scripts that route
+// pre-receive and post-receive back into this binary. The web process
+// regenerates it on every start, so the scripts always point at the
+// binary that is actually running.
+func (c *Config) HooksPath() string {
+	return filepath.Join(c.DataDir, "hooks")
+}
+
+// WorkspacesPath is the directory CI job workspaces are created under.
+func (c *Config) WorkspacesPath() string {
+	return filepath.Join(c.DataDir, "workspaces")
+}
+
+// Environment variable names, shared with the Git hook environment so the
+// hook process loads exactly the configuration the web process runs with.
+const (
+	EnvDatabaseURL = "GITMAN_DATABASE_URL"
+	EnvDataDir     = "GITMAN_DATA_DIR"
+	EnvPublicURL   = "GITMAN_PUBLIC_URL"
+	EnvWebURL      = "GITMAN_WEB_URL"
+	EnvSecretKey   = "GITMAN_SECRET_KEY"
+	EnvPort        = "GITMAN_PORT"
+	// EnvRetentionDays is how many days finished runs and their logs are
+	// kept; 0 keeps them forever.
+	EnvRetentionDays = "GITMAN_RETENTION_DAYS"
+	// EnvTrustedProxies is a comma-separated list of IP addresses or
+	// CIDR ranges, such as "172.16.0.0/12" for a proxy on a Docker
+	// network.
+	EnvTrustedProxies = "GITMAN_TRUSTED_PROXIES"
+)
+
+// Load reads configuration from the environment and validates it.
+func Load() (*Config, error) {
+	cfg := &Config{
+		DatabaseURL: strings.TrimSpace(os.Getenv(EnvDatabaseURL)),
+		DataDir:     getEnv(EnvDataDir, ".data"),
+		PublicURL:   strings.TrimRight(getEnv(EnvPublicURL, "http://localhost:8080"), "/"),
+		WebURL:      strings.TrimRight(strings.TrimSpace(os.Getenv(EnvWebURL)), "/"),
+		SecretKey:   os.Getenv(EnvSecretKey),
+	}
+
+	port, err := getEnvInt(EnvPort, 8080)
+	if err != nil {
 		return nil, err
 	}
-	exePath, err := os.Executable()
+	cfg.Port = port
+
+	if cfg.RetentionDays, err = getEnvInt(EnvRetentionDays, 90); err != nil {
+		return nil, err
+	}
+
+	proxies, err := parseProxies(os.Getenv(EnvTrustedProxies))
 	if err != nil {
-		return nil, fmt.Errorf("detect executable path: %w", err)
+		return nil, err
 	}
-	exePath, err = filepath.Abs(exePath)
-	if err != nil {
-		return nil, fmt.Errorf("resolve executable path: %w", err)
-	}
+	cfg.TrustedProxies = proxies
 
-	port := getEnv("GITMAN_PORT", "8080")
-	serverHost := getEnv("GITMAN_SERVER_HOST", "localhost")
-	publicURL := strings.TrimRight(getEnv("GITMAN_PUBLIC_URL", "http://"+serverHost+":"+port), "/")
-
-	cfg := &Config{
-		Port:                         port,
-		DBPath:                       getEnv("GITMAN_DB", ".data/db/gitman.sqlite"),
-		ReposPath:                    getEnv("GITMAN_REPOS", ".data/repos"),
-		AuthKeysPath:                 getEnv("GITMAN_AUTH_KEYS", ".data/authorized_keys"),
-		BinaryPath:                   getEnv("GITMAN_BINARY_PATH", exePath),
-		SSHUser:                      getEnv("GITMAN_SSH_USER", "git"),
-		ServerHost:                   serverHost,
-		PublicURL:                    publicURL,
-		ArtifactsPath:                getEnv("GITMAN_ARTIFACTS", ".data/artifacts"),
-		SecretKey:                    getEnv("GITMAN_SECRET_KEY", ""),
-		LogLevel:                     getEnv("GITMAN_LOG_LEVEL", "info"),
-		AllowRegister:                getEnvBool("GITMAN_ALLOW_REGISTER", false),
-		WorkerConcurrency:            getEnvInt("GITMAN_WORKER_CONCURRENCY", 1),
-		ForceSecureCookies:           getEnvBool("GITMAN_FORCE_SECURE_COOKIES", false),
-		TrustProxyHeaders:            getEnvBool("GITMAN_TRUST_PROXY_HEADERS", false),
-		GitReceiveMaxBytes:           getEnvRequiredPositiveInt64("GITMAN_GIT_RECEIVE_MAX_BYTES", 512*1024*1024),
-		GitHTTPMaxConcurrent:         getEnvInt("GITMAN_GIT_HTTP_MAX_CONCURRENT", 16),
-		GitHTTPMaxConcurrentPerIP:    getEnvInt("GITMAN_GIT_HTTP_MAX_CONCURRENT_PER_IP", 4),
-		GitHTTPTimeout:               getEnvDuration("GITMAN_GIT_HTTP_TIMEOUT", 30*time.Minute),
-		FileSearchMaxConcurrent:      getEnvInt("GITMAN_FILE_SEARCH_MAX_CONCURRENT", 8),
-		FileSearchMaxConcurrentPerIP: getEnvInt("GITMAN_FILE_SEARCH_MAX_CONCURRENT_PER_IP", 2),
-		FileSearchMaxFiles:           getEnvInt("GITMAN_FILE_SEARCH_MAX_FILES", 100000),
-		FileSearchMaxBytes:           getEnvRequiredPositiveInt64("GITMAN_FILE_SEARCH_MAX_BYTES", 32*1024*1024),
-		FileSearchTimeout:            getEnvDuration("GITMAN_FILE_SEARCH_TIMEOUT", 5*time.Second),
-		RepoBrowseMaxConcurrent:      getEnvInt("GITMAN_REPO_BROWSE_MAX_CONCURRENT", 16),
-		RepoBrowseMaxConcurrentPerIP: getEnvInt("GITMAN_REPO_BROWSE_MAX_CONCURRENT_PER_IP", 4),
-		RepoBrowseTimeout:            getEnvDuration("GITMAN_REPO_BROWSE_TIMEOUT", 10*time.Second),
-		RepoStreamMaxConcurrent:      getEnvInt("GITMAN_REPO_STREAM_MAX_CONCURRENT", 8),
-		RepoStreamMaxConcurrentPerIP: getEnvInt("GITMAN_REPO_STREAM_MAX_CONCURRENT_PER_IP", 2),
-		RepoStreamTimeout:            getEnvDuration("GITMAN_REPO_STREAM_TIMEOUT", 15*time.Minute),
-
-		CacheRoot:              getEnv("GITMAN_CACHE_ROOT", ".data/ci/cache"),
-		MemoryLimit:            getEnv("GITMAN_MEMORY_LIMIT", "512m"),
-		CPULimit:               getEnv("GITMAN_CPU_LIMIT", "1"),
-		CIJobTimeout:           getEnvDuration("GITMAN_CI_TIMEOUT", 30*time.Minute),
-		CILeaseTimeout:         getEnvDuration("GITMAN_CI_LEASE_TIMEOUT", 2*time.Minute),
-		CIHeartbeatInterval:    getEnvDuration("GITMAN_CI_HEARTBEAT_INTERVAL", 15*time.Second),
-		CINetwork:              getEnv("GITMAN_CI_NETWORK", "none"),
-		CIArtifactMaxBytes:     getEnvInt64("GITMAN_CI_ARTIFACT_MAX_BYTES", 100*1024*1024),
-		CIArtifactMaxFiles:     getEnvInt("GITMAN_CI_ARTIFACT_MAX_FILES", 1000),
-		CIArtifactMaxEntries:   getEnvInt("GITMAN_CI_ARTIFACT_MAX_ENTRIES", 5000),
-		CILogMaxBytes:          getEnvInt64("GITMAN_CI_LOG_MAX_BYTES", 10*1024*1024),
-		CIWorkspaceRoot:        getEnv("GITMAN_CI_WORKSPACE_ROOT", ".data/ci/workspaces"),
-		CIWorkspaceMaxBytes:    getEnvInt64("GITMAN_CI_WORKSPACE_MAX_BYTES", 1024*1024*1024),
-		CIWorkspaceMaxEntries:  getEnvInt("GITMAN_CI_WORKSPACE_MAX_ENTRIES", 200000),
-		CICacheMaxBytes:        getEnvInt64("GITMAN_CI_CACHE_MAX_BYTES", 1024*1024*1024),
-		CICacheMaxEntries:      getEnvInt("GITMAN_CI_CACHE_MAX_ENTRIES", 100000),
-		CIStorageMinFreeBytes:  getEnvInt64("GITMAN_CI_STORAGE_MIN_FREE_BYTES", 1024*1024*1024),
-		CIStorageMinFreeInodes: getEnvInt64("GITMAN_CI_STORAGE_MIN_FREE_INODES", 10000),
-		CIContainerUser:        getEnv("GITMAN_CI_CONTAINER_USER", defaultCIContainerUser()),
-		CIAllowDockerSocket:    getEnvBool("GITMAN_CI_ALLOW_DOCKER_SOCKET", false),
-		CIDockerSocketPath:     getEnv("GITMAN_CI_DOCKER_SOCKET_PATH", "/var/run/docker.sock"),
-		CIWorkerPathPrefix:     cleanOptionalPathPrefix(getEnv("GITMAN_CI_WORKER_PATH_PREFIX", "")),
-		CIHostPathPrefix:       cleanOptionalPathPrefix(getEnv("GITMAN_CI_HOST_PATH_PREFIX", "")),
-	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 	return cfg, nil
 }
 
-// ValidateEnvironment rejects explicitly configured values that would
-// otherwise be silently replaced by defaults.
-func ValidateEnvironment() error {
-	positiveInts := []string{
-		"GITMAN_WORKER_CONCURRENCY",
-		"GITMAN_CI_ARTIFACT_MAX_FILES",
-		"GITMAN_CI_ARTIFACT_MAX_ENTRIES",
-		"GITMAN_CI_WORKSPACE_MAX_ENTRIES",
-		"GITMAN_CI_CACHE_MAX_ENTRIES",
-		"GITMAN_GIT_HTTP_MAX_CONCURRENT",
-		"GITMAN_GIT_HTTP_MAX_CONCURRENT_PER_IP",
-		"GITMAN_FILE_SEARCH_MAX_CONCURRENT",
-		"GITMAN_FILE_SEARCH_MAX_CONCURRENT_PER_IP",
-		"GITMAN_FILE_SEARCH_MAX_FILES",
-		"GITMAN_REPO_BROWSE_MAX_CONCURRENT",
-		"GITMAN_REPO_BROWSE_MAX_CONCURRENT_PER_IP",
-		"GITMAN_REPO_STREAM_MAX_CONCURRENT",
-		"GITMAN_REPO_STREAM_MAX_CONCURRENT_PER_IP",
-	}
-	positiveInt64s := []string{
-		"GITMAN_GIT_RECEIVE_MAX_BYTES",
-		"GITMAN_FILE_SEARCH_MAX_BYTES",
-		"GITMAN_CI_ARTIFACT_MAX_BYTES",
-		"GITMAN_CI_LOG_MAX_BYTES",
-		"GITMAN_CI_WORKSPACE_MAX_BYTES",
-		"GITMAN_CI_CACHE_MAX_BYTES",
-		"GITMAN_CI_STORAGE_MIN_FREE_BYTES",
-		"GITMAN_CI_STORAGE_MIN_FREE_INODES",
-	}
-	bools := []string{
-		"GITMAN_ALLOW_REGISTER",
-		"GITMAN_FORCE_SECURE_COOKIES",
-		"GITMAN_TRUST_PROXY_HEADERS",
-		"GITMAN_CI_ALLOW_DOCKER_SOCKET",
-	}
-	durations := []string{
-		"GITMAN_GIT_HTTP_TIMEOUT",
-		"GITMAN_FILE_SEARCH_TIMEOUT",
-		"GITMAN_REPO_BROWSE_TIMEOUT",
-		"GITMAN_REPO_STREAM_TIMEOUT",
-		"GITMAN_CI_TIMEOUT",
-		"GITMAN_CI_LEASE_TIMEOUT",
-		"GITMAN_CI_HEARTBEAT_INTERVAL",
-	}
-	for _, key := range positiveInts {
-		if value, ok := os.LookupEnv(key); ok {
-			n, err := strconv.Atoi(value)
-			if err != nil || n <= 0 {
-				return fmt.Errorf("%s must be a positive integer", key)
-			}
-		}
-	}
-	for _, key := range positiveInt64s {
-		if value, ok := os.LookupEnv(key); ok {
-			n, err := strconv.ParseInt(value, 10, 64)
-			if err != nil || n <= 0 {
-				return fmt.Errorf("%s must be a positive integer", key)
-			}
-		}
-	}
-	for _, key := range bools {
-		if value, ok := os.LookupEnv(key); ok {
-			if _, err := strconv.ParseBool(value); err != nil {
-				return fmt.Errorf("%s must be true or false", key)
-			}
-		}
-	}
-	for _, key := range durations {
-		if value, ok := os.LookupEnv(key); ok {
-			if d, err := time.ParseDuration(value); err == nil && d > 0 {
-				continue
-			}
-			if seconds, err := strconv.Atoi(value); err == nil && seconds > 0 {
-				continue
-			}
-			return fmt.Errorf("%s must be a positive duration such as 30s or 5m", key)
-		}
-	}
-	return nil
-}
-
-func (c *Config) ProductionWarnings() []string {
-	if c == nil {
-		return []string{"configuration is nil"}
-	}
-	var warnings []string
-	publicURL, err := url.Parse(c.PublicURL)
-	if err == nil {
-		host := publicURL.Hostname()
-		if publicURL.Scheme == "https" && !c.ForceSecureCookies && !c.TrustProxyHeaders {
-			warnings = append(warnings, "GITMAN_PUBLIC_URL uses HTTPS but neither GITMAN_FORCE_SECURE_COOKIES nor GITMAN_TRUST_PROXY_HEADERS is enabled; session cookies may be issued without Secure behind a TLS-terminating proxy")
-		}
-		if publicURL.Scheme == "http" && !loopbackHost(host) {
-			warnings = append(warnings, "GITMAN_PUBLIC_URL uses plain HTTP on a non-loopback host; credentials and sessions require HTTPS in production")
-		}
-		if publicURL.Scheme == "http" && c.ForceSecureCookies {
-			warnings = append(warnings, "GITMAN_FORCE_SECURE_COOKIES is enabled while GITMAN_PUBLIC_URL uses HTTP; browsers may refuse to send the session cookie")
-		}
-	}
-	if c.AllowRegister {
-		warnings = append(warnings, "self-registration is enabled; disable GITMAN_ALLOW_REGISTER unless public account creation is intentional")
-	}
-	if strings.TrimSpace(c.SecretKey) == "" {
-		warnings = append(warnings, "GITMAN_SECRET_KEY is not configured; CI secret storage is unavailable")
-	}
-	if c.CIAllowDockerSocket {
-		warnings = append(warnings, "CI Docker socket access is enabled; trusted jobs can control the Docker daemon and effectively the worker host")
-	}
-	return warnings
-}
-
-func loopbackHost(host string) bool {
-	host = strings.TrimSpace(strings.TrimSuffix(host, "."))
-	if strings.EqualFold(host, "localhost") {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
-}
-
+// Validate rejects a configuration that would otherwise fail in a
+// confusing way once Gitman is already serving requests, and makes
+// DataDir absolute so every process and every Git subprocess agrees on
+// where it is regardless of working directory.
 func (c *Config) Validate() error {
-	if c == nil {
-		return fmt.Errorf("configuration is nil")
+	if c.DatabaseURL == "" {
+		return fmt.Errorf("%s is required", EnvDatabaseURL)
 	}
-	port, err := strconv.Atoi(c.Port)
-	if err != nil || port < 1 || port > 65535 {
-		return fmt.Errorf("GITMAN_PORT must be a number between 1 and 65535")
+	if strings.TrimSpace(c.DataDir) == "" {
+		return fmt.Errorf("%s must not be empty", EnvDataDir)
 	}
-	for name, raw := range map[string]string{
-		"GITMAN_PUBLIC_URL": c.PublicURL,
-	} {
-		parsed, err := url.Parse(raw)
-		if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" ||
-			(parsed.Scheme != "http" && parsed.Scheme != "https") {
-			return fmt.Errorf("%s must be an absolute http or https URL", name)
-		}
+	abs, err := filepath.Abs(c.DataDir)
+	if err != nil {
+		return fmt.Errorf("resolve %s: %w", EnvDataDir, err)
 	}
-	for name, value := range map[string]string{
-		"GITMAN_DB":                    c.DBPath,
-		"GITMAN_REPOS":                 c.ReposPath,
-		"GITMAN_AUTH_KEYS":             c.AuthKeysPath,
-		"GITMAN_ARTIFACTS":             c.ArtifactsPath,
-		"GITMAN_CACHE_ROOT":            c.CacheRoot,
-		"GITMAN_CI_WORKSPACE_ROOT":     c.CIWorkspaceRoot,
-		"GITMAN_BINARY_PATH":           c.BinaryPath,
-		"GITMAN_SSH_USER":              c.SSHUser,
-		"GITMAN_SERVER_HOST":           c.ServerHost,
-		"GITMAN_MEMORY_LIMIT":          c.MemoryLimit,
-		"GITMAN_CPU_LIMIT":             c.CPULimit,
-		"GITMAN_CI_NETWORK":            c.CINetwork,
-		"GITMAN_CI_CONTAINER_USER":     c.CIContainerUser,
-		"GITMAN_CI_DOCKER_SOCKET_PATH": c.CIDockerSocketPath,
-	} {
-		if strings.TrimSpace(value) == "" {
-			return fmt.Errorf("%s cannot be empty", name)
-		}
+	c.DataDir = abs
+
+	if err := validateBaseURL(c.PublicURL); err != nil {
+		return fmt.Errorf("%s %w", EnvPublicURL, err)
 	}
-	if c.GitHTTPMaxConcurrentPerIP > c.GitHTTPMaxConcurrent {
-		return fmt.Errorf("GITMAN_GIT_HTTP_MAX_CONCURRENT_PER_IP cannot exceed GITMAN_GIT_HTTP_MAX_CONCURRENT")
+	if c.WebURL == "" {
+		c.WebURL = c.PublicURL
 	}
-	if c.FileSearchMaxConcurrentPerIP > c.FileSearchMaxConcurrent {
-		return fmt.Errorf("GITMAN_FILE_SEARCH_MAX_CONCURRENT_PER_IP cannot exceed GITMAN_FILE_SEARCH_MAX_CONCURRENT")
+	if err := validateBaseURL(c.WebURL); err != nil {
+		return fmt.Errorf("%s %w", EnvWebURL, err)
 	}
-	if c.RepoBrowseMaxConcurrentPerIP > c.RepoBrowseMaxConcurrent {
-		return fmt.Errorf("GITMAN_REPO_BROWSE_MAX_CONCURRENT_PER_IP cannot exceed GITMAN_REPO_BROWSE_MAX_CONCURRENT")
+	if c.Port < 1 || c.Port > 65535 {
+		return fmt.Errorf("%s must be between 1 and 65535", EnvPort)
 	}
-	if c.GitReceiveMaxBytes > 10*1024*1024*1024 {
-		return fmt.Errorf("GITMAN_GIT_RECEIVE_MAX_BYTES cannot exceed 10737418240 (10 GiB)")
+	if c.RetentionDays < 0 || c.RetentionDays > 36500 {
+		return fmt.Errorf("%s must be between 0 (keep forever) and 36500 days", EnvRetentionDays)
 	}
-	if c.RepoStreamMaxConcurrentPerIP > c.RepoStreamMaxConcurrent {
-		return fmt.Errorf("GITMAN_REPO_STREAM_MAX_CONCURRENT_PER_IP cannot exceed GITMAN_REPO_STREAM_MAX_CONCURRENT")
-	}
-	if c.CIHeartbeatInterval*3 > c.CILeaseTimeout {
-		return fmt.Errorf("GITMAN_CI_HEARTBEAT_INTERVAL must be at most one third of GITMAN_CI_LEASE_TIMEOUT")
-	}
-	if (c.CIWorkerPathPrefix == "") != (c.CIHostPathPrefix == "") {
-		return fmt.Errorf("GITMAN_CI_WORKER_PATH_PREFIX and GITMAN_CI_HOST_PATH_PREFIX must be set together")
-	}
-	if c.CIWorkerPathPrefix != "" && (!filepath.IsAbs(c.CIWorkerPathPrefix) || !filepath.IsAbs(c.CIHostPathPrefix)) {
-		return fmt.Errorf("GITMAN_CI_WORKER_PATH_PREFIX and GITMAN_CI_HOST_PATH_PREFIX must be absolute")
-	}
-	if !filepath.IsAbs(c.CIDockerSocketPath) {
-		return fmt.Errorf("GITMAN_CI_DOCKER_SOCKET_PATH must be absolute")
-	}
-	if !dockerMemoryLimitRegex.MatchString(strings.TrimSpace(c.MemoryLimit)) {
-		return fmt.Errorf("GITMAN_MEMORY_LIMIT must be a positive byte value with an optional b, k, m, or g suffix")
-	}
-	cpuLimit, err := strconv.ParseFloat(strings.TrimSpace(c.CPULimit), 64)
-	if err != nil || cpuLimit <= 0 || math.IsNaN(cpuLimit) || math.IsInf(cpuLimit, 0) {
-		return fmt.Errorf("GITMAN_CPU_LIMIT must be a positive number")
-	}
-	if strings.ContainsAny(c.CINetwork, "\x00\r\n\t ") {
-		return fmt.Errorf("GITMAN_CI_NETWORK cannot contain whitespace or control characters")
-	}
-	if _, _, err := ParseCIContainerUser(c.CIContainerUser); err != nil {
-		return err
-	}
-	switch c.LogLevel {
-	case "debug", "info", "warn", "error":
-	default:
-		return fmt.Errorf("GITMAN_LOG_LEVEL must be debug, info, warn, or error")
+	if c.SecretKey != "" && len(c.SecretKey) < 32 {
+		return fmt.Errorf("%s must be at least 32 characters", EnvSecretKey)
 	}
 	return nil
 }
 
-// ParseCIContainerUser validates and parses the configured container identity.
-// Numeric syntax is a configuration invariant shared by every command. The
-// worker separately requires both IDs to be non-root because web/admin may be
-// run by root even when the worker runs elsewhere with an explicit identity.
-func ParseCIContainerUser(value string) (uid, gid int, err error) {
-	parts := strings.Split(strings.TrimSpace(value), ":")
-	if len(parts) != 2 {
-		return 0, 0, fmt.Errorf("GITMAN_CI_CONTAINER_USER must be a numeric UID:GID")
+func validateBaseURL(raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" ||
+		(parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return fmt.Errorf("must be an absolute http or https URL without credentials, query or fragment")
 	}
-	uid, uidErr := strconv.Atoi(parts[0])
-	gid, gidErr := strconv.Atoi(parts[1])
-	if uidErr != nil || gidErr != nil || uid < 0 || gid < 0 {
-		return 0, 0, fmt.Errorf("GITMAN_CI_CONTAINER_USER must be a numeric UID:GID")
-	}
-	return uid, gid, nil
-}
-
-func defaultCIContainerUser() string {
-	return strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid())
-}
-
-func cleanOptionalPathPrefix(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-	return filepath.Clean(value)
+	return nil
 }
 
 func getEnv(key, fallback string) string {
-	if value, exists := os.LookupEnv(key); exists {
-		return value
+	if value, ok := os.LookupEnv(key); ok && strings.TrimSpace(value) != "" {
+		return strings.TrimSpace(value)
 	}
 	return fallback
 }
 
-func getEnvInt(key string, fallback int) int {
-	if val, ok := os.LookupEnv(key); ok {
-		if n, err := strconv.Atoi(val); err == nil && n > 0 {
-			return n
-		}
+func getEnvInt(key string, fallback int) (int, error) {
+	value, ok := os.LookupEnv(key)
+	if !ok || strings.TrimSpace(value) == "" {
+		return fallback, nil
 	}
-	return fallback
+	n, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil {
+		return 0, fmt.Errorf("%s must be an integer", key)
+	}
+	return n, nil
 }
 
-func getEnvInt64(key string, fallback int64) int64 {
-	if val, ok := os.LookupEnv(key); ok {
-		if n, err := strconv.ParseInt(val, 10, 64); err == nil && n > 0 {
-			return n
+func parseProxies(raw string) ([]netip.Prefix, error) {
+	var prefixes []netip.Prefix
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
 		}
-	}
-	return fallback
-}
-
-func getEnvRequiredPositiveInt64(key string, fallback int64) int64 {
-	if val, ok := os.LookupEnv(key); ok {
-		n, err := strconv.ParseInt(val, 10, 64)
-		if err == nil && n > 0 {
-			return n
+		if strings.Contains(part, "/") {
+			prefix, err := netip.ParsePrefix(part)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %q is not an IP address or CIDR range", EnvTrustedProxies, part)
+			}
+			prefixes = append(prefixes, prefix.Masked())
+			continue
 		}
-	}
-	return fallback
-}
-
-func getEnvBool(key string, fallback bool) bool {
-	if val, ok := os.LookupEnv(key); ok {
-		if b, err := strconv.ParseBool(val); err == nil {
-			return b
+		addr, err := netip.ParseAddr(part)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %q is not an IP address or CIDR range", EnvTrustedProxies, part)
 		}
+		addr = addr.Unmap()
+		prefixes = append(prefixes, netip.PrefixFrom(addr, addr.BitLen()))
 	}
-	return fallback
-}
-
-func getEnvDuration(key string, fallback time.Duration) time.Duration {
-	if val, ok := os.LookupEnv(key); ok {
-		if d, err := time.ParseDuration(val); err == nil && d > 0 {
-			return d
-		}
-		if seconds, err := strconv.Atoi(val); err == nil && seconds > 0 {
-			return time.Duration(seconds) * time.Second
-		}
-	}
-	return fallback
-}
-
-func ParseLogLevel(level string) slog.Level {
-	switch level {
-	case "debug":
-		return slog.LevelDebug
-	case "warn":
-		return slog.LevelWarn
-	case "error":
-		return slog.LevelError
-	default:
-		return slog.LevelInfo
-	}
+	return prefixes, nil
 }

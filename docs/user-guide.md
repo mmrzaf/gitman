@@ -1,74 +1,56 @@
-# Repository user guide
+# User guide
 
-## Accounts
+## Signing in
 
-Operators normally create accounts with the admin CLI. Self-registration appears only when the operator sets `GITMAN_ALLOW_REGISTER=true`.
+Sign in with the username and password an admin created for you (or that
+you reset). There is no self-registration — every account is created by
+an admin with `gitman admin person add`.
 
-## Repositories
+## Home
 
-Authenticated users can create and delete repositories from **Repositories**. Each repository has:
+Lists every repository. Anyone signed in can create a new one from here;
+there are no organizations or namespaces, just one flat list.
 
-- A name containing letters, numbers, dashes, or underscores.
-- An optional description, up to 500 characters.
-- A public or private visibility setting chosen at creation time.
+## A repository
 
-Deleting a repository removes its active bare repository, CI logs, CI artifacts, and CI cache after the database record is deleted. Treat deletion as destructive.
+- **Files** — browse the tree at any branch, tag or commit; jump to a
+  file by path with the go-to-file finder.
+- **Commit** — a single commit's diff and metadata.
+- **Compare** — the diff between two refs.
+- **Runs** — the pipeline runs triggered by pushes (or started by hand)
+  for this repository, and what's currently deployed to each target, if
+  the pipeline defines any.
+- **Settings** — for people allowed to manage this repository: ref rules,
+  secrets, and deletion.
 
-## Public and private source
+## Runs
 
-Public repository source can be browsed anonymously in the web UI and cloned anonymously over HTTP. Private repository source is limited to the owner and explicit collaborators.
+Each push that a ref rule allows to run the pipeline starts a run. A
+run's page shows each step, its output, and whether it passed. From here
+you can:
 
-CI logs and artifacts are member-only even when the source repository is public.
+- **Run again** — re-run the same commit.
+- **Cancel** — stop a run in progress.
 
-## Collaborators
+Anyone allowed to push to the ref can start or cancel a run; a run of a
+bare commit with no ref (nothing matched) can be started or cancelled by
+any member.
 
-Only the owner manages collaborators. Access levels are:
+## Account
 
-| Access | Pull and browse private source | Push | View CI logs and artifacts | Run CI manually |
-| --- | --- | --- | --- | --- |
-| `read` | Yes | No | Yes | No |
-| `write` | Yes | Yes | Yes | Yes |
+Under your username, top-right of every page:
 
-A write collaborator can modify `.gitman-ci.yml`. Do not inject secrets into a repository unless every write collaborator is trusted with those values.
+- **Access tokens** — create and revoke the tokens Git uses in place of a
+  password. A read token can clone and fetch; a write token can also
+  push.
+- Change your password.
 
-## Personal access tokens
+## Admins
 
-Create tokens from **Access Tokens**. A token:
+Admins additionally see **People**, to add, disable, enable, and change
+the role of accounts. People are disabled, never deleted, so their name
+stays attached to what they did.
 
-- Starts with `gm_`.
-- Is displayed only once.
-- Must expire after 30, 90, 180, or 365 days; new tokens default to 90 days.
-- Shows its expiration and approximate last-use time in the UI.
-- Is required for authenticated Git over HTTP.
-- Can authenticate artifact API downloads using `Authorization: Bearer <token>`.
-- Can be revoked from the UI.
-
-Store tokens in a credential manager. Do not commit them. Tokens created before beta 18 receive a 90-day rotation deadline when the beta-18 database migration runs.
-
-## SSH keys
-
-Add RSA, ECDSA, Ed25519, or OpenSSH security keys from **SSH Keys** after the operator enables SSH transport. Gitman validates and canonicalizes each key, displays its SHA-256 fingerprint, rejects insecure DSA and certificate records, and atomically regenerates the managed `authorized_keys` file. Shell access is not provided; keys are restricted to Git forced commands.
-
-## Browser source features
-
-Repository pages provide:
-
-- Branch, tag, and immutable commit browsing with source context preserved between pages.
-- File trees, breadcrumbs, exact source blobs, line/range permalinks, Raw/Download/Copy actions, and keyboard-driven Go to File.
-- Commit history, commit detail pages, unified diffs, rename/delete/binary handling, and CI status linked to the exact commit.
-- A bounded root README source preview with a direct link to the full file.
-- ZIP and TAR.GZ source downloads.
-- Clone commands for HTTP and SSH.
-- A small repository shortcut set: `t`, `g f`, `g c`, `g i`, and `?`.
-
-## CI UI
-
-Members can view exact run status, queue and execution timing, structured step logs with incremental live updates, raw-log search/follow/wrap controls, exact pipeline configuration, outcome reasons, retry history, and nested artifacts. Owners and write collaborators can run CI manually, cancel queued or running jobs, and retry completed jobs against the same commit. Gitman manages the durable post-receive trigger automatically; owners manage repository secrets and trusted-ref policy.
-
-Repository owners also have a dedicated **Settings** page for description, visibility, and safe deletion. Repositories with queued or running CI jobs—or a cancelled job whose worker is still stopping—must be settled before deletion.
-
-## Security activity
-
-The **Security** page shows recent security-relevant activity associated with your account, including sign-ins, failed sign-in attempts against your account, token and SSH-key changes, repository access/settings changes, CI secret/trusted-ref changes, and administrator password resets. Review entries you do not recognize and revoke affected credentials immediately.
-
-The **Tokens** page labels credentials as active, expiring soon, or expired, shows approximate last-use time when available, and shows the token's access scope. Read-only tokens can clone/fetch and use read-only repository APIs; read/write tokens can also push.
+See [Security model](operator/security.md) for how ref rules and roles
+fit together, and the [CLI reference](reference/cli.md) for doing any of
+this from the command line instead.

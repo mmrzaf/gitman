@@ -1,0 +1,66 @@
+{{define "layout" -}}
+<!doctype html>
+<html lang="en" class="no-js">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>{{.Title}} · Gitman</title>
+<link rel="icon" href="{{asset "favicon.svg"}}" type="image/svg+xml">
+<link rel="stylesheet" href="{{asset "css/gitman.css"}}">
+<script src="{{asset "js/head.js"}}"></script>
+<script type="module" src="{{asset "js/main.js"}}"></script>
+</head>
+<body class="page-{{.Name}}">
+<a class="skip-link" href="#main">Skip to content</a>
+{{- if .Person}}
+<header class="topbar{{if eq .Name "run"}} page-wide-bar{{end}}">
+  <nav class="topbar-inner" aria-label="Main">
+    <a class="brand" href="/"><span class="brand-mark" aria-hidden="true">g</span><span class="brand-name">Gitman</span></a>
+    <a class="topbar-link" href="/"{{if eq .Name "home"}} aria-current="page"{{end}}>{{template "icon" "home"}}<span class="topbar-link-label">Home</span></a>
+    {{- if .Person.IsAdmin}}
+    <a class="topbar-link" href="/people"{{if eq .Name "people"}} aria-current="page"{{end}}>{{template "icon" "person"}}<span class="topbar-link-label">People</span></a>
+    {{- end}}
+    <span class="topbar-spacer"></span>
+    <a class="palette-button" href="/jump" data-palette-open aria-keyshortcuts="Control+K Meta+K"{{if eq .Name "jump"}} aria-current="page"{{end}}>
+      {{template "icon" "search"}}<span class="palette-button-label">Jump to…</span><kbd class="kbd js-only" data-shortcut-label>Ctrl K</kbd>
+    </a>
+    <details class="menu" data-menu>
+      <summary class="btn btn-ghost" aria-label="Account menu for {{.Person.Username}}">{{template "icon" "person"}}<span class="topbar-link-label mono">{{.Person.Username}}</span>{{template "icon" "chevron-down"}}</summary>
+      <div class="menu-list">
+        <p class="menu-heading" aria-hidden="true">Signed in as <strong>{{.Person.Username}}</strong>{{if .Person.IsAdmin}} · admin{{end}}</p>
+        <a class="menu-item" href="/me">{{template "icon" "key"}}Access tokens</a>
+        <a class="menu-item" href="/me?tab=password">{{template "icon" "lock"}}Change password</a>
+        <div class="menu-separator" role="separator"></div>
+        <form method="post" action="/logout"><button type="submit" class="menu-item">{{template "icon" "signout"}}Sign out</button></form>
+      </div>
+    </details>
+  </nav>
+</header>
+{{- with .Frame}}
+<div class="repobar{{if eq $.Name "run"}} page-wide-bar{{end}}">
+  <div class="repobar-inner">
+    <div class="repobar-title">
+      <a class="repobar-name" href="/{{.Repo.Name}}">{{template "icon" "repo"}}<span class="truncate">{{.Repo.Name}}</span></a>
+      {{- with .Repo.Description}}<span class="repobar-description truncate">{{.}}</span>{{end}}
+    </div>
+    <nav class="repobar-nav" aria-label="Repository">
+      <a class="repobar-link" href="/{{.Repo.Name}}"{{if eq .Section "overview"}} aria-current="page"{{end}}>{{template "icon" "repo"}}Overview</a>
+      <a class="repobar-link" href="{{refURL .Repo.Name .Repo.DefaultBranch ""}}"{{if eq .Section "files"}} aria-current="page"{{end}}>{{template "icon" "code"}}Files</a>
+      {{- if $.Person.IsAdmin}}
+      <a class="repobar-link" href="/{{.Repo.Name}}/settings"{{if eq .Section "settings"}} aria-current="page"{{end}}>{{template "icon" "settings"}}Settings</a>
+      {{- end}}
+    </nav>
+  </div>
+</div>
+{{- end}}
+{{- end}}
+<div class="toasts" data-toasts>
+  {{- with .Flash}}{{template "toast" .}}{{end}}
+</div>
+<main id="main"{{with .EventStream}} data-live-events="{{.}}"{{end}}>
+{{template "content" .}}
+</main>
+</body>
+</html>
+{{- end}}

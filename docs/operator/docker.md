@@ -1,106 +1,92 @@
 # Docker deployment
 
-The included Compose stack defines:
+The supported deployment is Docker Compose, behind a Traefik instance
+already running on the host. `compose.yaml` defines three services:
 
-| Service | Purpose | Privilege note |
-| --- | --- | --- |
-| `web` | Browser UI and Git smart HTTP | No Docker socket |
-| `worker` | Optional built-in CI executor | Mounts `/var/run/docker.sock` and controls sibling job containers |
+- **`postgres`** — `postgres:16-alpine` (or `POSTGRES_IMAGE`), on an
+  internal-only network, with a health check Compose uses to gate `web`
+  and `worker` startup.
+- **`web`** — built from the repository's `Dockerfile`, joined to both the
+  internal network (to reach `postgres`) and the external Traefik
+  network. Routing is entirely via container labels
+  (`traefik.http.routers.gitman...`) — there's no separate Traefik
+  config file to maintain.
+- **`worker`** — the same image as `web`, run as `root` so it can reach
+  the host's Docker socket (`/var/run/docker.sock`, bind-mounted in), and
+  started with `command: ["worker"]`.
 
-Both services share a host data directory mounted at `/data`.
+`web` and `worker` share one environment block (a YAML anchor in
+`compose.yaml`), so there's one place to change a setting for both.
 
-## Web-only deployment
+## Prerequisites
 
-Use this when CI is not required:
+- Docker with the Compose plugin.
+- A Traefik instance on the host, with an external network
+  (`TRAEFIK_NETWORK`, default `traefik`) that Traefik and Gitman both
+  join.
 
-```bash
-export GIT_UID=$(id -u)
-export GITMAN_DATA_DIR="$(pwd)/data"
-mkdir -p "$GITMAN_DATA_DIR"
-chmod 700 "$GITMAN_DATA_DIR"
-docker compose up -d --build web
-```
+## Setup
 
-## Web plus CI worker
-
-Use a Linux Docker host. Determine the Docker socket group ID so the non-root worker can access the daemon:
-
-```bash
-export GIT_UID=$(id -u)
-export DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)
-export GITMAN_DATA_DIR="$(pwd)/data"
-mkdir -p "$GITMAN_DATA_DIR"
-chmod 700 "$GITMAN_DATA_DIR"
+```sh
+cp .env.example .env            # fill in GITMAN_HOST, POSTGRES_PASSWORD, ...
+sudo install -d -o 1000 -g 1000 /srv/gitman
 docker compose up -d --build
+docker compose exec web gitman admin person add --admin darius
 ```
 
-Pre-pull approved job images on the Docker host:
+See [Configuration reference](configuration.md) for every `.env` setting.
 
-```bash
-docker pull golang:1.27-bookworm
+## The data directory
+
+`GITMAN_DATA_DIR` (host-side, default `/srv/gitman`) is bind-mounted into
+`web` and `worker` at the **identical path**. This matters because a
+pipeline step container is started by the *host's* Docker daemon, not by
+the worker container's own filesystem view — the worker hands Docker a
+host path for the step's workspace mount, so the worker must see that
+workspace at the same path the host does. Don't remap this mount to a
+different path on either side.
+
+## Docker access for pipelines
+
+`worker` always has the host's Docker socket available, but a pipeline
+only gets to use it (`docker: true` in `.gitman.yml`) on refs whose rule
+explicitly allows it:
+
+```sh
+gitman admin rule set --docker --run myrepo branch main
 ```
 
-## Create the first account
+Granting this hands that ref's pipeline the same privileges as anyone
+with access to the host's Docker socket — root, effectively. Grant it
+only on refs whose pushers you'd trust with that. See
+[Security model](security.md).
 
-```bash
-read -rsp 'Admin password: ' ADMIN_PASSWORD; printf '\n'
-printf '%s\n' "$ADMIN_PASSWORD" | docker compose exec -T web gitman admin users create admin
-unset ADMIN_PASSWORD
+## Scaling workers
+
+```sh
+docker compose up -d --scale worker=3
 ```
 
-## Bind address
+Workers coordinate purely through PostgreSQL (row locking to claim runs,
+`LISTEN`/`NOTIFY` for wake-ups) — there's no other state to share, so
+this is safe to do at any time. Gitman never pulls images; every image a
+pipeline references must already exist on the worker host before a run
+needs it.
 
-Compose publishes the web service to `127.0.0.1:8080` by default. Change the host bind only when the service is intentionally exposed:
+## Mirrors
 
-```bash
-GITMAN_BIND_ADDRESS=0.0.0.0 docker compose up -d
-```
+Every download the image build makes is a build argument
+(`GO_IMAGE`, `RUNTIME_IMAGE`, `GOPROXY`, `ALPINE_MIRROR` — see the top of
+the `Dockerfile`). Compose's own images (`POSTGRES_IMAGE`,
+`GITMAN_IMAGE`) are set in `.env` if you need a registry mirror for
+those too.
 
-Prefer a reverse proxy that listens publicly and forwards to `127.0.0.1:8080`.
+## Behind Traefik
 
-## CI secrets
-
-Generate and persist an encryption key in your deployment secret manager:
-
-```bash
-export GITMAN_SECRET_KEY=$(openssl rand -hex 32)
-docker compose up -d
-```
-
-The same value must reach both `web` and `worker`.
-
-## HTTPS reverse proxy
-
-Terminate TLS at a trusted reverse proxy and configure:
-
-```bash
-export GITMAN_PUBLIC_URL=https://git.example.com
-export GITMAN_FORCE_SECURE_COOKIES=true
-export GITMAN_TRUST_PROXY_HEADERS=true
-docker compose up -d
-```
-
-The proxy must set `X-Forwarded-Proto: https` or an equivalent standardized `Forwarded` header. Do not enable proxy-header trust when clients can bypass the trusted proxy.
-
-## Compose-specific host variables
-
-Compose adapts a few host-side variable names before passing values to the worker:
-
-| Host-side Compose variable | Worker environment variable |
-| --- | --- |
-| `GITMAN_CI_MEMORY_LIMIT` | `GITMAN_MEMORY_LIMIT` |
-| `GITMAN_CI_CPU_LIMIT` | `GITMAN_CPU_LIMIT` |
-
-Use the left column when invoking Docker Compose. Use the right column for direct worker deployments.
-
-## Operations
-
-```bash
-docker compose ps
-docker compose logs -f web
-docker compose logs -f worker
-docker compose restart web worker
-docker compose down
-```
-
-Read [security](security.md), [configuration](configuration.md), and [backups and upgrades](backups-and-upgrades.md) before production use.
+- Set `GITMAN_TRUSTED_PROXIES` to the address range Traefik reaches
+  Gitman from (the default, `172.16.0.0/12`, covers Docker's default
+  bridge networks) — otherwise every request appears to come from
+  Traefik, and the sign-in rate limiter treats every client as one.
+- Large clones and pushes can outlast a proxy's read timeout. If your
+  Traefik entry point sets one, raise it for Gitman's route, e.g.
+  `--entryPoints.websecure.transport.respondingTimeouts.readTimeout=0`.

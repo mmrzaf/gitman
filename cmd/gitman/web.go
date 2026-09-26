@@ -2,147 +2,77 @@ package main
 
 import (
 	"context"
-	"errors"
-	"flag"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
+	"path/filepath"
 	"syscall"
-	"time"
 
-	citrigger "github.com/mmrzaf/gitman/internal/ci/trigger"
+	"github.com/mmrzaf/gitman/internal/activity"
+	"github.com/mmrzaf/gitman/internal/auth"
+	"github.com/mmrzaf/gitman/internal/ci"
 	"github.com/mmrzaf/gitman/internal/config"
-	"github.com/mmrzaf/gitman/internal/db"
-	"github.com/mmrzaf/gitman/internal/handlers"
-	gitmanssh "github.com/mmrzaf/gitman/internal/ssh"
+	"github.com/mmrzaf/gitman/internal/git"
+	"github.com/mmrzaf/gitman/internal/postgres"
+	"github.com/mmrzaf/gitman/internal/push"
+	reposvc "github.com/mmrzaf/gitman/internal/repo"
+	"github.com/mmrzaf/gitman/internal/web"
 )
 
-func init() {
-	register(Command{
-		Name:     "web",
-		NeedsGit: true,
-		Run:      runWeb,
-	})
-}
-
-func runWeb(cfg *config.Config, database *db.DB, args []string) error {
-	for _, warning := range cfg.ProductionWarnings() {
-		slog.Warn("production configuration warning", "warning", warning)
+// runWeb runs the web process until it receives SIGINT or SIGTERM.
+func runWeb(args []string) error {
+	if len(args) != 0 {
+		return fmt.Errorf("web takes no arguments; it is configured through the environment")
 	}
-	fs := flag.NewFlagSet("web", flag.ContinueOnError)
-	port := fs.String("port", "", "")
-
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-
-	finalPort := cfg.Port
-	if *port != "" {
-		finalPort = *port
-	}
-	portNumber, err := strconv.Atoi(finalPort)
-	if err != nil || portNumber < 1 || portNumber > 65535 {
-		return fmt.Errorf("web port must be a number between 1 and 65535")
-	}
-
-	if err := os.MkdirAll(cfg.ReposPath, 0o700); err != nil {
-		return err
-	}
-	if err := os.Chmod(cfg.ReposPath, 0o700); err != nil {
-		return err
-	}
-	if err := os.MkdirAll(cfg.ArtifactsPath, 0o700); err != nil {
-		return err
-	}
-	if err := os.Chmod(cfg.ArtifactsPath, 0o700); err != nil {
-		return err
-	}
-
-	templates, err := handlers.LoadTemplates()
+	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
-	staticFS, err := handlers.NewStaticFS()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	database, err := postgres.Connect(ctx, cfg.DatabaseURL, postgres.Options{})
 	if err != nil {
 		return err
 	}
-
-	app := &handlers.App{
-		Config:    cfg,
-		DB:        database,
-		Templates: templates,
-		StaticFS:  staticFS,
-	}
-	runCtx, cancelRun := context.WithCancel(context.Background())
-	defer cancelRun()
-	if err := gitmanssh.SyncAuthorizedKeys(runCtx, database, cfg); err != nil {
-		return fmt.Errorf("synchronize authorized_keys: %w", err)
-	}
-	if err := database.DeleteExpiredSessions(runCtx); err != nil {
-		slog.Warn("failed to prune expired sessions at startup", "error", err)
-	}
-	go pruneExpiredSessions(runCtx, database)
-	triggerManager := &citrigger.Manager{DB: database, ReposPath: cfg.ReposPath}
-	if err := triggerManager.ReconcileAll(runCtx); err != nil {
-		slog.Warn("some repository CI hooks could not be reconciled", "error", err)
-	}
-	go triggerManager.Run(runCtx)
-
-	router := handlers.SetupRouter(app)
-
-	srv := &http.Server{
-		Addr:              ":" + finalPort,
-		Handler:           router,
-		ReadHeaderTimeout: 10 * time.Second,
-		IdleTimeout:       120 * time.Second,
-		MaxHeaderBytes:    1 << 20,
+	defer database.Close()
+	if err := database.Migrate(ctx); err != nil {
+		return err
 	}
 
-	errChan := make(chan error, 1)
-
-	go func() {
-		slog.Info("web server starting", "port", finalPort)
-		errChan <- srv.ListenAndServe()
-	}()
-
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
-
-	select {
-
-	case err := <-errChan:
-		if !errors.Is(err, http.ErrServerClosed) {
-			return err
-		}
-
-	case sig := <-stop:
-		slog.Info("shutdown", "signal", sig)
-		cancelRun()
-
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		return srv.Shutdown(ctx)
+	executable, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("locate the gitman binary: %w", err)
+	}
+	if executable, err = filepath.EvalSymlinks(executable); err != nil {
+		return fmt.Errorf("locate the gitman binary: %w", err)
+	}
+	if err := push.Install(cfg.HooksPath(), executable); err != nil {
+		return err
 	}
 
-	return nil
-}
-
-func pruneExpiredSessions(ctx context.Context, database *db.DB) {
-	ticker := time.NewTicker(time.Hour)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if err := database.DeleteExpiredSessions(ctx); err != nil {
-				slog.Warn("failed to prune expired sessions", "error", err)
-			}
-		}
+	store := git.NewStore(cfg.ReposPath())
+	defer store.Close()
+	if err := store.Sweep(); err != nil {
+		log.Warn("could not remove leftovers of interrupted repository operations", "error", err)
 	}
+
+	people := auth.NewService(database)
+	runs := ci.NewService(database)
+	app, err := web.New(cfg, web.Services{
+		People:   people,
+		Repos:    reposvc.NewService(database, store, cfg.SecretKey),
+		CI:       runs,
+		Activity: activity.NewService(database),
+		Ping:     database.Ping,
+		Listen:   database.Listen,
+	}, log)
+	if err != nil {
+		return err
+	}
+	go runRetention(ctx, people, runs, cfg.RetentionDays, log)
+	return app.Run(ctx)
 }
