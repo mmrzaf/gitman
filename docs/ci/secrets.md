@@ -17,8 +17,8 @@ treat it like any other encryption key, not a rotatable password.
 
 ## Who can add secrets
 
-Only an admin, or someone with access to a repository's **Settings**
-page, can add or change its secrets.
+Only an admin can add or change a repository's secrets: the **Settings**
+page is gated by the global admin role, with no other way to reach it.
 
 ## Whether a run gets them
 

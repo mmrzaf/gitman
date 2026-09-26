@@ -8,20 +8,34 @@ an admin with `gitman admin person add`.
 
 ## Home
 
-Lists every repository. Anyone signed in can create a new one from here;
-there are no organizations or namespaces, just one flat list.
+Lists every repository you can read. Anyone signed in can create a new
+one from here; there are no organizations or namespaces, just one flat
+list of what's readable to you.
 
 ## A repository
 
+Its nav has three items:
+
+- **Overview** — its branches and tags, what's currently deployed to
+  each target (if the pipeline defines any), and a timeline of recent
+  activity.
 - **Files** — browse the tree at any branch, tag or commit; jump to a
-  file by path with the go-to-file finder.
-- **Commit** — a single commit's diff and metadata.
-- **Compare** — the diff between two refs.
-- **Runs** — the pipeline runs triggered by pushes (or started by hand)
-  for this repository, and what's currently deployed to each target, if
-  the pipeline defines any.
-- **Settings** — for people allowed to manage this repository: ref rules,
-  secrets, and deletion.
+  file by path with the go-to-file finder. A commit's own page (its diff
+  and metadata) and a comparison between two refs are reached from links
+  here, not from the nav.
+- **Runs** — every run of this repository's pipeline, newest first,
+  paged.
+- **Settings** — admins only: description, ref rules, secrets, who may
+  read the repository and push to a ref no rule matches, and deletion.
+
+### Read access
+
+Each repository is either readable by **everyone** signed in, or
+**restricted** to its explicit readers and admins — set on its Settings
+page's **Access** tab. To anyone who cannot read a restricted repository,
+it does not exist: it is left out of Home, search, activity, and
+anywhere else a list of repositories or their runs appears, and Git
+itself refuses to clone, fetch or push to it.
 
 ## Runs
 
@@ -34,7 +48,7 @@ you can:
 
 Anyone allowed to push to the ref can start or cancel a run; a run of a
 bare commit with no ref (nothing matched) can be started or cancelled by
-any member.
+any member who can read the repository.
 
 ## Account
 

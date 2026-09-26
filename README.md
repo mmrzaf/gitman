@@ -96,14 +96,25 @@ Everything is set through the environment.
 | `GITMAN_SECRET_KEY` | empty | Encrypts repository secrets; at least 32 characters. Empty disables secrets. Changing it makes stored secrets unreadable. |
 | `GITMAN_TRUSTED_PROXIES` | empty | Comma-separated addresses or CIDR ranges allowed to set `X-Forwarded-For`. |
 | `GITMAN_RETENTION_DAYS` | `90` | Days finished runs and their logs are kept; `0` keeps them forever. |
+| `GITMAN_DATABASE_MAX_CONNS` | `0` | Caps `web` and `worker`'s own connection pool sizes; `0` keeps each process's own default. |
+| `GITMAN_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. |
+| `GITMAN_LOG_FORMAT` | `text` | `text` or `json`. |
+
+See [Configuration reference](docs/operator/configuration.md) for
+Compose-level settings and image build arguments.
 
 ## People and permissions
 
-- Everyone who can sign in can read every repository. There are no
-  anonymous users and no per-repository access lists.
+- There are no anonymous users: every request, over the web or over Git,
+  authenticates as a specific person.
 - Anyone can create a repository. An **admin** also manages people and
-  repository settings: rules, secrets and deletion. A person is disabled,
-  never deleted, so their name stays on what they did.
+  repository settings: rules, secrets, read access and deletion. A person
+  is disabled, never deleted, so their name stays on what they did.
+- **Read access** is per repository: **everyone** signed in (the
+  default), or **restricted** to explicit readers and admins. To anyone
+  who cannot read a restricted repository, it does not exist — it is left
+  out of every list, and Git itself refuses to clone, fetch or push to
+  it. Nobody can push to a repository they cannot read.
 - **Ref rules** are the only other permission system. A rule matches
   branches or tags by pattern (`main`, `release/*`, `v*`); the most
   specific matching rule applies. It decides:
@@ -113,9 +124,12 @@ Everything is set through the environment.
   - whether that pipeline may use Docker, get the repository's secrets,
     and ship to a target.
 
-A ref no rule matches is unprotected: anyone may push, force-push or
-delete it, and pushes to it run nothing. A new repository is fully usable
-at once; rules only add protection and grant pipeline capabilities.
+A ref no rule matches is otherwise unprotected — force-push and deletion
+are always allowed, and pushes to it run nothing — but who may push to it
+follows the repository's **default push policy** (everyone, admins, or
+named people; everyone by default); a rule for that specific branch or
+tag overrides it. A new repository is fully usable at once; rules and the
+default push policy only add protection and grant pipeline capabilities.
 
 Allowing Docker hands a pipeline the host's Docker socket, which is root
 on the worker's host: grant it only on refs whose pushers you would give
@@ -169,6 +183,55 @@ steps:
   the run's page.
 - A passing run with a target is recorded as a deployment: the
   repository page shows what is live on each target.
+
+There is no built-in artifact or deploy step: a pipeline ships by running
+whatever the target actually needs, the same as it would outside Gitman.
+A step's container has full outbound network access. Some patterns:
+
+**Deploy over the Docker socket, on the same host as the worker**
+(`docker: true`, granted only on the ref that deploys):
+
+```yaml
+- name: deploy
+  when: production
+  run: |
+    docker compose -f /srv/apps/waiotech/compose.yaml pull
+    docker compose -f /srv/apps/waiotech/compose.yaml up -d
+```
+
+**Build and push an image to a registry** (a `REGISTRY_TOKEN` secret,
+`--secrets` allowed on the ref):
+
+```yaml
+- name: publish
+  when: production
+  run: |
+    echo "$REGISTRY_TOKEN" | docker login registry.example.com -u deploy --password-stdin
+    docker build -t registry.example.com/waiotech:"$GITMAN_VERSION" .
+    docker push registry.example.com/waiotech:"$GITMAN_VERSION"
+```
+
+**Deploy over SSH**, with the private key and `known_hosts` stored as
+secrets (a secret's value may be multi-line, such as a whole key file):
+
+```yaml
+- name: deploy
+  when: production
+  run: |
+    install -m 600 -D /dev/stdin ~/.ssh/id_ed25519 <<< "$DEPLOY_KEY"
+    install -m 644 -D /dev/stdin ~/.ssh/known_hosts <<< "$KNOWN_HOSTS"
+    ssh deploy@app.example.com "cd /srv/apps/waiotech && git pull && ./restart.sh"
+```
+
+**Upload a build output with curl**:
+
+```yaml
+- name: upload
+  run: |
+    go build -o bin/waiotech .
+    curl -fsS -H "Authorization: Bearer $UPLOAD_TOKEN" -T bin/waiotech \
+      https://artifacts.example.com/waiotech/"$GITMAN_VERSION"
+```
 
 Check a pipeline file before pushing it:
 
@@ -244,13 +307,14 @@ GITMAN_TEST_DATABASE_URL='postgres://postgres@localhost/gitman_test?sslmode=disa
 
 ## Not added, on purpose
 
-- **SSH.** Git over HTTPS with access tokens is one way in, secured one
-  way.
+- **SSH.** There is no SSH transport at all, now or planned. Git over
+  HTTPS with access tokens is the only way in, secured one way.
 - **Pull requests, issues, wikis, forks, stars.** Gitman is where code
   lives and ships from; discussion lives elsewhere.
-- **Organizations, namespaces, per-repository access lists.** One flat
-  list of repositories; ref rules are the permission system.
-- **Anonymous or public access.**
+- **Organizations, namespaces.** One flat list of repositories.
+- **Anonymous or public access, of any kind.** Every request, over the
+  web or over Git, authenticates as a specific person; there is no
+  read-only or unauthenticated mode, and no way to turn one on.
 - **Pulling images.** What a pipeline runs is what the operator put on
   the host.
 - **Automatic retries, caches between runs, artifacts, matrix builds,

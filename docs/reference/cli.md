@@ -25,6 +25,10 @@ gitman admin person role <username> admin|member
 gitman admin token create [--write] [--days N] <username> <name>
 gitman admin repo create [--description TEXT] [--default-branch NAME] <name>
 gitman admin repo list | delete <name> | sync <name>
+gitman admin repo visibility <name> everyone|restricted
+gitman admin repo default-push [--push everyone|admins|people] [--people a,b] <name>
+gitman admin reader add | remove <repo> <username>
+gitman admin reader list <repo>
 gitman admin rule list <repo>
 gitman admin rule set [--push everyone|admins|people] [--people a,b] [--force] [--delete]
                       [--run] [--docker] [--secrets] [--ship] <repo> branch|tag <pattern>
@@ -46,6 +50,11 @@ Flags go before the positional arguments.
 - `admin repo sync <name>` rebuilds a repository's ref index from Git —
   needed after restoring `repos/` from a different point in time than the
   database. See [Backups and upgrades](../operator/backups-and-upgrades.md).
+- `admin repo visibility` sets who may read a repository; `restricted`
+  limits it to its readers (`admin reader add`/`remove`/`list`) and
+  admins. `admin repo default-push` sets who may push to a branch or tag
+  no rule matches. See [Repository read
+  access](../operator/security.md#repository-read-access).
 - `admin rule set` flags map directly to what a rule grants: `--force`/
   `--delete` (force-push/deletion), `--run` (pushes trigger the
   pipeline), `--docker`/`--secrets`/`--ship` (what a triggered run may

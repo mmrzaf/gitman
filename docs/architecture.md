@@ -6,9 +6,11 @@ processes, selected by its first argument:
 - **`gitman web`** serves Git over HTTP (the smart HTTP protocol) and the
   web interface. Git's push hooks (`pre-receive`/`post-receive`) invoke the
   same binary as `gitman hook ...`, generated fresh at every start.
-- **`gitman worker`** polls PostgreSQL for queued pipeline runs, fetches
-  each run's commit from `web` over Git HTTP, and runs every pipeline step
-  in its own Docker container on the host, using the host's Docker socket.
+- **`gitman worker`** claims queued pipeline runs from PostgreSQL — woken
+  by `LISTEN`/`NOTIFY`, with a periodic poll as a safety net under it —
+  fetches each run's commit from `web` over Git HTTP, and runs every
+  pipeline step in its own Docker container on the host, using the host's
+  Docker socket.
 - **`gitman admin ...`** is the operator CLI: people, tokens, repositories,
   ref rules, run cancellation and worker cleanup. See the
   [CLI reference](reference/cli.md).
@@ -25,8 +27,7 @@ processes, selected by its first argument:
 - **Run workspaces** are ephemeral checkouts under
   `GITMAN_DATA_DIR/workspaces`, used only while a run is in progress.
 - **Git hook scripts** are regenerated under `GITMAN_DATA_DIR/hooks` on
-  every start of `web` or `worker`, so they never need to survive an
-  upgrade on disk.
+  every start of `web`, so they never need to survive an upgrade on disk.
 
 ## Why one PostgreSQL and no cache
 

@@ -15,13 +15,16 @@ config file. `web` and `worker` read the same settings.
 | `GITMAN_SECRET_KEY` | empty | Encrypts repository secrets; at least 32 characters. Empty disables secret storage entirely. Changing it makes stored secrets unreadable. |
 | `GITMAN_TRUSTED_PROXIES` | empty | Comma-separated IP addresses or CIDR ranges allowed to set `X-Forwarded-For` — needed for correct client-IP attribution (rate limiting, audit) behind a reverse proxy. |
 | `GITMAN_RETENTION_DAYS` | `90` | Days finished runs and their logs are kept; `0` keeps them forever. Each ref's latest run and every deployment record are always kept. |
+| `GITMAN_DATABASE_MAX_CONNS` | `0` (the process's own default) | Caps `web` and `worker`'s own connection pool sizes. `web` also refuses a request that cannot get a connection within a short, fixed timeout, with `503` and `Retry-After`, rather than leaving it to hang. |
+| `GITMAN_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. |
+| `GITMAN_LOG_FORMAT` | `text` | `text` or `json`. |
 
 Secure cookies aren't a separate setting: the session cookie's `Secure`
 flag is derived from `GITMAN_PUBLIC_URL`'s scheme (set automatically when
-it's `https`). The log level and per-endpoint concurrency limits present
-in earlier versions of Gitman have no equivalent here — logging uses a
-single fixed level, and there are no independently tunable Smart-HTTP,
-file-search or repository-browse limits.
+it's `https`). Git HTTP (clone, fetch, push) has a fixed, not
+independently tunable, concurrency limit; there are no other
+independently tunable Smart-HTTP, file-search or repository-browse
+limits present in earlier versions of Gitman.
 
 ## Compose-level settings (`.env`)
 
@@ -36,6 +39,9 @@ These aren't read by `gitman` itself; they're substituted into
 | `GITMAN_SECRET_KEY` | empty | Passed through to the application setting above. |
 | `GITMAN_TRUSTED_PROXIES` | `172.16.0.0/12` | Passed through to the application setting above; the default covers Docker's default bridge networks. |
 | `GITMAN_RETENTION_DAYS` | `90` | Passed through to the application setting above. |
+| `GITMAN_DATABASE_MAX_CONNS` | `0` | Passed through to the application setting above. |
+| `GITMAN_LOG_LEVEL` | `info` | Passed through to the application setting above. |
+| `GITMAN_LOG_FORMAT` | `text` | Passed through to the application setting above. |
 | `TRAEFIK_NETWORK` | `traefik` | The external Docker network Traefik and `web` share. |
 | `TRAEFIK_ENTRYPOINT` | `websecure` | Traefik entry point for Gitman's router. |
 | `TRAEFIK_CERTRESOLVER` | `letsencrypt` | Traefik certificate resolver for Gitman's router. |
@@ -64,11 +70,15 @@ time, so the image itself can be built behind a registry or module mirror:
 
 The rewrite is deliberately smaller in scope than earlier Gitman
 versions. Settings that controlled SQLite paths, CI artifact/cache
-storage, SSH, self-registration, per-endpoint concurrency limits, worker
-resource limits (memory/CPU), and CI storage/heartbeat tuning have no
-counterpart: those features (SSH, self-registration, CI artifacts and
-caches, per-repository access lists) don't exist in this version at all.
-See [Not added, on purpose](../../README.md#not-added-on-purpose).
+storage, SSH, self-registration, independently tunable per-endpoint
+concurrency limits, worker resource limits (memory/CPU), and CI
+storage/heartbeat tuning have no counterpart: those features (SSH,
+self-registration, CI artifacts and caches) don't exist in this version
+at all. See [Not added, on purpose](../../README.md#not-added-on-purpose).
+
+Per-repository read access is back, unlike in the version immediately
+before this rewrite: see [Repository read
+access](security.md#repository-read-access).
 
 Docker access for pipelines moved from an instance-wide setting to a
 per-ref grant: see `--docker` in

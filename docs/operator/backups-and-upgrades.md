@@ -9,8 +9,8 @@
   repositories themselves.
 
 Nothing else needs backing up: Git hook scripts under `hooks/` are
-regenerated at every start of `web` or `worker`, and run workspaces exist
-only for the duration of a run.
+regenerated at every start of `web`, and run workspaces exist only for
+the duration of a run.
 
 ## Restoring
 
