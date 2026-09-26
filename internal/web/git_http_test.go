@@ -455,3 +455,34 @@ func TestRunFetchToken(t *testing.T) {
 		t.Fatalf("a finished run's token still works: ok=%v\n%s", ok, out)
 	}
 }
+
+// TestRestrictedRepositoryOverGitHTTP is the transport-level half of the
+// read-visibility rule: a restricted repository must be exactly as
+// unreachable over Git — clone, fetch, and push alike — as a name that
+// does not exist, for anyone who is not one of its readers or an admin.
+func TestRestrictedRepositoryOverGitHTTP(t *testing.T) {
+	e := setupGitHTTP(t)
+	ctx := context.Background()
+	repos := reposvc.NewService(e.db, nil, "")
+	if err := repos.SetVisibility(ctx, e.repo.ID, reposvc.VisibilityRestricted, ""); err != nil {
+		t.Fatal(err)
+	}
+	reader, readerCred := e.person("bea", false, auth.ScopeWrite)
+	_, outsiderCred := e.person("oscar", false, auth.ScopeWrite)
+	_, adminCred := e.person("lead", true, auth.ScopeWrite)
+	if err := repos.AddReader(ctx, e.repo.ID, reader.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	out, ok := e.git(".", "ls-remote", e.url(outsiderCred))
+	if ok || !strings.Contains(out, "Repository not found") {
+		t.Fatalf("a non-reader cloned a restricted repository: ok=%v\n%s", ok, out)
+	}
+
+	for _, cred := range []gitCredential{readerCred, adminCred} {
+		out, ok := e.git(".", "ls-remote", e.url(cred))
+		if !ok {
+			t.Fatalf("%s (a reader/admin) could not clone the restricted repository:\n%s", cred.username, out)
+		}
+	}
+}

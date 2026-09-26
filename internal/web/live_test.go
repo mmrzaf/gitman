@@ -17,6 +17,7 @@ import (
 	"github.com/mmrzaf/gitman/internal/auth"
 	"github.com/mmrzaf/gitman/internal/ci"
 	"github.com/mmrzaf/gitman/internal/git"
+	"github.com/mmrzaf/gitman/internal/postgres/pgtest"
 	reposvc "github.com/mmrzaf/gitman/internal/repo"
 )
 
@@ -166,13 +167,47 @@ func TestEventStreamRefusesAMalformedRun(t *testing.T) {
 	}
 }
 
-func TestEventStreamSendsChanges(t *testing.T) {
-	a := renderingApp(t)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := a.events(w, r); err != nil {
+// eventStreamFixture is a minimal, DB-backed App for testing /events'
+// notice filtering: real enough that mustReadRun/mustReadStep's
+// readability checks work, without the full session/routing stack
+// setup and browser build. The returned handler already carries person
+// in its request context, the way page's session middleware would.
+func eventStreamFixture(t *testing.T) (a *App, handler http.HandlerFunc) {
+	t.Helper()
+	database := pgtest.Open(t)
+	store := git.NewStore(t.TempDir())
+	t.Cleanup(store.Close)
+	repos := reposvc.NewService(database, store, "")
+	people := auth.NewService(database)
+	a = &App{repos: repos, ci: ci.NewService(database), hub: newHub(), now: time.Now,
+		log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	r, err := repos.Create(context.Background(), "demo", "", "main", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	person, err := people.Create(context.Background(), "darius", "correct-horse-battery", false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Pool.Exec(context.Background(), `
+		INSERT INTO runs (id, repo_id, number, commit_hash, trigger, status)
+		VALUES ('run-1', $1, 1, 'abc123', 'manual', 'queued')
+	`, r.ID); err != nil {
+		t.Fatal(err)
+	}
+	handler = func(w http.ResponseWriter, req *http.Request) {
+		req = req.WithContext(context.WithValue(req.Context(), personKey{}, person))
+		if err := a.events(w, req); err != nil {
 			t.Error(err)
 		}
-	}))
+	}
+	return a, handler
+}
+
+func TestEventStreamSendsChanges(t *testing.T) {
+	a, handler := eventStreamFixture(t)
+	server := httptest.NewServer(handler)
 	defer server.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -216,13 +251,13 @@ func TestEventStreamSendsChanges(t *testing.T) {
 // or a Repository page — which must update for a push or a settings
 // change, not only for runs.
 func TestEventStreamFollowsActivity(t *testing.T) {
-	a := renderingApp(t)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := a.events(w, r); err != nil {
-			t.Error(err)
-		}
-	}))
+	a, handler := eventStreamFixture(t)
+	server := httptest.NewServer(handler)
 	defer server.Close()
+	repo, err := a.repos.GetByName(context.Background(), "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/events", nil)
@@ -233,7 +268,7 @@ func TestEventStreamFollowsActivity(t *testing.T) {
 	defer resp.Body.Close()
 	go func() {
 		time.Sleep(100 * time.Millisecond)
-		a.hub.publish(notice{channel: activity.NotifyChannel, payload: "repo-1"})
+		a.hub.publish(notice{channel: activity.NotifyChannel, payload: repo.ID})
 	}()
 	lines := bufio.NewScanner(resp.Body)
 	for lines.Scan() {

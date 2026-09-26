@@ -138,6 +138,21 @@ func (a *App) resolveGit(w http.ResponseWriter, r *http.Request, svc git.Service
 		http.Error(w, "Internal error.", http.StatusInternalServerError)
 		return nil, false
 	}
+	// A run's own fetch token is already scoped to that run's repository
+	// above; only a person's token needs a readability check, and a
+	// repository this person cannot read does not exist to them.
+	if person != nil {
+		readable, err := a.repos.CanRead(r.Context(), repoRecord, person.ID, person.IsAdmin)
+		if err != nil {
+			a.log.Error("git repository readability check failed", "repo", name, "error", err)
+			http.Error(w, "Internal error.", http.StatusInternalServerError)
+			return nil, false
+		}
+		if !readable {
+			refuse("Repository not found.", http.StatusNotFound)
+			return nil, false
+		}
+	}
 	gitRepo, err := a.repos.Open(repoRecord)
 	if err != nil {
 		a.log.Error("git repository open failed", "repo", name, "error", err)

@@ -15,7 +15,8 @@ type jumpPage struct {
 }
 
 func (a *App) jump(w http.ResponseWriter, r *http.Request) error {
-	repos, err := a.repos.List(r.Context())
+	person := personFrom(r)
+	repos, err := a.repos.ListReadable(r.Context(), person.ID, person.IsAdmin)
 	if err != nil {
 		return err
 	}

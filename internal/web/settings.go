@@ -21,13 +21,43 @@ func (a *App) repoByName(r *http.Request) (*reposvc.Repo, error) {
 // repoNamed resolves an explicit repository name, for callers that must
 // split it out of a path value themselves — the files-at-ref routes,
 // whose {repo} value is "name@ref" glued together.
+//
+// This is the one place every page and settings handler resolves a
+// repository by name, so it is the one place read access is checked: to
+// anyone who cannot read a restricted repository, it does not exist —
+// the same not-found error as a name nobody has ever used.
 func (a *App) repoNamed(r *http.Request, name string) (*reposvc.Repo, error) {
+	notFound := apperr.New(apperr.KindNotFound, "There is no repository named \u201c"+name+"\u201d.")
 	repo, err := a.repos.GetByName(r.Context(), name)
 	if err != nil {
 		if errors.Is(err, postgres.ErrNotFound) {
-			return nil, apperr.New(apperr.KindNotFound, "There is no repository named \u201c"+name+"\u201d.")
+			return nil, notFound
 		}
 		return nil, err
+	}
+	person := personFrom(r)
+	readable, err := a.repos.CanRead(r.Context(), repo, person.ID, person.IsAdmin)
+	if err != nil {
+		return nil, err
+	}
+	if !readable {
+		return nil, notFound
+	}
+	return repo, nil
+}
+
+// repoSettingsRepo resolves the repository the same way repoByName does,
+// then requires the signed-in person to be an admin — checked in that
+// order, and only after, so a restricted repository a non-admin cannot
+// read stays invisible (404) instead of announcing itself with a 403
+// that a repository they could read but don't manage would also get.
+func (a *App) repoSettingsRepo(r *http.Request) (*reposvc.Repo, error) {
+	repo, err := a.repoByName(r)
+	if err != nil {
+		return nil, err
+	}
+	if !personFrom(r).IsAdmin {
+		return nil, apperr.New(apperr.KindForbidden, "Only admins may manage a repository's settings.")
 	}
 	return repo, nil
 }
@@ -115,7 +145,7 @@ func (a *App) repoSettingsData(r *http.Request, repo *reposvc.Repo, state settin
 // (?dialog=rule-edit&kind=branch&pattern=main) or replacing a secret
 // (?dialog=secret-replace&key=DEPLOY_TOKEN).
 func (a *App) repoSettings(w http.ResponseWriter, r *http.Request) error {
-	repo, err := a.repoByName(r)
+	repo, err := a.repoSettingsRepo(r)
 	if err != nil {
 		return err
 	}
@@ -158,7 +188,7 @@ func (a *App) reRenderRepoSettings(w http.ResponseWriter, r *http.Request, repo 
 }
 
 func (a *App) repoSettingsDescription(w http.ResponseWriter, r *http.Request) error {
-	repo, err := a.repoByName(r)
+	repo, err := a.repoSettingsRepo(r)
 	if err != nil {
 		return err
 	}
@@ -181,7 +211,7 @@ func (a *App) repoSettingsDescription(w http.ResponseWriter, r *http.Request) er
 }
 
 func (a *App) repoSettingsRuleSet(w http.ResponseWriter, r *http.Request) error {
-	repo, err := a.repoByName(r)
+	repo, err := a.repoSettingsRepo(r)
 	if err != nil {
 		return err
 	}
@@ -222,7 +252,7 @@ func (a *App) repoSettingsRuleSet(w http.ResponseWriter, r *http.Request) error 
 }
 
 func (a *App) repoSettingsRuleDelete(w http.ResponseWriter, r *http.Request) error {
-	repo, err := a.repoByName(r)
+	repo, err := a.repoSettingsRepo(r)
 	if err != nil {
 		return err
 	}
@@ -244,7 +274,7 @@ func (a *App) repoSettingsRuleDelete(w http.ResponseWriter, r *http.Request) err
 }
 
 func (a *App) repoSettingsSecretSet(w http.ResponseWriter, r *http.Request) error {
-	repo, err := a.repoByName(r)
+	repo, err := a.repoSettingsRepo(r)
 	if err != nil {
 		return err
 	}
@@ -272,7 +302,7 @@ func (a *App) repoSettingsSecretSet(w http.ResponseWriter, r *http.Request) erro
 }
 
 func (a *App) repoSettingsSecretDelete(w http.ResponseWriter, r *http.Request) error {
-	repo, err := a.repoByName(r)
+	repo, err := a.repoSettingsRepo(r)
 	if err != nil {
 		return err
 	}
@@ -293,7 +323,7 @@ func (a *App) repoSettingsSecretDelete(w http.ResponseWriter, r *http.Request) e
 }
 
 func (a *App) repoSettingsDelete(w http.ResponseWriter, r *http.Request) error {
-	repo, err := a.repoByName(r)
+	repo, err := a.repoSettingsRepo(r)
 	if err != nil {
 		return err
 	}

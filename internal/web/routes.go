@@ -58,13 +58,19 @@ func (a *App) register(mux *http.ServeMux) {
 	mux.Handle("POST /{repo}/runs/{n}/again", a.page(member, a.runAgain))
 	mux.Handle("GET /{repo}/compare/{crange...}", a.page(member, a.compareView))
 	mux.Handle("GET /{repo}/tree-paths", a.page(member, a.treePaths))
-	mux.Handle("GET /{repo}/settings", a.page(admin, a.repoSettings))
-	mux.Handle("POST /{repo}/settings/description", a.page(admin, a.repoSettingsDescription))
-	mux.Handle("POST /{repo}/settings/rules", a.page(admin, a.repoSettingsRuleSet))
-	mux.Handle("POST /{repo}/settings/rules/delete", a.page(admin, a.repoSettingsRuleDelete))
-	mux.Handle("POST /{repo}/settings/secrets", a.page(admin, a.repoSettingsSecretSet))
-	mux.Handle("POST /{repo}/settings/secrets/delete", a.page(admin, a.repoSettingsSecretDelete))
-	mux.Handle("POST /{repo}/settings/delete", a.page(admin, a.repoSettingsDelete))
+	// Settings routes are registered at member, not admin, level: the
+	// admin requirement is checked inside each handler, after resolving
+	// the repository, so a restricted repository a non-admin cannot read
+	// stays a 404 rather than announcing itself with a 403. A member who
+	// can read the repository but isn't an admin still gets the same 403
+	// as before.
+	mux.Handle("GET /{repo}/settings", a.page(member, a.repoSettings))
+	mux.Handle("POST /{repo}/settings/description", a.page(member, a.repoSettingsDescription))
+	mux.Handle("POST /{repo}/settings/rules", a.page(member, a.repoSettingsRuleSet))
+	mux.Handle("POST /{repo}/settings/rules/delete", a.page(member, a.repoSettingsRuleDelete))
+	mux.Handle("POST /{repo}/settings/secrets", a.page(member, a.repoSettingsSecretSet))
+	mux.Handle("POST /{repo}/settings/secrets/delete", a.page(member, a.repoSettingsSecretDelete))
+	mux.Handle("POST /{repo}/settings/delete", a.page(member, a.repoSettingsDelete))
 
 	// Every other path is a page that does not exist, rendered inside the
 	// frame so the person keeps their navigation.

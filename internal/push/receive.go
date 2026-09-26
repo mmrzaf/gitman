@@ -143,6 +143,14 @@ func (h *Hook) PreReceive(ctx context.Context, updates []Update) error {
 		h.say("Gitman: %s is disabled and cannot push.", pc.person.Username)
 		return ErrRejected
 	}
+	readable, err := h.Repos.CanRead(ctx, pc.repo, pc.person.ID, pc.person.IsAdmin)
+	if err != nil {
+		return err
+	}
+	if !readable {
+		h.say("Gitman: %s cannot push to a repository they cannot read.", pc.person.Username)
+		return ErrRejected
+	}
 
 	existing, err := h.Git.Refs(ctx)
 	if err != nil {

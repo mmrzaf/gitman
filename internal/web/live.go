@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -13,7 +14,9 @@ import (
 
 	"github.com/mmrzaf/gitman/internal/activity"
 	"github.com/mmrzaf/gitman/internal/apperr"
+	"github.com/mmrzaf/gitman/internal/auth"
 	"github.com/mmrzaf/gitman/internal/ci"
+	"github.com/mmrzaf/gitman/internal/postgres"
 )
 
 // Pages update themselves over one Server-Sent Events stream. A
@@ -96,6 +99,46 @@ func (h *hub) run(ctx context.Context, listen ListenFunc, failed func(error)) {
 // its events.
 var runIDPattern = regexp.MustCompile(`^[A-Za-z0-9-]{1,64}$`)
 
+// mustReadRun reports a not-found error unless person can read the
+// repository runID belongs to, so a run stream reveals nothing about a
+// run in a repository they cannot read.
+func (a *App) mustReadRun(ctx context.Context, runID string, person *auth.Person) error {
+	repoID, err := a.ci.RepoIDForRun(ctx, runID)
+	if err != nil {
+		if errors.Is(err, postgres.ErrNotFound) {
+			return notFound("There is no such run.")
+		}
+		return err
+	}
+	readable, err := a.repos.CanReadID(ctx, repoID, person.ID, person.IsAdmin)
+	if err != nil {
+		return err
+	}
+	if !readable {
+		return notFound("There is no such run.")
+	}
+	return nil
+}
+
+// mustReadStep is mustReadRun for a step ID.
+func (a *App) mustReadStep(ctx context.Context, stepID string, person *auth.Person) error {
+	repoID, err := a.ci.RepoIDForStep(ctx, stepID)
+	if err != nil {
+		if errors.Is(err, postgres.ErrNotFound) {
+			return notFound("There is no such step.")
+		}
+		return err
+	}
+	readable, err := a.repos.CanReadID(ctx, repoID, person.ID, person.IsAdmin)
+	if err != nil {
+		return err
+	}
+	if !readable {
+		return notFound("There is no such step.")
+	}
+	return nil
+}
+
 // Once a stream has started, a failure cannot become an error page: it
 // is logged and the stream ends, and the browser reconnects.
 //
@@ -105,10 +148,21 @@ var runIDPattern = regexp.MustCompile(`^[A-Za-z0-9-]{1,64}$`)
 // output as "log" events, each carrying its sequence number as its event
 // ID so a reconnecting browser resumes exactly where it stopped.
 func (a *App) events(w http.ResponseWriter, r *http.Request) error {
+	person := personFrom(r)
 	runID := r.URL.Query().Get("run")
 	stepID := r.URL.Query().Get("step")
 	if (runID != "" && !runIDPattern.MatchString(runID)) || (stepID != "" && !runIDPattern.MatchString(stepID)) {
 		return apperr.New(apperr.KindInvalid, "That is not a run or a step.")
+	}
+	if runID != "" {
+		if err := a.mustReadRun(r.Context(), runID, person); err != nil {
+			return err
+		}
+	}
+	if stepID != "" {
+		if err := a.mustReadStep(r.Context(), stepID, person); err != nil {
+			return err
+		}
 	}
 	after := -1
 	if v, err := strconv.Atoi(r.URL.Query().Get("after")); err == nil {
@@ -181,10 +235,31 @@ func (a *App) events(w http.ResponseWriter, r *http.Request) error {
 				if runID != "" {
 					continue
 				}
+				// An event about no particular repository (a person's
+				// own settings, say) is always safe to signal; one
+				// about a repository is only signalled to someone who
+				// can read it.
+				if n.payload != "" {
+					if readable, err := a.repos.CanReadID(ctx, n.payload, person.ID, person.IsAdmin); err != nil || !readable {
+						continue
+					}
+				}
 				changed("")
 			case runID != "" && n.payload != runID:
 				continue
 			case n.channel == ci.NotifyChannel:
+				// The scoped case (runID set) was already checked once,
+				// above, when the stream opened; the unscoped case (Home's
+				// board) must check every run's repository as it comes in.
+				if runID == "" {
+					repoID, err := a.ci.RepoIDForRun(ctx, n.payload)
+					if err != nil {
+						continue
+					}
+					if readable, err := a.repos.CanReadID(ctx, repoID, person.ID, person.IsAdmin); err != nil || !readable {
+						continue
+					}
+				}
 				changed(n.payload)
 			case n.channel == ci.LogChannel:
 				if !sendLogs() {

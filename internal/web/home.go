@@ -43,19 +43,24 @@ type homePage struct {
 // repository-creation submission back onto the page it failed on.
 func (a *App) buildHomeData(r *http.Request, createForm *form) (homePage, error) {
 	ctx := r.Context()
-	list, err := a.repos.List(ctx)
+	person := personFrom(r)
+	list, err := a.repos.ListReadable(ctx, person.ID, person.IsAdmin)
 	if err != nil {
 		return homePage{}, err
 	}
-	live, err := a.ci.Live(ctx)
+	readableIDs := make([]string, len(list))
+	for i, repo := range list {
+		readableIDs[i] = repo.ID
+	}
+	live, err := a.ci.LiveForRepos(ctx, readableIDs)
 	if err != nil {
 		return homePage{}, err
 	}
-	inProgress, err := a.ci.InProgress(ctx, homeInProgressLimit)
+	inProgress, err := a.ci.InProgressForRepos(ctx, readableIDs, homeInProgressLimit)
 	if err != nil {
 		return homePage{}, err
 	}
-	feed, err := a.activity.Recent(ctx, nil, homeTimelineLimit)
+	feed, err := a.activity.RecentForRepos(ctx, readableIDs, homeTimelineLimit)
 	if err != nil {
 		return homePage{}, err
 	}
