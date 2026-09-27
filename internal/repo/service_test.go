@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mmrzaf/gitman/internal/activity"
 	"github.com/mmrzaf/gitman/internal/apperr"
 	"github.com/mmrzaf/gitman/internal/auth"
 	"github.com/mmrzaf/gitman/internal/git"
@@ -374,11 +375,30 @@ func TestVisibilityAndReaders(t *testing.T) {
 		t.Fatalf("CanRead(admin) = %v, %v, want true", ok, err)
 	}
 
-	if err := svc.AddReader(ctx, r.ID, person.ID, ""); err != nil {
+	if err := svc.AddReader(ctx, r.ID, person.ID, person.Username, ""); err != nil {
 		t.Fatalf("AddReader: %v", err)
 	}
-	if err := svc.AddReader(ctx, r.ID, person.ID, ""); err != nil {
+	if err := svc.AddReader(ctx, r.ID, person.ID, person.Username, ""); err != nil {
 		t.Fatalf("AddReader (again): %v", err)
+	}
+	// The activity log names the reader by username, the same way every
+	// other action naming a person does — not by their opaque ID, which
+	// would be meaningless on the timeline.
+	entries, err := activity.NewService(database).Recent(ctx, &r.ID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, e := range entries {
+		if e.Action == activity.RepoReaderAdded {
+			found = true
+			if e.Detail != person.Username {
+				t.Fatalf("RepoReaderAdded detail = %q, want the username %q", e.Detail, person.Username)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no RepoReaderAdded activity entry was recorded")
 	}
 	if ok, err := svc.CanRead(ctx, r, person.ID, false); err != nil || !ok {
 		t.Fatalf("CanRead(reader) = %v, %v, want true", ok, err)
@@ -388,13 +408,13 @@ func TestVisibilityAndReaders(t *testing.T) {
 		t.Fatalf("ListReaders = %v, %v", readers, err)
 	}
 
-	if err := svc.RemoveReader(ctx, r.ID, person.ID, ""); err != nil {
+	if err := svc.RemoveReader(ctx, r.ID, person.ID, person.Username, ""); err != nil {
 		t.Fatalf("RemoveReader: %v", err)
 	}
 	if ok, err := svc.CanRead(ctx, r, person.ID, false); err != nil || ok {
 		t.Fatalf("CanRead after RemoveReader = %v, %v, want false", ok, err)
 	}
-	if err := svc.RemoveReader(ctx, r.ID, person.ID, ""); !errors.Is(err, postgres.ErrNotFound) {
+	if err := svc.RemoveReader(ctx, r.ID, person.ID, person.Username, ""); !errors.Is(err, postgres.ErrNotFound) {
 		t.Fatalf("second RemoveReader = %v, want ErrNotFound", err)
 	}
 
@@ -438,7 +458,7 @@ func TestListReadable(t *testing.T) {
 		t.Fatalf("ListReadable(non-reader) = %+v, %v, want only %q", nonReader, err, open.Name)
 	}
 
-	if err := svc.AddReader(ctx, restricted.ID, reader.ID, ""); err != nil {
+	if err := svc.AddReader(ctx, restricted.ID, reader.ID, reader.Username, ""); err != nil {
 		t.Fatal(err)
 	}
 	readable, err := svc.ListReadable(ctx, reader.ID, false)

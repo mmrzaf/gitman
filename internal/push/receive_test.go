@@ -229,7 +229,7 @@ func TestPreReceiveRejectsAPushToARepositoryThePersonCannotRead(t *testing.T) {
 	// A reader may push once granted, even though the repository stays
 	// restricted.
 	f.out.Reset()
-	if err := f.repos.AddReader(context.Background(), f.repo.ID, f.hook.Ctx.PersonID, ""); err != nil {
+	if err := f.repos.AddReader(context.Background(), f.repo.ID, f.hook.Ctx.PersonID, "alice", ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.preReceive(t, []Update{{Old: zeroHash, New: commit, Ref: "refs/heads/feature", Kind: git.KindBranch, Name: "feature"}}); err != nil {

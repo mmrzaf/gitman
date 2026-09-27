@@ -403,6 +403,14 @@ func (a *App) repoSettingsAccess(w http.ResponseWriter, r *http.Request) error {
 // setReaders makes a repository's explicit readers match exactly the
 // given person IDs, adding and removing only what changed.
 func (a *App) setReaders(ctx context.Context, repoID string, people []string, actorID string) error {
+	everyone, err := a.people.List(ctx)
+	if err != nil {
+		return err
+	}
+	usernames := make(map[string]string, len(everyone))
+	for _, p := range everyone {
+		usernames[p.ID] = p.Username
+	}
 	current, err := a.repos.ListReaders(ctx, repoID)
 	if err != nil {
 		return err
@@ -417,14 +425,14 @@ func (a *App) setReaders(ctx context.Context, repoID string, people []string, ac
 	}
 	for _, id := range people {
 		if !currentSet[id] {
-			if err := a.repos.AddReader(ctx, repoID, id, actorID); err != nil {
+			if err := a.repos.AddReader(ctx, repoID, id, usernames[id], actorID); err != nil {
 				return err
 			}
 		}
 	}
 	for _, id := range current {
 		if !wantSet[id] {
-			if err := a.repos.RemoveReader(ctx, repoID, id, actorID); err != nil {
+			if err := a.repos.RemoveReader(ctx, repoID, id, usernames[id], actorID); err != nil {
 				return err
 			}
 		}

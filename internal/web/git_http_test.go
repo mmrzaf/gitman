@@ -472,7 +472,7 @@ func TestRestrictedRepositoryOverGitHTTP(t *testing.T) {
 	reader, readerCred := e.person("bea", false, auth.ScopeWrite)
 	_, outsiderCred := e.person("oscar", false, auth.ScopeWrite)
 	_, adminCred := e.person("lead", true, auth.ScopeWrite)
-	if err := repos.AddReader(ctx, e.repo.ID, reader.ID, ""); err != nil {
+	if err := repos.AddReader(ctx, e.repo.ID, reader.ID, reader.Username, ""); err != nil {
 		t.Fatal(err)
 	}
 

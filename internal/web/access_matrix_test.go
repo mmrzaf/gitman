@@ -85,7 +85,7 @@ func newMatrixFixture(t *testing.T) *matrixFixture {
 		t.Fatal(err)
 	}
 	readerPerson := mustPerson(t, database, "reader")
-	if err := repos.AddReader(context.Background(), restricted.ID, readerPerson.ID, ""); err != nil {
+	if err := repos.AddReader(context.Background(), restricted.ID, readerPerson.ID, readerPerson.Username, ""); err != nil {
 		t.Fatal(err)
 	}
 

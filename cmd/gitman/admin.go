@@ -116,6 +116,9 @@ func runAdmin(args []string) error {
 		if len(args) != 1 {
 			return adminUsage()
 		}
+		// Every admin action runs after the connect-then-Migrate sequence
+		// below, so "migrate" needs no action of its own: reaching this
+		// point has already applied any pending migration.
 		action = adminAction{run: func(context.Context, *adminEnv, []string) error { return nil }}
 	} else {
 		group, ok := adminGroups[args[0]]
@@ -477,7 +480,7 @@ func adminReaderAdd(ctx context.Context, env *adminEnv, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := env.repos.AddReader(ctx, repo.ID, person.ID, ""); err != nil {
+	if err := env.repos.AddReader(ctx, repo.ID, person.ID, person.Username, ""); err != nil {
 		return err
 	}
 	fmt.Fprintf(env.out, "%s can now read %s.\n", person.Username, repo.Name)
@@ -497,7 +500,7 @@ func adminReaderRemove(ctx context.Context, env *adminEnv, args []string) error 
 	if err != nil {
 		return err
 	}
-	if err := env.repos.RemoveReader(ctx, repo.ID, person.ID, ""); err != nil {
+	if err := env.repos.RemoveReader(ctx, repo.ID, person.ID, person.Username, ""); err != nil {
 		return err
 	}
 	fmt.Fprintf(env.out, "Removed %s's read access to %s.\n", person.Username, repo.Name)

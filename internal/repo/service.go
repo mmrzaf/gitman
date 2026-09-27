@@ -73,7 +73,9 @@ func (s *Service) Create(ctx context.Context, name, description, defaultBranch, 
 	})
 	if err != nil {
 		if created {
-			_ = s.git.Delete(r.ID)
+			if delErr := s.git.Delete(r.ID); delErr != nil && !errors.Is(delErr, git.ErrNotFound) {
+				return nil, fmt.Errorf("%w (and its half-created directory could not be removed either: %v)", err, delErr)
+			}
 		}
 		return nil, err
 	}
@@ -199,23 +201,28 @@ func (s *Service) SetVisibility(ctx context.Context, repoID string, v Visibility
 }
 
 // AddReader grants personID read access to a repository, regardless of
-// its current visibility.
-func (s *Service) AddReader(ctx context.Context, repoID, personID, actorID string) error {
+// its current visibility. readerName is recorded in the activity log,
+// the same way every other action naming a person records their
+// username rather than their ID; the grant itself is keyed by personID.
+// repo has no dependency on the auth package to look readerName up
+// itself, so every caller passes it in already knowing it.
+func (s *Service) AddReader(ctx context.Context, repoID, personID, readerName, actorID string) error {
 	return s.db.Tx(ctx, func(tx postgres.Tx) error {
 		if err := insertReaderRow(ctx, tx, repoID, personID); err != nil {
 			return err
 		}
-		return activity.Record(ctx, tx, repoID, actorID, activity.RepoReaderAdded, personID)
+		return activity.Record(ctx, tx, repoID, actorID, activity.RepoReaderAdded, readerName)
 	})
 }
 
 // RemoveReader revokes personID's explicit read access to a repository.
-func (s *Service) RemoveReader(ctx context.Context, repoID, personID, actorID string) error {
+// See AddReader on readerName.
+func (s *Service) RemoveReader(ctx context.Context, repoID, personID, readerName, actorID string) error {
 	return s.db.Tx(ctx, func(tx postgres.Tx) error {
 		if err := deleteReaderRow(ctx, tx, repoID, personID); err != nil {
 			return err
 		}
-		return activity.Record(ctx, tx, repoID, actorID, activity.RepoReaderRemoved, personID)
+		return activity.Record(ctx, tx, repoID, actorID, activity.RepoReaderRemoved, readerName)
 	})
 }
 
