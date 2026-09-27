@@ -3,7 +3,6 @@
 <header class="page-header">
   <div class="page-header-text">
     <h1 class="page-title" id="home-title">Home</h1>
-    <p class="page-subtitle">What's live, what's running, and what just happened.</p>
   </div>
   <div class="page-actions">
     <span class="live js-only" data-live-status data-state="connecting" role="status">{{template "icon" "live"}}<span data-live-label>Connecting…</span></span>
@@ -79,7 +78,7 @@
           </table>
         </div>
         {{- else}}
-        {{template "empty" (dict "Icon" "repo" "Title" "No repositories yet" "Text" "Create one, then push to it.")}}
+        {{template "empty" (dict "Icon" "repo" "Title" "No repositories yet")}}
         {{- end}}
       </div>
     </section>
@@ -101,8 +100,8 @@
     </header>
     <div class="dialog-body">
       {{template "form-error" .Data.CreateForm.Error}}
-      {{template "field" field .Data.CreateForm "name" "Name" "text" "required" "autofocus" "autocomplete:off" "hint:Letters, digits, dashes and underscores. It becomes part of the clone URL."}}
-      {{template "field" field .Data.CreateForm "description" "Description" "text" "hint:Optional. One line about what it is."}}
+      {{template "field" field .Data.CreateForm "name" "Name" "text" "required" "autofocus" "autocomplete:off" "hint:Letters, digits, dashes and underscores."}}
+      {{template "field" field .Data.CreateForm "description" "Description" "text" "hint:Optional."}}
       {{template "field" field .Data.CreateForm "default_branch" "Default branch" "text" "hint:main, if left blank."}}
     </div>
     <footer class="dialog-footer">

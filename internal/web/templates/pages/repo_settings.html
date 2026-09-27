@@ -23,7 +23,7 @@
           </div>
           <form method="post" action="{{$base}}/description" class="form" data-inline-form>
             {{template "form-error" $d.DescForm.Error}}
-            {{template "field" field $d.DescForm "description" "Description" "text" "hint:Shown under the repository's name."}}
+            {{template "field" field $d.DescForm "description" "Description" "text"}}
             <div class="form-actions">
               <button type="button" class="btn js-only" data-inline-cancel>Cancel</button>
               <button type="submit" class="btn btn-primary">Save description</button>
@@ -52,7 +52,7 @@
                 </select>
               </span>
               {{- with index $d.BranchForm.Errors "default_branch"}}<p class="field-error" id="f-default-branch-error">{{template "icon" "warning"}}<span>{{.}}</span></p>
-              {{- else}}<p class="field-hint" id="f-default-branch-hint">What a clone checks out, Files opens and branches are compared with.</p>{{end}}
+              {{- else}}<p class="field-hint" id="f-default-branch-hint">What a clone checks out, Files opens, and branches are compared with.</p>{{end}}
             </div>
             <div class="form-actions">
               <button type="button" class="btn js-only" data-inline-cancel>Cancel</button>
@@ -111,7 +111,7 @@
         </table>
       </div>
       {{- else}}
-      {{template "empty" (dict "Icon" "shield" "Title" "No rules yet" "Text" "Every branch and tag is unprotected, and no push starts a run.")}}
+      {{template "empty" (dict "Icon" "shield" "Title" "No rules yet")}}
       {{- end}}
     </section>
 
@@ -122,7 +122,7 @@
         <span class="panel-actions"><a class="btn btn-sm btn-primary" href="{{$base}}?tab=secrets&amp;dialog=secret-new" data-dialog-open="secret-new" data-command="Add a secret to {{$repo.Name}}">{{template "icon" "plus"}}New secret</a></span>
         {{- end}}
       </header>
-      <p class="panel-intro">Put into a run's environment when its ref's rule allows secrets. A value can be replaced, never read back.</p>
+      <p class="panel-intro">Given to a run as environment variables when its ref's rule allows secrets. A value can be replaced, never read back.</p>
       {{- if not $d.SecretsReady}}
       <div class="panel-body"><div class="callout is-queued" role="note">{{template "icon" "warning"}}<p class="callout-body">GITMAN_SECRET_KEY is not configured on this instance, so secrets can't be stored.</p></div></div>
       {{- else if $d.Secrets}}
@@ -158,14 +158,14 @@
 
     <section class="panel" id="panel-access" data-tab-panel="access" aria-labelledby="access-title"{{if ne $d.Tab "access"}} hidden{{end}}>
       <header class="panel-header"><h2 class="panel-title" id="access-title">Access</h2></header>
-      <p class="panel-intro">A restricted repository does not exist to anyone but its readers and admins: it never appears on Home, in search, in activity, or over Git.</p>
+      <p class="panel-intro">A restricted repository is invisible to everyone but its readers and admins, in Gitman and over Git.</p>
       <form method="post" action="{{$base}}/access" class="panel-body form">
         {{$af := $d.AccessForm}}
         {{template "form-error" $af.Error}}
         <fieldset class="choices">
           <legend>Who may read this repository</legend>
           {{- $visibility := $af.Get "visibility"}}
-          <label class="choice"><input type="radio" name="visibility" value="everyone"{{if or (eq $visibility "") (eq $visibility "everyone")}} checked{{end}}><span class="choice-label">Everyone</span><span class="choice-hint">Any enabled person.</span></label>
+          <label class="choice"><input type="radio" name="visibility" value="everyone"{{if or (eq $visibility "") (eq $visibility "everyone")}} checked{{end}}><span class="choice-label">Everyone</span><span class="choice-hint">Anyone who can sign in.</span></label>
           <label class="choice"><input type="radio" name="visibility" value="restricted"{{if eq $visibility "restricted"}} checked{{end}}><span class="choice-label">Restricted</span><span class="choice-hint">Only its readers and admins.</span></label>
         </fieldset>
         <fieldset class="choices choices-inline" data-show-when="visibility=restricted">
@@ -178,8 +178,8 @@
         <fieldset class="choices">
           <legend>Who may push a branch or tag no rule matches</legend>
           {{- $pushPolicy := $af.Get "default_push_policy"}}
-          <label class="choice"><input type="radio" name="default_push_policy" value="everyone"{{if or (eq $pushPolicy "") (eq $pushPolicy "everyone")}} checked{{end}}><span class="choice-label">Everyone</span><span class="choice-hint">Any enabled person who can read this repository.</span></label>
-          <label class="choice"><input type="radio" name="default_push_policy" value="admins"{{if eq $pushPolicy "admins"}} checked{{end}}><span class="choice-label">Admins</span><span class="choice-hint">Only people with the admin role.</span></label>
+          <label class="choice"><input type="radio" name="default_push_policy" value="everyone"{{if or (eq $pushPolicy "") (eq $pushPolicy "everyone")}} checked{{end}}><span class="choice-label">Everyone</span><span class="choice-hint">Anyone who can read this repository.</span></label>
+          <label class="choice"><input type="radio" name="default_push_policy" value="admins"{{if eq $pushPolicy "admins"}} checked{{end}}><span class="choice-label">Admins</span></label>
           <label class="choice"><input type="radio" name="default_push_policy" value="people"{{if eq $pushPolicy "people"}} checked{{end}}><span class="choice-label">Named people</span><span class="choice-hint">The people picked below, and admins.</span></label>
         </fieldset>
         <fieldset class="choices choices-inline" data-show-when="default_push_policy=people">
@@ -188,7 +188,7 @@
           <label class="choice"><input type="checkbox" name="default_push_people" value="{{.ID}}"{{if $af.Picked "default_push_people" .ID}} checked{{end}}><span class="choice-label mono">{{.Username}}</span></label>
           {{- end}}
         </fieldset>
-        <p class="field-hint">A rule for the branch or tag itself overrides this. Force-push and delete on an unmatched ref are unaffected.</p>
+        <p class="field-hint">A rule for the branch or tag overrides this. Whoever may push an unmatched branch or tag may also force-push and delete it.</p>
 
         <div class="form-actions"><button type="submit" class="btn btn-primary">Save access</button></div>
       </form>
@@ -275,8 +275,8 @@
     <fieldset class="choices">
       <legend>Who may push</legend>
       {{- $policy := $f.Get "push_policy"}}
-      <label class="choice"><input type="radio" name="push_policy" value="everyone"{{if or (eq $policy "") (eq $policy "everyone")}} checked{{end}}><span class="choice-label">Everyone</span><span class="choice-hint">Any enabled person.</span></label>
-      <label class="choice"><input type="radio" name="push_policy" value="admins"{{if eq $policy "admins"}} checked{{end}}><span class="choice-label">Admins</span><span class="choice-hint">Only people with the admin role.</span></label>
+      <label class="choice"><input type="radio" name="push_policy" value="everyone"{{if or (eq $policy "") (eq $policy "everyone")}} checked{{end}}><span class="choice-label">Everyone</span><span class="choice-hint">Anyone who can read this repository.</span></label>
+      <label class="choice"><input type="radio" name="push_policy" value="admins"{{if eq $policy "admins"}} checked{{end}}><span class="choice-label">Admins</span></label>
       <label class="choice"><input type="radio" name="push_policy" value="people"{{if eq $policy "people"}} checked{{end}}><span class="choice-label">Named people</span><span class="choice-hint">The people picked below, and admins.</span></label>
     </fieldset>
     <fieldset class="choices choices-inline" data-show-when="push_policy=people">

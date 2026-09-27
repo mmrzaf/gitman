@@ -508,6 +508,6 @@ func (a *App) repoSettingsDelete(w http.ResponseWriter, r *http.Request) error {
 	if err := a.repos.Delete(r.Context(), repo.ID, personFrom(r).ID); err != nil {
 		return err
 	}
-	a.redirect(w, r, "/", flashSuccess, "Deleted "+repo.Name+", with its history, runs and deployments.")
+	a.redirect(w, r, "/", flashSuccess, "Deleted "+repo.Name+".")
 	return nil
 }

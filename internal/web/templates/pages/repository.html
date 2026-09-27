@@ -22,7 +22,7 @@
           {{- end}}
         </div>
         {{- else}}
-        <div class="panel">{{template "empty" (dict "Icon" "ship" "Title" "Nothing shipped yet" "Text" "A passing run of a ref whose rule allows shipping, with a target in its pipeline, shows here.")}}</div>
+        <div class="panel">{{template "empty" (dict "Icon" "ship" "Title" "Nothing shipped yet" "Text" "A passing run shows here when its ref's rule allows shipping and the pipeline names a target for it.")}}</div>
         {{- end}}
       </div>
     </section>
@@ -47,7 +47,6 @@
       <header class="panel-header"><h2 class="panel-title" id="clone-title">{{template "icon" "code"}}Clone</h2></header>
       <div class="panel-body stack">
         {{template "copy-field" (dict "ID" "clone-url" "Label" "HTTPS" "Value" .Data.CloneURL)}}
-        <p class="field-hint">Sign in with your username and an <a href="/me">access token</a> as the password.</p>
         <dl class="facts">
           <dt>Default branch</dt><dd>{{if .Data.DefaultExists}}{{template "ref" (dict "Kind" "branch" "Name" $repo.DefaultBranch "Href" (refURL $repo.Name $repo.DefaultBranch ""))}}{{else}}<span class="cluster">{{template "ref" (dict "Kind" "branch" "Name" $repo.DefaultBranch)}}<span class="muted">not pushed yet</span></span>{{end}}</dd>
           <dt>Created</dt><dd>{{template "time" $repo.CreatedAt}}</dd>
@@ -98,7 +97,7 @@
         <td class="cell-shrink cell-muted">{{template "time" .UpdatedAt}}{{if .UpdatedByUsername}} by {{.UpdatedByUsername}}{{end}}</td>
         <td class="cell-shrink cell-end"><span class="cell-actions">
           {{- if .CanRun}}
-          <form method="post" action="/{{$repo.Name}}/runs" data-confirm="Run the pipeline of {{.Kind}} {{.Name}}?" data-confirm-detail="It runs the latest commit exactly as a push would." data-confirm-action="Start run" data-confirm-tone="primary">
+          <form method="post" action="/{{$repo.Name}}/runs" data-confirm="Run the pipeline of {{.Kind}} {{.Name}}?" data-confirm-detail="It runs the latest commit, as a push would." data-confirm-action="Start run" data-confirm-tone="primary">
             <input type="hidden" name="ref" value="{{.FullName}}">
             <button type="submit" class="btn btn-ghost btn-icon btn-sm" aria-label="Run {{.Kind}} {{.Name}}" title="Run">{{template "icon" "play"}}</button>
           </form>
@@ -111,7 +110,7 @@
   </table>
 </div>
 {{else if eq .Kind "tag"}}
-{{template "empty" (dict "Icon" "tag" "Title" "No tags yet" "Text" "Push a tag and it shows here with its runs and what it shipped.")}}
+{{template "empty" (dict "Icon" "tag" "Title" "No tags yet")}}
 {{else}}
 <div class="empty">
   {{template "icon" "push"}}

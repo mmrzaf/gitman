@@ -153,7 +153,7 @@ func TestRunPageNumbersTheEndOfALongLog(t *testing.T) {
 	}
 
 	resp, body := b.do(http.MethodGet, "/waiotech/runs/1?step=0", nil, nil)
-	expect(t, resp, body, http.StatusOK, "only its end is shown here", fmt.Sprintf(`id="L%d"`, total))
+	expect(t, resp, body, http.StatusOK, "Only the end of this output is shown.", fmt.Sprintf(`id="L%d"`, total))
 	first := regexp.MustCompile(`class="line" id="L(\d+)"><a href="#L\d+" tabindex="-1" aria-hidden="true">\d+</a>line (\d+) `).FindStringSubmatch(body)
 	if first == nil {
 		t.Fatal("no numbered line in the page")

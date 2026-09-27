@@ -10,7 +10,7 @@
 <section class="panel" aria-labelledby="files-title">
   {{- if $d.Branches}}
   <div class="panel-body stack">
-    <p>Push {{$repo.DefaultBranch}}{{if .Person.IsAdmin}}, or <a href="/{{$repo.Name}}/settings">choose another default branch</a>{{end}}. Meanwhile, browse a branch that exists:</p>
+    <p>Push {{$repo.DefaultBranch}}{{if .Person.IsAdmin}}, or <a href="/{{$repo.Name}}/settings">choose another default branch</a>{{end}}. Branches that exist:</p>
     <ul class="cluster" aria-label="Branches">
       {{- range $d.Branches}}
       <li>{{template "ref" (dict "Kind" "branch" "Name" . "Href" (refURL $repo.Name . ""))}}</li>

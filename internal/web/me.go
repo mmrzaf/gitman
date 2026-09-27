@@ -104,7 +104,7 @@ func (a *App) meCreateToken(w http.ResponseWriter, r *http.Request) error {
 		f.Fail("expires", "Unrecognized expiry.")
 	}
 	if name == "" {
-		f.Fail("name", "Name the token so you know what it's for.")
+		f.Fail("name", "Enter a name.")
 	}
 	if !f.Valid() {
 		return a.reRenderMe(w, r, mePage{PasswordForm: newForm(nil), TokenForm: f, Tab: "tokens", Dialog: "token-new"})

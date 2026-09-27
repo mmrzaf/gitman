@@ -4,7 +4,6 @@
 <header class="page-header">
   <div class="page-header-text">
     <h1 class="page-title" id="runs-title">Runs</h1>
-    <p class="page-subtitle">Every run of this repository, newest first.</p>
   </div>
   {{- if $d.Runnable}}
   <div class="page-actions">
@@ -44,7 +43,7 @@
   <div class="empty">
     {{template "icon" "play"}}
     <p class="empty-title">No runs yet</p>
-    <p>A run starts when you push to a branch or tag whose ref rule has <strong>run</strong> on{{if $d.Runnable}}, or when you start one with <strong>Run</strong>{{end}}. It runs the pipeline in <code>.gitman.yml</code> at the root of the commit.</p>
+    <p>A push to a branch or tag whose ref rule has <strong>run</strong> on starts one{{if $d.Runnable}}, and so does <strong>Run</strong>{{end}}. The pipeline is <code>.gitman.yml</code> at the root of the commit.</p>
     {{- if .Person.IsAdmin}}
     <p><a href="/{{$repo.Name}}/settings?tab=rules">Set up ref rules</a></p>
     {{- end}}
@@ -68,7 +67,7 @@
             </optgroup>
           </select>
         </span>
-        <p class="field-hint" id="f-run-ref-hint">Runs its latest commit exactly as a push to it would, with its rule's target, secrets and Docker.</p>
+        <p class="field-hint" id="f-run-ref-hint">Runs its latest commit, as a push would: with its rule's target, secrets and Docker.</p>
       </div>
     </div>
     <footer class="dialog-footer"><button type="button" class="btn js-only" data-dialog-close>Cancel</button><button type="submit" class="btn btn-primary">Start run</button></footer>

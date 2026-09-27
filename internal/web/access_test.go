@@ -86,7 +86,7 @@ func TestMeTokens(t *testing.T) {
 	}
 
 	resp, body = b.do(http.MethodPost, "/me/tokens", url.Values{"name": {""}, "scope": {"read"}}, nil)
-	expect(t, resp, body, http.StatusUnprocessableEntity, "Name the token")
+	expect(t, resp, body, http.StatusUnprocessableEntity, "Enter a name.")
 
 	tokens, err := auth.NewService(database).ListTokens(context.Background(), mustPerson(t, database, "darius").ID)
 	if err != nil || len(tokens) != 1 {
@@ -321,7 +321,7 @@ func TestRepoCreateAndSettings(t *testing.T) {
 		t.Fatalf("delete: %d", resp.StatusCode)
 	}
 	resp, body = b.do(http.MethodGet, "/", nil, nil)
-	expect(t, resp, body, http.StatusOK, "Deleted waiotech, with its history, runs and deployments.")
+	expect(t, resp, body, http.StatusOK, "Deleted waiotech.")
 	if strings.Contains(body, "waiotech.git") {
 		t.Fatal("the deleted repository is still listed")
 	}

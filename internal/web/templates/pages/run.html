@@ -116,7 +116,7 @@
     <div class="lines log" data-log data-log-step="{{.ID}}" data-log-after="{{$.Data.LogAfter}}" data-log-status="{{.Status}}" data-log-open="{{$.Data.LogOpen}}"
          data-error-pattern="{{$.Data.ErrorPattern}}" tabindex="0" role="log" aria-label="Output of {{.Name}}">
       {{- if $.Data.LogCut}}
-      <p class="log-note">The start of this output is long, so only its end is shown here. <a href="/{{$repo.Name}}/runs/{{$run.Number}}/log?step={{.Index}}">Open the whole output</a>.</p>
+      <p class="log-note">Only the end of this output is shown. <a href="/{{$repo.Name}}/runs/{{$run.Number}}/log?step={{.Index}}">Open the whole output</a>.</p>
       {{- end}}
       {{- range $.Data.Log}}
       <div class="line{{if .Error}} is-error{{end}}" id="L{{.Number}}"><a href="#L{{.Number}}" tabindex="-1" aria-hidden="true">{{.Number}}</a>{{.Text}}</div>

@@ -4,14 +4,14 @@
 <header class="page-header">
   <div class="page-header-text">
     <h1 class="page-title" id="people-title">People</h1>
-    <p class="page-subtitle">Everyone who can sign in, clone and push. People are disabled, never deleted, so their history keeps its names.</p>
+    <p class="page-subtitle">People are never deleted, only disabled, so their history keeps their name.</p>
   </div>
   <div class="page-actions">
     <a class="btn btn-primary" href="/people?dialog=person-new" data-dialog-open="person-new" data-command="Add a person">{{template "icon" "plus"}}Add person</a>
   </div>
 </header>
 <div class="stack">
-  {{- with $d.Password}}{{template "reveal" (dict "Label" (printf "Password for %s" $d.Username) "Value" . "Note" "Copy it now and give it to them: it won't be shown again. They should change it after signing in.")}}{{end}}
+  {{- with $d.Password}}{{template "reveal" (dict "Label" (printf "Password for %s" $d.Username) "Value" . "Note" "Copy it now and give it to them: it won't be shown again.")}}{{end}}
   <section class="panel" aria-labelledby="people-title">
     <div class="table-scroll">
       <table class="table">
@@ -37,7 +37,7 @@
                     {{- end}}
                   </form>
                   {{- if ne .ID $.Person.ID}}
-                  <form method="post" action="/people/{{.Username}}/reset-password" data-confirm="Reset the password for {{.Username}}?" data-confirm-detail="They're signed out everywhere, and a new password is shown once for you to pass on." data-confirm-action="Reset password">
+                  <form method="post" action="/people/{{.Username}}/reset-password" data-confirm="Reset the password for {{.Username}}?" data-confirm-detail="They're signed out, and a new password is shown once." data-confirm-action="Reset password">
                     <button type="submit" class="menu-item">{{template "icon" "lock"}}Reset password</button>
                   </form>
                   {{- end}}
@@ -47,7 +47,7 @@
                     <button type="submit" class="menu-item">{{template "icon" "passed"}}Enable</button>
                   </form>
                   {{- else}}
-                  <form method="post" action="/people/{{.Username}}/disable" data-confirm="Disable {{.Username}}?" data-confirm-detail="They can't sign in, clone or push, and their sessions and tokens stop working. You can enable them again later." data-confirm-action="Disable">
+                  <form method="post" action="/people/{{.Username}}/disable" data-confirm="Disable {{.Username}}?" data-confirm-detail="They're signed out and their tokens stop working. You can enable them again." data-confirm-action="Disable">
                     <button type="submit" class="menu-item menu-item-danger">{{template "icon" "cancelled"}}Disable</button>
                   </form>
                   {{- end}}
@@ -73,7 +73,7 @@
         <label class="choice"><input type="radio" name="role" value="member"{{if ne ($d.Form.Get "role") "admin"}} checked{{end}}><span class="choice-label">Member</span></label>
         <label class="choice"><input type="radio" name="role" value="admin"{{if eq ($d.Form.Get "role") "admin"}} checked{{end}}><span class="choice-label">Admin</span></label>
       </fieldset>
-      <p class="field-hint">A password is generated and shown once, for you to pass on.</p>
+      <p class="field-hint">A password is generated and shown once.</p>
     </div>
     <footer class="dialog-footer"><button type="button" class="btn js-only" data-dialog-close>Cancel</button><button type="submit" class="btn btn-primary">Add person</button></footer>
   </form>

@@ -14,13 +14,13 @@
 </nav>
 
 <div class="stack" id="panel-tokens" data-tab-panel="tokens"{{if ne $d.Tab "tokens"}} hidden{{end}}>
-  {{- with $d.NewToken}}{{template "reveal" (dict "Label" "Your new token" "Value" . "Note" "Copy it now: it won't be shown again. Use it as the password for Git over HTTPS, with your username.")}}{{end}}
+  {{- with $d.NewToken}}{{template "reveal" (dict "Label" "Your new token" "Value" . "Note" "Copy it now: it won't be shown again.")}}{{end}}
   <section class="panel" aria-labelledby="tokens-title">
     <header class="panel-header">
       <h2 class="panel-title" id="tokens-title">Access tokens</h2>
       <span class="panel-actions"><a class="btn btn-sm btn-primary" href="/me?dialog=token-new" data-dialog-open="token-new" data-command="Create an access token">{{template "icon" "plus"}}New token</a></span>
     </header>
-    <p class="panel-intro">The password for Git over HTTPS, with your username. Give each machine or script its own, so you can revoke one without the others.</p>
+    <p class="panel-intro">Git over HTTPS takes your username and a token as the password.</p>
     {{- if $d.Tokens}}
     <div class="table-scroll">
       <table class="table">
@@ -69,7 +69,7 @@
       <fieldset class="choices">
         <legend>Access</legend>
         <label class="choice"><input type="radio" name="scope" value="read"{{if ne ($d.TokenForm.Get "scope") "write"}} checked{{end}}><span class="choice-label">Read</span><span class="choice-hint">Clone and fetch.</span></label>
-        <label class="choice"><input type="radio" name="scope" value="write"{{if eq ($d.TokenForm.Get "scope") "write"}} checked{{end}}><span class="choice-label">Read and write</span><span class="choice-hint">Also push, as far as each ref's rules allow you.</span></label>
+        <label class="choice"><input type="radio" name="scope" value="write"{{if eq ($d.TokenForm.Get "scope") "write"}} checked{{end}}><span class="choice-label">Read and write</span><span class="choice-hint">Also push, where the ref rules allow.</span></label>
       </fieldset>
       <div class="field">
         <label class="field-label" for="f-expires">Expires</label>
