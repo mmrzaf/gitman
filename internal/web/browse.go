@@ -318,25 +318,24 @@ func (a *App) files(w http.ResponseWriter, r *http.Request, name, refAndPath str
 		}
 	}
 
-	// A file's page shows its history; a directory's does not.
-	if !page.IsDir {
-		skip := historySkip(r)
-		history, more, err := gitRepo.Log(ctx, res.Commit, res.Path, skip, historyPageSize)
+	// Every entry has a history: a file's commits, a directory's, and at
+	// the root the whole ref's.
+	skip := historySkip(r)
+	history, more, err := gitRepo.Log(ctx, res.Commit, res.Path, skip, historyPageSize)
+	if err != nil {
+		return tooLargeToShow(err)
+	}
+	page.History, page.HistoryMore, page.HistorySkip, page.HistoryPageSize = history, more, skip, historyPageSize
+	switch {
+	case skip == 0 && len(history) > 0:
+		page.LastChanged = history[0]
+	case skip > 0:
+		last, _, err := gitRepo.Log(ctx, res.Commit, res.Path, 0, 1)
 		if err != nil {
 			return tooLargeToShow(err)
 		}
-		page.History, page.HistoryMore, page.HistorySkip, page.HistoryPageSize = history, more, skip, historyPageSize
-		switch {
-		case skip == 0 && len(history) > 0:
-			page.LastChanged = history[0]
-		case skip > 0:
-			last, _, err := gitRepo.Log(ctx, res.Commit, res.Path, 0, 1)
-			if err != nil {
-				return tooLargeToShow(err)
-			}
-			if len(last) > 0 {
-				page.LastChanged = last[0]
-			}
+		if len(last) > 0 {
+			page.LastChanged = last[0]
 		}
 	}
 

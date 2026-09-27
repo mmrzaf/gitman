@@ -55,42 +55,41 @@
     {{- end}}
   </div>
 
-  {{- if $d.IsDir}}
-  {{- if $d.Entries}}
-  <div class="table-scroll">
-    <table class="table tree">
-      <caption class="visually-hidden">Files in {{if $d.Path}}{{$d.Path}}{{else}}{{$repo.Name}}{{end}}</caption>
-      <tbody>
-      {{- if $d.Path}}
-        <tr><td><a class="tree-name" href="{{refURL $repo.Name $d.Ref (dirOf $d.Path)}}">{{template "icon" "folder"}}<span>..</span><span class="visually-hidden">(parent directory)</span></a></td></tr>
-      {{- end}}
-      {{- range $d.Entries}}
-        <tr>
-          <td>
-            {{- if eq .Kind "submodule"}}
-            <span class="tree-name">{{template "icon" "module"}}<span>{{.Name}}</span><span class="chip">submodule</span></span>
-            {{- else}}
-            <a class="tree-name" href="{{refURL $repo.Name $d.Ref .Path}}">{{template "icon" .Icon}}<span>{{.Name}}</span>{{if .Executable}}<span class="chip">executable</span>{{end}}</a>
-            {{- end}}
-          </td>
-        </tr>
-      {{- end}}
-      </tbody>
-    </table>
-  </div>
-  {{- else}}
-  {{template "empty" (dict "Icon" "folder" "Title" "This directory is empty")}}
-  {{- end}}
-
-  {{- else}}
-  <nav class="tabs" data-tabs aria-label="File">
+  <nav class="tabs" data-tabs aria-label="{{if $d.IsDir}}Directory{{else}}File{{end}}">
     <a class="tab" id="tab-code" href="{{refURL $repo.Name $d.Ref $d.Path}}" data-tab="code"{{if eq $d.Tab "code"}} aria-current="page"{{end}}>{{template "icon" "code"}}Code</a>
     <a class="tab" id="tab-history" href="{{refURL $repo.Name $d.Ref $d.Path}}?tab=history" data-tab="history"{{if eq $d.Tab "history"}} aria-current="page"{{end}}>{{template "icon" "history"}}History</a>
   </nav>
   <div id="panel-code" data-tab-panel="code"{{if ne $d.Tab "code"}} hidden{{end}}>
     {{- with $d.LastChanged}}
-    <p class="panel-footer file-last-change">{{template "icon" "commit"}} Last changed in {{template "commit" (dict "Repo" $repo.Name "Hash" .Hash)}} by {{template "person" .Author.Name}} {{template "time" .Committer.When}} — <span class="truncate">{{.Subject}}</span></p>
+    <p class="panel-footer last-change">{{template "icon" "commit"}} Last changed in {{template "commit" (dict "Repo" $repo.Name "Hash" .Hash)}} by {{template "person" .Author.Name}} {{template "time" .Committer.When}} — <span class="truncate">{{.Subject}}</span></p>
     {{- end}}
+    {{- if $d.IsDir}}
+    {{- if $d.Entries}}
+    <div class="table-scroll">
+      <table class="table tree">
+        <caption class="visually-hidden">Files in {{if $d.Path}}{{$d.Path}}{{else}}{{$repo.Name}}{{end}}</caption>
+        <tbody>
+        {{- if $d.Path}}
+          <tr><td><a class="tree-name" href="{{refURL $repo.Name $d.Ref (dirOf $d.Path)}}">{{template "icon" "folder"}}<span>..</span><span class="visually-hidden">(parent directory)</span></a></td></tr>
+        {{- end}}
+        {{- range $d.Entries}}
+          <tr>
+            <td>
+              {{- if eq .Kind "submodule"}}
+              <span class="tree-name">{{template "icon" "module"}}<span>{{.Name}}</span><span class="chip">submodule</span></span>
+              {{- else}}
+              <a class="tree-name" href="{{refURL $repo.Name $d.Ref .Path}}">{{template "icon" .Icon}}<span>{{.Name}}</span>{{if .Executable}}<span class="chip">executable</span>{{end}}</a>
+              {{- end}}
+            </td>
+          </tr>
+        {{- end}}
+        </tbody>
+      </table>
+    </div>
+    {{- else}}
+    {{template "empty" (dict "Icon" "folder" "Title" "This directory is empty")}}
+    {{- end}}
+    {{- else}}
     {{- if $d.TooLarge}}
     {{template "empty" (dict "Icon" "file" "Title" "This file is too large to show here" "Text" "Open it raw to download it.")}}
     {{- else if $d.IsBinary}}
@@ -103,6 +102,7 @@
     </div>
     {{- else}}
     {{template "empty" (dict "Icon" "file" "Title" "This file is empty")}}
+    {{- end}}
     {{- end}}
   </div>
   <div id="panel-history" data-tab-panel="history"{{if ne $d.Tab "history"}} hidden{{end}}>
@@ -132,7 +132,6 @@
     {{template "empty" (dict "Icon" "history" "Title" "No history to show")}}
     {{- end}}
   </div>
-  {{- end}}
 </section>
 </div>
 {{end}}

@@ -413,6 +413,26 @@ func TestPathHistoryAndLastChanged(t *testing.T) {
 		`id="panel-code" data-tab-panel="code" hidden>`)
 }
 
+// TestDirectoryHistory is the commit list of a branch: the History tab at
+// its root. A directory's History lists only the commits that touched it.
+func TestDirectoryHistory(t *testing.T) {
+	database, store, b := setupWithStore(t)
+	signIn(t, database, b, "darius", false)
+	seedFilesRepo(t, database, store, b)
+
+	resp, body := b.do(http.MethodGet, "/waiotech@main", nil, nil)
+	expect(t, resp, body, http.StatusOK, "Last changed in", "Update README", `data-tab="history"`)
+
+	resp, body = b.do(http.MethodGet, "/waiotech@main?tab=history", nil, nil)
+	expect(t, resp, body, http.StatusOK, `id="panel-history" data-tab-panel="history">`, "Update README", "Initial commit")
+
+	resp, body = b.do(http.MethodGet, "/waiotech@main/server?tab=history", nil, nil)
+	expect(t, resp, body, http.StatusOK, `id="panel-history" data-tab-panel="history">`, "Initial commit")
+	if strings.Contains(body, "Update README") {
+		t.Error("a directory's history lists a commit that did not touch it")
+	}
+}
+
 func TestCommitView(t *testing.T) {
 	database, store, b := setupWithStore(t)
 	signIn(t, database, b, "darius", false)

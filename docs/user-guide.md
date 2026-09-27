@@ -20,7 +20,9 @@ Its nav has three items:
   each target (if the pipeline defines any), and a timeline of recent
   activity.
 - **Files** — browse the tree at any branch, tag or commit; jump to a
-  file by path with the go-to-file finder. A commit's own page (its diff
+  file by path with the go-to-file finder. Each file and directory has a
+  **History** tab of the commits that touched it; at the root, that is
+  every commit of the branch or tag. A commit's own page (its diff
   and metadata) and a comparison between two refs are reached from links
   here, not from the nav.
 - **Runs** — every run of this repository's pipeline, newest first,
