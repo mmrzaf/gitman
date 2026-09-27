@@ -296,7 +296,7 @@ func TestRenderErrorMapsPoolExhaustionToServiceUnavailable(t *testing.T) {
 		wantRetry  bool
 	}{
 		{"pool exhausted", fmt.Errorf("list repos: %w", postgres.ErrUnavailable), http.StatusServiceUnavailable, true},
-		{"kind unavailable directly", apperr.New(apperr.KindUnavailable, "try again"), http.StatusServiceUnavailable, false},
+		{"kind unavailable directly", apperr.New(apperr.KindUnavailable, "try again"), http.StatusServiceUnavailable, true},
 		{"not found stays not found", postgres.ErrNotFound, http.StatusNotFound, false},
 		{"a plain error stays internal", errors.New("boom"), http.StatusInternalServerError, false},
 	}

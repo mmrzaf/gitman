@@ -219,20 +219,22 @@ var errorTitles = map[int]string{
 func (a *App) renderError(w http.ResponseWriter, r *http.Request, err error) {
 	status := statusFor(apperr.KindOf(err))
 	message := apperr.PublicMessage(err)
-	switch {
-	case errors.Is(err, postgres.ErrNotFound):
+	if errors.Is(err, postgres.ErrNotFound) {
 		status = http.StatusNotFound
-	case errors.Is(err, postgres.ErrUnavailable):
+	}
+	if errors.Is(err, postgres.ErrUnavailable) {
 		status = http.StatusServiceUnavailable
+	}
+	// One check for 503 regardless of how it was reached — apperr.New
+	// with KindUnavailable directly, or postgres.ErrUnavailable above —
+	// so neither path can drift from the other's Retry-After and message.
+	if status == http.StatusServiceUnavailable {
 		message = "Gitman is too busy right now. Try again in a moment."
 		w.Header().Set("Retry-After", "5")
 	}
 	if status == http.StatusInternalServerError {
 		a.log.Error("page failed", "method", r.Method, "path", r.URL.Path, "error", err)
 		message = "The server could not finish this request. It has been logged."
-	}
-	if status == http.StatusNotFound && message == "" {
-		message = "There is nothing at this address."
 	}
 	title := errorTitles[status]
 	if title == "" {

@@ -317,7 +317,7 @@ func (a *App) files(w http.ResponseWriter, r *http.Request, name, refAndPath str
 		skip := historySkip(r)
 		history, more, err := gitRepo.Log(ctx, res.Commit, res.Path, skip, historyPageSize)
 		if err != nil {
-			return err
+			return tooLargeToShow(err)
 		}
 		page.History, page.HistoryMore, page.HistorySkip, page.HistoryPageSize = history, more, skip, historyPageSize
 		switch {
@@ -326,7 +326,7 @@ func (a *App) files(w http.ResponseWriter, r *http.Request, name, refAndPath str
 		case skip > 0:
 			last, _, err := gitRepo.Log(ctx, res.Commit, res.Path, 0, 1)
 			if err != nil {
-				return err
+				return tooLargeToShow(err)
 			}
 			if len(last) > 0 {
 				page.LastChanged = last[0]
