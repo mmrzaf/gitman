@@ -183,6 +183,7 @@ func TestAccessMatrixMutatingRoutes(t *testing.T) {
 			return "/" + r + "/runs/" + strconv.FormatInt(f.runNumber, 10) + "/again"
 		}, url.Values{}},
 		{"settings description", func(r string) string { return "/" + r + "/settings/description" }, url.Values{"description": {"x"}}},
+		{"settings default branch", func(r string) string { return "/" + r + "/settings/default-branch" }, url.Values{"default_branch": {"main"}}},
 	}
 	for _, route := range routes {
 		for _, repo := range []*reposvc.Repo{f.everyone, f.restricted} {

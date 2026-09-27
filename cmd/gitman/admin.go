@@ -61,12 +61,13 @@ var adminGroups = map[string]map[string]adminAction{
 		"cancel": {"<repo> <number>", adminRunCancel},
 	},
 	"repo": {
-		"create":       {"[--description TEXT] [--default-branch NAME] <name>", adminRepoCreate},
-		"list":         {"", adminRepoList},
-		"delete":       {"<name>", adminRepoDelete},
-		"sync":         {"<name>", adminRepoSync},
-		"visibility":   {"<name> everyone|restricted", adminRepoVisibility},
-		"default-push": {defaultPushUsage, adminRepoDefaultPush},
+		"create":         {"[--description TEXT] [--default-branch NAME] <name>", adminRepoCreate},
+		"list":           {"", adminRepoList},
+		"delete":         {"<name>", adminRepoDelete},
+		"sync":           {"<name>", adminRepoSync},
+		"visibility":     {"<name> everyone|restricted", adminRepoVisibility},
+		"default-branch": {"<name> <branch>", adminRepoDefaultBranch},
+		"default-push":   {defaultPushUsage, adminRepoDefaultPush},
 	},
 	"rule": {
 		"list":   {"<repo>", adminRuleList},
@@ -434,6 +435,22 @@ func adminRepoVisibility(ctx context.Context, env *adminEnv, args []string) erro
 		return err
 	}
 	fmt.Fprintf(env.out, "%s is now %s.\n", repo.Name, visibility)
+	return nil
+}
+
+func adminRepoDefaultBranch(ctx context.Context, env *adminEnv, args []string) error {
+	pos, err := parseArgs(flag.NewFlagSet("repo default-branch", flag.ContinueOnError), args, 2, "gitman admin repo default-branch <name> <branch>")
+	if err != nil {
+		return err
+	}
+	repo, err := repoByName(ctx, env, pos[0])
+	if err != nil {
+		return err
+	}
+	if err := env.repos.SetDefaultBranch(ctx, repo, pos[1], ""); err != nil {
+		return err
+	}
+	fmt.Fprintf(env.out, "%s's default branch is now %s.\n", repo.Name, pos[1])
 	return nil
 }
 

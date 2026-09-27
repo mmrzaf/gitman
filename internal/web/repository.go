@@ -25,7 +25,10 @@ type repositoryPage struct {
 	Targets  []ci.Deployment
 	Branches []refRow
 	Tags     []refRow
-	Timeline []activity.Entry
+	// DefaultExists is false until the default branch is first pushed:
+	// the only way it can be missing, since a push may not delete it.
+	DefaultExists bool
+	Timeline      []activity.Entry
 	// Tab is the refs list shown: "branches" or "tags".
 	Tab string
 }
@@ -81,6 +84,7 @@ func (a *App) repository(w http.ResponseWriter, r *http.Request) error {
 	}
 	for _, ref := range indexed {
 		row := refRow{IndexedRef: ref, IsDefault: ref.Kind == git.KindBranch && ref.Name == repo.DefaultBranch}
+		page.DefaultExists = page.DefaultExists || row.IsDefault
 		if ref.UpdatedBy != nil {
 			row.UpdatedByUsername = usernames[*ref.UpdatedBy]
 		}

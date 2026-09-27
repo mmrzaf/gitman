@@ -529,3 +529,52 @@ func TestGitConcurrencyLimitAnswersBusyWithRetryAfter(t *testing.T) {
 		t.Fatalf("status = %d, called = %d, want 200 and 1 once a slot frees up", w.Code, called)
 	}
 }
+
+// TestDefaultBranchNotPushedYet is a repository created with main as its
+// default whose first push was develop. No link Gitman draws leads to a
+// missing page, and once an admin moves the default to develop, a clone
+// checks it out.
+func TestDefaultBranchNotPushedYet(t *testing.T) {
+	e := setupGitHTTP(t)
+	admin := newBrowser(t, e.server)
+	signIn(t, e.db, admin, "lead", true)
+	_, cred := e.person("lead", true, auth.ScopeWrite)
+	e.initWork(cred)
+	e.commit("README.md", "# demo\n")
+	e.mustGit(e.work, "push", "--quiet", "origin", "HEAD:refs/heads/develop", "HEAD:refs/heads/feature")
+
+	resp, body := admin.do(http.MethodGet, "/demo@main", nil, nil)
+	expect(t, resp, body, http.StatusOK, "has not been pushed yet", `href="/demo@develop"`, `href="/demo@feature"`, `href="/demo/settings"`)
+	resp, body = admin.do(http.MethodGet, "/demo@no-such-branch", nil, nil)
+	expect(t, resp, body, http.StatusNotFound)
+
+	resp, body = admin.do(http.MethodGet, "/demo", nil, nil)
+	expect(t, resp, body, http.StatusOK, "has not been pushed yet")
+	if strings.Contains(body, "/demo/compare/") {
+		t.Error("the overview links to a comparison with a default branch that does not exist")
+	}
+
+	resp, body = admin.do(http.MethodPost, "/demo/settings/default-branch", url.Values{"default_branch": {"nope"}}, nil)
+	expect(t, resp, body, http.StatusUnprocessableEntity, "no branch named")
+	resp, _ = admin.do(http.MethodPost, "/demo/settings/default-branch", url.Values{"default_branch": {"develop"}}, nil)
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("set default branch: %d", resp.StatusCode)
+	}
+
+	resp, body = admin.do(http.MethodGet, "/demo", nil, nil)
+	expect(t, resp, body, http.StatusOK, "/demo/compare/develop...feature", "changed the default branch")
+	if strings.Contains(body, "has not been pushed yet") {
+		t.Error("the overview still says the default branch has not been pushed")
+	}
+	resp, body = admin.do(http.MethodGet, "/demo@develop", nil, nil)
+	expect(t, resp, body, http.StatusOK, "README.md")
+
+	clone := filepath.Join(t.TempDir(), "clone")
+	out := e.mustGit(".", "clone", e.url(cred), clone)
+	if strings.Contains(out, "nonexistent ref") {
+		t.Errorf("clone warned about the remote HEAD:\n%s", out)
+	}
+	if branch := strings.TrimSpace(e.mustGit(clone, "branch", "--show-current")); branch != "develop" {
+		t.Errorf("clone checked out %q, want develop", branch)
+	}
+}

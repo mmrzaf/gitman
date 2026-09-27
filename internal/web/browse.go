@@ -231,6 +231,12 @@ func (a *App) files(w http.ResponseWriter, r *http.Request, name, refAndPath str
 	}
 	res, err := a.resolveRefAndPath(ctx, gitRepo, repo.ID, refAndPath)
 	if err != nil {
+		// The default branch is what every Files link opens, and it can be
+		// missing only until it is first pushed: that is a state of the
+		// repository to show, not a page that does not exist.
+		if refAndPath == repo.DefaultBranch && apperr.KindOf(err) == apperr.KindNotFound {
+			return a.filesUnpushed(w, r, repo)
+		}
 		return err
 	}
 
@@ -339,6 +345,31 @@ func (a *App) files(w http.ResponseWriter, r *http.Request, name, refAndPath str
 		title = path.Base(res.Path) + " \u00b7 " + title
 	}
 	a.render(w, r, http.StatusOK, "files", title, page)
+	return nil
+}
+
+type filesUnpushedPage struct {
+	repoFrame
+	CloneURL string
+	// Branches are the branches the repository does have, if any.
+	Branches []string
+}
+
+// filesUnpushed serves the Files page of a repository whose default
+// branch has not been pushed yet, pointing to the branches it has.
+func (a *App) filesUnpushed(w http.ResponseWriter, r *http.Request, repo *reposvc.Repo) error {
+	refs, err := a.repos.ListRefs(r.Context(), repo.ID)
+	if err != nil {
+		return err
+	}
+	page := filesUnpushedPage{repoFrame: repoFrame{Repo: repo, Section: "files"}, CloneURL: a.cloneURL(repo)}
+	for _, ref := range refs {
+		if ref.Kind == git.KindBranch {
+			page.Branches = append(page.Branches, ref.Name)
+		}
+	}
+	sort.Strings(page.Branches)
+	a.render(w, r, http.StatusOK, "files_unpushed", repo.Name+"@"+repo.DefaultBranch, page)
 	return nil
 }
 

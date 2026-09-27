@@ -68,6 +68,7 @@ func (a *App) register(mux *http.ServeMux) {
 	// as before.
 	mux.Handle("GET /{repo}/settings", a.page(member, a.repoSettings))
 	mux.Handle("POST /{repo}/settings/description", a.page(member, a.repoSettingsDescription))
+	mux.Handle("POST /{repo}/settings/default-branch", a.page(member, a.repoSettingsDefaultBranch))
 	mux.Handle("POST /{repo}/settings/rules", a.page(member, a.repoSettingsRuleSet))
 	mux.Handle("POST /{repo}/settings/rules/delete", a.page(member, a.repoSettingsRuleDelete))
 	mux.Handle("POST /{repo}/settings/secrets", a.page(member, a.repoSettingsSecretSet))

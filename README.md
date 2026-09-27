@@ -257,6 +257,11 @@ gitman admin person role <username> admin|member
 gitman admin token create [--write] [--days N] <username> <name>
 gitman admin repo create [--description TEXT] [--default-branch NAME] <name>
 gitman admin repo list | delete <name> | sync <name>
+gitman admin repo visibility <name> everyone|restricted
+gitman admin repo default-branch <name> <branch>
+gitman admin repo default-push [--push everyone|admins|people] [--people a,b] <name>
+gitman admin reader add | remove <repo> <username>
+gitman admin reader list <repo>
 gitman admin rule list <repo>
 gitman admin rule set [--push everyone|admins|people] [--people a,b] [--force] [--delete]
                       [--run] [--docker] [--secrets] [--ship] <repo> branch|tag <pattern>

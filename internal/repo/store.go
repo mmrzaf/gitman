@@ -173,6 +173,19 @@ func deleteRepoRow(ctx context.Context, tx postgres.Tx, repoID string) (name str
 	return name, nil
 }
 
+// updateDefaultBranchRow sets a repository's default branch and returns
+// the one it replaces, read under a row lock so no concurrent change can
+// slip between the two.
+func updateDefaultBranchRow(ctx context.Context, tx postgres.Tx, repoID, branch string) (previous string, err error) {
+	if err := tx.QueryRow(ctx, `SELECT default_branch FROM repos WHERE id = $1 FOR UPDATE`, repoID).Scan(&previous); err != nil {
+		return "", postgres.NormalizeNotFound(err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE repos SET default_branch = $2 WHERE id = $1`, repoID, branch); err != nil {
+		return "", fmt.Errorf("update default branch: %w", err)
+	}
+	return previous, nil
+}
+
 func updateDescriptionRow(ctx context.Context, q postgres.Querier, repoID, description string) error {
 	tag, err := q.Exec(ctx, `UPDATE repos SET description = $2 WHERE id = $1`, repoID, description)
 	if err != nil {

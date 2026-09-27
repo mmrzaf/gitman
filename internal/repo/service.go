@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -185,6 +186,60 @@ func (s *Service) SetDescription(ctx context.Context, repoID, description, actor
 		}
 		return activity.Record(ctx, tx, repoID, actorID, activity.RepoDescribed, "")
 	})
+}
+
+// SetDefaultBranch makes branch the repository's default branch: the one
+// a clone checks out, the Files page opens and comparisons are made
+// against. It must be a branch the repository has. Gitman never changes
+// the default branch on its own; this is the only way it changes.
+//
+// The record and Git's HEAD change together: HEAD is moved last inside
+// the transaction, and moved back if the transaction then fails to
+// commit.
+func (s *Service) SetDefaultBranch(ctx context.Context, r *Repo, branch, actorID string) error {
+	if err := ValidateDefaultBranch(branch); err != nil {
+		return err
+	}
+	gitRepo, err := s.Open(r)
+	if err != nil {
+		return err
+	}
+	var previous string
+	headMoved := false
+	err = s.db.Tx(ctx, func(tx postgres.Tx) error {
+		// Holding the ref index lock keeps a push from being recorded
+		// between checking that the branch exists and choosing it.
+		if err := lockRefIndex(ctx, tx, r.ID); err != nil {
+			return err
+		}
+		refs, err := gitRepo.Refs(ctx)
+		if err != nil {
+			return fmt.Errorf("list refs: %w", err)
+		}
+		if !slices.ContainsFunc(refs, func(ref git.Ref) bool { return ref.Kind == git.KindBranch && ref.Name == branch }) {
+			return apperr.New(apperr.KindInvalid, fmt.Sprintf("%s has no branch named %q", r.Name, branch))
+		}
+		if previous, err = updateDefaultBranchRow(ctx, tx, r.ID, branch); err != nil {
+			return err
+		}
+		if previous == branch {
+			return nil
+		}
+		if err := activity.Record(ctx, tx, r.ID, actorID, activity.RepoDefaultBranchChanged, branch); err != nil {
+			return err
+		}
+		if err := gitRepo.SetHead(ctx, branch); err != nil {
+			return err
+		}
+		headMoved = true
+		return nil
+	})
+	if err != nil && headMoved {
+		if restoreErr := gitRepo.SetHead(context.WithoutCancel(ctx), previous); restoreErr != nil {
+			return fmt.Errorf("%w (and HEAD could not be moved back to %s either: %v)", err, previous, restoreErr)
+		}
+	}
+	return err
 }
 
 // SetVisibility changes who may read a repository.

@@ -26,6 +26,7 @@ gitman admin token create [--write] [--days N] <username> <name>
 gitman admin repo create [--description TEXT] [--default-branch NAME] <name>
 gitman admin repo list | delete <name> | sync <name>
 gitman admin repo visibility <name> everyone|restricted
+gitman admin repo default-branch <name> <branch>
 gitman admin repo default-push [--push everyone|admins|people] [--people a,b] <name>
 gitman admin reader add | remove <repo> <username>
 gitman admin reader list <repo>
@@ -55,6 +56,9 @@ Flags go before the positional arguments.
   admins. `admin repo default-push` sets who may push to a branch or tag
   no rule matches. See [Repository read
   access](../operator/security.md#repository-read-access).
+- `admin repo default-branch` moves a repository's default branch — what
+  a clone checks out — to a branch it already has. See [Default
+  branch](../user-guide.md#default-branch).
 - `admin rule set` flags map directly to what a rule grants: `--force`/
   `--delete` (force-push/deletion), `--run` (pushes trigger the
   pipeline), `--docker`/`--secrets`/`--ship` (what a triggered run may

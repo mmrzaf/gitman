@@ -354,10 +354,11 @@ var eventDescriptions = map[string]string{
 	activity.PersonRole:     "changed a role",
 	activity.PasswordReset:  "reset a password",
 
-	activity.RepoVisibilityChanged:  "changed who may read the repository",
-	activity.RepoReaderAdded:        "added a reader",
-	activity.RepoReaderRemoved:      "removed a reader",
-	activity.RepoDefaultPushChanged: "changed the default push policy",
+	activity.RepoVisibilityChanged:    "changed who may read the repository",
+	activity.RepoReaderAdded:          "added a reader",
+	activity.RepoReaderRemoved:        "removed a reader",
+	activity.RepoDefaultPushChanged:   "changed the default push policy",
+	activity.RepoDefaultBranchChanged: "changed the default branch",
 }
 
 // eventText renders a settings-change event's action and detail as one

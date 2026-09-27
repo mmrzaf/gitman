@@ -25,8 +25,24 @@ Its nav has three items:
   here, not from the nav.
 - **Runs** — every run of this repository's pipeline, newest first,
   paged.
-- **Settings** — admins only: description, ref rules, secrets, who may
-  read the repository and push to a ref no rule matches, and deletion.
+- **Settings** — admins only: description, default branch, ref rules,
+  secrets, who may read the repository and push to a ref no rule matches,
+  and deletion.
+
+### Default branch
+
+Every repository has one default branch, named when it is created
+(`main` if left blank). It is what `git clone` checks out, what **Files**
+opens, and what each branch is compared with on the Overview. A push may
+not delete it.
+
+Gitman never changes it by itself. An admin can move it to any branch the
+repository has, on the Settings page's **General** tab or with
+`gitman admin repo default-branch <repo> <branch>`.
+
+Since it cannot be deleted, the default branch is missing only until it
+is first pushed. Until then, the Overview and Files say so and link to
+the branches that do exist, instead of links that lead nowhere.
 
 ### Read access
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"sort"
 
 	"github.com/mmrzaf/gitman/internal/apperr"
 	"github.com/mmrzaf/gitman/internal/auth"
@@ -71,6 +72,10 @@ type repoSettingsPage struct {
 	Secrets      []reposvc.Secret
 	People       []auth.Person
 	SecretsReady bool
+	// Branches are the branches the default branch can be moved to, by
+	// name; DefaultExists is whether the current one is among them.
+	Branches      []string
+	DefaultExists bool
 }
 
 // settingsState is what differs between the settings page shown fresh
@@ -78,6 +83,7 @@ type repoSettingsPage struct {
 // which tab and dialog are open.
 type settingsState struct {
 	DescForm   *form
+	BranchForm *form
 	RuleForm   *form
 	SecretForm *form
 	DeleteForm *form
@@ -109,8 +115,9 @@ func (a *App) freshSettings(ctx context.Context, repo *reposvc.Repo, tab string)
 		"default_push_policy": {string(repo.DefaultPushPolicy)}, "default_push_people": repo.DefaultPushPeople,
 	}
 	return settingsState{
-		DescForm: newForm(url.Values{"description": {repo.Description}}),
-		RuleForm: newForm(nil), SecretForm: newForm(nil), DeleteForm: newForm(nil),
+		DescForm:   newForm(url.Values{"description": {repo.Description}}),
+		BranchForm: newForm(url.Values{"default_branch": {repo.DefaultBranch}}),
+		RuleForm:   newForm(nil), SecretForm: newForm(nil), DeleteForm: newForm(nil),
 		AccessForm: newForm(access),
 		Tab:        tab,
 	}, nil
@@ -146,10 +153,22 @@ func (a *App) repoSettingsData(r *http.Request, repo *reposvc.Repo, state settin
 	if err != nil {
 		return repoSettingsPage{}, err
 	}
-	return repoSettingsPage{
+	refs, err := a.repos.ListRefs(r.Context(), repo.ID)
+	if err != nil {
+		return repoSettingsPage{}, err
+	}
+	page := repoSettingsPage{
 		repoFrame: repoFrame{Repo: repo, Section: "settings"}, settingsState: state,
 		CloneURL: a.cloneURL(repo), Rules: rules, Secrets: secrets, People: everyone, SecretsReady: a.repos.SecretsAvailable(),
-	}, nil
+	}
+	for _, ref := range refs {
+		if ref.Kind == git.KindBranch {
+			page.Branches = append(page.Branches, ref.Name)
+			page.DefaultExists = page.DefaultExists || ref.Name == repo.DefaultBranch
+		}
+	}
+	sort.Strings(page.Branches)
+	return page, nil
 }
 
 // repoSettings shows the settings page, at the tab ?tab= names, with the
@@ -225,6 +244,34 @@ func (a *App) repoSettingsDescription(w http.ResponseWriter, r *http.Request) er
 		return err
 	}
 	a.redirect(w, r, "/"+repo.Name+"/settings", flashSuccess, "Saved.")
+	return nil
+}
+
+// repoSettingsDefaultBranch moves the default branch to another branch
+// the repository has.
+func (a *App) repoSettingsDefaultBranch(w http.ResponseWriter, r *http.Request) error {
+	repo, err := a.repoSettingsRepo(r)
+	if err != nil {
+		return err
+	}
+	if err := parseForm(w, r); err != nil {
+		return err
+	}
+	f := newForm(r.PostForm)
+	branch := f.Get("default_branch")
+	err = a.repos.SetDefaultBranch(r.Context(), repo, branch, personFrom(r).ID)
+	switch {
+	case failForm(f, "default_branch", err):
+		state, err := a.freshSettings(r.Context(), repo, "general")
+		if err != nil {
+			return err
+		}
+		state.BranchForm = f
+		return a.reRenderRepoSettings(w, r, repo, state)
+	case err != nil:
+		return err
+	}
+	a.redirect(w, r, "/"+repo.Name+"/settings", flashSuccess, "The default branch is now "+branch+".")
 	return nil
 }
 

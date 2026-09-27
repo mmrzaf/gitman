@@ -30,9 +30,39 @@
             </div>
           </form>
         </div>
+        <div class="inline-edit" data-inline-edit{{if not $d.BranchForm.Valid}} data-inline-editing{{end}}>
+          <div class="inline-edit-view" data-inline-view>
+            <p class="field-label">Default branch</p>
+            <p class="inline-edit-value cluster">{{template "ref" (dict "Kind" "branch" "Name" $repo.DefaultBranch)}}{{if not $d.DefaultExists}}<span class="muted">not pushed yet</span>{{end}}</p>
+            {{- if $d.Branches}}
+            <button type="button" class="btn btn-sm" data-inline-start aria-label="Change the default branch">{{template "icon" "edit"}}Change</button>
+            {{- end}}
+          </div>
+          {{- if $d.Branches}}
+          <form method="post" action="{{$base}}/default-branch" class="form" data-inline-form>
+            {{template "form-error" $d.BranchForm.Error}}
+            <div class="field">
+              <label class="field-label" for="f-default-branch">Default branch</label>
+              <span class="select-wrap">
+                <select class="select" id="f-default-branch" name="default_branch"
+                  {{- with index $d.BranchForm.Errors "default_branch"}} aria-invalid="true" aria-describedby="f-default-branch-error"{{else}} aria-describedby="f-default-branch-hint"{{end}}>
+                  {{- range $d.Branches}}
+                  <option value="{{.}}"{{if eq . ($d.BranchForm.Get "default_branch")}} selected{{end}}>{{.}}</option>
+                  {{- end}}
+                </select>
+              </span>
+              {{- with index $d.BranchForm.Errors "default_branch"}}<p class="field-error" id="f-default-branch-error">{{template "icon" "warning"}}<span>{{.}}</span></p>
+              {{- else}}<p class="field-hint" id="f-default-branch-hint">What a clone checks out, Files opens and branches are compared with.</p>{{end}}
+            </div>
+            <div class="form-actions">
+              <button type="button" class="btn js-only" data-inline-cancel>Cancel</button>
+              <button type="submit" class="btn btn-primary">Save default branch</button>
+            </div>
+          </form>
+          {{- end}}
+        </div>
         {{template "copy-field" (dict "ID" "clone-url" "Label" "Clone URL" "Value" $d.CloneURL)}}
         <dl class="facts">
-          <dt>Default branch</dt><dd>{{template "ref" (dict "Kind" "branch" "Name" $repo.DefaultBranch)}}</dd>
           <dt>Created</dt><dd>{{template "time" $repo.CreatedAt}}</dd>
         </dl>
       </div>

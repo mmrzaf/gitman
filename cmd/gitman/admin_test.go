@@ -118,7 +118,7 @@ func TestAdminWorkerCleanupFailsLostRunsBeforeRemovingLeftovers(t *testing.T) {
 }
 
 func TestRepoVisibilityAndDefaultPushCommandsAreRegistered(t *testing.T) {
-	for _, action := range []string{"visibility", "default-push"} {
+	for _, action := range []string{"visibility", "default-push", "default-branch"} {
 		if _, ok := adminGroups["repo"][action]; !ok {
 			t.Fatalf("expected a %q admin repo command to be registered", action)
 		}
@@ -154,6 +154,47 @@ func TestAdminRepoVisibility(t *testing.T) {
 	}
 	if err := adminRepoVisibility(ctx, env, []string{"no-such-repo", "everyone"}); err == nil {
 		t.Error("expected an unknown repository to be rejected")
+	}
+}
+
+func TestAdminRepoDefaultBranch(t *testing.T) {
+	ctx := t.Context()
+	env, _, store := newAdminEnv(t)
+	repo, err := env.repos.Create(ctx, "demo", "", "main", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := adminRepoDefaultBranch(ctx, env, []string{"demo", "develop"}); err == nil {
+		t.Fatal("expected a branch the repository does not have to be rejected")
+	}
+
+	bare, err := store.Path(repo.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	work := t.TempDir()
+	for _, args := range [][]string{
+		{"clone", "--quiet", bare, "."},
+		{"commit", "--quiet", "--allow-empty", "-m", "one"},
+		{"push", "--quiet", "origin", "HEAD:refs/heads/develop"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = work
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=T", "GIT_AUTHOR_EMAIL=t@x", "GIT_COMMITTER_NAME=T", "GIT_COMMITTER_EMAIL=t@x")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+
+	if err := adminRepoDefaultBranch(ctx, env, []string{"demo", "develop"}); err != nil {
+		t.Fatalf("adminRepoDefaultBranch: %v", err)
+	}
+	got, err := env.repos.GetByID(ctx, repo.ID)
+	if err != nil || got.DefaultBranch != "develop" {
+		t.Fatalf("GetByID after adminRepoDefaultBranch = %+v, %v", got, err)
+	}
+	if got := outputOf(env); got != "demo's default branch is now develop.\n" {
+		t.Errorf("output = %q", got)
 	}
 }
 

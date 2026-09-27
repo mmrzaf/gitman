@@ -258,6 +258,19 @@ func (r *Repo) Refs(ctx context.Context) ([]Ref, error) {
 	return refs, nil
 }
 
+// SetHead points HEAD at branch, which is what a clone checks out. It
+// does not check that the branch exists: Git allows HEAD to name a
+// branch not yet pushed, and the caller decides whether that is wanted.
+func (r *Repo) SetHead(ctx context.Context, branch string) error {
+	if err := ValidateName(branch); err != nil {
+		return fmt.Errorf("default branch: %w", err)
+	}
+	if _, err := run(ctx, r.opts(), "symbolic-ref", "HEAD", "refs/heads/"+branch); err != nil {
+		return fmt.Errorf("set HEAD: %w", err)
+	}
+	return nil
+}
+
 // Log lists commits reachable from the commit hash, newest first,
 // optionally limited to those touching path, skipping the first offset.
 // It reports whether more commits follow the returned page.

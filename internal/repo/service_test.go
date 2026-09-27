@@ -501,6 +501,86 @@ func TestSetDefaultPush(t *testing.T) {
 	}
 }
 
+// TestSetDefaultBranch is the repository created with main as its
+// default whose first push was develop: the default can then be moved to
+// develop, and only to a branch that exists.
+func TestSetDefaultBranch(t *testing.T) {
+	ctx := context.Background()
+	database := pgtest.Open(t)
+	store := newStore(t)
+	svc := NewService(database, store, testSecretKey)
+	r, err := svc.Create(ctx, "demo", "", "main", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bare, err := store.Path(r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	git := func(dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=T", "GIT_AUTHOR_EMAIL=t@x", "GIT_COMMITTER_NAME=T", "GIT_COMMITTER_EMAIL=t@x")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	work := t.TempDir()
+	git(work, "clone", "--quiet", bare, ".")
+	git(work, "commit", "--quiet", "--allow-empty", "-m", "one")
+	git(work, "push", "--quiet", "origin", "HEAD:refs/heads/develop", "HEAD:refs/tags/v1")
+
+	for name, branch := range map[string]string{
+		"a branch never pushed":   "feature",
+		"a tag, not a branch":     "v1",
+		"an invalid branch name":  "a..b",
+		"a hash-like branch name": "deadbeef",
+	} {
+		if err := svc.SetDefaultBranch(ctx, r, branch, ""); apperr.KindOf(err) != apperr.KindInvalid {
+			t.Errorf("SetDefaultBranch(%s) = %v, want an invalid-input error", name, err)
+		}
+	}
+
+	if err := svc.SetDefaultBranch(ctx, r, "develop", ""); err != nil {
+		t.Fatalf("SetDefaultBranch: %v", err)
+	}
+	got, err := svc.GetByID(ctx, r.ID)
+	if err != nil || got.DefaultBranch != "develop" {
+		t.Fatalf("GetByID after SetDefaultBranch = %+v, %v", got, err)
+	}
+	if head := git(bare, "symbolic-ref", "HEAD"); head != "refs/heads/develop" {
+		t.Errorf("HEAD = %q, want refs/heads/develop: a clone must check out the new default", head)
+	}
+	recorded := func() []string {
+		t.Helper()
+		entries, err := activity.NewService(database).Recent(ctx, &r.ID, 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var details []string
+		for _, e := range entries {
+			if e.Action == activity.RepoDefaultBranchChanged {
+				details = append(details, e.Detail)
+			}
+		}
+		return details
+	}
+	if got := recorded(); len(got) != 1 || got[0] != "develop" {
+		t.Fatalf("recorded default branch changes = %q, want [develop]", got)
+	}
+
+	// Choosing the branch that is already the default records nothing.
+	if err := svc.SetDefaultBranch(ctx, got, "develop", ""); err != nil {
+		t.Fatalf("SetDefaultBranch (unchanged): %v", err)
+	}
+	if got := recorded(); len(got) != 1 {
+		t.Errorf("recorded default branch changes = %q; an unchanged default was recorded", got)
+	}
+}
+
 func TestRunSecrets(t *testing.T) {
 	ctx := context.Background()
 	database := pgtest.Open(t)
