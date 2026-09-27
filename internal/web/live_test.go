@@ -3,8 +3,10 @@ package web
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -16,6 +18,7 @@ import (
 	"github.com/mmrzaf/gitman/internal/apperr"
 	"github.com/mmrzaf/gitman/internal/auth"
 	"github.com/mmrzaf/gitman/internal/ci"
+	"github.com/mmrzaf/gitman/internal/config"
 	"github.com/mmrzaf/gitman/internal/git"
 	"github.com/mmrzaf/gitman/internal/postgres/pgtest"
 	reposvc "github.com/mmrzaf/gitman/internal/repo"
@@ -360,5 +363,55 @@ func TestFilesAtRefIsDecidedBeforeRouting(t *testing.T) {
 	}
 	if filesAtRef(httptest.NewRequest(http.MethodPost, "/waiotech@main/runs/42/cancel", nil)) {
 		t.Error("a POST is never a file view")
+	}
+}
+
+// TestShutdownEndsOpenEventStreams is Ctrl+C with a Gitman page open in
+// a browser: its event stream never finishes by itself, and must not
+// hold the server's graceful shutdown for the whole grace period.
+func TestShutdownEndsOpenEventStreams(t *testing.T) {
+	a, handler := eventStreamFixture(t)
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := probe.Addr().(*net.TCPAddr).Port
+	probe.Close()
+	a.cfg = &config.Config{Port: port}
+	a.handler = handler
+	a.listen = func(ctx context.Context, _ []string, _ func(string, string), _ func(error)) { <-ctx.Done() }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stopped := make(chan error, 1)
+	go func() { stopped <- a.Run(ctx) }()
+
+	var resp *http.Response
+	for deadline := time.Now().Add(5 * time.Second); ; {
+		if resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:%d/events", port)); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the server never started: %v", err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	defer resp.Body.Close()
+	if _, err := bufio.NewReader(resp.Body).ReadString('\n'); err != nil {
+		t.Fatalf("the stream did not open: %v", err)
+	}
+
+	start := time.Now()
+	cancel()
+	select {
+	case err := <-stopped:
+		if err != nil {
+			t.Fatalf("Run = %v; want a clean shutdown", err)
+		}
+		if took := time.Since(start); took > 5*time.Second {
+			t.Fatalf("shutdown took %s with a stream open", took)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("shutdown waited on an open event stream")
 	}
 }

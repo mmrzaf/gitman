@@ -56,10 +56,21 @@ type subscriber struct {
 type hub struct {
 	mu   sync.Mutex
 	subs map[*subscriber]struct{}
+	// closed ends every open stream when the server shuts down. A stream
+	// is a request that never finishes on its own, so without it a
+	// graceful shutdown would wait out its whole grace period for any
+	// open page; the browser reconnects to the next server by itself.
+	closed    chan struct{}
+	closeOnce sync.Once
 }
 
 func newHub() *hub {
-	return &hub{subs: map[*subscriber]struct{}{}}
+	return &hub{subs: map[*subscriber]struct{}{}, closed: make(chan struct{})}
+}
+
+// close ends every open event stream, and any opened after.
+func (h *hub) close() {
+	h.closeOnce.Do(func() { close(h.closed) })
 }
 
 func (h *hub) subscribe() (*subscriber, func()) {
@@ -223,6 +234,8 @@ func (a *App) events(w http.ResponseWriter, r *http.Request) error {
 	for {
 		select {
 		case <-ctx.Done():
+			return nil
+		case <-a.hub.closed:
 			return nil
 		case n := <-sub.notices:
 			switch {

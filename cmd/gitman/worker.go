@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/mmrzaf/gitman/internal/ci"
@@ -34,7 +32,7 @@ func runWorker(args []string) error {
 		return fmt.Errorf("read hostname: %w", err)
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signalContext()
 	defer stop()
 
 	maxConns := int32(4)

@@ -4,10 +4,13 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"sort"
+	"syscall"
 )
 
 // version is set at build time via -ldflags "-X main.version=...".
@@ -80,4 +83,14 @@ func printUsage() {
 	for _, name := range names {
 		fmt.Fprintf(os.Stderr, "  %-10s %s\n", name, commands[name].summary)
 	}
+}
+
+// signalContext is done at the first SIGINT or SIGTERM, when a graceful
+// shutdown begins. From then on it no longer catches them, so a second
+// Ctrl+C ends the process at once instead of being ignored while the
+// shutdown runs.
+func signalContext() (context.Context, context.CancelFunc) {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	context.AfterFunc(ctx, stop)
+	return ctx, stop
 }

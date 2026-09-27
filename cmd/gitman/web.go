@@ -1,12 +1,9 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
-	"os/signal"
 	"path/filepath"
-	"syscall"
 	"time"
 
 	"github.com/mmrzaf/gitman/internal/activity"
@@ -38,7 +35,7 @@ func runWeb(args []string) error {
 	}
 	log := cfg.NewLogger(os.Stderr)
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signalContext()
 	defer stop()
 
 	database, err := postgres.Connect(ctx, cfg.DatabaseURL, postgres.Options{

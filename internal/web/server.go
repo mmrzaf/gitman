@@ -39,6 +39,10 @@ func (a *App) Run(ctx context.Context) error {
 		// long as it takes. Handlers that stream set their own deadlines.
 	}
 
+	// Shutdown waits for requests to finish, and an event stream never
+	// does on its own: end them all as shutdown begins.
+	srv.RegisterOnShutdown(a.hub.close)
+
 	go a.hub.run(ctx, a.listen, func(err error) {
 		a.log.Warn("lost the connection live updates listen on; reconnecting", "error", err)
 	})
