@@ -1,8 +1,14 @@
 {{define "content"}}
 {{$d := .Data}}{{$repo := $d.Repo}}
 <div class="page">
-<h1 class="visually-hidden" id="runs-title">Runs for {{$repo.Name}}</h1>
-<section class="panel" aria-labelledby="runs-title">
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title" id="runs-title">Runs</h1>
+    <p class="page-subtitle">Every run of this repository, newest first.</p>
+  </div>
+</header>
+<section class="panel" aria-labelledby="runs-history-title">
+  <header class="panel-header"><h2 class="panel-title" id="runs-history-title">History</h2></header>
   {{- if $d.Runs}}
   <div class="table-scroll">
     <table class="table">

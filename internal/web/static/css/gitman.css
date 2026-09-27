@@ -495,8 +495,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .btn-primary:hover { background: var(--primary-solid-hover); border-color: var(--primary-solid-hover); color: var(--on-accent); }
 .btn-danger { color: var(--danger); }
 .btn-danger:hover { color: var(--danger-hover); border-color: var(--danger); }
-.btn-danger-solid { background: var(--danger-solid); border-color: var(--danger-solid); color: #ffffff; }
-.btn-danger-solid:hover { background: var(--danger-solid-hover); border-color: var(--danger-solid-hover); color: #ffffff; }
+.btn-danger-solid { background: var(--danger-solid); border-color: var(--danger-solid); color: var(--on-accent); }
+.btn-danger-solid:hover { background: var(--danger-solid-hover); border-color: var(--danger-solid-hover); color: var(--on-accent); }
 .btn-ghost { border-color: transparent; background: transparent; box-shadow: none; color: var(--text-2); }
 .btn-ghost:hover { background: var(--surface-hover); }
 .btn-ghost[aria-pressed="true"] { background: var(--accent-bg); color: var(--accent); }
@@ -942,9 +942,8 @@ time { white-space: nowrap; }
 .picker-option .icon { color: var(--muted); }
 .picker-option[aria-selected="true"] { background: var(--accent-bg); }
 .picker-option[aria-selected="true"] .icon { color: var(--accent); }
-.picker-option-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker-option-label { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .picker-option-hint { flex: 0 1 auto; max-width: 45%; margin-left: auto; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: var(--text-sm); white-space: nowrap; }
-.picker-option-label { flex: 0 1 auto; }
 .picker-option mark { background: none; color: var(--accent); font-weight: var(--weight-bold); }
 .picker-message { padding: var(--sp-6) var(--sp-4); color: var(--muted); text-align: center; }
 .picker-footer { display: flex; gap: var(--sp-4); padding: var(--sp-2) var(--sp-4); border-top: 1px solid var(--border); color: var(--muted); font-size: var(--text-xs); }

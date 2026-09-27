@@ -390,7 +390,7 @@ func TestRepositoryPage(t *testing.T) {
 
 	resp, body := b.do(http.MethodGet, "/waiotech", nil, nil)
 	expect(t, resp, body, http.StatusOK, "Created waiotech.")
-	expect(t, resp, body, http.StatusOK, "waiotech", "Plant maintenance", "http://gitman.test/waiotech.git", "Nothing pushed yet",
+	expect(t, resp, body, http.StatusOK, "waiotech", "Plant maintenance", "http://gitman.test/waiotech.git", "No pushes yet",
 		// Nothing has shipped, but the targets region is there for the
 		// first deployment to appear in on a live page.
 		`<div data-live-region="targets">`, "Nothing shipped yet")

@@ -103,7 +103,7 @@
 {{else}}
 <div class="empty">
   {{template "icon" "push"}}
-  <p class="empty-title">Nothing pushed yet</p>
+  <p class="empty-title">No pushes yet</p>
   <p>Push an existing repository to start:</p>
   <pre class="secret-value"><code>git remote add origin {{.Clone}}
 git push -u origin {{$repo.DefaultBranch}}</code></pre>
