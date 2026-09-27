@@ -319,7 +319,7 @@ func (h *Hook) PostReceive(ctx context.Context, updates []Update) error {
 		records = append(records, rec)
 	}
 	var created []*ci.Created
-	var createdFor, moved []updateRecord
+	var createdFor, moved, notRun []updateRecord
 	err = h.DB.Tx(ctx, func(tx postgres.Tx) error {
 		// The ref index lock comes first, before any row that refers to
 		// the repository: deleting a repository takes the same lock
@@ -355,6 +355,7 @@ func (h *Hook) PostReceive(ctx context.Context, updates []Update) error {
 				continue
 			}
 			if !rec.decision.RunOnPush {
+				notRun = append(notRun, rec)
 				continue
 			}
 			// Hooks of pushes that land back to back can finish in
@@ -394,6 +395,15 @@ func (h *Hook) PostReceive(ctx context.Context, updates []Update) error {
 	}
 	for _, rec := range moved {
 		h.say("Gitman: %s %s moved again before this push was recorded; the later push runs its pipeline.", rec.Kind, rec.Name)
+	}
+	// A push that starts no run says so, so the pusher never has to
+	// wonder whether a pipeline is broken or was never asked for.
+	for _, rec := range notRun {
+		if rec.decision.MatchedRule == nil {
+			h.say("Gitman: no run for %s %s: no ref rule matches it, and only a rule with \"run\" on starts one.", rec.Kind, rec.Name)
+		} else {
+			h.say("Gitman: no run for %s %s: %s does not have \"run\" on.", rec.Kind, rec.Name, ruleLabel(rec.decision))
+		}
 	}
 	return nil
 }

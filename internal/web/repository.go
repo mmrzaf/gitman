@@ -15,9 +15,14 @@ type refRow struct {
 	reposvc.IndexedRef
 	UpdatedByUsername string
 	IsDefault         bool
-	LatestRun         *ci.Summary
-	LatestDeployment  *ci.Deployment
+	// CanRun is whether the signed-in person may start a run of it.
+	CanRun           bool
+	LatestRun        *ci.Summary
+	LatestDeployment *ci.Deployment
 }
+
+// FullName is the row's full ref name, what the "Run" form posts.
+func (r refRow) FullName() string { return git.FullName(r.Kind, r.Name) }
 
 type repositoryPage struct {
 	repoFrame
@@ -77,6 +82,15 @@ func (a *App) repository(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
+	runnable, err := a.runnableRefs(r, repo)
+	if err != nil {
+		return err
+	}
+	canRun := make(map[string]bool, len(runnable))
+	for _, ref := range runnable {
+		canRun[ref.FullName] = true
+	}
+
 	page := repositoryPage{
 		repoFrame: repoFrame{Repo: repo, Section: "overview"},
 		CloneURL:  a.cloneURL(repo), Targets: targets,
@@ -85,6 +99,7 @@ func (a *App) repository(w http.ResponseWriter, r *http.Request) error {
 	for _, ref := range indexed {
 		row := refRow{IndexedRef: ref, IsDefault: ref.Kind == git.KindBranch && ref.Name == repo.DefaultBranch}
 		page.DefaultExists = page.DefaultExists || row.IsDefault
+		row.CanRun = canRun[row.FullName()]
 		if ref.UpdatedBy != nil {
 			row.UpdatedByUsername = usernames[*ref.UpdatedBy]
 		}

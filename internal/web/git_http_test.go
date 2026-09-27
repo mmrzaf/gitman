@@ -578,3 +578,64 @@ func TestDefaultBranchNotPushedYet(t *testing.T) {
 		t.Errorf("clone checked out %q, want develop", branch)
 	}
 }
+
+// TestRunABranchByHand runs a branch from the Runs page's dialog the way
+// a push to it would: with its rule's target. Only people who may push
+// to a ref are offered it, and may run it.
+func TestRunABranchByHand(t *testing.T) {
+	e := setupGitHTTP(t)
+	lead := newBrowser(t, e.server)
+	signIn(t, e.db, lead, "lead", true)
+	member := newBrowser(t, e.server)
+	signIn(t, e.db, member, "darius", false)
+	_, cred := e.person("lead", true, auth.ScopeWrite)
+	e.saveRule(reposvc.Rule{Kind: git.KindBranch, Pattern: "main", PushPolicy: reposvc.PushAdmins, AllowShip: true})
+
+	resp, body := lead.do(http.MethodGet, "/demo/runs", nil, nil)
+	expect(t, resp, body, http.StatusOK, "No runs yet", ".gitman.yml", `href="/demo/settings?tab=rules"`)
+	if strings.Contains(body, `id="run-new"`) {
+		t.Error("the Run dialog is offered for a repository with nothing to run")
+	}
+
+	e.initWork(cred)
+	head := e.commit(".gitman.yml", "image: alpine:3.20\ntargets:\n  staging:\n    branch: main\nsteps:\n  - name: test\n    run: echo test\n")
+	out := e.mustGit(e.work, "push", "origin", "main", "HEAD:refs/heads/develop")
+	if !strings.Contains(out, "no run for branch main: the rule for branch \"main\" does not have \"run\" on.") ||
+		!strings.Contains(out, "no run for branch develop: no ref rule matches it") {
+		t.Fatalf("push output does not say why nothing ran:\n%s", out)
+	}
+
+	resp, body = lead.do(http.MethodGet, "/demo/runs", nil, nil)
+	expect(t, resp, body, http.StatusOK, `id="run-new"`, `<option value="refs/heads/main">main (default)</option>`, `<option value="refs/heads/develop">develop</option>`)
+	resp, body = member.do(http.MethodGet, "/demo/runs", nil, nil)
+	expect(t, resp, body, http.StatusOK, `<option value="refs/heads/develop">develop</option>`)
+	if strings.Contains(body, `value="refs/heads/main"`) {
+		t.Error("a member who may not push to main is offered to run it")
+	}
+	resp, body = member.do(http.MethodGet, "/demo", nil, nil)
+	expect(t, resp, body, http.StatusOK, `aria-label="Run branch develop"`)
+	if strings.Contains(body, `aria-label="Run branch main"`) {
+		t.Error("a member who may not push to main gets a Run button for it")
+	}
+
+	resp, body = member.do(http.MethodPost, "/demo/runs", url.Values{"ref": {"refs/heads/main"}}, nil)
+	expect(t, resp, body, http.StatusForbidden, "You may not push to branch main")
+	resp, body = lead.do(http.MethodPost, "/demo/runs", url.Values{"ref": {"refs/heads/nope"}}, nil)
+	expect(t, resp, body, http.StatusNotFound, "demo has no branch named")
+	resp, body = lead.do(http.MethodPost, "/demo/runs", url.Values{"ref": {"HEAD"}}, nil)
+	expect(t, resp, body, http.StatusUnprocessableEntity, "Choose a branch or tag to run.")
+
+	resp, _ = lead.do(http.MethodPost, "/demo/runs", url.Values{"ref": {"refs/heads/main"}}, nil)
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/demo/runs/1" {
+		t.Fatalf("run main: %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	var commit, kind, name, target, trigger string
+	if err := e.db.Pool.QueryRow(context.Background(),
+		`SELECT commit_hash, ref_kind, ref_name, target, trigger FROM runs WHERE repo_id = $1 AND number = 1`, e.repo.ID).
+		Scan(&commit, &kind, &name, &target, &trigger); err != nil {
+		t.Fatal(err)
+	}
+	if commit != head || kind != "branch" || name != "main" || target != "staging" || trigger != "manual" {
+		t.Fatalf("run 1 = %s %s %s target %q trigger %s; want main's commit, shipping to staging, started by hand", commit, kind, name, target, trigger)
+	}
+}

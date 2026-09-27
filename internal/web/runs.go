@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -87,6 +88,10 @@ const runsPageSize = 30
 type runsPage struct {
 	repoFrame
 	Runs []ci.Summary
+	// Runnable are the branches and tags the signed-in person may run,
+	// for the "Run" dialog; Dialog is "run-new" when it is open.
+	Runnable []runnableRef
+	Dialog   string
 	// Before is the ?before= value that produced this page, for the
 	// "Older" link to keep going from.
 	Before int64
@@ -108,7 +113,15 @@ func (a *App) runs(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	page := runsPage{repoFrame: repoFrame{Repo: repo, Section: "runs"}, Runs: runs, Before: before}
+	runnable, err := a.runnableRefs(r, repo)
+	if err != nil {
+		return err
+	}
+	page := runsPage{repoFrame: repoFrame{Repo: repo, Section: "runs"}, Runs: runs, Before: before,
+		Runnable: runnable, Dialog: dialogFrom(r, "run-new")}
+	if len(runnable) == 0 {
+		page.Dialog = ""
+	}
 	if len(runs) == runsPageSize {
 		page.More = runs[len(runs)-1].Number
 	}
@@ -276,6 +289,78 @@ func (a *App) runAgain(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	return a.startRun(w, r, repo, run.Commit, run.RefKind, run.RefName)
+}
+
+// runnableRef is a branch or tag the signed-in person may run.
+type runnableRef struct {
+	Kind git.Kind
+	Name string
+	// FullName is what the "Run" form posts: refs/heads/... or
+	// refs/tags/....
+	FullName  string
+	IsDefault bool
+}
+
+// runnableRefs lists the branches and tags the signed-in person may
+// start a run of — those they may push to — in the order a picker shows
+// them: the default branch, the other branches by name, then tags, most
+// recently moved first.
+func (a *App) runnableRefs(r *http.Request, repo *reposvc.Repo) ([]runnableRef, error) {
+	refs, err := a.repos.ListRefs(r.Context(), repo.ID)
+	if err != nil {
+		return nil, err
+	}
+	rules, err := a.repos.ListRules(r.Context(), repo.ID)
+	if err != nil {
+		return nil, err
+	}
+	person := personFrom(r)
+	var branches, tags []runnableRef
+	for _, ref := range refs {
+		if !reposvc.Evaluate(rules, ref.Kind, ref.Name, person.ID, person.IsAdmin, repo.DefaultPushPolicy, repo.DefaultPushPeople).CanPush {
+			continue
+		}
+		rr := runnableRef{Kind: ref.Kind, Name: ref.Name, FullName: git.FullName(ref.Kind, ref.Name),
+			IsDefault: ref.Kind == git.KindBranch && ref.Name == repo.DefaultBranch}
+		if ref.Kind == git.KindTag {
+			tags = append(tags, rr)
+		} else {
+			branches = append(branches, rr)
+		}
+	}
+	sort.SliceStable(branches, func(i, j int) bool {
+		if branches[i].IsDefault != branches[j].IsDefault {
+			return branches[i].IsDefault
+		}
+		return branches[i].Name < branches[j].Name
+	})
+	return append(branches, tags...), nil
+}
+
+// runRef starts a run of a branch or tag's current commit, exactly as a
+// push to it would: with its rule's target, secrets and Docker.
+func (a *App) runRef(w http.ResponseWriter, r *http.Request) error {
+	repo, err := a.repoByName(r)
+	if err != nil {
+		return err
+	}
+	if err := parseForm(w, r); err != nil {
+		return err
+	}
+	kind, name, ok := git.SplitFullName(r.PostForm.Get("ref"))
+	if !ok {
+		return apperr.New(apperr.KindInvalid, "Choose a branch or tag to run.")
+	}
+	refs, err := a.repos.ListRefs(r.Context(), repo.ID)
+	if err != nil {
+		return err
+	}
+	for _, ref := range refs {
+		if ref.Kind == kind && ref.Name == name {
+			return a.startRun(w, r, repo, ref.Commit, kind, name)
+		}
+	}
+	return notFound("%s has no %s named \u201c%s\u201d.", repo.Name, kind, name)
 }
 
 // commitRun starts a run of a bare commit, with no ref: it resolves no

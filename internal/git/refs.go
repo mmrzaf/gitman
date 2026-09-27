@@ -101,6 +101,15 @@ func LooksLikeCommitHash(name string) bool {
 	return hashLikePattern.MatchString(name)
 }
 
+// FullName is the full ref name of a branch or tag: the inverse of
+// SplitFullName.
+func FullName(kind Kind, name string) string {
+	if kind == KindTag {
+		return "refs/tags/" + name
+	}
+	return "refs/heads/" + name
+}
+
 // SplitFullName splits a full ref name into its kind and short name. It
 // reports ok == false for anything that is not a branch or a tag, such as
 // refs/notes/* or refs/pull/*, which Gitman does not accept.

@@ -55,11 +55,24 @@ itself refuses to clone, fetch or push to it.
 
 ## Runs
 
-Each push that a ref rule allows to run the pipeline starts a run. A
-run's page shows each step, its output, and whether it passed. From here
-you can:
+A run runs the pipeline in `.gitman.yml` at the root of a commit, on a
+worker. It starts in one of three ways:
 
-- **Run again** — re-run the same commit.
+- **A push** to a branch or tag whose ref rule has **run** on. A push
+  that starts no run says why, in the output of `git push`.
+- **By hand, from a branch or tag** — the **Run** button on the Runs
+  page (pick the branch or tag; the default branch comes first), or the
+  run button on its row of the Overview. It runs the ref's latest commit
+  exactly as a push to it would, with its rule's target, secrets and
+  Docker.
+- **By hand, from a commit** — **Run this commit** on a commit's page.
+  It runs without a ref, so it resolves no target and gets no Docker or
+  secrets.
+
+A run's page shows each step, its output, and whether it passed. From
+there you can:
+
+- **Run again** — re-run the same commit, for the same ref.
 - **Cancel** — stop a run in progress.
 
 Anyone allowed to push to the ref can start or cancel a run; a run of a

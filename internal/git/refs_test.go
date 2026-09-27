@@ -120,7 +120,7 @@ func TestSelectPatternNoMatch(t *testing.T) {
 	}
 }
 
-func TestSplitFullName(t *testing.T) {
+func TestFullNameRoundTrip(t *testing.T) {
 	cases := []struct {
 		kind Kind
 		name string
@@ -134,6 +134,9 @@ func TestSplitFullName(t *testing.T) {
 		kind, name, ok := SplitFullName(c.full)
 		if !ok || kind != c.kind || name != c.name {
 			t.Errorf("SplitFullName(%q) = %s, %q, %v, want %s, %q, true", c.full, kind, name, ok, c.kind, c.name)
+		}
+		if full := FullName(c.kind, c.name); full != c.full {
+			t.Errorf("FullName(%s, %q) = %q, want %q", c.kind, c.name, full, c.full)
 		}
 	}
 }

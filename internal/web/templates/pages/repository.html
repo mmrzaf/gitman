@@ -83,7 +83,7 @@
         <th scope="col">Last shipped</th>
         <th scope="col">Commit</th>
         <th scope="col">Updated</th>
-        {{if eq .Kind "branch"}}<th scope="col"><span class="visually-hidden">Compare</span></th>{{end}}
+        <th scope="col"><span class="visually-hidden">Actions</span></th>
       </tr>
     </thead>
     <tbody>
@@ -96,7 +96,15 @@
         <td class="cell-shrink">{{with .LatestDeployment}}<span class="version">{{.Version}}</span> <span class="muted">→</span> {{.Target}}{{else}}<span class="muted">—</span>{{end}}</td>
         <td class="cell-shrink">{{template "commit" (dict "Repo" $repo.Name "Hash" .Commit)}}</td>
         <td class="cell-shrink cell-muted">{{template "time" .UpdatedAt}}{{if .UpdatedByUsername}} by {{.UpdatedByUsername}}{{end}}</td>
-        {{if eq .Kind "branch"}}<td class="cell-shrink cell-end">{{if and $defaultExists (not .IsDefault)}}<a href="{{compareURL $repo.Name $repo.DefaultBranch .Name}}" aria-label="Compare {{.Name}} with {{$repo.DefaultBranch}}">{{template "icon" "compare"}}</a>{{end}}</td>{{end}}
+        <td class="cell-shrink cell-end"><span class="cell-actions">
+          {{- if .CanRun}}
+          <form method="post" action="/{{$repo.Name}}/runs" data-confirm="Run the pipeline of {{.Kind}} {{.Name}}?" data-confirm-detail="It runs the latest commit exactly as a push would." data-confirm-action="Start run" data-confirm-tone="primary">
+            <input type="hidden" name="ref" value="{{.FullName}}">
+            <button type="submit" class="btn btn-ghost btn-icon btn-sm" aria-label="Run {{.Kind}} {{.Name}}" title="Run">{{template "icon" "play"}}</button>
+          </form>
+          {{- end}}
+          {{- if and (eq .Kind "branch") $defaultExists (not .IsDefault)}}<a class="btn btn-ghost btn-icon btn-sm" href="{{compareURL $repo.Name $repo.DefaultBranch .Name}}" aria-label="Compare {{.Name}} with {{$repo.DefaultBranch}}" title="Compare">{{template "icon" "compare"}}</a>{{end}}
+        </span></td>
       </tr>
     {{end}}
     </tbody>

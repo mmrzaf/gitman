@@ -6,6 +6,11 @@
     <h1 class="page-title" id="runs-title">Runs</h1>
     <p class="page-subtitle">Every run of this repository, newest first.</p>
   </div>
+  {{- if $d.Runnable}}
+  <div class="page-actions">
+    <a class="btn btn-primary" href="/{{$repo.Name}}/runs?dialog=run-new" data-dialog-open="run-new" data-command="Run the pipeline of {{$repo.Name}}">{{template "icon" "play"}}Run</a>
+  </div>
+  {{- end}}
 </header>
 <section class="panel" aria-labelledby="runs-history-title">
   <header class="panel-header"><h2 class="panel-title" id="runs-history-title">History</h2></header>
@@ -36,8 +41,39 @@
   <div class="panel-body"><a class="btn" href="/{{$repo.Name}}/runs?before={{$d.More}}">Older runs</a></div>
   {{- end}}
   {{- else}}
-  {{template "empty" (dict "Icon" "play" "Title" "No runs yet")}}
+  <div class="empty">
+    {{template "icon" "play"}}
+    <p class="empty-title">No runs yet</p>
+    <p>A run starts when you push to a branch or tag whose ref rule has <strong>run</strong> on{{if $d.Runnable}}, or when you start one with <strong>Run</strong>{{end}}. It runs the pipeline in <code>.gitman.yml</code> at the root of the commit.</p>
+    {{- if .Person.IsAdmin}}
+    <p><a href="/{{$repo.Name}}/settings?tab=rules">Set up ref rules</a></p>
+    {{- end}}
+  </div>
   {{- end}}
 </section>
+{{- if $d.Runnable}}
+<dialog class="dialog" id="run-new" aria-labelledby="run-new-title" data-dialog{{if eq $d.Dialog "run-new"}} open{{end}}>
+  <form method="post" action="/{{$repo.Name}}/runs" class="form">
+    <header class="dialog-header"><h2 class="dialog-title" id="run-new-title">Run the pipeline</h2>{{template "dialog-close" (printf "/%s/runs" $repo.Name)}}</header>
+    <div class="dialog-body">
+      <div class="field">
+        <label class="field-label" for="f-run-ref">Branch or tag</label>
+        <span class="select-wrap">
+          <select class="select" id="f-run-ref" name="ref" aria-describedby="f-run-ref-hint" autofocus>
+            <optgroup label="Branches">
+              {{- range $d.Runnable}}{{if eq .Kind "branch"}}<option value="{{.FullName}}">{{.Name}}{{if .IsDefault}} (default){{end}}</option>{{end}}{{end}}
+            </optgroup>
+            <optgroup label="Tags">
+              {{- range $d.Runnable}}{{if eq .Kind "tag"}}<option value="{{.FullName}}">{{.Name}}</option>{{end}}{{end}}
+            </optgroup>
+          </select>
+        </span>
+        <p class="field-hint" id="f-run-ref-hint">Runs its latest commit exactly as a push to it would, with its rule's target, secrets and Docker.</p>
+      </div>
+    </div>
+    <footer class="dialog-footer"><button type="button" class="btn js-only" data-dialog-close>Cancel</button><button type="submit" class="btn btn-primary">Start run</button></footer>
+  </form>
+</dialog>
+{{- end}}
 </div>
 {{end}}

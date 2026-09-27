@@ -741,6 +741,7 @@ time { white-space: nowrap; }
 .table .cell-end { text-align: right; }
 .table .cell-truncate { max-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .table .cell-muted { color: var(--muted); }
+.table .cell-actions { display: inline-flex; align-items: center; gap: var(--sp-1); }
 .table-rowheader { font-weight: var(--weight-medium); }
 
 /* ---- Tabs ----------------------------------------------------------

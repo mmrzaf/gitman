@@ -265,7 +265,7 @@ func (r *Repo) SetHead(ctx context.Context, branch string) error {
 	if err := ValidateName(branch); err != nil {
 		return fmt.Errorf("default branch: %w", err)
 	}
-	if _, err := run(ctx, r.opts(), "symbolic-ref", "HEAD", "refs/heads/"+branch); err != nil {
+	if _, err := run(ctx, r.opts(), "symbolic-ref", "HEAD", FullName(KindBranch, branch)); err != nil {
 		return fmt.Errorf("set HEAD: %w", err)
 	}
 	return nil

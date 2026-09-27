@@ -498,3 +498,37 @@ func TestPostReceiveOfADeletedTagCancelsItsQueuedRun(t *testing.T) {
 		t.Fatalf("run = %s %q; want cancelled because the tag was deleted", status, reason)
 	}
 }
+
+// TestPostReceiveSaysWhyARefStartedNoRun is a push to refs that start no
+// run: one no rule matches, and one whose rule does not have "run" on.
+// Each gets a line saying so; a ref that does run gets none.
+func TestPostReceiveSaysWhyARefStartedNoRun(t *testing.T) {
+	ctx := context.Background()
+	f := newReceiveFixture(t)
+	if err := f.hook.Repos.SaveRule(ctx, f.hook.Ctx.RepoID, repo.Rule{Kind: git.KindBranch, Pattern: "release/*", PushPolicy: repo.PushEveryone}, ""); err != nil {
+		t.Fatal(err)
+	}
+	head := f.commit(t, "one", "refs/heads/main")
+	runGit(t, f.work, "push", "--quiet", f.bare, "HEAD:refs/heads/develop", "HEAD:refs/heads/release/1")
+
+	if err := f.hook.PostReceive(ctx, []Update{
+		{Old: zeroHash, New: head, Ref: "refs/heads/main", Kind: git.KindBranch, Name: "main"},
+		{Old: zeroHash, New: head, Ref: "refs/heads/develop", Kind: git.KindBranch, Name: "develop"},
+		{Old: zeroHash, New: head, Ref: "refs/heads/release/1", Kind: git.KindBranch, Name: "release/1"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	out := f.out.String()
+	for _, want := range []string{
+		"run #1 queued for branch main",
+		`no run for branch develop: no ref rule matches it, and only a rule with "run" on starts one.`,
+		`no run for branch release/1: the rule for branch "release/*" does not have "run" on.`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "no run for branch main") {
+		t.Errorf("a ref that ran was reported as not running:\n%s", out)
+	}
+}
