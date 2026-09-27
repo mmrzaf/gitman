@@ -563,7 +563,7 @@ func adminWorkerCleanup(ctx context.Context, env *adminEnv, args []string) error
 	if _, err := parseArgs(flag.NewFlagSet("worker cleanup", flag.ContinueOnError), args, 0, "gitman admin worker cleanup"); err != nil {
 		return err
 	}
-	failed, err := env.ci.FailLostRuns(ctx, worker.LostAfter)
+	failed, err := env.ci.FailLostRuns(ctx, ci.WorkerLostAfter)
 	if err != nil {
 		return err
 	}

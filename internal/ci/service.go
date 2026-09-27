@@ -346,6 +346,22 @@ func (s *Service) StopWorker(ctx context.Context, workerID string) error {
 	return markWorkerStopped(ctx, s.db.Q, workerID)
 }
 
+// WorkerLostAfter is how long a worker may go without a heartbeat before
+// it counts as gone: no longer online, and its running runs failed. It is
+// minutes, not seconds, so a Postgres restart or failover — which can
+// itself take a minute or two — reads as a database blip to wait out,
+// not a lost worker to fail runs for. "gitman admin worker cleanup" uses
+// the same threshold, so an operator running it by hand fails a run
+// exactly when a live worker would have.
+const WorkerLostAfter = 5 * time.Minute
+
+// AnyWorkerOnline reports whether any worker is running: one that has
+// not stopped and has sent a heartbeat within WorkerLostAfter. Without
+// one, a queued run waits until a worker starts.
+func (s *Service) AnyWorkerOnline(ctx context.Context) (bool, error) {
+	return selectAnyWorkerOnline(ctx, s.db.Q, WorkerLostAfter)
+}
+
 // FailLostRuns fails every running run whose worker stopped, or has not
 // sent a heartbeat in the last staleAfter, and returns how many it
 // failed. Runs are never retried automatically: a run that shipped

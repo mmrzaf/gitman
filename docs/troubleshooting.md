@@ -1,8 +1,16 @@
 # Troubleshooting
 
+## A run stays queued
+
+A queued run waits for a worker to claim it. When no worker is online,
+the run's page, Home and the output of `git push` say so: start one
+(`gitman worker`, or `make run-worker` from a checkout), and it claims
+the run at once. A worker counts as online from when it starts until it
+shuts down, or until it has sent no heartbeat for five minutes.
+
 ## A run is stuck / its worker seems gone
 
-A run whose worker stops sending heartbeats for about a minute is failed
+A run whose worker stops sending heartbeats for five minutes is failed
 automatically, with that reason recorded. Its step container and
 workspace are cleaned up by a live worker on the same host within a few
 more minutes — no action needed if another worker is healthy.
@@ -21,7 +29,7 @@ Runs are never retried automatically — re-run a failed run by hand
 
 ## After a database outage
 
-A worker waits a minute of its own healthy heartbeats after a database
+A worker waits five minutes of its own healthy heartbeats after a database
 outage before it judges any *other* worker lost, to avoid a thundering
 herd of runs being marked failed the moment the database comes back.
 

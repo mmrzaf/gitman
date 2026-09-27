@@ -16,6 +16,9 @@
     <section class="panel" aria-labelledby="progress-title">
       <header class="panel-header"><h2 class="panel-title" id="progress-title">{{template "icon" "running"}}Running now</h2></header>
       <div data-live-region="progress">
+        {{- if .Data.NoWorker}}
+        <div class="panel-body"><div class="callout is-queued" role="note">{{template "icon" "queued"}}<p class="callout-body">No worker is online, so queued runs wait until one starts.</p></div></div>
+        {{- end}}
         {{- if .Data.InProgress}}
         <ol class="runlist">
           {{- range .Data.InProgress}}

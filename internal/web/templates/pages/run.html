@@ -50,6 +50,12 @@
     <p class="callout-body">{{$run.Reason}}</p>
   </div>
   {{- end}}
+  {{- if .Data.NoWorker}}
+  <div class="callout run-reason is-queued" role="note">
+    {{template "icon" "queued"}}
+    <p class="callout-body">No worker is online, so this run waits until one starts.</p>
+  </div>
+  {{- end}}
 </header>
 
 {{if $run.Steps}}

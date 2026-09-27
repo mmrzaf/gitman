@@ -21,14 +21,6 @@ import (
 	"github.com/mmrzaf/gitman/internal/repo"
 )
 
-// LostAfter is how long a worker may go without a heartbeat before its
-// running runs are failed. It is minutes, not seconds, so a Postgres
-// restart or failover — which can itself take a minute or two — reads as
-// a database blip to wait out, not a lost worker to fail runs for.
-// "gitman admin worker cleanup" uses the same threshold, so an operator
-// running it by hand fails a run exactly when a live worker would have.
-const LostAfter = 5 * time.Minute
-
 // Timing of a worker's background duties.
 const (
 	heartbeatInterval = 10 * time.Second
@@ -299,9 +291,9 @@ func (w *Worker) heartbeat(ctx context.Context) {
 }
 
 // beat sends one heartbeat and, once this worker's own heartbeats have
-// been reaching the database for at least LostAfter, fails the runs of
-// workers whose heartbeats have not. Until then this worker cannot tell
-// a dead worker from one that, like itself, was merely cut off: after a
+// been reaching the database for at least ci.WorkerLostAfter, fails the
+// runs of workers whose heartbeats have not. Until then this worker
+// cannot tell a dead worker from one that, like itself, was cut off: after a
 // database outage every worker's last heartbeat is stale, and the first
 // to reconnect must give the others a chance to report in before it
 // judges any of them lost.
@@ -319,10 +311,10 @@ func (w *Worker) beat(ctx context.Context) {
 	if w.healthySince.IsZero() {
 		w.healthySince = now
 	}
-	if now.Sub(w.healthySince) < LostAfter {
+	if now.Sub(w.healthySince) < ci.WorkerLostAfter {
 		return
 	}
-	n, err := w.ci.FailLostRuns(tick, LostAfter)
+	n, err := w.ci.FailLostRuns(tick, ci.WorkerLostAfter)
 	switch {
 	case err != nil && ctx.Err() == nil:
 		w.log.Warn("could not check for runs of lost workers", "error", err)

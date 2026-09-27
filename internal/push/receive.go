@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/mmrzaf/gitman/internal/activity"
@@ -392,6 +393,14 @@ func (h *Hook) PostReceive(ctx context.Context, updates []Update) error {
 
 	for i, run := range created {
 		h.reportRun(pc.repo.Name, createdFor[i], run)
+	}
+	if slices.ContainsFunc(created, func(run *ci.Created) bool { return run.Status == ci.StatusQueued }) {
+		// Only advice: the push and its runs are already recorded, so a
+		// failed check leaves the notice out rather than failing a push
+		// that succeeded.
+		if online, err := h.CI.AnyWorkerOnline(ctx); err == nil && !online {
+			h.say("Gitman: no worker is online, so queued runs wait until one starts.")
+		}
 	}
 	for _, rec := range moved {
 		h.say("Gitman: %s %s moved again before this push was recorded; the later push runs its pipeline.", rec.Kind, rec.Name)

@@ -7,7 +7,6 @@ import (
 
 	"github.com/mmrzaf/gitman/internal/ci"
 	"github.com/mmrzaf/gitman/internal/postgres"
-	"github.com/mmrzaf/gitman/internal/worker"
 )
 
 // lostRunSweepInterval is how often the web process checks for runs
@@ -17,7 +16,7 @@ const lostRunSweepInterval = time.Minute
 // runLostRunSweep is the web process's backstop for a run whose worker
 // stopped and never came back: normally a restarted worker fails its
 // dead predecessor's runs itself, on the same schedule, so this only
-// matters when no worker ever restarts. It waits out worker.LostAfter
+// matters when no worker ever restarts. It waits out ci.WorkerLostAfter
 // from its own first reachable database, the same way a worker waits
 // out its own heartbeat loop before judging another worker lost — right
 // after an outage every worker's last heartbeat looks equally stale, and
@@ -33,8 +32,8 @@ func runLostRunSweep(ctx context.Context, database *postgres.DB, runs *ci.Servic
 			if healthySince.IsZero() {
 				healthySince = time.Now()
 			}
-			if time.Since(healthySince) >= worker.LostAfter {
-				if n, err := runs.FailLostRuns(ctx, worker.LostAfter); err != nil {
+			if time.Since(healthySince) >= ci.WorkerLostAfter {
+				if n, err := runs.FailLostRuns(ctx, ci.WorkerLostAfter); err != nil {
 					if ctx.Err() == nil {
 						log.Warn("could not check for runs of lost workers", "error", err)
 					}

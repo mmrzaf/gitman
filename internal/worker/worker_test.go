@@ -142,7 +142,7 @@ func TestDrainClaimsNothingWhileDockerIsDown(t *testing.T) {
 }
 
 // TestBeatWaitsBeforeJudgingOtherWorkers is a database back after an
-// outage longer than LostAfter: every worker's last heartbeat is stale,
+// outage longer than ci.WorkerLostAfter: every worker's last heartbeat is stale,
 // including those of workers still running their runs. The first worker
 // to reach the database again must not fail their runs before they have
 // had the chance to heartbeat too.
@@ -170,9 +170,9 @@ func TestBeatWaitsBeforeJudgingOtherWorkers(t *testing.T) {
 	if status := runStatus(t, database); status != "running" {
 		t.Fatalf("run status = %s right after the database came back; want running", status)
 	}
-	// Once it has been heartbeating for LostAfter, a worker still silent
+	// Once it has been heartbeating for ci.WorkerLostAfter, a worker still silent
 	// is lost.
-	w.healthySince = time.Now().Add(-LostAfter - time.Second)
+	w.healthySince = time.Now().Add(-ci.WorkerLostAfter - time.Second)
 	w.beat(ctx)
 	if status := runStatus(t, database); status != "failed" {
 		t.Fatalf("run status = %s; want failed once the other worker stayed silent", status)

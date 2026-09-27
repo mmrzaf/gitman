@@ -3,6 +3,7 @@ package web
 import (
 	"errors"
 	"net/http"
+	"slices"
 	"sort"
 
 	"github.com/mmrzaf/gitman/internal/activity"
@@ -32,6 +33,9 @@ type homePage struct {
 	Targets    []string
 	Board      []boardRepo
 	InProgress []ci.Summary
+	// NoWorker reports that runs are queued with no worker online to
+	// claim them.
+	NoWorker   bool
 	Timeline   []activity.Entry
 	CreateForm *form
 	// Dialog is the dialog the page opens with: "new-repo" when asked for
@@ -66,6 +70,13 @@ func (a *App) buildHomeData(r *http.Request, createForm *form) (homePage, error)
 	}
 
 	page := homePage{CreateForm: createForm, InProgress: inProgress, Timeline: feed}
+	if slices.ContainsFunc(inProgress, func(run ci.Summary) bool { return run.Status == ci.StatusQueued }) {
+		online, err := a.ci.AnyWorkerOnline(ctx)
+		if err != nil {
+			return homePage{}, err
+		}
+		page.NoWorker = !online
+	}
 	byRepo := map[string]map[string]*ci.Deployment{}
 	targets := map[string]bool{}
 	for i, d := range live {

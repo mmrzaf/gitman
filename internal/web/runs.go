@@ -37,6 +37,9 @@ type runPage struct {
 	LogOpen  bool
 	Duration time.Duration
 	Now      time.Time
+	// NoWorker reports that the run is queued with no worker online to
+	// claim it: it waits until one starts.
+	NoWorker bool
 }
 
 // logLine is one numbered line of a step's output. Numbers count from
@@ -185,6 +188,13 @@ func (a *App) runView(w http.ResponseWriter, r *http.Request) error {
 			end = *run.FinishedAt
 		}
 		page.Duration = end.Sub(*run.StartedAt).Round(time.Second)
+	}
+	if run.Status == ci.StatusQueued {
+		online, err := a.ci.AnyWorkerOnline(r.Context())
+		if err != nil {
+			return err
+		}
+		page.NoWorker = !online
 	}
 	if page.Selected != nil {
 		var log strings.Builder

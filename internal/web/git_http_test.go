@@ -639,3 +639,41 @@ func TestRunABranchByHand(t *testing.T) {
 		t.Fatalf("run 1 = %s %s %s target %q trigger %s; want main's commit, shipping to staging, started by hand", commit, kind, name, target, trigger)
 	}
 }
+
+// TestQueuedRunSaysNoWorkerIsOnline is a run pushed while no worker runs:
+// the push, the run's page and Home each say why it waits, and stop
+// saying so once a worker is online.
+func TestQueuedRunSaysNoWorkerIsOnline(t *testing.T) {
+	e := setupGitHTTP(t)
+	b := newBrowser(t, e.server)
+	signIn(t, e.db, b, "lead", true)
+	_, cred := e.person("lead", true, auth.ScopeWrite)
+	e.saveRule(reposvc.Rule{Kind: git.KindBranch, Pattern: "main", PushPolicy: reposvc.PushEveryone, RunOnPush: true})
+	const notice = "No worker is online"
+
+	e.initWork(cred)
+	e.commit(".gitman.yml", "image: alpine:3.20\nsteps:\n  - name: test\n    run: echo test\n")
+	out := e.mustGit(e.work, "push", "origin", "main")
+	if !strings.Contains(out, "run #1 queued for branch main") || !strings.Contains(out, "no worker is online, so queued runs wait until one starts") {
+		t.Fatalf("push output does not say the run waits for a worker:\n%s", out)
+	}
+	resp, body := b.do(http.MethodGet, "/demo/runs/1", nil, nil)
+	expect(t, resp, body, http.StatusOK, notice)
+	resp, body = b.do(http.MethodGet, "/", nil, nil)
+	expect(t, resp, body, http.StatusOK, notice)
+
+	if err := ci.NewService(e.db).RegisterWorker(context.Background(), "w1", "host"); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/demo/runs/1", "/"} {
+		resp, body = b.do(http.MethodGet, path, nil, nil)
+		expect(t, resp, body, http.StatusOK)
+		if strings.Contains(body, notice) {
+			t.Errorf("%s still says no worker is online while one is", path)
+		}
+	}
+	e.commit("a.txt", "a\n")
+	if out := e.mustGit(e.work, "push", "origin", "main"); strings.Contains(out, "no worker is online") {
+		t.Errorf("push says no worker is online while one is:\n%s", out)
+	}
+}

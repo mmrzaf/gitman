@@ -681,3 +681,50 @@ func TestAppendLogAcceptsTheSameChunkTwice(t *testing.T) {
 		t.Fatalf("LogChunks = %+v, %v", chunks, err)
 	}
 }
+
+// TestAnyWorkerOnline is what tells a person why a queued run is not
+// starting: a worker is online from the moment it registers until it
+// stops, or until its heartbeat is WorkerLostAfter old.
+func TestAnyWorkerOnline(t *testing.T) {
+	ctx := context.Background()
+	database := pgtest.Open(t)
+	svc := NewService(database)
+	online := func() bool {
+		t.Helper()
+		ok, err := svc.AnyWorkerOnline(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ok
+	}
+
+	if online() {
+		t.Fatal("online with no worker ever registered")
+	}
+	if err := svc.RegisterWorker(ctx, "w1", "host"); err != nil {
+		t.Fatal(err)
+	}
+	if !online() {
+		t.Fatal("not online right after a worker registered")
+	}
+	if _, err := database.Pool.Exec(ctx,
+		`UPDATE workers SET heartbeat_at = now() - make_interval(secs => $1) - interval '1 second'`,
+		WorkerLostAfter.Seconds()); err != nil {
+		t.Fatal(err)
+	}
+	if online() {
+		t.Fatal("online with only a heartbeat older than WorkerLostAfter")
+	}
+	if err := svc.Heartbeat(ctx, "w1", 0); err != nil {
+		t.Fatal(err)
+	}
+	if !online() {
+		t.Fatal("not online after a fresh heartbeat")
+	}
+	if err := svc.StopWorker(ctx, "w1"); err != nil {
+		t.Fatal(err)
+	}
+	if online() {
+		t.Fatal("online after the only worker stopped")
+	}
+}

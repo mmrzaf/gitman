@@ -69,6 +69,9 @@ worker. It starts in one of three ways:
   It runs without a ref, so it resolves no target and gets no Docker or
   secrets.
 
+A run waits in the queue until a worker claims it. When no worker is
+online, a queued run's page and Home say so.
+
 A run's page shows each step, its output, and whether it passed. From
 there you can:
 

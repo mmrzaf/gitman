@@ -537,6 +537,22 @@ func markWorkerStopped(ctx context.Context, q postgres.Querier, workerID string)
 	return nil
 }
 
+// selectAnyWorkerOnline reports whether a worker has not stopped and has
+// heartbeated within staleAfter, judged by the database's clock, as
+// selectLostRuns does.
+func selectAnyWorkerOnline(ctx context.Context, q postgres.Querier, staleAfter time.Duration) (bool, error) {
+	var online bool
+	if err := q.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM workers
+			WHERE stopped_at IS NULL AND heartbeat_at >= now() - make_interval(secs => $1)
+		)
+	`, staleAfter.Seconds()).Scan(&online); err != nil {
+		return false, fmt.Errorf("check for online workers: %w", err)
+	}
+	return online, nil
+}
+
 // selectLostRuns locks and returns running runs whose worker has not
 // heartbeated in the last staleAfter, or has stopped. The schema keeps a
 // running run's worker in existence.
