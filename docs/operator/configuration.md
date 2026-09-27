@@ -21,66 +21,38 @@ config file. `web` and `worker` read the same settings.
 
 Secure cookies aren't a separate setting: the session cookie's `Secure`
 flag is derived from `GITMAN_PUBLIC_URL`'s scheme (set automatically when
-it's `https`). Git HTTP (clone, fetch, push) has a fixed, not
-independently tunable, concurrency limit; there are no other
-independently tunable Smart-HTTP, file-search or repository-browse
-limits present in earlier versions of Gitman.
+it's `https`). Git over HTTPS (clone, fetch, push) has a fixed
+concurrency limit.
 
-## Compose-level settings (`.env`)
+## Compose (`.env`)
 
-These aren't read by `gitman` itself; they're substituted into
-`compose.yaml`.
+`compose.yaml` hands `.env` to both services, so every application
+setting above goes there. Three more are for Compose itself:
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `GITMAN_HOST` | — (required) | The hostname Traefik routes to Gitman; also used to build `GITMAN_PUBLIC_URL`. |
-| `POSTGRES_PASSWORD` | — (required) | PostgreSQL's password; part of the generated `GITMAN_DATABASE_URL`. |
-| `GITMAN_DATA_DIR` | `/srv/gitman` | Host path bind-mounted into `web` and `worker` at the identical path. |
-| `GITMAN_SECRET_KEY` | empty | Passed through to the application setting above. |
-| `GITMAN_TRUSTED_PROXIES` | `172.16.0.0/12` | Passed through to the application setting above; the default covers Docker's default bridge networks. |
-| `GITMAN_RETENTION_DAYS` | `90` | Passed through to the application setting above. |
-| `GITMAN_DATABASE_MAX_CONNS` | `0` | Passed through to the application setting above. |
-| `GITMAN_LOG_LEVEL` | `info` | Passed through to the application setting above. |
-| `GITMAN_LOG_FORMAT` | `text` | Passed through to the application setting above. |
-| `TRAEFIK_NETWORK` | `traefik` | The external Docker network Traefik and `web` share. |
-| `TRAEFIK_ENTRYPOINT` | `websecure` | Traefik entry point for Gitman's router. |
-| `TRAEFIK_CERTRESOLVER` | `letsencrypt` | Traefik certificate resolver for Gitman's router. |
-| `POSTGRES_IMAGE` | `postgres:16-alpine` | Image tag, to use a registry mirror. |
-| `GITMAN_IMAGE` | `gitman:latest` | Image tag, to use a registry mirror. |
+| Variable | Purpose |
+|---|---|
+| `GITMAN_IMAGE` | The image to run, such as `gitman:1.0.0-beta.21`. Required. |
+| `GITMAN_DOMAIN` | The host name Traefik routes to Gitman. `GITMAN_PUBLIC_URL` is set from it to `https://<GITMAN_DOMAIN>`. Required. |
+| `GITMAN_DATA_DIR` | Also the host path mounted into both services, at the identical path. Required. |
+
+Compose sets `GITMAN_WEB_URL` to `http://gitman-web:8080` itself: workers
+reach web directly on the `gitman_internal` network, not through Traefik.
 
 ## Image build arguments (`Dockerfile`)
 
-Not runtime settings — passed at `docker build`/`docker compose build`
-time, so the image itself can be built behind a registry or module mirror:
+Not runtime settings — passed at `docker build` time, so the image itself can be built behind a registry or module mirror:
 
 | Build arg | Default | Purpose |
 |---|---|---|
-| `GO_IMAGE` | `golang:1.27-alpine` | Builder base image. |
-| `RUNTIME_IMAGE` | `alpine:3.20` | Runtime base image. |
+| `GO_IMAGE` | `golang:1.27-bookworm` | Builder base image. |
+| `RUNTIME_IMAGE` | `debian:bookworm-slim` | Runtime base image. |
+| `DOCKER_CLI_IMAGE` | `docker:29-cli` | The image the worker's `docker` client is copied from. |
+| `DEBIAN_MIRROR` | `http://deb.debian.org/debian` | Debian package mirror for the runtime image. |
+| `DEBIAN_SECURITY_MIRROR` | `http://security.debian.org/debian-security` | Debian security mirror for the runtime image. |
 | `GOPROXY` | `https://proxy.golang.org,direct` | Go module proxy used during the build. |
-| `ALPINE_MIRROR` | empty (public default) | Alpine package mirror, if set. |
 | `VERSION` | `dev` | Embedded into the binary as `main.version`, shown by `gitman version`. |
 
 ## Health probes
 
 - `GET /healthz` — process-only liveness; doesn't touch the database.
 - `GET /readyz` — liveness plus a database check.
-
-## Settings with no equivalent in this version
-
-The rewrite is deliberately smaller in scope than earlier Gitman
-versions. Settings that controlled SQLite paths, CI artifact/cache
-storage, SSH, self-registration, independently tunable per-endpoint
-concurrency limits, worker resource limits (memory/CPU), and CI
-storage/heartbeat tuning have no counterpart: those features (SSH,
-self-registration, CI artifacts and caches) don't exist in this version
-at all. See [Not added, on purpose](../../README.md#not-added-on-purpose).
-
-Per-repository read access is back, unlike in the version immediately
-before this rewrite: see [Repository read
-access](security.md#repository-read-access).
-
-Docker access for pipelines moved from an instance-wide setting to a
-per-ref grant: see `--docker` in
-[`gitman admin rule set`](../reference/cli.md) and
-[Security model](security.md).

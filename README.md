@@ -20,13 +20,15 @@ handful of ideas — people, repositories, ref rules and pipelines.
 
 ## Running it
 
-You need Docker with Compose, and a Traefik already serving other sites on
-the host (the Compose file attaches to its network).
+Gitman runs with Docker Compose on a host that already runs Traefik, on
+an external `proxy` network, and PostgreSQL, as `postgres` on an external
+`data` network. Build the image on the host, then start it from a
+directory holding `compose.yaml` and a `.env` made from `.env.example`:
 
 ```sh
-cp .env.example .env            # then fill it in
-sudo install -d -o 1000 -g 1000 /srv/gitman
-docker compose up -d --build
+docker build --build-arg VERSION=v1.0.0-beta.21 -t gitman:1.0.0-beta.21 .
+sudo install -d -o 1000 -g 1000 /srv/apps/gitman/data
+docker compose up -d
 ```
 
 Create the first admin; the command prints their password:
@@ -35,24 +37,26 @@ Create the first admin; the command prints their password:
 docker compose exec web gitman admin person add --admin darius
 ```
 
-Sign in at `https://<GITMAN_HOST>`, create a repository from Home, and make
-an access token under **Access tokens**, in the menu under your username at
-the top right of every page. Git uses your username and that token as the
-password:
+Sign in at `https://<GITMAN_DOMAIN>`, create a repository from Home, and
+make an access token under **Access tokens**, in the menu under your
+username at the top right of every page. Git uses your username and that
+token as the password:
 
 ```sh
 git clone https://git.example.com/waiotech.git
 ```
 
 A read token can clone and fetch; pushing needs a write token.
+[Docker deployment](docs/operator/docker.md) has the whole setup.
 
 ### Behind Traefik
 
-- `GITMAN_TRUSTED_PROXIES` must cover the address Traefik reaches Gitman
-  from, or every request appears to come from Traefik and the sign-in
+- `GITMAN_TRUSTED_PROXIES` must cover every proxy in front of Gitman:
+  Traefik, and a CDN such as ArvanCloud if one is in front of it. Otherwise
+  every request appears to come from the nearest proxy and the sign-in
   limiter counts everyone together.
-- Large clones and pushes can outlast a proxy's read timeout. If your
-  Traefik entry point sets one, raise it, for example
+- Clones and pushes stream, and can be large and slow. If the entry point
+  sets a read timeout, raise it, for example
   `--entryPoints.websecure.transport.respondingTimeouts.readTimeout=0`.
 
 ### Workers and the data directory
@@ -64,12 +68,7 @@ that same path. The workspaces directory is private to the worker's
 user, and step containers run without the `MKNOD` capability, so a step
 cannot leave a device node for the worker to open. Several Gitman
 instances can share one Docker host: each labels its step containers
-with its own instance ID and cleans up only its own. Run more workers by
-scaling the service:
-
-```sh
-docker compose up -d --scale worker=3
-```
+with its own instance ID and cleans up only its own.
 
 Gitman never pulls images. Every image a pipeline uses (`image`, and
 anything listed in `requires`) must already be on the worker's Docker
@@ -78,9 +77,10 @@ host; a run with a missing image fails and says which one.
 ### Mirrors
 
 Every download the image build makes is a build argument (`GO_IMAGE`,
-`RUNTIME_IMAGE`, `GOPROXY`, `ALPINE_MIRROR`); see the top of the
-`Dockerfile`. Compose's own images are `POSTGRES_IMAGE` and
-`GITMAN_IMAGE` in `.env`.
+`RUNTIME_IMAGE`, `DOCKER_CLI_IMAGE`, `DEBIAN_MIRROR`,
+`DEBIAN_SECURITY_MIRROR`, `GOPROXY`); see the top of the `Dockerfile`.
+Gitman's own [`.gitman.yml`](.gitman.yml) builds it with Liara's
+mirrors.
 
 ## Configuration
 

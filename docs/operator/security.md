@@ -68,11 +68,13 @@ restricted to admins, not every branch. Containers a step starts through
 the socket belong to that step; Gitman only stops and removes the step
 containers it started itself, never anything else on the host.
 
-The worker process itself always runs as `root` in the supported Compose
-setup, specifically so it can reach `/var/run/docker.sock` — this is a
-property of how the worker is deployed, not something a ref rule changes.
-Step containers run as whatever user their own image specifies; Gitman
-does not force a non-root user inside them.
+The worker process itself runs as `root` in the supported Compose setup.
+Step containers run as whatever user their own image specifies, often
+root, and Gitman does not force a non-root user inside them; the worker
+must be able to remove whatever files they leave in a run's workspace.
+Holding the Docker socket makes the worker root-equivalent on the host
+either way. This is a property of how the worker is deployed, not
+something a ref rule changes.
 
 A step's container has full outbound network access, the same as any
 other container on the host's Docker network: nothing in Gitman isolates
