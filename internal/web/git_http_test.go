@@ -489,7 +489,7 @@ func TestRestrictedRepositoryOverGitHTTP(t *testing.T) {
 	}
 }
 
-// TestGitConcurrencyLimitAnswersBusyWithRetryAfter covers R2-4's Git HTTP
+// TestGitConcurrencyLimitAnswersBusyWithRetryAfter checks the Git HTTP
 // concurrency limit: once every slot is taken, the next request is
 // refused at once with 503 and Retry-After rather than left to queue
 // behind requests that could each run for as long as a large clone or

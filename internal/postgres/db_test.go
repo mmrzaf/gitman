@@ -117,8 +117,8 @@ func TestTxRollsBackOnError(t *testing.T) {
 	}
 }
 
-// TestAcquireTimeoutFailsFastWhenThePoolIsExhausted covers R2-4: a caller
-// that cannot even get a connection within AcquireTimeout fails with
+// TestAcquireTimeoutFailsFastWhenThePoolIsExhausted is a caller that
+// cannot even get a connection within AcquireTimeout: it fails with
 // ErrUnavailable in bounded time, on both Q and Tx, rather than waiting
 // as long as its own (here, unbounded) context would otherwise allow.
 func TestAcquireTimeoutFailsFastWhenThePoolIsExhausted(t *testing.T) {

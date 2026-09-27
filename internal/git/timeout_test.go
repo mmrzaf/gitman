@@ -8,16 +8,15 @@ import (
 	"time"
 )
 
-// TestStreamReportsATimeoutTheSameWayRunDoes covers R2-5: stream's error
-// path used to return whatever error its consumer produced without ever
-// checking whether a timeout was the real cause, the way run already
-// did. consume here stands in for a parser like parsePatch, which can
-// fail on its own terms — a malformed or truncated read, say — for a
-// reason that has nothing to do with context.DeadlineExceeded; it sleeps
-// past the command's timeout before reporting that failure, so the
-// timeout has already fired by the time it does. The timeout is still
-// the real cause and must still be reported as one, not masked by
-// whatever error the truncation itself produced.
+// TestStreamReportsATimeoutTheSameWayRunDoes checks that stream's error
+// path reports a timeout as the real cause, the way run's does. consume
+// here stands in for a parser like parsePatch, which can fail on its own
+// terms — a malformed or truncated read, say — for a reason that has
+// nothing to do with context.DeadlineExceeded; it sleeps past the
+// command's timeout before reporting that failure, so the timeout has
+// already fired by the time it does. The timeout is still the real
+// cause and must still be reported as one, not masked by whatever error
+// the truncation itself produced.
 func TestStreamReportsATimeoutTheSameWayRunDoes(t *testing.T) {
 	f := newFixture(t)
 	f.write(t, "a.txt", "hello\n")

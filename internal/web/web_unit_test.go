@@ -284,9 +284,9 @@ func TestPartialsRead(t *testing.T) {
 	}
 }
 
-// TestRenderErrorMapsPoolExhaustionToServiceUnavailable covers R2-4: a
-// database call refused for want of a free connection reaches the person
-// as 503 with a Retry-After header, distinct from an ordinary 500.
+// TestRenderErrorMapsPoolExhaustionToServiceUnavailable is a database
+// call refused for want of a free connection: it reaches the person as
+// 503 with a Retry-After header, distinct from an ordinary 500.
 func TestRenderErrorMapsPoolExhaustionToServiceUnavailable(t *testing.T) {
 	a := renderingApp(t)
 	cases := []struct {
