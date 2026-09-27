@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -151,4 +152,65 @@ func TestAcquireTimeoutFailsFastWhenThePoolIsExhausted(t *testing.T) {
 	if err := database.Tx(ctx, func(tx Tx) error { return nil }); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("Tx while the pool is exhausted = %v, want ErrUnavailable", err)
 	}
+}
+
+// TestAcquireTimeoutStaysBoundedUnderSustainedContention covers a real
+// past bug: acquiring a connection just to check one was available, then
+// releasing it and asking Pool for a separate one to actually use, left a
+// gap between the two acquires for another waiter to queue ahead of the
+// real one — so under sustained contention, a caller could be repeatedly
+// bumped to the back of Pool's own wait queue by its own probe-then-
+// reacquire dance, adding unbounded extra latency on top of what
+// AcquireTimeout was supposed to cap. That doesn't hang outright — Pool
+// still eventually serves everyone — so the regression this guards
+// against is a throughput one: measured against the pre-fix code, this
+// workload reliably took upward of 2.5s (every waiter repeatedly
+// re-queuing behind the others), against ~1.1-1.2s fixed. secondsBudget
+// sits with margin on both sides of that gap.
+func TestAcquireTimeoutStaysBoundedUnderSustainedContention(t *testing.T) {
+	const secondsBudget = 2 * time.Second
+
+	ctx := context.Background()
+	url := os.Getenv("GITMAN_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("GITMAN_TEST_DATABASE_URL not set; skipping a test that requires PostgreSQL")
+	}
+	database, err := Connect(ctx, url, Options{MaxConns: 2, AcquireTimeout: 200 * time.Millisecond})
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	t.Cleanup(database.Close)
+
+	const goroutines, roundsEach = 30, 4
+	done := make(chan error, goroutines)
+	start := time.Now()
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			for j := 0; j < roundsEach; j++ {
+				// context.Background() on purpose: nothing about the
+				// caller's own context should be what bounds this.
+				_, err := database.Q.Exec(context.Background(), "SELECT pg_sleep(0.05)")
+				if err != nil && !errors.Is(err, ErrUnavailable) {
+					done <- fmt.Errorf("round %d: %w", j, err)
+					return
+				}
+			}
+			done <- nil
+		}()
+	}
+	for i := 0; i < goroutines; i++ {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Error(err)
+			}
+		case <-time.After(15 * time.Second):
+			t.Fatalf("still waiting on goroutines after 15s under a 200ms acquire timeout: the fix regressed")
+		}
+	}
+	if elapsed := time.Since(start); elapsed > secondsBudget {
+		t.Fatalf("%d goroutines x %d rounds took %s, want under %s: probe-then-reacquire latency may have regressed",
+			goroutines, roundsEach, elapsed, secondsBudget)
+	}
+	t.Logf("%d goroutines x %d rounds against 2 connections finished in %s", goroutines, roundsEach, time.Since(start))
 }

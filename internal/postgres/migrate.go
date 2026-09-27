@@ -145,12 +145,16 @@ func (d *DB) Migrate(ctx context.Context) error {
 
 // Tx runs fn inside a transaction, committing if fn returns nil and
 // rolling back otherwise. Acquiring the connection it runs on is bounded
-// the same way DB.Q is; the transaction itself, once it has one, is not.
+// the same way DB.Q is, via the same acquireConn; the transaction itself,
+// once it has a connection, is not — it holds that one connection for its
+// whole duration and releases it when done, same as DB.Q's own results do.
 func (d *DB) Tx(ctx context.Context, fn func(tx Tx) error) error {
-	if err := d.probeAcquire(ctx); err != nil {
+	conn, err := d.acquireConn(ctx)
+	if err != nil {
 		return err
 	}
-	tx, err := d.Pool.Begin(ctx)
+	defer conn.Release()
+	tx, err := conn.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}

@@ -38,8 +38,9 @@ type Options struct {
 }
 
 // Connect opens a connection pool and verifies the database is reachable.
-// It does not apply migrations: only long-running processes do that, via
-// Migrate, so a hook invoked on every push never touches the schema.
+// It does not apply migrations itself: a caller runs them via Migrate
+// when it wants them run. A Git hook, invoked on every push, deliberately
+// never calls Migrate, so a push never touches the schema.
 func Connect(ctx context.Context, databaseURL string, opts Options) (*DB, error) {
 	poolConfig, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
@@ -61,58 +62,103 @@ func Connect(ctx context.Context, databaseURL string, opts Options) (*DB, error)
 	return d, nil
 }
 
-// probeAcquire briefly acquires and releases a connection, bounded by
-// acquireTimeout, before a caller goes on to run its real query or
-// transaction on ctx unbounded. It only detects sustained exhaustion: a
-// connection that frees up a moment later is not what it is for. Doing
-// nothing when acquireTimeout is unset keeps every caller that never
-// opted into it exactly as unbounded as before.
-func (d *DB) probeAcquire(ctx context.Context) error {
+// acquireConn gets one connection from the pool, bounded by acquireTimeout
+// when set. The bound applies only to the wait for a free connection: the
+// timeout is not carried into the connection's later use, so a caller
+// that then runs a genuinely slow (but healthy) query is never cut off by
+// it. Cancelling the bounding context right after Acquire returns is safe
+// — a *pgxpool.Conn does not hold onto the context it was acquired with.
+func (d *DB) acquireConn(ctx context.Context) (*pgxpool.Conn, error) {
 	if d.acquireTimeout <= 0 {
-		return nil
+		return d.Pool.Acquire(ctx)
 	}
-	pctx, cancel := context.WithTimeout(ctx, d.acquireTimeout)
+	bctx, cancel := context.WithTimeout(ctx, d.acquireTimeout)
 	defer cancel()
-	conn, err := d.Pool.Acquire(pctx)
+	conn, err := d.Pool.Acquire(bctx)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
-			return ErrUnavailable
+			return nil, ErrUnavailable
 		}
-		return err
+		return nil, err
 	}
-	conn.Release()
-	return nil
+	return conn, nil
 }
 
-// boundedQuerier is DB.Q: Pool's three read/write methods, each preceded
-// by probeAcquire so a caller waiting on an exhausted pool fails fast
-// instead of blocking for as long as its own context allows.
+// boundedQuerier is DB.Q: each call acquires its own connection through
+// acquireConn, bounded by acquireTimeout, and runs on it directly —
+// rather than acquiring-and-releasing a probe connection and then asking
+// Pool for a separate one, which would leave a second, unbounded wait for
+// the real connection once another waiter takes the one the probe just
+// freed.
 type boundedQuerier struct {
 	db *DB
 }
 
 func (b boundedQuerier) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
-	if err := b.db.probeAcquire(ctx); err != nil {
+	conn, err := b.db.acquireConn(ctx)
+	if err != nil {
 		return pgconn.CommandTag{}, err
 	}
-	return b.db.Pool.Exec(ctx, sql, args...)
+	defer conn.Release()
+	return conn.Exec(ctx, sql, args...)
 }
 
+// Query returns a releasingRows that holds its connection until the
+// caller closes it, exactly as if it were still Pool's own.
 func (b boundedQuerier) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
-	if err := b.db.probeAcquire(ctx); err != nil {
+	conn, err := b.db.acquireConn(ctx)
+	if err != nil {
 		return nil, err
 	}
-	return b.db.Pool.Query(ctx, sql, args...)
+	rows, err := conn.Query(ctx, sql, args...)
+	if err != nil {
+		conn.Release()
+		return nil, err
+	}
+	return &releasingRows{Rows: rows, conn: conn}, nil
 }
 
+// QueryRow returns a releasingRow that holds its connection until the
+// caller scans it, exactly as if it were still Pool's own.
 func (b boundedQuerier) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
-	if err := b.db.probeAcquire(ctx); err != nil {
+	conn, err := b.db.acquireConn(ctx)
+	if err != nil {
 		return erroredRow{err}
 	}
-	return b.db.Pool.QueryRow(ctx, sql, args...)
+	return &releasingRow{row: conn.QueryRow(ctx, sql, args...), conn: conn}
 }
 
-// erroredRow is a pgx.Row that reports probeAcquire's failure as a
+// releasingRows wraps the Rows of a connection acquired just for this
+// query, releasing that connection back to the pool exactly when the
+// caller is done with them — on Close, the same as Pool.Query's own
+// rows already release theirs internally.
+type releasingRows struct {
+	pgx.Rows
+	conn     *pgxpool.Conn
+	released bool
+}
+
+func (r *releasingRows) Close() {
+	r.Rows.Close()
+	if !r.released {
+		r.released = true
+		r.conn.Release()
+	}
+}
+
+// releasingRow is releasingRows' equivalent for QueryRow, whose one row
+// is consumed by a single Scan instead of a Close.
+type releasingRow struct {
+	row  pgx.Row
+	conn *pgxpool.Conn
+}
+
+func (r *releasingRow) Scan(dest ...any) error {
+	defer r.conn.Release()
+	return r.row.Scan(dest...)
+}
+
+// erroredRow is a pgx.Row that reports acquireConn's failure as a
 // QueryRow caller expects to see one: from Scan, not from QueryRow
 // itself, which never returns an error.
 type erroredRow struct{ err error }
