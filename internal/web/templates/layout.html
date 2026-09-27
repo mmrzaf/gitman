@@ -5,8 +5,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#172033">
 <title>{{.Title}} · Gitman</title>
-<link rel="icon" href="{{asset "favicon.svg"}}" type="image/svg+xml">
+<link rel="icon" href="{{asset "brand/favicon.ico"}}" sizes="any">
+<link rel="icon" href="{{asset "brand/favicon-16x16.png"}}" type="image/png" sizes="16x16">
+<link rel="icon" href="{{asset "brand/favicon-32x32.png"}}" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="{{asset "brand/apple-touch-icon.png"}}" sizes="180x180">
+<link rel="icon" href="{{asset "brand/android-chrome-192x192.png"}}" type="image/png" sizes="192x192">
+<link rel="icon" href="{{asset "brand/android-chrome-512x512.png"}}" type="image/png" sizes="512x512">
 <link rel="stylesheet" href="{{asset "css/gitman.css"}}">
 <script src="{{asset "js/head.js"}}"></script>
 <script type="module" src="{{asset "js/main.js"}}"></script>
@@ -16,11 +22,7 @@
 {{- if .Person}}
 <header class="topbar{{if eq .Name "run"}} page-wide-bar{{end}}">
   <nav class="topbar-inner" aria-label="Main">
-    <a class="brand" href="/"><span class="brand-mark" aria-hidden="true">g</span><span class="brand-name">Gitman</span></a>
-    <a class="topbar-link" href="/"{{if eq .Name "home"}} aria-current="page"{{end}}>{{template "icon" "home"}}<span class="topbar-link-label">Home</span></a>
-    {{- if .Person.IsAdmin}}
-    <a class="topbar-link" href="/people"{{if eq .Name "people"}} aria-current="page"{{end}}>{{template "icon" "person"}}<span class="topbar-link-label">People</span></a>
-    {{- end}}
+    <a class="brand" href="/" aria-label="Gitman home"><picture class="brand-lockup"><source media="(prefers-color-scheme: dark)" srcset="{{asset "brand/gitman-header-dark.png"}}"><img src="{{asset "brand/gitman-header-light.png"}}" alt="" width="126" height="42"></picture><img class="brand-symbol" src="{{asset "brand/gitman-mark-64.png"}}" alt="" width="28" height="28"></a>
     <span class="topbar-spacer"></span>
     <a class="palette-button" href="/jump" data-palette-open aria-keyshortcuts="Control+K Meta+K"{{if eq .Name "jump"}} aria-current="page"{{end}}>
       {{template "icon" "search"}}<span class="palette-button-label">Jump to…</span><kbd class="kbd js-only" data-shortcut-label>Ctrl K</kbd>
@@ -29,6 +31,10 @@
       <summary class="btn btn-ghost" aria-label="Account menu for {{.Person.Username}}">{{template "icon" "person"}}<span class="topbar-link-label mono">{{.Person.Username}}</span>{{template "icon" "chevron-down"}}</summary>
       <div class="menu-list">
         <p class="menu-heading" aria-hidden="true">Signed in as <strong>{{.Person.Username}}</strong>{{if .Person.IsAdmin}} · admin{{end}}</p>
+        {{- if .Person.IsAdmin}}
+        <a class="menu-item" href="/people"{{if eq .Name "people"}} aria-current="page"{{end}}>{{template "icon" "person"}}People</a>
+        <div class="menu-separator" role="separator"></div>
+        {{- end}}
         <a class="menu-item" href="/me">{{template "icon" "key"}}Access tokens</a>
         <a class="menu-item" href="/me?tab=password">{{template "icon" "lock"}}Change password</a>
         <div class="menu-separator" role="separator"></div>

@@ -282,6 +282,10 @@ func TestHomeBoard(t *testing.T) {
 	// has shipped nothing there says so.
 	expect(t, resp, body, http.StatusOK, "waiotech", "3f2a91cb1de0", ">#7</a>", "2 h ago", "cerv", `<th scope="col">staging</th>`,
 		`<span class="board-none">—<span class="visually-hidden">nothing shipped</span></span>`)
+	if !strings.Contains(body, `class="brand" href="/" aria-label="Gitman home"`) ||
+		!strings.Contains(body, `class="menu-item" href="/people"`) || strings.Contains(body, `class="topbar-link"`) {
+		t.Error("the logo must link home and People must be in the admin account menu")
+	}
 
 	// The board (what's live now) must not show a superseded deployment,
 	// even though the timeline below it legitimately does — that older

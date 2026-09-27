@@ -11,6 +11,11 @@
 :root {
   color-scheme: light dark;
 
+  --brand-ink: #172033;
+  --brand-blue: #1d5ccc;
+  --brand-light-surface: #e6ecf5;
+  --brand-white: #ffffff;
+
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, "Liberation Mono", monospace;
 
@@ -52,23 +57,24 @@
   /* Colour, light. Text colours are chosen to reach 4.5:1 on every
      surface they are used on. */
   --bg: #f4f5f7;
-  --surface: #ffffff;
+  --surface: var(--brand-white);
   --surface-2: #f8f9fb;
   --surface-hover: #f0f2f5;
   --surface-sunken: #eef0f3;
   --border: #dde1e6;
   --border-strong: #c3cad2;
-  --text: #1a1d21;
+  --text: var(--brand-ink);
   --text-2: #3f464f;
   --muted: #5d6671;
   --placeholder: #7c848e;
-  --accent: #1d5ccc;
+  --accent: var(--brand-blue);
   --accent-hover: #164aa6;
   --accent-bg: #e8effc;
   --accent-border: #b9cdf3;
-  --on-accent: #ffffff;
-  --focus: #1d5ccc;
+  --on-accent: var(--brand-white);
+  --focus: var(--brand-blue);
   --selection: #cfe0fc;
+  --nav-selected-bg: var(--brand-light-surface);
 
   --passed: #1a7543;
   --passed-bg: #e5f3eb;
@@ -76,9 +82,9 @@
   --failed: #bd2720;
   --failed-bg: #fcebea;
   --failed-border: #f1bdb8;
-  --running: #1d5ccc;
-  --running-bg: #e8effc;
-  --running-border: #b9cdf3;
+  --running: #9a4d00;
+  --running-bg: #fff1e6;
+  --running-border: #e7ba96;
   --queued: #875800;
   --queued-bg: #fbf2dc;
   --queued-border: #e9d29a;
@@ -89,7 +95,7 @@
   --danger-hover: #9c1d17;
   /* Solid buttons carry white text, so their fills stay dark enough in
      both themes, unlike the text colours above. */
-  --primary-solid: #1d5ccc;
+  --primary-solid: var(--brand-blue);
   --primary-solid-hover: #164aa6;
   --danger-solid: #bd2720;
   --danger-solid-hover: #9c1d17;
@@ -130,6 +136,7 @@
     --on-accent: #ffffff;
     --focus: #7eabff;
     --selection: #25406f;
+    --nav-selected-bg: #20262e;
 
     --passed: #5acb8d;
     --passed-bg: #10261a;
@@ -137,9 +144,9 @@
     --failed: #ff8078;
     --failed-bg: #2c1514;
     --failed-border: #5c2723;
-    --running: #7eabff;
-    --running-bg: #172542;
-    --running-border: #2c4577;
+    --running: #ffab67;
+    --running-bg: #302014;
+    --running-border: #69412d;
     --queued: #e5b64a;
     --queued-bg: #2a2111;
     --queued-border: #56451c;
@@ -354,18 +361,6 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .icon-lock { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.5' stroke-linejoin='round'%3E%3Crect x='3' y='7' width='10' height='7' rx='1.4'/%3E%3Cpath d='M5.4 7V5a2.6 2.6 0 0 1 5.2 0v2'/%3E%3C/svg%3E"); }
 .icon-live { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='4'/%3E%3C/svg%3E"); }
 
-.brand-mark {
-  display: inline-grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  border-radius: var(--radius);
-  background: var(--text);
-  color: var(--surface);
-  font: 700 13px/1 var(--font-mono);
-  letter-spacing: -0.04em;
-}
-
 /* ---- Top bar ------------------------------------------------------ */
 
 .topbar {
@@ -388,24 +383,11 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .brand {
   display: inline-flex;
   align-items: center;
-  gap: var(--sp-2);
   margin-right: var(--sp-3);
-  color: var(--text);
-  font-weight: var(--weight-bold);
 }
-.brand:hover { color: var(--text); text-decoration: none; }
-.topbar-link {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-2);
-  height: var(--control-h);
-  padding: 0 var(--sp-3);
-  border-radius: var(--radius);
-  color: var(--text-2);
-  font-weight: var(--weight-medium);
-}
-.topbar-link:hover { background: var(--surface-hover); color: var(--text); text-decoration: none; }
-.topbar-link[aria-current="page"] { color: var(--text); background: var(--surface-sunken); }
+.brand-lockup, .brand-lockup img { display: block; width: 126px; height: 42px; }
+.brand-symbol { display: none; }
+.brand:hover { text-decoration: none; }
 .topbar-spacer { flex: 1; }
 .palette-button {
   display: inline-flex;
@@ -425,7 +407,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .palette-button .kbd { margin-left: auto; }
 @media (max-width: 720px) {
   .palette-button { width: auto; }
-  .palette-button-label, .palette-button .kbd, .topbar-link-label, .brand-name { display: none; }
+  .palette-button-label, .palette-button .kbd, .topbar-link-label, .brand-lockup { display: none; }
+  .brand-symbol { display: block; width: 28px; height: 28px; }
 }
 
 /* ---- Repository bar: the repository's name and its sections. ------ */
@@ -872,6 +855,8 @@ time { white-space: nowrap; }
   outline: none;
 }
 .menu-item .icon { color: var(--muted); }
+.menu-item[aria-current="page"] { background: var(--nav-selected-bg); color: var(--accent); }
+.menu-item[aria-current="page"] .icon { color: var(--accent); }
 .menu-item-danger, .menu-item-danger .icon { color: var(--danger); }
 .menu-separator { height: 1px; margin: var(--sp-1) 0; background: var(--border); }
 .menu-heading { padding: var(--sp-1) var(--sp-2); color: var(--muted); font-size: var(--text-xs); }
@@ -976,7 +961,7 @@ time { white-space: nowrap; }
 .toast-message { flex: 1; }
 .toast-success { --status: var(--passed); }
 .toast-error { --status: var(--failed); }
-.toast-info { --status: var(--running); }
+.toast-info { --status: var(--accent); }
 .toast[data-leaving] { opacity: 0; transform: translateY(8px); transition: opacity 0.2s, transform 0.2s; }
 
 /* ---- Callouts: a note that belongs to the page. ------------------- */
@@ -1383,7 +1368,7 @@ h1.path { font-size: var(--text-xl); letter-spacing: -0.01em; }
   width: min(380px, 100%);
 }
 .signin-brand { display: flex; align-items: center; gap: var(--sp-3); }
-.signin-brand .brand-mark { width: 36px; height: 36px; font-size: 18px; border-radius: var(--radius-lg); }
+.signin-mark { display: block; width: 40px; height: 40px; flex: none; }
 .signin-host { color: var(--muted); font-family: var(--font-mono); font-size: var(--text-mono); }
 .signin .panel-body { padding: var(--sp-5); }
 .error-card { display: grid; gap: var(--sp-3); width: min(480px, 100%); text-align: left; }

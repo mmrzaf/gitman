@@ -447,7 +447,7 @@ func TestJumpPage(t *testing.T) {
 	signIn(t, database, member, "darius", false)
 	resp, body = member.do(http.MethodGet, "/jump", nil, nil)
 	expect(t, resp, body, http.StatusOK, `href="/waiotech" data-group="Repositories"`)
-	if strings.Contains(body, `/waiotech/settings`) || strings.Contains(body, `href="/people"`) {
+	if strings.Contains(body, `/waiotech/settings`) || strings.Contains(body, `href="/people"`) || strings.Contains(body, `class="topbar-link"`) {
 		t.Error("a member is offered pages only admins may open")
 	}
 }
