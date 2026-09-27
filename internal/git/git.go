@@ -22,6 +22,13 @@ const (
 	defaultTimeout   = 2 * time.Minute
 	defaultMaxOutput = 64 << 20
 	stderrTail       = 8 << 10
+	// waitDelay bounds how long Wait may block after a killed process's
+	// pipes should have closed, so a process that ignores its context
+	// cancellation cannot hang cleanup forever.
+	waitDelay = 5 * time.Second
+	// readBufferSize is the buffered-reader size for streaming git output
+	// a line or a NUL-delimited record at a time.
+	readBufferSize = 64 << 10
 )
 
 // ErrOutputLimit is returned when a git command produces more output than
@@ -109,7 +116,7 @@ func run(ctx context.Context, o cmdOptions, args ...string) ([]byte, error) {
 	cmd.Dir = o.dir
 	cmd.Env = append(baseEnv(), o.env...)
 	cmd.Stdin = o.stdin
-	cmd.WaitDelay = 5 * time.Second
+	cmd.WaitDelay = waitDelay
 
 	var captured *limitedBuffer
 	if o.stdout != nil {
@@ -165,7 +172,7 @@ func stream(ctx context.Context, o cmdOptions, consume func(io.Reader) error, ar
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = o.dir
 	cmd.Env = append(baseEnv(), o.env...)
-	cmd.WaitDelay = 5 * time.Second
+	cmd.WaitDelay = waitDelay
 	stderr := &tailBuffer{max: stderrTail}
 	cmd.Stderr = stderr
 	stdout, err := cmd.StdoutPipe()

@@ -36,7 +36,10 @@ func OpenHookRepo(path string, env []string) *Repo {
 		path:   path,
 		env:    env,
 		source: &standaloneSource{path: path, env: env},
-		cache:  newObjectCache(8 << 20),
+		// A fraction of Store's shared cache: this one serves a single
+		// push's hook invocation, not every concurrent reader in the
+		// process, so it does not need nearly as much room.
+		cache: newObjectCache(8 << 20),
 	}
 }
 
@@ -420,7 +423,12 @@ func (r *Repo) Compare(ctx context.Context, base, head string, maxCommits int, l
 }
 
 // errNotFoundIfMissing maps a git error about a missing object to
-// ErrNotFound.
+// ErrNotFound. Git gives no structured signal for this on the commands
+// that call it — unlike IsAncestor/MergeBase, which key off a documented
+// exit code instead — so this matches the English text of the error
+// message itself. baseEnv fixes LANG/LC_ALL to "C", which is what keeps
+// that text stable across a host's locale and git version differences
+// this would otherwise be exposed to.
 func errNotFoundIfMissing(err error) error {
 	var gitErr *Error
 	if errors.As(err, &gitErr) {

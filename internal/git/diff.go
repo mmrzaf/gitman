@@ -133,7 +133,7 @@ func (r *Repo) Diff(ctx context.Context, from, to string, limits DiffLimits) (*D
 	}
 
 	err = stream(ctx, r.opts(), func(out io.Reader) error {
-		return parsePatch(bufio.NewReaderSize(out, 64<<10), diff.Files, limits)
+		return parsePatch(bufio.NewReaderSize(out, readBufferSize), diff.Files, limits)
 	}, "diff-tree", "-r", "-M", "-p", "--no-color", "--no-ext-diff", "-U3", from, to)
 	if err != nil {
 		return nil, errNotFoundIfMissing(err)

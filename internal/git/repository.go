@@ -45,8 +45,16 @@ type Store struct {
 // NewStore returns a Store rooted at root. Call Close to stop its readers.
 func NewStore(root string) *Store {
 	return &Store{
-		root:  root,
-		pool:  newReaderPool(64, 2*time.Minute),
+		root: root,
+		// 64 readers: comfortably above the concurrency this process
+		// actually sees in practice (page requests plus one worker's
+		// pipeline fetches), without keeping an unbounded number of git
+		// processes idle. 2 minutes: long enough that a reader survives
+		// the gap between two requests to the same repository, short
+		// enough that an idle repository's readers are eventually reaped.
+		pool: newReaderPool(64, 2*time.Minute),
+		// Shared across every concurrent reader in the process, unlike
+		// OpenHookRepo's much smaller one, which serves a single push.
 		cache: newObjectCache(64 << 20),
 	}
 }
@@ -229,6 +237,7 @@ func startReader(repoPath string, env []string) (*reader, error) {
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		_ = stdin.Close()
 		return nil, fmt.Errorf("start object reader: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
@@ -237,7 +246,7 @@ func startReader(repoPath string, env []string) (*reader, error) {
 	return &reader{
 		cmd:      cmd,
 		stdin:    stdin,
-		stdout:   bufio.NewReaderSize(stdout, 64<<10),
+		stdout:   bufio.NewReaderSize(stdout, readBufferSize),
 		lastUsed: time.Now(),
 	}, nil
 }
@@ -287,6 +296,13 @@ func isTooLarge(err error) bool {
 	return errors.As(err, &tl)
 }
 
+// validObjectName guards the newline-delimited "info <name>"/"contents
+// <name>" protocol this package speaks to git's batch-command reader: a
+// name is written on its own line, so one containing a newline would be
+// read as more than one command, and one containing NUL cannot be a
+// valid revision or path at all. 4096, PATH_MAX on Linux, bounds it to
+// what a real path (the common shape of name, e.g. "HEAD:some/path")
+// could plausibly be, past which it is malformed on its way in.
 func validObjectName(name string) error {
 	if name == "" || len(name) > 4096 || strings.ContainsAny(name, "\n\x00") {
 		return fmt.Errorf("invalid object name")
@@ -428,7 +444,11 @@ func (p *readerPool) closeIdleLocked(cutoff time.Time, keep int) {
 }
 
 // acquire returns the repository's reader, locked for the caller's
-// exclusive use.
+// exclusive use. A bounded retry, not a loop, because a reader can only
+// go from broken to forgotten to freshly created here — three attempts
+// is more than this pool's own code ever needs, so hitting the bound
+// means something keeps recreating a broken reader, not that this
+// particular acquire was simply unlucky.
 func (p *readerPool) acquire(path string) (*reader, error) {
 	for attempt := 0; attempt < 3; attempt++ {
 		r, err := p.lookup(path)
@@ -600,6 +620,9 @@ func (c *objectCache) get(key string) (any, bool) {
 }
 
 func (c *objectCache) add(key string, value any, cost int64) {
+	// Past this fraction, one entry would evict most of the rest of the
+	// cache just to hold itself, likely only to be evicted in turn the
+	// next time something else is added — worse than not caching it.
 	if cost > c.maxCost/8 {
 		return
 	}

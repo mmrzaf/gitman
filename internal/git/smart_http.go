@@ -35,7 +35,9 @@ func (s Service) command() string {
 // not broken.
 const transportTimeout = time.Hour
 
-// MaxPushBytes caps the size of the pack one push may send.
+// MaxPushBytes caps the size of the pack one push may send: generous for
+// even a large repository's history, while still bounding how much of a
+// single push Gitman will commit memory and disk to at once.
 const MaxPushBytes = 2 << 30
 
 // TransportOptions describes one smart-protocol invocation.
@@ -53,6 +55,9 @@ type TransportOptions struct {
 	Env []string
 }
 
+// A real Git-Protocol header value is short (e.g. "version=2"); 256 is a
+// generous sanity bound against a client sending something implausible,
+// not a limit expected to matter for a well-behaved one.
 var protocolHeaderPattern = regexp.MustCompile(`^[A-Za-z0-9=:.,_-]{0,256}$`)
 
 // ValidProtocolHeader reports whether a Git-Protocol header value is safe
