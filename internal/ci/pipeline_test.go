@@ -628,30 +628,30 @@ func assertStringSlicesEqual(t *testing.T, got, want []string) {
 func TestGoldenSmsGateway(t *testing.T) {
 	cfg := loadFixture(t, "sms-gateway.gitman.yml")
 
-	assertStringSlicesEqual(t, stepNames(cfg), []string{"build image", "verify image", "deploy"})
+	assertStringSlicesEqual(t, stepNames(cfg), []string{"build image", "check image", "deploy"})
 
 	if len(cfg.Targets) != 1 {
 		t.Fatalf("expected exactly one target, got %v", cfg.Targets)
 	}
 	production, ok := cfg.Targets["production"]
-	if !ok || production.Kind != git.KindTag || production.Pattern != "*" {
+	if !ok || production.Kind != git.KindTag || production.Pattern != "v*" {
 		t.Fatalf("production target = %+v, ok=%v", production, ok)
 	}
 
 	// A branch push builds and verifies, but does not deploy: no target
 	// matches a branch, and "deploy" only runs for the named "production"
 	// target.
-	assertStringSlicesEqual(t, runningSteps(cfg, git.KindBranch, "develop"), []string{"build image", "verify image"})
+	assertStringSlicesEqual(t, runningSteps(cfg, git.KindBranch, "develop"), []string{"build image", "check image"})
 
 	// A tag push matches "production", so all three steps run, including
 	// deploy.
-	assertStringSlicesEqual(t, runningSteps(cfg, git.KindTag, "v1.0.0"), []string{"build image", "verify image", "deploy"})
+	assertStringSlicesEqual(t, runningSteps(cfg, git.KindTag, "v1.0.0"), []string{"build image", "check image", "deploy"})
 }
 
 func TestGoldenCerv(t *testing.T) {
 	cfg := loadFixture(t, "cerv.gitman.yml")
 
-	assertStringSlicesEqual(t, stepNames(cfg), []string{"verify version tag", "build image", "verify built image"})
+	assertStringSlicesEqual(t, stepNames(cfg), []string{"check the tag matches VERSION", "build image", "check image"})
 
 	if len(cfg.Targets) != 0 {
 		t.Fatalf("expected no targets, got %v", cfg.Targets)
@@ -665,7 +665,7 @@ func TestGoldenCerv(t *testing.T) {
 	}
 
 	// A tag push runs every step.
-	assertStringSlicesEqual(t, runningSteps(cfg, git.KindTag, "v1.0.0"), []string{"verify version tag", "build image", "verify built image"})
+	assertStringSlicesEqual(t, runningSteps(cfg, git.KindTag, "v1.0.0"), []string{"check the tag matches VERSION", "build image", "check image"})
 }
 
 func TestGoldenWaiotech(t *testing.T) {
@@ -682,7 +682,7 @@ func TestGoldenWaiotech(t *testing.T) {
 		t.Fatalf("staging target = %+v, ok=%v", staging, ok)
 	}
 	production, ok := cfg.Targets["production"]
-	if !ok || production.Kind != git.KindTag || production.Pattern != "*" {
+	if !ok || production.Kind != git.KindTag || production.Pattern != "v*" {
 		t.Fatalf("production target = %+v, ok=%v", production, ok)
 	}
 
@@ -697,6 +697,12 @@ func TestGoldenWaiotech(t *testing.T) {
 
 	// A tag push matches "production": all six run again.
 	assertStringSlicesEqual(t, runningSteps(cfg, git.KindTag, "v1.4.2"), wantSteps)
+
+	// A tag that is not a release, such as a pushed backup tag, matches
+	// no target and deploys nothing.
+	if running := runningSteps(cfg, git.KindTag, "backup/worktree-agent-a445ce3"); len(running) != 0 {
+		t.Fatalf("expected no steps to run for a non-release tag, got %v", running)
+	}
 
 	// The deploy step's own logic picks DEPLOY_DIR from the resolved
 	// target's env, not from a shell if-statement: confirm both targets

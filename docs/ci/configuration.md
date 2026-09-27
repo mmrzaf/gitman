@@ -1,43 +1,53 @@
 # Pipeline configuration (`.gitman.yml`)
 
 ```yaml
-image: golang:1.27-alpine      # every step runs in this image
-docker: false                  # true: steps can use the host's Docker
+image: docker:29-cli           # every step runs in this image
+docker: true                   # steps use the host's Docker; a ref rule must allow it
 timeout: 20m                   # the whole run; default 30m, at most 24h
-requires:                      # further images the steps use
-  - postgres:16-alpine
+requires:                      # images that must already be on the host
+  - golang:1.27-bookworm
+  - debian:bookworm-slim
 env:                           # for every step
-  CGO_ENABLED: "0"
+  GOPROXY: https://goproxy.example.com,direct
 
 targets:                       # where a ref ships to
   staging:
     branch: develop
+    env:
+      DEPLOY_DIR: /srv/apps/waiotech-stage
   production:
     tag: "v*"
     env:
       DEPLOY_DIR: /srv/apps/waiotech
 
 steps:
-  - name: test
-    run: go test ./...
-  - name: release
-    when: production           # always (default), target, branch, tag, or a target's name
-    run: ./deploy.sh
+  - name: build
+    run: docker build --pull=false --build-arg GOPROXY="$GOPROXY" -t "waiotech:$GITMAN_VERSION" .
+  - name: check
+    run: docker run --rm "waiotech:$GITMAN_VERSION" waiotech version
+  - name: deploy
+    when: target               # always (default), target, branch, tag, or a target's name
+    run: ./deploy.sh "$DEPLOY_DIR" "waiotech:$GITMAN_VERSION"
 ```
+
+A pipeline is meant to stay this light: build, check, and deploy. Each
+step is one container; Gitman starts no databases or other services
+next to it, so tests that need them belong in a CI that has them.
 
 ## Fields
 
-- **`image`** (required) — the Docker image every step runs in, unless a
-  step needs one of the `requires` images as a sidecar.
+- **`image`** (required) — the Docker image every step runs in.
 - **`docker`** — when `true`, steps get the host's Docker socket. This is
   root on the worker's host; a ref rule must separately allow it
   (`--docker` on `gitman admin rule set`) before a run on that ref can use
   it. See [Security model](../operator/security.md).
 - **`timeout`** — the whole run's limit, not per step. Defaults to 30
   minutes; at most 24 hours.
-- **`requires`** — further images made available to steps, alongside
-  `image`. None of these are pulled by Gitman; they must already exist on
-  the worker's host.
+- **`requires`** — images that must already be on the worker's host,
+  such as the base images a `docker build --pull=false` uses. A run
+  checks them, and `image`, before its first step, and fails naming any
+  that is missing. Gitman never pulls them, and starts nothing from
+  them.
 - **`env`** — variables set for every step. Keys starting with `GITMAN_`
   are rejected — that prefix is reserved for the variables below.
 - **`targets`** — a map of name to where a ref ships. Each target matches
@@ -56,7 +66,9 @@ steps:
 
 - `GITMAN_REPO`, `GITMAN_RUN`, `GITMAN_COMMIT`, `GITMAN_SHORT`
 - `GITMAN_REF`, `GITMAN_REF_KIND`, `GITMAN_TARGET`
-- `GITMAN_VERSION` — the tag name for a tag ref, otherwise the short commit
+- `GITMAN_VERSION` — for a tag, its name with anything but letters, digits,
+  `.`, `-` and `_` replaced by `-`; for a branch, the commit's first 12
+  characters. It is safe as a Docker image tag.
 - `GITMAN_SUMMARY` — a file path; lines of `key=value` appended to it
   appear on the run's page
 

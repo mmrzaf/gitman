@@ -1,28 +1,40 @@
+# waiotech on Gitman. develop ships to staging and a v* tag to
+# production: each builds the server, dashboard, admin, website and
+# deployer images as waiotech-*:<version> and deploys them with the
+# deployer. Other refs run nothing.
+#
+# Ref rules: develop and v* tags need run, docker and ship.
 image: docker:29-cli
 docker: true
-
 requires:
   - python:3.13-slim-bookworm
   - node:22-bookworm-slim
   - cerv:1.0
-  - docker:29-cli
 
 env:
   DOCKER_BUILDKIT: "1"
   BUILDKIT_PROGRESS: plain
+
+  PYTHON_IMAGE: python:3.13-slim-bookworm
+  NODE_IMAGE: node:22-bookworm-slim
+  CERV_IMAGE: cerv:1.0
+  DOCKER_CLI_IMAGE: docker:29-cli
+
   DEBIAN_MIRROR: http://linux-mirror.liara.ir/repository/debian
   DEBIAN_SECURITY_MIRROR: http://linux-mirror.liara.ir/repository/debian-security
   PIP_INDEX_URL: https://package-mirror.liara.ir/repository/pypi/simple/
   NPM_REGISTRY: https://mirror.abrha.net/repository/npm/
+
   VITE_API_BASE_URL: /
   VITE_API_TIMEOUT: "30000"
+
   PUBLIC_CONTACT_EMAIL: ""
   PUBLIC_CONTACT_PHONE: ""
   PUBLIC_CONTACT_ADDRESS_EN: ""
   PUBLIC_CONTACT_ADDRESS_FA: ""
   PUBLIC_CONTACT_MAP_URL: ""
   PUBLIC_CONTACT_FORM_ACTION: ""
-  PUBLIC_CONTACT_FORM_METHOD: post
+  PUBLIC_CONTACT_FORM_METHOD: "post"
   PUBLIC_STATUS_URL: ""
   PUBLIC_ANDROID_URL: ""
 
@@ -35,7 +47,7 @@ targets:
       PUBLIC_DASHBOARD_URL: https://platform.stage.waiotech.com
       PUBLIC_ALLOW_INDEXING: "false"
   production:
-    tag: "*"
+    tag: "v*"
     env:
       DEPLOY_DIR: /srv/apps/waiotech
       PUBLIC_SITE_URL: https://waiotech.com
@@ -46,8 +58,9 @@ steps:
   - name: build server
     when: target
     run: |
+      set -eu
       docker build --pull=false \
-        --build-arg PYTHON_IMAGE=python:3.13-slim-bookworm \
+        --build-arg PYTHON_IMAGE="$PYTHON_IMAGE" \
         --build-arg DEBIAN_MIRROR="$DEBIAN_MIRROR" \
         --build-arg DEBIAN_SECURITY_MIRROR="$DEBIAN_SECURITY_MIRROR" \
         --build-arg PIP_INDEX_URL="$PIP_INDEX_URL" \
@@ -61,9 +74,10 @@ steps:
   - name: build dashboard
     when: target
     run: |
+      set -eu
       docker build --pull=false \
-        --build-arg NODE_IMAGE=node:22-bookworm-slim \
-        --build-arg CERV_IMAGE=cerv:1.0 \
+        --build-arg NODE_IMAGE="$NODE_IMAGE" \
+        --build-arg CERV_IMAGE="$CERV_IMAGE" \
         --build-arg NPM_REGISTRY="$NPM_REGISTRY" \
         --build-arg VITE_API_BASE_URL="$VITE_API_BASE_URL" \
         --build-arg VITE_API_TIMEOUT="$VITE_API_TIMEOUT" \
@@ -78,9 +92,10 @@ steps:
   - name: build admin
     when: target
     run: |
+      set -eu
       docker build --pull=false \
-        --build-arg NODE_IMAGE=node:22-bookworm-slim \
-        --build-arg CERV_IMAGE=cerv:1.0 \
+        --build-arg NODE_IMAGE="$NODE_IMAGE" \
+        --build-arg CERV_IMAGE="$CERV_IMAGE" \
         --build-arg NPM_REGISTRY="$NPM_REGISTRY" \
         --label "org.opencontainers.image.revision=$GITMAN_COMMIT" \
         --label "org.opencontainers.image.ref.name=$GITMAN_REF" \
@@ -92,9 +107,10 @@ steps:
   - name: build website
     when: target
     run: |
+      set -eu
       docker build --pull=false \
-        --build-arg NODE_IMAGE=node:22-bookworm-slim \
-        --build-arg CERV_IMAGE=cerv:1.0 \
+        --build-arg NODE_IMAGE="$NODE_IMAGE" \
+        --build-arg CERV_IMAGE="$CERV_IMAGE" \
         --build-arg NPM_REGISTRY="$NPM_REGISTRY" \
         --build-arg PUBLIC_SITE_URL="$PUBLIC_SITE_URL" \
         --build-arg PUBLIC_DASHBOARD_URL="$PUBLIC_DASHBOARD_URL" \
@@ -118,9 +134,10 @@ steps:
   - name: build deployer
     when: target
     run: |
+      set -eu
       docker build --pull=false \
-        --build-arg DOCKER_CLI_IMAGE=docker:29-cli \
-        --build-arg PYTHON_IMAGE=python:3.13-slim-bookworm \
+        --build-arg DOCKER_CLI_IMAGE="$DOCKER_CLI_IMAGE" \
+        --build-arg PYTHON_IMAGE="$PYTHON_IMAGE" \
         --build-arg DEBIAN_MIRROR="$DEBIAN_MIRROR" \
         --build-arg DEBIAN_SECURITY_MIRROR="$DEBIAN_SECURITY_MIRROR" \
         --label "org.opencontainers.image.revision=$GITMAN_COMMIT" \
@@ -133,6 +150,8 @@ steps:
   - name: deploy
     when: target
     run: |
+      set -eu
+      echo "Deploying $GITMAN_VERSION to $GITMAN_TARGET at $DEPLOY_DIR"
       docker run --rm --pull never \
         --network host \
         --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
@@ -141,8 +160,4 @@ steps:
         --env "WAIOTECH_APP_DIR=$DEPLOY_DIR" \
         "waiotech-deployer:$GITMAN_VERSION" \
         "$GITMAN_VERSION"
-      echo "target=$GITMAN_TARGET" >> "$GITMAN_SUMMARY"
-      echo "server=waiotech-server:$GITMAN_VERSION" >> "$GITMAN_SUMMARY"
-      echo "dashboard=waiotech-dashboard:$GITMAN_VERSION" >> "$GITMAN_SUMMARY"
-      echo "admin=waiotech-admin:$GITMAN_VERSION" >> "$GITMAN_SUMMARY"
-      echo "website=waiotech-website:$GITMAN_VERSION" >> "$GITMAN_SUMMARY"
+      echo "version=$GITMAN_VERSION" >> "$GITMAN_SUMMARY"

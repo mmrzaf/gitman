@@ -142,29 +142,38 @@ A repository's pipeline is `.gitman.yml` at the root of the commit being
 run.
 
 ```yaml
-image: golang:1.27-alpine      # every step runs in this image
-docker: false                  # true: steps can use the host's Docker
+image: docker:29-cli           # every step runs in this image
+docker: true                   # steps use the host's Docker; a ref rule must allow it
 timeout: 20m                   # the whole run; default 30m, at most 24h
-requires:                      # further images the steps use
-  - postgres:16-alpine
+requires:                      # images that must already be on the host
+  - golang:1.27-bookworm
+  - debian:bookworm-slim
 env:                           # for every step
-  CGO_ENABLED: "0"
+  GOPROXY: https://goproxy.example.com,direct
 
 targets:                       # where a ref ships to
   staging:
     branch: develop
+    env:
+      DEPLOY_DIR: /srv/apps/waiotech-stage
   production:
     tag: "v*"
     env:
       DEPLOY_DIR: /srv/apps/waiotech
 
 steps:
-  - name: test
-    run: go test ./...
-  - name: release
-    when: production           # always (default), target, branch, tag, or a target's name
-    run: ./deploy.sh
+  - name: build
+    run: docker build --pull=false --build-arg GOPROXY="$GOPROXY" -t "waiotech:$GITMAN_VERSION" .
+  - name: check
+    run: docker run --rm "waiotech:$GITMAN_VERSION" waiotech version
+  - name: deploy
+    when: target               # always (default), target, branch, tag, or a target's name
+    run: ./deploy.sh "$DEPLOY_DIR" "waiotech:$GITMAN_VERSION"
 ```
+
+A pipeline is meant to stay this light: build, check, and deploy. Each
+step is one container; Gitman starts no databases or other services
+next to it, so tests that need them belong in a CI that has them.
 
 - Steps run in order, each in a fresh container with the checked-out
   commit at `/workspace`. The first failing step ends the run; later steps
@@ -176,7 +185,8 @@ steps:
   of the pipeline's:
   - `GITMAN_REPO`, `GITMAN_RUN`, `GITMAN_COMMIT`, `GITMAN_SHORT`;
   - `GITMAN_REF`, `GITMAN_REF_KIND`, `GITMAN_TARGET`;
-  - `GITMAN_VERSION`: the tag name for a tag, otherwise the short commit.
+  - `GITMAN_VERSION`: for a tag, its name made safe as an image tag; for
+    a branch, the commit's first 12 characters.
 - Secrets are added when the ref's rule allows them. They never appear on
   a command line, and their values are masked in stored output.
 - Lines of `key=value` appended to the file `$GITMAN_SUMMARY` appear on
@@ -189,14 +199,21 @@ whatever the target actually needs, the same as it would outside Gitman.
 A step's container has full outbound network access. Some patterns:
 
 **Deploy over the Docker socket, on the same host as the worker**
-(`docker: true`, granted only on the ref that deploys):
+(`docker: true`, granted only on the ref that deploys). A step's own
+filesystem is only the checkout, so it reaches a host directory through a
+container it starts on the host's Docker:
 
 ```yaml
 - name: deploy
   when: production
   run: |
-    docker compose -f /srv/apps/waiotech/compose.yaml pull
-    docker compose -f /srv/apps/waiotech/compose.yaml up -d
+    docker run --rm \
+      --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
+      --mount type=bind,src=/srv/apps/waiotech,dst=/srv/apps/waiotech \
+      --workdir /srv/apps/waiotech \
+      docker:29-cli sh -ec "
+        sed -i 's#^APP_IMAGE=.*#APP_IMAGE=waiotech:$GITMAN_VERSION#' .env
+        docker compose up -d"
 ```
 
 **Build and push an image to a registry** (a `REGISTRY_TOKEN` secret,

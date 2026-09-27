@@ -1,24 +1,29 @@
+# cerv on Gitman. A v* tag, which must match the VERSION file, builds
+# cerv:<version> on the host's Docker. A branch runs nothing.
+#
+# Ref rule: v* tags need run and docker.
 image: docker:29-cli
 docker: true
-
 requires:
   - debian:trixie
 
 env:
   DOCKER_BUILDKIT: "1"
+  BASE_IMAGE: debian:trixie
   DEBIAN_MIRROR: http://linux-mirror.liara.ir/repository/debian
   DEBIAN_SECURITY_MIRROR: http://linux-mirror.liara.ir/repository/debian-security
 
 steps:
-  - name: verify version tag
+  - name: check the tag matches VERSION
     when: tag
     run: |
-      RAW_VERSION="${GITMAN_REF#v}"
-      BASE_VERSION="$(cat VERSION)"
-      case "$RAW_VERSION" in
-        "$BASE_VERSION"|"$BASE_VERSION"-*) ;;
+      set -eu
+      tagged="${GITMAN_REF#v}"
+      version="$(cat VERSION)"
+      case "$tagged" in
+        "$version"|"$version"-*) ;;
         *)
-          echo "release tag '$GITMAN_REF' does not match VERSION '$BASE_VERSION'" >&2
+          echo "Tag $GITMAN_REF does not match VERSION $version" >&2
           exit 1
           ;;
       esac
@@ -26,20 +31,22 @@ steps:
   - name: build image
     when: tag
     run: |
+      set -eu
+      image="cerv:${GITMAN_VERSION#v}"
       docker build \
         --pull=false \
-        --build-arg BASE_IMAGE=debian:trixie \
+        --build-arg BASE_IMAGE="$BASE_IMAGE" \
         --build-arg DEBIAN_MIRROR="$DEBIAN_MIRROR" \
         --build-arg DEBIAN_SECURITY_MIRROR="$DEBIAN_SECURITY_MIRROR" \
         --label "org.opencontainers.image.revision=$GITMAN_COMMIT" \
         --label "org.opencontainers.image.ref.name=$GITMAN_REF" \
-        --label "org.opencontainers.image.version=$GITMAN_VERSION" \
-        --tag "cerv:$GITMAN_VERSION" \
+        --label "org.opencontainers.image.version=${GITMAN_VERSION#v}" \
+        --tag "$image" \
         .
+      echo "image=$image" >> "$GITMAN_SUMMARY"
 
-  - name: verify built image
+  - name: check image
     when: tag
     run: |
-      EXPECTED_VERSION="$(cat VERSION)"
-      docker image inspect "cerv:$GITMAN_VERSION" >/dev/null
-      docker run --rm "cerv:$GITMAN_VERSION" --version | grep -qx "cerv $EXPECTED_VERSION"
+      set -eu
+      docker run --rm "cerv:${GITMAN_VERSION#v}" --version | grep -qx "cerv $(cat VERSION)"
