@@ -25,6 +25,7 @@ func (a *App) register(mux *http.ServeMux) {
 	// wildcard and a literal in opposite positions of the same shape).
 	// Three segments can never collide with a two-segment repo route.
 	mux.Handle("GET /assets/static/{file}", http.HandlerFunc(a.serveAsset))
+	mux.HandleFunc("GET /favicon.ico", a.serveFavicon)
 
 	mux.Handle("GET /login", a.page(anyone, a.loginForm))
 	mux.Handle("POST /login", a.page(anyone, a.login))

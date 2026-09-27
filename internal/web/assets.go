@@ -129,6 +129,8 @@ var assetTypes = map[string]string{
 	".css": "text/css; charset=utf-8",
 	".js":  "text/javascript; charset=utf-8",
 	".svg": "image/svg+xml",
+	".png": "image/png",
+	".ico": "image/x-icon",
 }
 
 func (a *App) serveAsset(w http.ResponseWriter, r *http.Request) {
@@ -147,4 +149,15 @@ func (a *App) serveAsset(w http.ResponseWriter, r *http.Request) {
 	h.Set("Cache-Control", "public, max-age=31536000, immutable")
 	h.Set("X-Content-Type-Options", "nosniff")
 	_, _ = w.Write(data)
+}
+
+// Browsers also request /favicon.ico without consulting the page's icon links.
+func (a *App) serveFavicon(w http.ResponseWriter, r *http.Request) {
+	u, err := a.assets.url("brand/favicon.ico")
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	http.Redirect(w, r, u, http.StatusFound)
 }

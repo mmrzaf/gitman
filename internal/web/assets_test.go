@@ -1,6 +1,10 @@
 package web
 
 import (
+	"bytes"
+	"encoding/binary"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -61,5 +65,54 @@ func TestShippedAssetsLoad(t *testing.T) {
 		if strings.Contains(body, `from "./`) || strings.Contains(body, `import "./`) {
 			t.Errorf("%s still has an unrewritten relative import", plain)
 		}
+	}
+}
+
+func TestBrandAssetsResolveAndKeepExpectedDimensions(t *testing.T) {
+	a, err := loadAssets()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, size := range map[string][2]uint32{
+		"favicon-16x16.png":          {16, 16},
+		"favicon-32x32.png":          {32, 32},
+		"apple-touch-icon.png":       {180, 180},
+		"android-chrome-192x192.png": {192, 192},
+		"android-chrome-512x512.png": {512, 512},
+		"gitman-header-light.png":    {336, 112},
+		"gitman-header-dark.png":     {336, 112},
+		"gitman-mark-64.png":         {64, 64},
+	} {
+		u, err := a.url("brand/" + name)
+		if err != nil {
+			t.Error(err)
+			continue
+		}
+		data := a.files[strings.TrimPrefix(u, "/assets/static/")]
+		if len(data) < 24 || !bytes.Equal(data[:8], []byte("\x89PNG\r\n\x1a\n")) ||
+			binary.BigEndian.Uint32(data[16:20]) != size[0] || binary.BigEndian.Uint32(data[20:24]) != size[1] {
+			t.Errorf("%s: invalid PNG header or dimensions", name)
+		}
+	}
+}
+
+func TestFaviconRedirectsToShippedIcon(t *testing.T) {
+	assets, err := loadAssets()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &App{assets: assets}
+	mux := http.NewServeMux()
+	a.register(mux)
+	redirect := httptest.NewRecorder()
+	mux.ServeHTTP(redirect, httptest.NewRequest(http.MethodGet, "/favicon.ico", nil))
+	u, _ := assets.url("brand/favicon.ico")
+	if redirect.Code != http.StatusFound || redirect.Header().Get("Location") != u {
+		t.Fatalf("favicon redirect: status %d, location %q; want %q", redirect.Code, redirect.Header().Get("Location"), u)
+	}
+	icon := httptest.NewRecorder()
+	mux.ServeHTTP(icon, httptest.NewRequest(http.MethodGet, u, nil))
+	if icon.Code != http.StatusOK || icon.Header().Get("Content-Type") != "image/x-icon" || !bytes.HasPrefix(icon.Body.Bytes(), []byte{0, 0, 1, 0}) {
+		t.Errorf("favicon asset: status %d, type %q, first bytes %v", icon.Code, icon.Header().Get("Content-Type"), icon.Body.Bytes()[:min(icon.Body.Len(), 4)])
 	}
 }
