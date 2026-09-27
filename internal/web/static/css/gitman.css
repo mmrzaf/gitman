@@ -259,7 +259,6 @@ button, input, select, textarea { font: inherit; color: inherit; }
   padding: var(--sp-6) var(--gutter) var(--sp-10);
 }
 .page-narrow { max-width: var(--page-narrow); }
-.page-wide { max-width: none; }
 
 .page-header {
   display: flex;
@@ -379,7 +378,6 @@ button, input, select, textarea { font: inherit; color: inherit; }
   margin: 0 auto;
   padding: 0 var(--gutter);
 }
-.page-wide-bar .topbar-inner { max-width: none; }
 .brand {
   display: inline-flex;
   align-items: center;
@@ -422,7 +420,6 @@ button, input, select, textarea { font: inherit; color: inherit; }
   margin: 0 auto;
   padding: var(--sp-4) var(--gutter) 0;
 }
-.page-wide-bar .repobar-inner { max-width: none; }
 .repobar-title {
   display: flex;
   align-items: baseline;

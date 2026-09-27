@@ -20,7 +20,7 @@
 <body class="page-{{.Name}}">
 <a class="skip-link" href="#main">Skip to content</a>
 {{- if .Person}}
-<header class="topbar{{if eq .Name "run"}} page-wide-bar{{end}}">
+<header class="topbar">
   <nav class="topbar-inner" aria-label="Main">
     <a class="brand" href="/" aria-label="Gitman home"><picture class="brand-lockup"><source media="(prefers-color-scheme: dark)" srcset="{{asset "brand/gitman-header-dark.png"}}"><img src="{{asset "brand/gitman-header-light.png"}}" alt="" width="126" height="42"></picture><img class="brand-symbol" src="{{asset "brand/gitman-mark-64.png"}}" alt="" width="28" height="28"></a>
     <span class="topbar-spacer"></span>
@@ -44,7 +44,7 @@
   </nav>
 </header>
 {{- with .Frame}}
-<div class="repobar{{if eq $.Name "run"}} page-wide-bar{{end}}">
+<div class="repobar">
   <div class="repobar-inner">
     <div class="repobar-title">
       <a class="repobar-name" href="/{{.Repo.Name}}">{{template "icon" "repo"}}<span class="truncate">{{.Repo.Name}}</span></a>
