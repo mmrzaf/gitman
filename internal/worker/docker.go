@@ -39,6 +39,11 @@ const (
 // may keep its output pipes open through a child process it forked.
 const clientWaitDelay = 10 * time.Second
 
+// removeTimeout bounds a force-remove issued after the step's own context
+// has already ended, so a docker daemon that never answers cannot leave
+// that cleanup running forever.
+const removeTimeout = 30 * time.Second
+
 // command returns a docker client invocation bound to ctx: when ctx ends
 // the client is killed, which is the only way to stop it while it is
 // blocked on a daemon that has stopped answering.
@@ -176,7 +181,7 @@ func (d *Docker) Run(ctx context.Context, spec containerSpec, out io.Writer) (in
 // remove force-removes a container, with its own deadline: it runs when
 // the step's context has already ended.
 func (d *Docker) remove(name string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), removeTimeout)
 	defer cancel()
 	_ = d.command(ctx, "rm", "--force", name).Run()
 }

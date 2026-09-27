@@ -364,6 +364,10 @@ func (w *logWriter) Close() error {
 	<-w.done
 	w.mu.Lock()
 	w.closing = true
+	// Wake a writer blocked in waitForRoomLocked immediately, rather than
+	// leaving it to notice closing only once its own backpressure timeout
+	// fires: nothing will ever drain the buffer for it now.
+	w.cond.Broadcast()
 	if len(w.line) > 0 {
 		w.emitLocked(string(w.line))
 		w.line = nil
