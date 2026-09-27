@@ -241,7 +241,7 @@ func TestSlowRequestBodiesAreCutOff(t *testing.T) {
 
 // TestPartialsRead renders shared pieces of pages as a person reads them:
 // the timeline's wording, a diff whose patch was left out, and Home's
-// in-progress list for a run of a bare commit.
+// in-progress list naming the branch a run is for.
 func TestPartialsRead(t *testing.T) {
 	assets, err := loadAssets()
 	if err != nil {
@@ -276,11 +276,10 @@ func TestPartialsRead(t *testing.T) {
 
 	out = render("content", pageData{Person: &auth.Person{Username: "darius"}, Data: homePage{
 		CreateForm: newForm(nil),
-		InProgress: []ci.Summary{{RepoName: "w", Number: 7, Status: ci.StatusQueued, QueuedAt: time.Now()}},
+		InProgress: []ci.Summary{{RepoName: "w", Number: 7, RefKind: git.KindBranch, RefName: "develop", Status: ci.StatusQueued, QueuedAt: time.Now()}},
 	}})
-	if !strings.Contains(out, `Run #7</a>
-              <span class="chip">a commit</span>`) {
-		t.Errorf("a bare commit's run in progress reads:\n%s", out)
+	if !strings.Contains(out, `Run #7</a>`) || !strings.Contains(out, `title="branch develop"`) {
+		t.Errorf("a run in progress reads:\n%s", out)
 	}
 }
 

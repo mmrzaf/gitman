@@ -33,8 +33,7 @@
     </div>
   </div>
   <p class="run-facts">
-    {{- if $run.RefName}}<span>{{template "ref" (dict "Kind" $run.RefKind "Name" $run.RefName "Href" (refURL $repo.Name $run.RefName ""))}}</span>
-    {{- else}}<span class="chip">a commit, no ref</span>{{end}}
+    <span>{{template "ref" (dict "Kind" $run.RefKind "Name" $run.RefName "Href" (refURL $repo.Name $run.RefName ""))}}</span>
     <span>{{template "icon" "commit"}}{{template "commit" (dict "Repo" $repo.Name "Hash" $run.Commit)}}</span>
     <span>{{if eq $run.Trigger "push"}}{{template "icon" "push"}}Pushed{{else}}{{template "icon" "play"}}Started{{end}} by {{template "person" $run.Actor}} {{template "time" $run.QueuedAt}}</span>
     {{- if $run.StartedAt}}

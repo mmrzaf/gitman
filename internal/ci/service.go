@@ -109,15 +109,13 @@ func (s *Service) CreateTx(ctx context.Context, tx postgres.Tx, p CreateParams) 
 		}
 	}
 
-	if p.RefName != "" {
-		superseded, err := supersedeQueued(ctx, tx, p.RepoID, p.RefKind, p.RefName, run.Number, fmt.Sprintf("Superseded by #%d.", run.Number))
-		if err != nil {
+	superseded, err := supersedeQueued(ctx, tx, p.RepoID, p.RefKind, p.RefName, run.Number, fmt.Sprintf("Superseded by #%d.", run.Number))
+	if err != nil {
+		return nil, err
+	}
+	for _, runID := range superseded {
+		if err := notifyRun(ctx, tx, runID); err != nil {
 			return nil, err
-		}
-		for _, runID := range superseded {
-			if err := notifyRun(ctx, tx, runID); err != nil {
-				return nil, err
-			}
 		}
 	}
 	if err := notifyRun(ctx, tx, run.ID); err != nil {
@@ -429,8 +427,7 @@ type StartParams struct {
 	// Git is the repository the commit is read from.
 	Git    *git.Repo
 	Commit string
-	// RefKind and RefName name the ref the run is for; both are empty
-	// for a run of a bare commit, which resolves no target.
+	// RefKind and RefName name the ref the run is for.
 	RefKind  git.Kind
 	RefName  string
 	PersonID string

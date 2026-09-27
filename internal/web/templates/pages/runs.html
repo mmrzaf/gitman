@@ -28,7 +28,7 @@
       {{- range $d.Runs}}
         <tr>
           <th scope="row" class="table-rowheader"><a class="run-ref" href="/{{$repo.Name}}/runs/{{.Number}}">{{template "status" .Status}}<span>#{{.Number}}</span></a></th>
-          <td>{{if .RefName}}{{template "ref" (dict "Kind" .RefKind "Name" .RefName "Href" (refURL $repo.Name .RefName ""))}}{{else}}<span class="muted">—</span>{{end}}</td>
+          <td>{{template "ref" (dict "Kind" .RefKind "Name" .RefName "Href" (refURL $repo.Name .RefName ""))}}</td>
           <td>{{if eq .Trigger "push"}}{{template "icon" "push"}}Pushed{{else}}{{template "icon" "play"}}Started{{end}} by {{template "person" .Actor}}</td>
           <td class="cell-shrink cell-muted">{{template "time" .QueuedAt}}</td>
         </tr>

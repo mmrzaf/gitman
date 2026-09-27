@@ -267,7 +267,7 @@ func TestHomeBoard(t *testing.T) {
 	}
 	for _, q := range []string{
 		`INSERT INTO repos (id, name, description) VALUES ('r1', 'waiotech', ''), ('r2', 'cerv', '')`,
-		`INSERT INTO runs (id, repo_id, number, commit_hash, trigger, status, finished_at) VALUES ('run1', 'r1', 7, 'aaaaaaaaaaaa', 'push', 'passed', now())`,
+		`INSERT INTO runs (id, repo_id, number, commit_hash, trigger, status, finished_at, ref_kind, ref_name) VALUES ('run1', 'r1', 7, 'aaaaaaaaaaaa', 'push', 'passed', now(), 'branch', 'main')`,
 		`INSERT INTO deployments (id, repo_id, target, version, commit_hash, run_id, person_id, created_at)
 		 VALUES ('d1', 'r1', 'staging', '3f2a91cb1de0', 'aaaaaaaaaaaa', 'run1', '` + p.ID + `', now() - interval '2 hours'),
 		        ('d0', 'r1', 'staging', 'old', 'bbbbbbbbbbbb', NULL, NULL, now() - interval '3 days')`,

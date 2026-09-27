@@ -53,10 +53,8 @@ func planRun(p CreateParams) plan {
 		return pl
 	}
 
-	if p.RefName != "" {
-		if target, ok := cfg.ResolveTarget(p.RefKind, p.RefName); ok {
-			pl.target = target
-		}
+	if target, ok := cfg.ResolveTarget(p.RefKind, p.RefName); ok {
+		pl.target = target
 	}
 	label := refLabel(p.RefKind, p.RefName)
 	if cfg.Docker && !p.Decision.AllowDocker {

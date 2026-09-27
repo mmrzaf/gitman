@@ -194,8 +194,8 @@ func eventStreamFixture(t *testing.T) (a *App, handler http.HandlerFunc) {
 		t.Fatal(err)
 	}
 	if _, err := database.Pool.Exec(context.Background(), `
-		INSERT INTO runs (id, repo_id, number, commit_hash, trigger, status)
-		VALUES ('run-1', $1, 1, 'abc123', 'manual', 'queued')
+		INSERT INTO runs (id, repo_id, number, commit_hash, trigger, status, ref_kind, ref_name)
+		VALUES ('run-1', $1, 1, 'abc123', 'manual', 'queued', 'branch', 'main')
 	`, r.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -302,7 +302,7 @@ func TestLivePagesRender(t *testing.T) {
 			[]string{`data-live-events="/events"`, `href="/waiotech/runs/42"`, `data-live-region="branches"`, `data-live-region="tags"`,
 				`href="/waiotech/compare/main...develop"`, `aria-current="page">`}},
 		{"commit", commitPage{repoFrame: repoFrame{Repo: repo}, Commit: &git.Commit{Hash: strings.Repeat("c", 40), Subject: "Fix it"}, Diff: &git.Diff{}},
-			[]string{`action="/waiotech/commit/` + strings.Repeat("c", 40) + `/run"`, "Run this commit"}},
+			[]string{"Fix it", "Browse files"}},
 	}
 	for _, p := range pages {
 		t.Run(p.name, func(t *testing.T) {
@@ -331,13 +331,12 @@ func TestRoutesRegisterAndResolve(t *testing.T) {
 	mux := http.NewServeMux()
 	a.register(mux) // Go's router panics here on conflicting patterns.
 	for path, want := range map[string]string{
-		"GET /events":                       "GET /events",
-		"GET /waiotech/runs/42":             "GET /{repo}/runs/{n}",
-		"GET /waiotech/runs/42/log":         "GET /{repo}/runs/{n}/log",
-		"POST /waiotech/runs/42/cancel":     "POST /{repo}/runs/{n}/cancel",
-		"POST /waiotech/runs/42/again":      "POST /{repo}/runs/{n}/again",
-		"POST /waiotech/commit/abc1234/run": "POST /{repo}/commit/{sha}/run",
-		"GET /waiotech":                     "GET /{repo}",
+		"GET /events":                   "GET /events",
+		"GET /waiotech/runs/42":         "GET /{repo}/runs/{n}",
+		"GET /waiotech/runs/42/log":     "GET /{repo}/runs/{n}/log",
+		"POST /waiotech/runs/42/cancel": "POST /{repo}/runs/{n}/cancel",
+		"POST /waiotech/runs/42/again":  "POST /{repo}/runs/{n}/again",
+		"GET /waiotech":                 "GET /{repo}",
 	} {
 		method, target, _ := strings.Cut(path, " ")
 		_, pattern := mux.Handler(httptest.NewRequest(method, target, nil))

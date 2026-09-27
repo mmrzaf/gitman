@@ -36,8 +36,8 @@ func seed(t *testing.T, database *postgres.DB) (repoID, otherRepoID, personID st
 	      VALUES ('run1', $1, 1, repeat('a',40), 'branch', 'main', 'push', $2, 'passed', $3)`, repoID, personID, base.Add(2*time.Minute))
 	// An unfinished run must never appear in the timeline.
 	exec(`INSERT INTO workers (id, hostname) VALUES ('w1', 'host')`)
-	exec(`INSERT INTO runs (id, repo_id, number, commit_hash, trigger, status, started_at, worker_id)
-	      VALUES ('run2', $1, 2, repeat('b',40), 'manual', 'running', now(), 'w1')`, repoID)
+	exec(`INSERT INTO runs (id, repo_id, number, commit_hash, trigger, status, started_at, worker_id, ref_kind, ref_name)
+	      VALUES ('run2', $1, 2, repeat('b',40), 'manual', 'running', now(), 'w1', 'branch', 'main')`, repoID)
 
 	exec(`INSERT INTO deployments (id, repo_id, target, version, commit_hash, run_id, person_id, created_at)
 	      VALUES ('dep1', $1, 'staging', 'v1', repeat('a',40), 'run1', $2, $3)`, repoID, personID, base.Add(3*time.Minute))

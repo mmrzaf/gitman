@@ -68,8 +68,8 @@ func newMatrixFixture(t *testing.T) *matrixFixture {
 		syncRepoRefs(t, database, store, r.ID)
 
 		if _, err := database.Pool.Exec(context.Background(), `
-			INSERT INTO runs (id, repo_id, number, commit_hash, trigger, status)
-			VALUES ($1, $2, 1, $3, 'manual', 'queued')
+			INSERT INTO runs (id, repo_id, number, commit_hash, trigger, status, ref_kind, ref_name)
+			VALUES ($1, $2, 1, $3, 'manual', 'queued', 'branch', 'main')
 		`, name+"-run1", r.ID, commit); err != nil {
 			t.Fatal(err)
 		}
@@ -175,7 +175,6 @@ func TestAccessMatrixMutatingRoutes(t *testing.T) {
 		path   func(repoName string) string
 		values url.Values
 	}{
-		{"commit run", func(r string) string { return "/" + r + "/commit/" + f.commit[:10] + "/run" }, url.Values{}},
 		{"run cancel", func(r string) string {
 			return "/" + r + "/runs/" + strconv.FormatInt(f.runNumber, 10) + "/cancel"
 		}, url.Values{}},

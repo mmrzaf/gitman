@@ -76,8 +76,8 @@ func TestAdminWorkerCleanupFailsLostRunsBeforeRemovingLeftovers(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := database.Pool.Exec(ctx, `
-		INSERT INTO runs (id, repo_id, number, commit_hash, trigger, status, worker_id, started_at)
-		VALUES ('run1', 'r1', 1, 'abc123', 'manual', 'running', 'w1', now() - interval '11 minutes')
+		INSERT INTO runs (id, repo_id, number, commit_hash, trigger, status, worker_id, started_at, ref_kind, ref_name)
+		VALUES ('run1', 'r1', 1, 'abc123', 'manual', 'running', 'w1', now() - interval '11 minutes', 'branch', 'main')
 	`); err != nil {
 		t.Fatal(err)
 	}
@@ -530,8 +530,8 @@ func TestAdminRunCancel(t *testing.T) {
 	}
 
 	if _, err := database.Pool.Exec(ctx, `
-		INSERT INTO runs (id, repo_id, number, commit_hash, trigger, status)
-		VALUES ('run1', $1, 1, 'abc123', 'manual', 'queued')
+		INSERT INTO runs (id, repo_id, number, commit_hash, trigger, status, ref_kind, ref_name)
+		VALUES ('run1', $1, 1, 'abc123', 'manual', 'queued', 'branch', 'main')
 	`, repo.ID); err != nil {
 		t.Fatal(err)
 	}

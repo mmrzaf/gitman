@@ -26,7 +26,7 @@
             <p class="runlist-main">
               <a class="feed-repo" href="/{{.RepoName}}">{{.RepoName}}</a>
               <a href="/{{.RepoName}}/runs/{{.Number}}">Run #{{.Number}}</a>
-              {{if .RefName}}{{template "ref" (dict "Kind" .RefKind "Name" .RefName)}}{{else}}<span class="chip">a commit</span>{{end}}
+              {{template "ref" (dict "Kind" .RefKind "Name" .RefName)}}
               {{if .Actor}}<span class="muted">by {{.Actor}}</span>{{end}}
             </p>
             <span class="runlist-meta">{{if .StartedAt}}started {{template "time" .StartedAt}}{{else}}queued {{template "time" .QueuedAt}}{{end}}</span>

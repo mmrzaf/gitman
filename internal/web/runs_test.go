@@ -14,6 +14,7 @@ import (
 
 	"github.com/mmrzaf/gitman/internal/ci"
 	"github.com/mmrzaf/gitman/internal/git"
+	"github.com/mmrzaf/gitman/internal/postgres"
 	reposvc "github.com/mmrzaf/gitman/internal/repo"
 )
 
@@ -38,9 +39,9 @@ func TestRunActions(t *testing.T) {
 	commit := runGit(t, work, "rev-parse", "HEAD")
 	syncRepoRefs(t, database, store, repo.ID)
 
-	resp, body := b.do(http.MethodPost, "/waiotech/commit/"+commit[:10]+"/run", url.Values{}, nil)
+	resp, body := b.do(http.MethodPost, "/waiotech/runs", url.Values{"ref": {"refs/heads/main"}}, nil)
 	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/waiotech/runs/1" {
-		t.Fatalf("run a commit: %d %q\n%s", resp.StatusCode, resp.Header.Get("Location"), body)
+		t.Fatalf("run main: %d %q\n%s", resp.StatusCode, resp.Header.Get("Location"), body)
 	}
 	resp, body = b.do(http.MethodGet, "/waiotech/runs/1", nil, nil)
 	expect(t, resp, body, http.StatusOK, "Started run #1.", "run #1", "queued", ">Cancel<", `data-live-events="/events?run=`)
@@ -97,7 +98,7 @@ func TestRunActions(t *testing.T) {
 // runningRun starts a run of the seeded repository's pipeline and has a
 // worker take it and start its first step, returning the run and that
 // step, ready for output.
-func runningRun(t *testing.T, b *browser, repo *reposvc.Repo, store *git.Store, svc *ci.Service) (*ci.Claim, string) {
+func runningRun(t *testing.T, b *browser, database *postgres.DB, repo *reposvc.Repo, store *git.Store, svc *ci.Service) (*ci.Claim, string) {
 	t.Helper()
 	ctx := context.Background()
 	barePath, err := store.Path(repo.ID)
@@ -110,8 +111,8 @@ func runningRun(t *testing.T, b *browser, repo *reposvc.Repo, store *git.Store, 
 	runGit(t, work, "add", "-A")
 	runGit(t, work, "commit", "--quiet", "-m", "Add pipeline")
 	runGit(t, work, "push", "--quiet", "origin", "main")
-	commit := runGit(t, work, "rev-parse", "HEAD")
-	if resp, body := b.do(http.MethodPost, "/waiotech/commit/"+commit+"/run", url.Values{}, nil); resp.StatusCode != http.StatusSeeOther {
+	syncRepoRefs(t, database, store, repo.ID)
+	if resp, body := b.do(http.MethodPost, "/waiotech/runs", url.Values{"ref": {"refs/heads/main"}}, nil); resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("start a run: %d\n%s", resp.StatusCode, body)
 	}
 	if err := svc.RegisterWorker(ctx, "w1", "host"); err != nil {
@@ -136,7 +137,7 @@ func TestRunPageNumbersTheEndOfALongLog(t *testing.T) {
 	signIn(t, database, b, "darius", false)
 	repo := seedFilesRepo(t, database, store, b)
 	svc := ci.NewService(database)
-	claim, step := runningRun(t, b, repo, store, svc)
+	claim, step := runningRun(t, b, database, repo, store, svc)
 
 	const total = 40000
 	var chunk strings.Builder
@@ -194,7 +195,7 @@ func TestEventStreamStripsTerminalEscapes(t *testing.T) {
 	signIn(t, database, b, "darius", false)
 	repo := seedFilesRepo(t, database, store, b)
 	svc := ci.NewService(database)
-	claim, step := runningRun(t, b, repo, store, svc)
+	claim, step := runningRun(t, b, database, repo, store, svc)
 	if err := svc.AppendLog(context.Background(), claim.RunID, step, 0, "\x1b[32mok\x1b[0m done\n"); err != nil {
 		t.Fatal(err)
 	}

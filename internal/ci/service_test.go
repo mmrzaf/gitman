@@ -181,7 +181,8 @@ func TestCreateFailedRunIsFinished(t *testing.T) {
 	if err := database.Tx(ctx, func(tx postgres.Tx) error {
 		var err error
 		run, err = NewService(database).CreateTx(ctx, tx, CreateParams{
-			RepoID: "r1", Commit: strings.Repeat("b", 40), Trigger: TriggerManual, PipelineProblem: "There is no .gitman.yml at bbbbbbb.",
+			RepoID: "r1", Commit: strings.Repeat("b", 40), RefKind: git.KindBranch, RefName: "main",
+			Trigger: TriggerManual, PipelineProblem: "There is no .gitman.yml at bbbbbbb.",
 		})
 		return err
 	}); err != nil {

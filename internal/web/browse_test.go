@@ -463,8 +463,6 @@ func TestCommitView(t *testing.T) {
 		resp, body = b.do(http.MethodGet, "/waiotech/commit/"+rev, nil, nil)
 		expect(t, resp, body, http.StatusNotFound, "is not a commit")
 	}
-	resp, body = b.do(http.MethodPost, "/waiotech/commit/main/run", url.Values{}, nil)
-	expect(t, resp, body, http.StatusNotFound, "is not a commit")
 }
 
 func TestCompareView(t *testing.T) {

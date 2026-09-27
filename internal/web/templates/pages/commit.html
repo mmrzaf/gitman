@@ -19,12 +19,6 @@
   </div>
   <div class="page-actions">
     <a class="btn" href="{{refURL $repo.Name $c.Hash ""}}" data-command="Browse files at this commit">{{template "icon" "code"}}Browse files</a>
-    <form method="post" action="/{{$repo.Name}}/commit/{{$c.Hash}}/run"
-          data-confirm="Run the pipeline of {{short $c.Hash}}?"
-          data-confirm-detail="It runs without a ref, so it resolves no target and gets no Docker or secrets — only a ref's rules grant those."
-          data-confirm-action="Start run" data-confirm-tone="primary">
-      <button type="submit" class="btn" data-command="Run this commit">{{template "icon" "play"}}Run this commit</button>
-    </form>
   </div>
 </header>
 <div class="stack">

@@ -373,33 +373,11 @@ func (a *App) runRef(w http.ResponseWriter, r *http.Request) error {
 	return notFound("%s has no %s named \u201c%s\u201d.", repo.Name, kind, name)
 }
 
-// commitRun starts a run of a bare commit, with no ref: it resolves no
-// target, and gets no Docker or secrets, which only rules grant.
-func (a *App) commitRun(w http.ResponseWriter, r *http.Request) error {
-	repo, err := a.repoByName(r)
-	if err != nil {
-		return err
-	}
-	gitRepo, err := a.repos.Open(repo)
-	if err != nil {
-		return err
-	}
-	commit, err := a.commitNamed(r, gitRepo, repo)
-	if err != nil {
-		return err
-	}
-	return a.startRun(w, r, repo, commit, "", "")
-}
-
 // mayRun checks that the signed-in person may start or cancel runs of a
 // ref, which takes the same permission as pushing to it, and returns what
-// the ref's rules allow them. A run of a bare commit has no ref: any
-// member may start or cancel one. action completes the refusal, as in
-// "so you may not <action>".
+// the ref's rules allow them. action completes the refusal, as in "so you
+// may not <action>".
 func (a *App) mayRun(r *http.Request, repo *reposvc.Repo, kind git.Kind, name, action string) (reposvc.Decision, error) {
-	if name == "" {
-		return reposvc.Decision{}, nil
-	}
 	person := personFrom(r)
 	rules, err := a.repos.ListRules(r.Context(), repo.ID)
 	if err != nil {

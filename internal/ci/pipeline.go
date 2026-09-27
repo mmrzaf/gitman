@@ -124,10 +124,10 @@ func (c *Config) ResolveTarget(kind git.Kind, name string) (targetName string, o
 type RunContext struct {
 	Repo      string
 	RunNumber int64
-	Commit    string   // full commit hash
-	RefKind   git.Kind // empty for a manual run of a bare commit with no ref
-	RefName   string   // branch or tag name; empty for a manual run of a bare commit
-	Target    string   // resolved target name; empty if none matched
+	Commit    string // full commit hash
+	RefKind   git.Kind
+	RefName   string // branch or tag name
+	Target    string // resolved target name; empty if none matched
 }
 
 var versionUnsafe = regexp.MustCompile(`[^A-Za-z0-9._-]`)
@@ -136,10 +136,9 @@ var versionUnsafe = regexp.MustCompile(`[^A-Za-z0-9._-]`)
 // for a tag ref, the tag name with every character other than a letter,
 // digit, dot, dash or underscore replaced by '-', leading and trailing
 // dots/dashes trimmed, and the result capped at 128 characters; for
-// anything else (a branch push, or a manual run with no ref), the first
-// 12 characters of the commit hash.
+// a branch, the first 12 characters of the commit hash.
 func (rc RunContext) Version() string {
-	if rc.RefKind == git.KindTag && rc.RefName != "" {
+	if rc.RefKind == git.KindTag {
 		if v := sanitizeVersion(rc.RefName); v != "" {
 			return v
 		}

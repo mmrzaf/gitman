@@ -239,11 +239,11 @@ Check a pipeline file before pushing it:
 gitman check .gitman.yml
 ```
 
-A push prints each run it started, with a link. Runs can also be started
-by hand — **Run again** on a run, **Run this commit** on a commit — by
-anyone allowed to push to the ref, and cancelled by the same people from
-the run's page, or with `gitman admin run cancel <repo> <number>`. A run
-of a bare commit has no ref, so any member may start or cancel it.
+A push prints each run it started, with a link. Every run is of a
+branch or tag. Runs can also be started by hand — **Run** on the Runs
+page or a branch's row, and **Run again** on a run — by anyone allowed
+to push to the ref, and cancelled by the same people from the run's
+page, or with `gitman admin run cancel <repo> <number>`.
 
 ## The command line
 
