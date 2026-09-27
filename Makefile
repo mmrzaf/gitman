@@ -63,5 +63,5 @@ deps: ## Download and tidy Go modules
 	GOPROXY=$(GOPROXY) $(GO) mod download
 	GOPROXY=$(GOPROXY) $(GO) mod tidy
 
-release-source: ## Create the tracked-files-only source archive
+release-source: ## Create the source archive of the checked-out commit
 	scripts/release-source-archive.sh $${VERSION:?set VERSION}

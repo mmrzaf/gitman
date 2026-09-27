@@ -18,22 +18,23 @@ Releases are cut by pushing a tag matching `v*` (e.g. `v1.0.0`,
 4. The `release` workflow runs, in order:
    - **release-metadata** — validates the tag looks like `v1.2.3` or
      `v1.2.3-beta.4` and derives whether it's a prerelease.
-   - **verify** — checks out the tag, confirms the Go toolchain matches
-     `GO_VERSION`, runs `gofmt`, `go vet`, `golangci-lint`, `govulncheck`,
-     the race-detector test suite against a real PostgreSQL service
+   - **verify** — checks out the tag, with the Go version `go.mod` names,
+     and runs `gofmt`, `go vet`, `golangci-lint`, `govulncheck`, the
+     race-detector test suite against a real PostgreSQL service
      container, a smoke-build of the binary (`gitman version` must print
      `gitman <tag>`), and a Docker smoke build.
-   - **build-binaries** — `linux/amd64` and `linux/arm64`, `CGO_ENABLED=0`,
-     uploaded with checksums.
-   - **source-archive** — `make release-source`, a tracked-files-only
-     tarball (see [`scripts/release-source-archive.sh`](../../scripts/release-source-archive.sh)).
+   - **build-binaries** — `linux/amd64` and `linux/arm64`, `CGO_ENABLED=0`.
+   - **source-archive** — `make release-source`, a tarball of the tagged
+     commit (see [`scripts/release-source-archive.sh`](../../scripts/release-source-archive.sh)).
    - **docker-image** — a multi-arch (`amd64`+`arm64`) image pushed to
      `ghcr.io/<repo>`, tagged with the version, `major.minor`, and
      `latest` (skipped for a prerelease).
    - **docker-archive** — a `linux/amd64`-only image saved as a
      downloadable `.tar.gz`, for offline installs.
    - **create-release** — publishes a GitHub Release with every artifact
-     above plus an aggregate `SHA256SUMS`, and generated release notes.
+     above, their `SHA256SUMS` (check a download with
+     `sha256sum -c --ignore-missing SHA256SUMS`), and generated release
+     notes.
 5. To republish an existing tag (for example after a workflow-only fix),
    use the workflow's `workflow_dispatch` input instead of re-tagging.
 6. Verify after the workflow completes:
@@ -42,8 +43,8 @@ Releases are cut by pushing a tag matching `v*` (e.g. `v1.0.0`,
 
 ## Notes
 
-- The release workflow builds with the public `GOPROXY` and no Alpine
-  mirror — those are for restricted-network *self-hosted* pipeline runs
+- The release workflow builds with the public `GOPROXY` and Debian
+  mirrors. Mirrors are for restricted-network *self-hosted* pipeline runs
   (see this repository's own [`.gitman.yml`](../../.gitman.yml)), not for
   GitHub-hosted runners.
 - There's no data migration between major Gitman versions with different

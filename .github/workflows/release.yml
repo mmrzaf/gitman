@@ -20,14 +20,15 @@ concurrency:
 
 env:
   APP_NAME: gitman
-  GO_VERSION: '1.27'
   GOLANGCI_LINT_VERSION: 'v2.13.2'
   GOVULNCHECK_VERSION: 'v1.6.0'
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  GO_IMAGE: golang:1.27-alpine
-  RUNTIME_IMAGE: alpine:3.20
-  ALPINE_MIRROR: ''
+  GO_IMAGE: golang:1.27-bookworm
+  RUNTIME_IMAGE: debian:bookworm-slim
+  DOCKER_CLI_IMAGE: docker:29-cli
+  DEBIAN_MIRROR: http://deb.debian.org/debian
+  DEBIAN_SECURITY_MIRROR: http://security.debian.org/debian-security
   GOPROXY: https://proxy.golang.org,direct
 
 jobs:
@@ -97,20 +98,8 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
-
-      - name: Show toolchain
-        shell: bash
-        run: |
-          set -euo pipefail
-          go version
-          goversion="$(go env GOVERSION)"
-          expected="go${GO_VERSION}"
-          if [[ "$goversion" != "$expected"* ]]; then
-            echo "Expected Go ${expected}.x, got ${goversion}" >&2
-            exit 1
-          fi
 
       - name: Download modules
         run: go mod download
@@ -126,9 +115,6 @@ jobs:
             exit 1
           fi
 
-      - name: Test with race detector
-        run: go test -race -p 1 -count=1 ./...
-
       - name: Vet
         run: go vet ./...
 
@@ -140,6 +126,9 @@ jobs:
 
       - name: Vulnerability scan
         run: go run golang.org/x/vuln/cmd/govulncheck@${{ env.GOVULNCHECK_VERSION }} ./...
+
+      - name: Test with race detector
+        run: go test -race -p 1 -count=1 ./...
 
       - name: Build smoke binary
         shell: bash
@@ -160,7 +149,9 @@ jobs:
           docker build \
             --build-arg GO_IMAGE="$GO_IMAGE" \
             --build-arg RUNTIME_IMAGE="$RUNTIME_IMAGE" \
-            --build-arg ALPINE_MIRROR="$ALPINE_MIRROR" \
+            --build-arg DOCKER_CLI_IMAGE="$DOCKER_CLI_IMAGE" \
+            --build-arg DEBIAN_MIRROR="$DEBIAN_MIRROR" \
+            --build-arg DEBIAN_SECURITY_MIRROR="$DEBIAN_SECURITY_MIRROR" \
             --build-arg GOPROXY="$GOPROXY" \
             --build-arg VERSION="$VERSION" \
             -t gitman:verify .
@@ -190,7 +181,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
 
       - name: Build binary
@@ -205,7 +196,6 @@ jobs:
           mkdir -p dist
           out="dist/${APP_NAME}_${GOOS}_${GOARCH}${{ matrix.ext }}"
           go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o "$out" ./cmd/gitman
-          sha256sum "$out" >"$out.sha256"
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v7
@@ -225,7 +215,7 @@ jobs:
           ref: ${{ needs.release-metadata.outputs.version }}
           fetch-depth: 0
 
-      - name: Build tracked-files-only source archive
+      - name: Build the source archive of the tag
         shell: bash
         env:
           VERSION: ${{ needs.release-metadata.outputs.version }}
@@ -238,9 +228,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: source-archive
-          path: |
-            dist/*.tar.gz
-            dist/*.sha256
+          path: dist/*.tar.gz
           if-no-files-found: error
 
   docker-image:
@@ -293,7 +281,9 @@ jobs:
           build-args: |
             GO_IMAGE=${{ env.GO_IMAGE }}
             RUNTIME_IMAGE=${{ env.RUNTIME_IMAGE }}
-            ALPINE_MIRROR=${{ env.ALPINE_MIRROR }}
+            DOCKER_CLI_IMAGE=${{ env.DOCKER_CLI_IMAGE }}
+            DEBIAN_MIRROR=${{ env.DEBIAN_MIRROR }}
+            DEBIAN_SECURITY_MIRROR=${{ env.DEBIAN_SECURITY_MIRROR }}
             GOPROXY=${{ env.GOPROXY }}
             VERSION=${{ needs.release-metadata.outputs.version }}
 
@@ -320,13 +310,14 @@ jobs:
           docker build --platform linux/amd64 \
             --build-arg GO_IMAGE="$GO_IMAGE" \
             --build-arg RUNTIME_IMAGE="$RUNTIME_IMAGE" \
-            --build-arg ALPINE_MIRROR="$ALPINE_MIRROR" \
+            --build-arg DOCKER_CLI_IMAGE="$DOCKER_CLI_IMAGE" \
+            --build-arg DEBIAN_MIRROR="$DEBIAN_MIRROR" \
+            --build-arg DEBIAN_SECURITY_MIRROR="$DEBIAN_SECURITY_MIRROR" \
             --build-arg GOPROXY="$GOPROXY" \
             --build-arg VERSION="$VERSION" \
             -t "$image" .
           test "$(docker run --rm "$image" gitman version)" = "gitman $VERSION"
           docker save "$image" | gzip -9 >"dist/gitman-docker-image-linux-amd64-${CLEAN_VERSION}.tar.gz"
-          sha256sum "dist/gitman-docker-image-linux-amd64-${CLEAN_VERSION}.tar.gz" >"dist/gitman-docker-image-linux-amd64-${CLEAN_VERSION}.tar.gz.sha256"
 
       - name: Upload Docker archive artifact
         uses: actions/upload-artifact@v7
@@ -348,12 +339,12 @@ jobs:
           path: release
           merge-multiple: true
 
-      - name: Create aggregate checksums
+      - name: Create checksums
         shell: bash
         run: |
           set -euo pipefail
           cd release
-          sha256sum * | sort -k2 > SHA256SUMS
+          sha256sum -- * | sort -k2 > SHA256SUMS
           ls -la
 
       - name: Publish GitHub Release

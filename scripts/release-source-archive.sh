@@ -1,57 +1,35 @@
 #!/usr/bin/env bash
+# Builds the source archive of a release from the commit checked out, and
+# its checksum next to it:
+#   scripts/release-source-archive.sh <version> [output-dir]
+# It archives the commit, not the working tree, so local edits and
+# deletions never reach a release.
 set -euo pipefail
 
 version="${1:?usage: scripts/release-source-archive.sh <version> [output-dir]}"
 out_dir="${2:-dist}"
 prefix="gitman-${version#v}"
-archive="${out_dir}/${prefix}.tar.gz"
-checksum="${archive}.sha256"
+archive="${prefix}.tar.gz"
 
-mkdir -p "$out_dir"
-
-tmp_list="$(mktemp)"
-trap 'rm -f "$tmp_list"' EXIT
-
-git ls-files >"$tmp_list"
-
-# Skip files that don't exist on disk (e.g. deleted from working tree)
-tmp_list2="$(mktemp)"
-trap 'rm -f "$tmp_list2"' EXIT
-while IFS= read -r path; do
-  if [[ -e "$path" ]]; then
-    echo "$path" >> "$tmp_list2"
-  fi
-done <"$tmp_list"
-mv "$tmp_list2" "$tmp_list"
+files="$(git ls-tree -r --name-only HEAD)"
 
 while IFS= read -r path; do
   case "$path" in
-    ""|/*|../*|*/../*|.data/*|data/*|bin/*|dist/*|coverage.out|coverage.html|.env|*/.env|*.sqlite|*.sqlite-*|*.db|*.log)
-      echo "refusing unsafe or runtime path in source archive: $path" >&2
+    .data/*|data/*|bin/*|dist/*|coverage.out|coverage.html|.env|*/.env|*.sqlite|*.sqlite-*|*.db|*.log)
+      echo "refusing runtime file in source archive: $path" >&2
       exit 1
       ;;
   esac
-done <"$tmp_list"
+done <<<"$files"
 
 for required_dir in internal/postgres/migrations internal/web/templates internal/web/static; do
-  if ! grep -q "^${required_dir}/" "$tmp_list"; then
+  if ! grep -q "^${required_dir}/" <<<"$files"; then
     echo "source archive is missing required embedded inputs: ${required_dir}/" >&2
     exit 1
   fi
 done
 
-tar --format=ustar --owner=0 --group=0 --numeric-owner \
-  --transform "s#^#${prefix}/#" \
-  -czf "$archive" -T "$tmp_list"
-
-tar -tzf "$archive" | while IFS= read -r path; do
-  case "$path" in
-    /*|*"/../"*|../*|"$prefix/.data/"*|"$prefix/data/"*|"$prefix/bin/"*|"$prefix/dist/"*)
-      echo "archive contains unsafe or runtime path: $path" >&2
-      exit 1
-      ;;
-  esac
-done
-
-sha256sum "$archive" >"$checksum"
-echo "$archive"
+mkdir -p "$out_dir"
+git archive --format=tar.gz --prefix="${prefix}/" -o "$out_dir/$archive" HEAD
+(cd "$out_dir" && sha256sum -- "$archive" >"$archive.sha256")
+echo "$out_dir/$archive"
