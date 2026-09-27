@@ -1,92 +1,53 @@
 # Release checklist
 
-## Validate
+Releases are cut by pushing a tag matching `v*` (e.g. `v1.0.0`,
+`v1.0.0-beta.1`); `.github/workflows/release.yml` does the rest.
 
-```bash
-VERSION=vX.Y.Z make verify
-VERSION=vX.Y.Z make release-source
-```
+1. On `develop` (or the branch you're releasing from), make sure `main`
+   is up to date and `go.mod`'s `go` directive matches the Go version you
+   intend to ship with.
+2. Run the local verification set before tagging:
+   ```sh
+   make verify
+   ```
+3. Tag and push:
+   ```sh
+   git tag v1.2.3
+   git push origin v1.2.3
+   ```
+4. The `release` workflow runs, in order:
+   - **release-metadata** — validates the tag looks like `v1.2.3` or
+     `v1.2.3-beta.4` and derives whether it's a prerelease.
+   - **verify** — checks out the tag, with the Go version `go.mod` names,
+     and runs `gofmt`, `go vet`, `golangci-lint`, `govulncheck`, the
+     race-detector test suite against a real PostgreSQL service
+     container, a smoke-build of the binary (`gitman version` must print
+     `gitman <tag>`), and a Docker smoke build.
+   - **build-binaries** — `linux/amd64` and `linux/arm64`, `CGO_ENABLED=0`.
+   - **source-archive** — `make release-source`, a tarball of the tagged
+     commit (see [`scripts/release-source-archive.sh`](../../scripts/release-source-archive.sh)).
+   - **docker-image** — a multi-arch (`amd64`+`arm64`) image pushed to
+     `ghcr.io/<repo>`, tagged with the version, `major.minor`, and
+     `latest` (skipped for a prerelease).
+   - **docker-archive** — a `linux/amd64`-only image saved as a
+     downloadable `.tar.gz`, for offline installs.
+   - **create-release** — publishes a GitHub Release with every artifact
+     above, their `SHA256SUMS` (check a download with
+     `sha256sum -c --ignore-missing SHA256SUMS`), and generated release
+     notes.
+5. To republish an existing tag (for example after a workflow-only fix),
+   use the workflow's `workflow_dispatch` input instead of re-tagging.
+6. Verify after the workflow completes:
+   - The GHCR image pulls and runs: `docker run --rm ghcr.io/<repo>:1.2.3 gitman version`.
+   - The GitHub Release has all expected assets and a `SHA256SUMS` file.
 
-`make verify` is intentionally network-independent and does not run vulnerability scanning. Before release, require the GitHub CI/release `govulncheck` job to pass on the exact release commit with the pinned Go toolchain.
+## Notes
 
-Gitman server binaries are released for Linux amd64 and arm64. Do not add another server OS to the release matrix until Git transport hooks, CI, filesystem semantics, and the full integration suite are supported there.
-
-Exercise at least:
-
-- Login and logout.
-- Public and private repository browse, clone, fetch, and push.
-- `read` and `write` collaborator boundaries.
-- Token creation, one-time display, read/write scope enforcement, finite expiration, last-used update, expired-token rejection, and revoke.
-- SSH-key add/delete and generated `authorized_keys` output when SSH is supported, including a configured Gitman binary path containing spaces or shell quotes.
-- Manual CI run for the default branch, non-default branch, tag, reachable historical commit, skipped run, failed run, successful run, artifact download/preview, trusted-ref rules, and automatic push-trigger delivery.
-- CI cancellation for both a pending and running job, retry lineage, structured/live incremental logs, UTF-8 log boundaries, search/follow/wrap/raw views, and repository deletion refusal until a cancelled worker has stopped.
-- Worker heartbeat lifecycle, Docker-unavailable claim pause/recovery, exact-attempt requeue, low-free-space/inode admission pause, and workspace/cache/artifact entry-count enforcement.
-- Durable push triggers while the web process is stopped, including an annotated tag followed by ref deletion before restart.
-- Repository description and visibility updates, owner-only settings access, and quarantined deletion cleanup.
-- Repository home, README preview, commit/diff pages, exact-revision source links, line/range permalinks, Go to File, CI-run navigation back to its branch/tag context, and narrow-screen navigation.
-- Root/merge/rename/delete/binary commit inspection plus odd Unicode/whitespace filenames and source-rendering limits.
-- `/healthz` liveness, `/readyz` web readiness, and `/ci-healthz` worker-fleet readiness behavior without session cookies or worker-detail leakage.
-- Git HTTP clone and push with a personal access token, and rejection with the account password.
-- Git HTTP large-push smoke: push 3–10 MiB incompressible data with stock Git defaults, then clone/fetch and verify the resulting commit.
-- A push larger than `GITMAN_GIT_RECEIVE_MAX_BYTES` is rejected cleanly without corrupting the repository.
-- Public archive/raw/download streams honor global/per-client concurrency limits and terminate at `GITMAN_REPO_STREAM_TIMEOUT`.
-- Pathological browse fixtures (very large directory, very large commit, and thousands of refs) render bounded/truncation-aware pages without unbounded memory growth.
-- Password validation rejects inputs over bcrypt's 72-byte limit; password reset revokes existing sessions and tokens and records a non-secret audit event.
-- Login success/failure, self-registration, and security-sensitive admin, token, SSH-key, repository, collaborator, CI secret, and CI trusted-ref mutations record audit events without credential/secret values.
-- Beta-17 database upgrade preserves existing tokens while assigning their 90-day rotation deadline, and creates the audit trail schema.
-- Unauthorized repository-settings POSTs return 403 without rendering collaborator, CI-secret-name, or trusted-ref data.
-- Backup creation and restore drill.
-
-## Package only source inputs
-
-Do not package runtime state or development metadata. Explicitly exclude:
-
-```text
-.git/
-.data/
-data/
-*.sqlite
-bin/
-coverage.*
-*.out
-.env
-```
-
-Also check for generated `authorized_keys`, CI logs, CI artifacts, repositories, tokens, secrets, and local credentials.
-
-`.gitignore` is not a release-packaging policy. Build source archives from tracked files with `scripts/release-source-archive.sh`.
-
-## Verify archive contents
-
-```bash
-tar -tzf <archive>.tar.gz | sort
-```
-
-The archive must retain embedded inputs:
-
-```text
-migrations/
-templates/
-static/
-```
-
-## Deployment notes
-
-Document:
-
-- Database migration impact.
-- Required Go and Docker versions when changed.
-- New environment variables and defaults.
-- Backup and rollback steps.
-- CI behavior or security-boundary changes.
-
-## Version output
-
-Verify release injection before publishing:
-
-```bash
-go build -trimpath -ldflags "-X main.version=vX.Y.Z" -o bin/gitman ./cmd/gitman
-bin/gitman version
-bin/gitman --version
-```
-
+- The release workflow builds with the public `GOPROXY` and Debian
+  mirrors. Mirrors are for restricted-network *self-hosted* pipeline runs
+  (see this repository's own [`.gitman.yml`](../../.gitman.yml)), not for
+  GitHub-hosted runners.
+- There's no data migration between major Gitman versions with different
+  storage backends (e.g. the move from SQLite to PostgreSQL) — that's a
+  fresh install, not an upgrade. Say so in the release notes if a release
+  changes the storage backend.

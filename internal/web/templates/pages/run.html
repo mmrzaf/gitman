@@ -1,0 +1,138 @@
+{{define "content"}}
+{{$repo := .Data.Repo}}{{$run := .Data.Run}}{{$sel := .Data.Selected}}
+<div class="page">
+<header class="run-header" data-live-region="run-header">
+  <div class="run-heading">
+    <h1 class="page-title" id="run-title" data-announce="Run #{{$run.Number}} {{$run.Status}}">Run #{{$run.Number}}</h1>
+    {{template "status-lg" $run.Status}}
+    <div class="page-actions run-actions">
+      {{- if $run.Finished}}
+      <form method="post" action="/{{$repo.Name}}/runs/{{$run.Number}}/again">
+        <button type="submit" class="btn" data-command="Run again">{{template "icon" "rerun"}}Run again</button>
+      </form>
+      {{- else if $run.CancelRequested}}
+      <span class="status is-cancelled">{{template "icon" "cancelled"}}stopping…</span>
+      {{- else}}
+      <form method="post" action="/{{$repo.Name}}/runs/{{$run.Number}}/cancel"
+            data-confirm="Cancel run #{{$run.Number}}?"
+            data-confirm-detail="{{if eq $run.Status "running"}}The step running now is stopped and the rest are skipped.{{else}}It won't start.{{end}}"
+            data-confirm-action="Cancel run">
+        <button type="submit" class="btn btn-danger" data-command="Cancel this run">{{template "icon" "stop"}}Cancel</button>
+      </form>
+      {{- end}}
+      <details class="menu" data-menu>
+        <summary class="btn btn-icon" aria-label="More for run #{{$run.Number}}">{{template "icon" "more"}}</summary>
+        <div class="menu-list">
+          <a class="menu-item" href="/{{$repo.Name}}/commit/{{$run.Commit}}">{{template "icon" "commit"}}View commit {{short $run.Commit}}</a>
+          <a class="menu-item" href="{{refURL $repo.Name $run.Commit ""}}">{{template "icon" "code"}}Browse files at this commit</a>
+          {{- with $sel}}
+          <a class="menu-item" href="/{{$repo.Name}}/runs/{{$run.Number}}/log?step={{.Index}}">{{template "icon" "raw"}}Raw output of {{.Name}}</a>
+          {{- end}}
+        </div>
+      </details>
+    </div>
+  </div>
+  <p class="run-facts">
+    <span>{{template "ref" (dict "Kind" $run.RefKind "Name" $run.RefName "Href" (refURL $repo.Name $run.RefName ""))}}</span>
+    <span>{{template "icon" "commit"}}{{template "commit" (dict "Repo" $repo.Name "Hash" $run.Commit)}}</span>
+    <span>{{if eq $run.Trigger "push"}}{{template "icon" "push"}}Pushed{{else}}{{template "icon" "play"}}Started{{end}} by {{template "person" $run.Actor}} {{template "time" $run.QueuedAt}}</span>
+    {{- if $run.StartedAt}}
+    <span>{{template "icon" "history"}}{{duration .Data.Duration}}{{if not $run.FinishedAt}} so far{{end}}</span>
+    {{- end}}
+    {{- if $run.Target}}
+    <span>{{template "icon" "ship"}}Ships to <strong>{{$run.Target}}</strong> as <span class="version">{{$run.Version}}</span></span>
+    {{- end}}
+  </p>
+  {{- if $run.Reason}}
+  <div class="callout run-reason is-{{$run.Status}}" role="note">
+    {{template "icon" $run.Status}}
+    <p class="callout-body">{{$run.Reason}}</p>
+  </div>
+  {{- end}}
+  {{- if .Data.NoWorker}}
+  <div class="callout run-reason is-queued" role="note">
+    {{template "icon" "queued"}}
+    <p class="callout-body">No worker is online, so this run waits until one starts.</p>
+  </div>
+  {{- end}}
+</header>
+
+{{if $run.Steps}}
+<div class="run-layout">
+  <div class="run-side">
+    <nav class="panel" aria-labelledby="steps-title">
+      <header class="panel-header">
+        <h2 class="panel-title" id="steps-title">Steps <span class="panel-count">{{len $run.Steps}}</span></h2>
+      </header>
+      <ol class="steps" data-live-region="run-steps">
+        {{- range $run.Steps}}
+        <li><a class="step is-{{.Status}}" href="?step={{.Index}}"{{if and $sel (eq .ID $sel.ID)}} aria-current="step"{{end}} data-command="Show step {{.Name}}">
+          {{template "status-icon" .Status}}
+          <span class="step-name">{{.Name}}</span>
+          <span class="step-time">{{if .StartedAt}}{{duration (.Duration $.Data.Now)}}{{else}}{{.Status}}{{end}}</span>
+        </a></li>
+        {{- end}}
+      </ol>
+    </nav>
+    <div data-live-region="run-results">
+      {{- if $run.Results}}
+      <section class="panel" aria-labelledby="results-title">
+        <header class="panel-header"><h2 class="panel-title" id="results-title">Summary</h2></header>
+        <dl class="summary">
+          {{- range $run.Results}}
+          <div><dt>{{.Key}}</dt><dd>{{.Value}}</dd></div>
+          {{- end}}
+        </dl>
+      </section>
+      {{- end}}
+    </div>
+  </div>
+
+  <section class="panel run-output" aria-labelledby="output-title">
+    <header class="toolbar">
+      <div class="run-output-title" data-live-region="run-output-head">
+        {{- with $sel}}
+        {{template "status-icon" .Status}}
+        <h2 id="output-title" class="run-output-name"><span>{{.Name}}</span></h2>
+        <span class="toolbar-text">{{if .StartedAt}}{{duration (.Duration $.Data.Now)}}{{end}}{{if .ExitCode}} · exit code {{deref .ExitCode}}{{end}}</span>
+        {{- else}}
+        <h2 id="output-title" class="run-output-name"><span>Output</span></h2>
+        {{- end}}
+      </div>
+      <span class="toolbar-spacer"></span>
+      {{- if not $run.Finished}}
+      <span class="live js-only" data-live-status data-state="connecting" role="status">{{template "icon" "live"}}<span data-live-label>Connecting…</span></span>
+      {{- end}}
+      {{- with $sel}}
+      <button type="button" class="btn btn-ghost btn-icon btn-sm js-only" data-log-wrap aria-pressed="false" aria-label="Wrap long lines" title="Wrap long lines">{{template "icon" "wrap"}}</button>
+      <button type="button" class="btn btn-ghost btn-icon btn-sm js-only" data-log-jump="start" aria-label="Jump to the first line" title="Jump to the first line">{{template "icon" "arrow-up"}}</button>
+      <button type="button" class="btn btn-ghost btn-icon btn-sm js-only" data-log-jump="end" aria-label="Jump to the last line" title="Jump to the last line">{{template "icon" "arrow-down"}}</button>
+      <a class="btn btn-ghost btn-sm" href="/{{$repo.Name}}/runs/{{$run.Number}}/log?step={{.Index}}" data-log-raw data-command="Open the raw output of {{.Name}}">{{template "icon" "raw"}}Raw</a>
+      {{- end}}
+    </header>
+    <div class="run-output-body">
+    {{- with $sel}}
+    <div class="lines log" data-log data-log-step="{{.ID}}" data-log-after="{{$.Data.LogAfter}}" data-log-status="{{.Status}}" data-log-open="{{$.Data.LogOpen}}"
+         data-error-pattern="{{$.Data.ErrorPattern}}" tabindex="0" role="log" aria-label="Output of {{.Name}}">
+      {{- if $.Data.LogCut}}
+      <p class="log-note">Only the end of this output is shown. <a href="/{{$repo.Name}}/runs/{{$run.Number}}/log?step={{.Index}}">Open the whole output</a>.</p>
+      {{- end}}
+      {{- range $.Data.Log}}
+      <div class="line{{if .Error}} is-error{{end}}" id="L{{.Number}}"><a href="#L{{.Number}}" tabindex="-1" aria-hidden="true">{{.Number}}</a>{{.Text}}</div>
+      {{- end}}
+      {{- if not $.Data.Log}}
+      <p class="log-waiting" data-log-empty>{{if eq .Status "running"}}{{template "icon" "running"}}Waiting for output…{{else if eq .Status "pending"}}This step hasn't started.{{else}}No output.{{end}}</p>
+      {{- end}}
+    </div>
+    {{- else}}
+    <div class="lines log">
+      <p class="log-waiting">{{if eq $run.Status "queued"}}{{template "icon" "queued"}}Waiting for a worker to pick up this run.{{else}}No step has run.{{end}}</p>
+    </div>
+    {{- end}}
+    <button type="button" class="btn btn-sm log-latest" data-log-latest hidden>{{template "icon" "arrow-down"}}New output</button>
+    </div>
+  </section>
+</div>
+{{end}}
+</div>
+{{end}}

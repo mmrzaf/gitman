@@ -1,100 +1,68 @@
 # Troubleshooting
 
-## Web health
+## A run stays queued
 
-```bash
-curl -f http://localhost:8080/health
+A queued run waits for a worker to claim it. When no worker is online,
+the run's page, Home and the output of `git push` say so: start one
+(`gitman worker`, or `make run-worker` from a checkout), and it claims
+the run at once. A worker counts as online from when it starts until it
+shuts down, or until it has sent no heartbeat for five minutes.
+
+## A run is stuck / its worker seems gone
+
+A run whose worker stops sending heartbeats for five minutes is failed
+automatically, with that reason recorded. Its step container and
+workspace are cleaned up by a live worker on the same host within a few
+more minutes — no action needed if another worker is healthy.
+
+If a worker was killed outright (`SIGKILL`, an OOM kill) and nothing else
+is running on that host, nothing removes its leftover step containers
+and workspace automatically:
+
+```sh
+gitman admin worker cleanup
 ```
 
-A healthy server returns JSON with `"status":"ok"`.
+Run this by hand, or on a schedule, on hosts where that can happen.
+Runs are never retried automatically — re-run a failed run by hand
+(**Run again** on the run's page, or push again).
 
-## CI run is skipped
+## After a database outage
 
-The selected commit does not contain a root-level `.gitman-ci.yml`.
+A worker waits five minutes of its own healthy heartbeats after a database
+outage before it judges any *other* worker lost, to avoid a thundering
+herd of runs being marked failed the moment the database comes back.
 
-## CI image is unavailable
+## Docker daemon unreachable from a worker
 
-Gitman uses `docker run --pull never`. Pre-pull or build the exact configured image on the runner host:
+A worker whose Docker daemon doesn't answer claims no new runs until it
+does — existing runs on that worker still fail per the heartbeat rule
+above, but the worker doesn't make things worse by claiming more work it
+can't do.
 
-```bash
-docker pull debian:bookworm-slim
-```
+## A pipeline step can't find an image
 
-## Dependencies cannot download
+Gitman never pulls images. If a run fails because an image (the
+pipeline's `image`, or one listed in `requires`) is missing, that image
+needs to be present on the worker's Docker host already — pull or build
+it there, then re-run.
 
-The default CI network mode is `none`. Put dependencies into the image, repository, or warmed `/gitman/cache`, or deliberately change `GITMAN_CI_NETWORK` after reviewing the security impact.
+## `gitman check .gitman.yml` fails
 
-## Worker rejects container user
+Read the specific error — it names the exact field. A common one:
+pipeline `env` (or a target's `env`) can't set a variable starting with
+`GITMAN_`; that prefix is reserved for the variables Gitman injects into
+every step. See [Pipeline configuration](ci/configuration.md).
 
-`GITMAN_CI_CONTAINER_USER` must be a numeric non-root `UID:GID`, for example:
+## Health checks
 
-```bash
-export GITMAN_CI_CONTAINER_USER=1000:1000
-```
+- `GET /healthz` — is the process up at all. Doesn't touch PostgreSQL.
+- `GET /readyz` — also checks PostgreSQL is reachable.
 
-## Worker cannot access Docker socket
+Use `/readyz` for a load balancer's or orchestrator's readiness probe,
+and `/healthz` for pure liveness.
 
-For Compose on Linux, set the socket group ID before starting the stack:
+## Large clone or push hangs / times out
 
-```bash
-export DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)
-docker compose up -d
-```
-
-Then inspect:
-
-```bash
-docker compose logs -f worker
-```
-
-## Dockerized worker bind-mount errors
-
-When the worker runs in Docker, both path prefixes must be set together and must be absolute:
-
-```text
-GITMAN_CI_WORKER_PATH_PREFIX=/data
-GITMAN_CI_HOST_PATH_PREFIX=<absolute host data directory>
-```
-
-The included Compose file configures them.
-
-## Cannot save CI secrets
-
-Set the same non-empty `GITMAN_SECRET_KEY` for web and worker. Preserve the value externally. If the key changed, previously stored values cannot be decrypted.
-
-## CI log stops growing
-
-The default log limit is 10 MiB. Gitman appends a suppression notice and discards further output after the limit is reached.
-
-## SSH clone fails
-
-Check:
-
-1. The host OpenSSH account exists.
-2. `/home/git/.ssh/authorized_keys` points to Gitman's generated file.
-3. File ownership matches the host `git` account.
-4. `GITMAN_BINARY_PATH` points to a working host wrapper.
-5. The wrapper exports the correct `GITMAN_DB` and `GITMAN_REPOS` paths.
-6. The user added a valid SSH public key in the UI.
-
-## Clone links show the wrong host
-
-Set:
-
-```bash
-export GITMAN_PUBLIC_URL=https://git.example.com
-export GITMAN_SERVER_HOST=git.example.com
-```
-
-`GITMAN_PUBLIC_URL` controls HTTP clone links. `GITMAN_SERVER_HOST` controls SSH clone links.
-
-## Reverse-proxy login problems
-
-Set secure-cookie and proxy trust settings only behind a trusted HTTPS proxy:
-
-```bash
-export GITMAN_FORCE_SECURE_COOKIES=true
-export GITMAN_TRUST_PROXY_HEADERS=true
-```
-
-Ensure the proxy forwards the original HTTPS scheme.
+This is almost always a reverse proxy's read timeout, not Gitman's — see
+[Behind Traefik](operator/docker.md#behind-traefik).

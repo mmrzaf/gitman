@@ -1,175 +1,349 @@
 # Gitman
 
-Gitman is a lightweight self-hosted Git server written in Go. It stores metadata in SQLite, stores bare repositories on disk, and uses the system Git executable for Git transport operations.
+A self-hosted Git server with built-in pipelines, for one person or a small
+team on their own server. Git over HTTPS, a web interface for browsing code
+and following runs, and pipelines that build and ship with Docker on the
+same host.
 
-Gitman is aimed at small teams and private infrastructure. It is not a multi-tenant SaaS platform and it does not attempt to replace a dedicated CI runner fleet.
+It deliberately stays small: one binary, one PostgreSQL database, and a
+handful of ideas — people, repositories, ref rules and pipelines.
 
-## Features
+## How it fits together
 
-- Browser UI for repositories, branches, tags, commit diffs, exact source with line permalinks, root README preview, collaborators, SSH keys, and personal access tokens.
-- Git smart HTTP with personal access token authentication.
-- Optional SSH Git transport through the host OpenSSH server and generated `authorized_keys` forced commands.
-- Private and public repositories with read and write collaborators.
-- Built-in CI jobs defined in `.gitman-ci.yml`.
-- CI secrets encrypted at rest when `GITMAN_SECRET_KEY` is configured.
-- Durable push-triggered CI, cancellation and exact-commit retries, structured incremental live logs, retry lineage, exact pipeline visibility, outcome reasons, and nested artifacts.
-- Repository settings and guarded deletion, repository archives, backups, and an admin CLI.
+- **web** serves Git over HTTP and the web interface. Git's push hooks are
+  the same binary, started by Git.
+- **worker** claims queued runs, fetches each run's commit from web, and
+  runs every step in its own Docker container on the host.
+- **PostgreSQL** holds everything except repositories themselves, which
+  are bare Git repositories on disk. Web and workers share nothing else,
+  so you can run as many workers as you like.
 
-## Requirements
+## Running it
 
-- Linux server host.
-- Go `1.27` to build from source.
-- `git` available in `PATH` at runtime.
-- Docker only when the built-in CI worker is enabled.
-- OpenSSH only when SSH Git transport is enabled.
+Gitman runs with Docker Compose on a host that already runs Traefik, on
+an external `proxy` network, and PostgreSQL, as `postgres` on an external
+`data` network. Build the image on the host, then start it from a
+directory holding `compose.yaml` and a `.env` made from `.env.example`:
 
-The repository must include the vendored `static/` directory used by the embedded web UI.
-
-## Build and run from source
-
-```bash
-go test ./...
-go build -o bin/gitman ./cmd/gitman
-mkdir -p .data
-read -rsp 'Admin password: ' ADMIN_PASSWORD; printf '\n'
-printf '%s\n' "$ADMIN_PASSWORD" | ./bin/gitman admin users create admin
-unset ADMIN_PASSWORD
-./bin/gitman web
+```sh
+docker build --build-arg VERSION=v1.0.0-beta.21 -t gitman:1.0.0-beta.21 .
+sudo install -d -o 1000 -g 1000 /srv/apps/gitman/data
+docker compose up -d
 ```
 
-The UI is available at `http://localhost:8080` by default.
+Create the first admin; the command prints their password:
 
-Operational probes are available at `/healthz` for liveness and `/readyz` for readiness. `/health` remains an alias for readiness.
-
-Start the CI worker separately when CI is needed. Pull approved job images on the runner first: Gitman starts CI containers with `--pull never` so repository-controlled jobs cannot grow Docker storage by pulling arbitrary images.
-
-```bash
-docker pull golang:1.27-bookworm
-./bin/gitman worker
+```sh
+docker compose exec web gitman admin person add --admin darius
 ```
 
-## Docker
+Sign in at `https://<GITMAN_DOMAIN>`, create a repository from Home, and
+make an access token under **Access tokens**, in the menu under your
+username at the top right of every page. Git uses your username and that
+token as the password:
 
-For the local HTTP setup:
-
-```bash
-export GIT_UID=$(id -u)
-export DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)
-export GITMAN_DATA_DIR="$(pwd)/data"
-mkdir -p "$GITMAN_DATA_DIR" && chmod 700 "$GITMAN_DATA_DIR"
-docker compose up -d --build
+```sh
+git clone https://git.example.com/waiotech.git
 ```
 
-Open `http://localhost:8080`. Read the [Docker deployment guide](docs/operator/docker.md) before exposing the service publicly or enabling SSH.
+A read token can clone and fetch; pushing needs a write token.
+[Docker deployment](docs/operator/docker.md) has the whole setup.
 
-## CI configuration
+### Behind Traefik
 
-Add `.gitman-ci.yml` at the repository root:
+- `GITMAN_TRUSTED_PROXIES` must cover every proxy in front of Gitman:
+  Traefik, and a CDN such as ArvanCloud if one is in front of it. Otherwise
+  every request appears to come from the nearest proxy and the sign-in
+  limiter counts everyone together.
+- Clones and pushes stream, and can be large and slow. If the entry point
+  sets a read timeout, raise it, for example
+  `--entryPoints.websecure.transport.respondingTimeouts.readTimeout=0`.
 
-```yaml
-image: golang:1.27-bookworm
-env:
-  APP_ENV: test
-  GOMODCACHE: /gitman/cache/go/pkg/mod
-  DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
-steps:
-  - name: Dependencies
-    run: |
-      mkdir -p "$GOMODCACHE"
-      go mod download
-  - name: Test
-    run: go test ./...
-  - name: Save report
-    run: cp coverage.out /gitman/artifacts/coverage.out
-```
+### Workers and the data directory
 
-CI jobs run in Docker containers with network access disabled by default, a read-only root filesystem, dropped Linux capabilities, PID limits, CPU and memory limits, Docker log persistence disabled, bounded Gitman logs, bounded artifact staging, bounded workspace usage, and serialized per-repository cache writes. Manual runs can select a branch, tag, or reachable historical commit; Gitman always reads `.gitman-ci.yml` from the exact selected commit. Job images must already exist on the runner because CI uses `--pull never`. With `GITMAN_CI_NETWORK=none`, dependencies must come from the image, the repository, or an already-warmed `/gitman/cache` mount.
+`GITMAN_DATA_DIR` is mounted at the **same path** inside the containers as
+on the host. A step container is started by the host's Docker, so the
+workspace it mounts must be a host path, and the worker must see it at
+that same path. The workspaces directory is private to the worker's
+user, and step containers run without the `MKNOD` capability, so a step
+cannot leave a device node for the worker to open. Several Gitman
+instances can share one Docker host: each labels its step containers
+with its own instance ID and cleans up only its own.
 
-Non-default branches and tags do not auto-run by default and do not receive CI secrets unless the repository owner adds a matching trust rule. Rules may be exact refs or glob patterns such as `v*` for version tags. Docker socket access requires both `GITMAN_CI_ALLOW_DOCKER_SOCKET=true` and matching ref approval. Treat Docker-enabled jobs as privileged host infrastructure. Application-level byte/entry checks and free-space/inode admission reserves limit damage but are not hard quotas. Run the worker on a dedicated runner host or inside a VM with kernel-enforced filesystem quotas before accepting untrusted repository writers.
+Gitman never pulls images. Every image a pipeline uses (`image`, and
+anything listed in `requires`) must already be on the worker's Docker
+host; a run with a missing image fails and says which one.
 
-## Admin CLI
+### Mirrors
 
-Passwords are read from standard input so they do not appear in shell history or process listings.
-
-```bash
-read -rsp 'Password: ' USER_PASSWORD; printf '\n'
-printf '%s\n' "$USER_PASSWORD" | gitman admin users create alice
-unset USER_PASSWORD
-
-read -rsp 'New password: ' USER_PASSWORD; printf '\n'
-printf '%s\n' "$USER_PASSWORD" | gitman admin users reset-password alice
-unset USER_PASSWORD
-gitman admin users delete alice
-
-gitman admin repos backup /srv/backups/repos-$(date +%F)
-gitman admin repos backup-all /srv/backups/gitman-$(date +%F)
-gitman admin repos configure-all
-gitman version
-```
-
-CI workers persist a liveness/admission heartbeat. Monitor `/ci-healthz` separately from web `/readyz`; a healthy web process does not imply that optional CI execution is available.
-
-Backup commands require Gitman's exclusive state lock. Stop the web and worker processes first; Gitman refuses the backup while another Gitman process is using mutable state. The destination must be absent or empty and must not be inside the repository or artifact trees.
+Every download the image build makes is a build argument (`GO_IMAGE`,
+`RUNTIME_IMAGE`, `DOCKER_CLI_IMAGE`, `DEBIAN_MIRROR`,
+`DEBIAN_SECURITY_MIRROR`, `GOPROXY`); see the top of the `Dockerfile`.
+Gitman's own [`.gitman.yml`](.gitman.yml) builds it with Liara's
+mirrors.
 
 ## Configuration
 
-Core environment variables:
+Everything is set through the environment.
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `GITMAN_PORT` | `8080` | HTTP listen port. |
-| `GITMAN_DB` | `.data/db/gitman.sqlite` | SQLite database path. |
-| `GITMAN_REPOS` | `.data/repos` | Bare repository root. |
-| `GITMAN_ARTIFACTS` | `.data/artifacts` | CI log and artifact root. |
-| `GITMAN_CACHE_ROOT` | `.data/ci/cache` | Persistent CI cache root. |
-| `GITMAN_PUBLIC_URL` | `http://localhost:8080` | Browser-facing base URL used for clone links. |
-| `GITMAN_SECRET_KEY` | empty | CI-secret encryption key. Empty disables CI-secret storage. |
-| `GITMAN_ALLOW_REGISTER` | `false` | Enable public account registration. |
-| `GITMAN_FORCE_SECURE_COOKIES` | `false` | Always mark browser cookies as secure. Enable behind HTTPS. |
-| `GITMAN_TRUST_PROXY_HEADERS` | `false` | Trust proxy HTTPS headers. Enable only behind a trusted reverse proxy. |
-| `GITMAN_GIT_RECEIVE_MAX_BYTES` | `536870912` | Git receive-pack input ceiling applied to new repos and `admin repos configure-all`. |
-| `GITMAN_GIT_HTTP_MAX_CONCURRENT` | `16` | Maximum concurrent Smart HTTP Git backend processes per web instance. |
-| `GITMAN_GIT_HTTP_MAX_CONCURRENT_PER_IP` | `4` | Maximum concurrent Smart HTTP operations from one resolved client IP. |
-| `GITMAN_GIT_HTTP_TIMEOUT` | `30m` | Maximum lifetime of one Smart HTTP Git operation. |
-| `GITMAN_FILE_SEARCH_MAX_CONCURRENT` | `8` | Maximum simultaneous Go-to-file searches per web instance. |
-| `GITMAN_FILE_SEARCH_MAX_CONCURRENT_PER_IP` | `2` | Maximum simultaneous Go-to-file searches from one resolved client IP. |
-| `GITMAN_FILE_SEARCH_MAX_FILES` | `100000` | Maximum blob paths inspected by one Go-to-file search. |
-| `GITMAN_FILE_SEARCH_MAX_BYTES` | `33554432` | Maximum `git ls-tree` output consumed by one file search. |
-| `GITMAN_FILE_SEARCH_TIMEOUT` | `5s` | Maximum time spent enumerating files for one search request. |
+| Variable | Default | |
+|---|---|---|
+| `GITMAN_DATABASE_URL` | — | PostgreSQL connection URL. Required. |
+| `GITMAN_DATA_DIR` | `.data` | Repositories, hooks and run workspaces. |
+| `GITMAN_PUBLIC_URL` | `http://localhost:8080` | The address people use; shown in clone URLs and push output. |
+| `GITMAN_WEB_URL` | the public URL | Where workers reach web to fetch run checkouts. |
+| `GITMAN_PORT` | `8080` | The web process's port. |
+| `GITMAN_SECRET_KEY` | empty | Encrypts repository secrets; at least 32 characters. Empty disables secrets. Changing it makes stored secrets unreadable. |
+| `GITMAN_TRUSTED_PROXIES` | empty | Comma-separated addresses or CIDR ranges allowed to set `X-Forwarded-For`. |
+| `GITMAN_RETENTION_DAYS` | `90` | Days finished runs and their logs are kept; `0` keeps them forever. |
+| `GITMAN_DATABASE_MAX_CONNS` | `0` | Caps `web` and `worker`'s own connection pool sizes; `0` keeps each process's own default. |
+| `GITMAN_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. |
+| `GITMAN_LOG_FORMAT` | `text` | `text` or `json`. |
 
-CI limits:
+See [Configuration reference](docs/operator/configuration.md) for
+Compose-level settings and image build arguments.
 
-| Variable | Default |
-| --- | --- |
-| `GITMAN_WORKER_CONCURRENCY` | `1` |
-| `GITMAN_MEMORY_LIMIT` | `512m` |
-| `GITMAN_CPU_LIMIT` | `1` |
-| `GITMAN_CI_TIMEOUT` | `30m` |
-| `GITMAN_CI_LEASE_TIMEOUT` | `2m` |
-| `GITMAN_CI_HEARTBEAT_INTERVAL` | `15s` |
-| `GITMAN_CI_NETWORK` | `none` |
-| `GITMAN_CI_ARTIFACT_MAX_BYTES` | `104857600` |
-| `GITMAN_CI_ARTIFACT_MAX_FILES` | `1000` |
-| `GITMAN_CI_ARTIFACT_MAX_ENTRIES` | `5000` |
-| `GITMAN_CI_LOG_MAX_BYTES` | `10485760` |
-| `GITMAN_CI_WORKSPACE_ROOT` | `.data/ci/workspaces` |
-| `GITMAN_CI_WORKSPACE_MAX_BYTES` | `1073741824` |
-| `GITMAN_CI_WORKSPACE_MAX_ENTRIES` | `200000` |
-| `GITMAN_CI_CACHE_MAX_BYTES` | `1073741824` |
-| `GITMAN_CI_CACHE_MAX_ENTRIES` | `100000` |
-| `GITMAN_CI_STORAGE_MIN_FREE_BYTES` | `1073741824` |
-| `GITMAN_CI_STORAGE_MIN_FREE_INODES` | `10000` |
-| `GITMAN_CI_CONTAINER_USER` | worker process numeric non-root UID:GID |
-| `GITMAN_CI_ALLOW_DOCKER_SOCKET` | `false` |
-| `GITMAN_CI_DOCKER_SOCKET_PATH` | `/var/run/docker.sock` |
-| `GITMAN_CI_WORKER_PATH_PREFIX` | empty |
-| `GITMAN_CI_HOST_PATH_PREFIX` | empty |
+## People and permissions
 
-## Security model
+- There are no anonymous users: every request, over the web or over Git,
+  authenticates as a specific person.
+- Anyone can create a repository. An **admin** also manages people and
+  repository settings: rules, secrets, read access and deletion. A person
+  is disabled, never deleted, so their name stays on what they did.
+- **Read access** is per repository: **everyone** signed in (the
+  default), or **restricted** to explicit readers and admins. To anyone
+  who cannot read a restricted repository, it does not exist — it is left
+  out of every list, and Git itself refuses to clone, fetch or push to
+  it. Nobody can push to a repository they cannot read.
+- **Ref rules** are the only other permission system. A rule matches
+  branches or tags by pattern (`main`, `release/*`, `v*`); the most
+  specific matching rule applies. It decides:
+  - who may push: everyone, admins, or named people;
+  - whether force-pushes and deletions are allowed;
+  - whether a push runs the pipeline;
+  - whether that pipeline may use Docker, get the repository's secrets,
+    and ship to a target.
 
-- Repository writers can run repository-controlled CI code. Any CI secret exposed to a trusted ref job must be treated as accessible to writers who can modify that ref.
-- CI logs and artifacts require owner or collaborator membership even when repository source code is public.
-- CI logs mask exact configured secret values, but masking is defense in depth. Do not print secrets.
-- CI containers are restricted, but a Docker socket is still privileged infrastructure. Pre-pull only approved images. CI jobs must run as a numeric non-root UID:GID. Enable `GITMAN_CI_ALLOW_DOCKER_SOCKET` only for trusted repositories and matching refs or patterns that require `docker: true`.
-- When the worker itself runs in Docker, configure the worker and host path prefixes so sibling containers mount host-visible paths. The included Compose file does this automatically.
-- Set `GITMAN_PUBLIC_URL`, force secure cookies, and trust proxy headers only when the reverse proxy is controlled and correctly configured.
+A ref no rule matches is otherwise unprotected — force-push and deletion
+are always allowed, and pushes to it run nothing — but who may push to it
+follows the repository's **default push policy** (everyone, admins, or
+named people; everyone by default); a rule for that specific branch or
+tag overrides it. A new repository is fully usable at once; rules and the
+default push policy only add protection and grant pipeline capabilities.
+
+Allowing Docker hands a pipeline the host's Docker socket, which is root
+on the worker's host: grant it only on refs whose pushers you would give
+that. Containers a step starts through the socket are its own; Gitman
+stops and removes only the step containers it started.
+
+## Pipelines
+
+A repository's pipeline is `.gitman.yml` at the root of the commit being
+run.
+
+```yaml
+image: docker:29-cli           # every step runs in this image
+docker: true                   # steps use the host's Docker; a ref rule must allow it
+timeout: 20m                   # the whole run; default 30m, at most 24h
+requires:                      # images that must already be on the host
+  - golang:1.27-bookworm
+  - debian:bookworm-slim
+env:                           # for every step
+  GOPROXY: https://goproxy.example.com,direct
+
+targets:                       # where a ref ships to
+  staging:
+    branch: develop
+    env:
+      DEPLOY_DIR: /srv/apps/waiotech-stage
+  production:
+    tag: "v*"
+    env:
+      DEPLOY_DIR: /srv/apps/waiotech
+
+steps:
+  - name: build
+    run: docker build --pull=false --build-arg GOPROXY="$GOPROXY" -t "waiotech:$GITMAN_VERSION" .
+  - name: check
+    run: docker run --rm "waiotech:$GITMAN_VERSION" waiotech version
+  - name: deploy
+    when: target               # always (default), target, branch, tag, or a target's name
+    run: ./deploy.sh "$DEPLOY_DIR" "waiotech:$GITMAN_VERSION"
+```
+
+A pipeline is meant to stay this light: build, check, and deploy. Each
+step is one container; Gitman starts no databases or other services
+next to it, so tests that need them belong in a CI that has them.
+
+- Steps run in order, each in a fresh container with the checked-out
+  commit at `/workspace`. The first failing step ends the run; later steps
+  are skipped.
+- A run's **target** is the one whose pattern matches the ref most
+  specifically. A step with `when: target` runs only when some target
+  matched; `when: production` only when that one did.
+- Every step gets these variables, and the matched target's `env` on top
+  of the pipeline's:
+  - `GITMAN_REPO`, `GITMAN_RUN`, `GITMAN_COMMIT`, `GITMAN_SHORT`;
+  - `GITMAN_REF`, `GITMAN_REF_KIND`, `GITMAN_TARGET`;
+  - `GITMAN_VERSION`: for a tag, its name made safe as an image tag; for
+    a branch, the commit's first 12 characters.
+- Secrets are added when the ref's rule allows them. They never appear on
+  a command line, and their values are masked in stored output.
+- Lines of `key=value` appended to the file `$GITMAN_SUMMARY` appear on
+  the run's page.
+- A passing run with a target is recorded as a deployment: the
+  repository page shows what is live on each target.
+
+There is no built-in artifact or deploy step: a pipeline ships by running
+whatever the target actually needs, the same as it would outside Gitman.
+A step's container has full outbound network access. Some patterns:
+
+**Deploy over the Docker socket, on the same host as the worker**
+(`docker: true`, granted only on the ref that deploys). A step's own
+filesystem is only the checkout, so it reaches a host directory through a
+container it starts on the host's Docker:
+
+```yaml
+- name: deploy
+  when: production
+  run: |
+    docker run --rm \
+      --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
+      --mount type=bind,src=/srv/apps/waiotech,dst=/srv/apps/waiotech \
+      --workdir /srv/apps/waiotech \
+      docker:29-cli sh -ec "
+        sed -i 's#^APP_IMAGE=.*#APP_IMAGE=waiotech:$GITMAN_VERSION#' .env
+        docker compose up -d"
+```
+
+**Build and push an image to a registry** (a `REGISTRY_TOKEN` secret,
+`--secrets` allowed on the ref):
+
+```yaml
+- name: publish
+  when: production
+  run: |
+    echo "$REGISTRY_TOKEN" | docker login registry.example.com -u deploy --password-stdin
+    docker build -t registry.example.com/waiotech:"$GITMAN_VERSION" .
+    docker push registry.example.com/waiotech:"$GITMAN_VERSION"
+```
+
+**Deploy over SSH**, with the private key and `known_hosts` stored as
+secrets (a secret's value may be multi-line, such as a whole key file):
+
+```yaml
+- name: deploy
+  when: production
+  run: |
+    install -m 600 -D /dev/stdin ~/.ssh/id_ed25519 <<< "$DEPLOY_KEY"
+    install -m 644 -D /dev/stdin ~/.ssh/known_hosts <<< "$KNOWN_HOSTS"
+    ssh deploy@app.example.com "cd /srv/apps/waiotech && git pull && ./restart.sh"
+```
+
+**Upload a build output with curl**:
+
+```yaml
+- name: upload
+  run: |
+    go build -o bin/waiotech .
+    curl -fsS -H "Authorization: Bearer $UPLOAD_TOKEN" -T bin/waiotech \
+      https://artifacts.example.com/waiotech/"$GITMAN_VERSION"
+```
+
+Check a pipeline file before pushing it:
+
+```sh
+gitman check .gitman.yml
+```
+
+A push prints each run it started, with a link. Every run is of a
+branch or tag. Runs can also be started by hand — **Run** on the Runs
+page or a branch's row, and **Run again** on a run — by anyone allowed
+to push to the ref, and cancelled by the same people from the run's
+page, or with `gitman admin run cancel <repo> <number>`.
+
+## The command line
+
+The same binary administers an instance
+(`docker compose exec web gitman admin ...`):
+
+```
+gitman admin person add [--admin] <username>
+gitman admin person list | disable | enable | reset-password <username>
+gitman admin person role <username> admin|member
+gitman admin token create [--write] [--days N] <username> <name>
+gitman admin repo create [--description TEXT] [--default-branch NAME] <name>
+gitman admin repo list | delete <name> | sync <name>
+gitman admin repo visibility <name> everyone|restricted
+gitman admin repo default-branch <name> <branch>
+gitman admin repo default-push [--push everyone|admins|people] [--people a,b] <name>
+gitman admin reader add | remove <repo> <username>
+gitman admin reader list <repo>
+gitman admin rule list <repo>
+gitman admin rule set [--push everyone|admins|people] [--people a,b] [--force] [--delete]
+                      [--run] [--docker] [--secrets] [--ship] <repo> branch|tag <pattern>
+gitman admin rule delete <repo> branch|tag <pattern>
+gitman admin run cancel <repo> <number>
+gitman admin worker cleanup
+gitman admin migrate
+```
+
+## Operating it
+
+- **Backups:** the database (`pg_dump`) and the `repos` directory under
+  `GITMAN_DATA_DIR`. Hooks are rewritten at every start, and workspaces
+  exist only while a run does. After restoring repositories from a
+  different moment than the database, run `gitman admin repo sync <name>`
+  to rebuild each one's ref index from Git.
+- **Retention:** the web process prunes expired sessions and finished
+  runs older than `GITMAN_RETENTION_DAYS` every hour. Each ref's latest
+  run and every deployment record are kept.
+- **Upgrades:** migrations run automatically when web or a worker starts.
+- **Lost workers:** a run whose worker stops responding for a minute is
+  failed with that reason, and its step container and workspace are
+  removed by a live worker on the same host within another few minutes.
+  After a database outage, a worker waits a minute of its own healthy
+  heartbeats before judging any other worker lost. A worker whose Docker
+  daemon does not answer claims no runs until it does.
+  If a worker is killed outright (SIGKILL, OOM) and nothing else is
+  running on that host, nothing removes them automatically; run
+  `gitman admin worker cleanup` there, or schedule it, to reclaim them.
+  Runs are never retried automatically.
+- **Health:** `/healthz` reports the process is up; `/readyz` also checks
+  the database.
+
+## Developing
+
+Go 1.27 and Git.
+
+```sh
+go build ./...
+go test ./...        # tests that need PostgreSQL skip themselves
+```
+
+To run them all:
+
+```sh
+GITMAN_TEST_DATABASE_URL='postgres://postgres@localhost/gitman_test?sslmode=disable' go test -p 1 ./...
+```
+
+## Not added, on purpose
+
+- **SSH.** There is no SSH transport at all, now or planned. Git over
+  HTTPS with access tokens is the only way in, secured one way.
+- **Pull requests, issues, wikis, forks, stars.** Gitman is where code
+  lives and ships from; discussion lives elsewhere.
+- **Organizations, namespaces.** One flat list of repositories.
+- **Anonymous or public access, of any kind.** Every request, over the
+  web or over Git, authenticates as a specific person; there is no
+  read-only or unauthenticated mode, and no way to turn one on.
+- **Pulling images.** What a pipeline runs is what the operator put on
+  the host.
+- **Automatic retries, caches between runs, artifacts, matrix builds,
+  scheduled runs.** A run is one commit, run once, in order.
+- **Webhooks, email and plugins.**
+- **Deleting people.** People are disabled, so history keeps their names.
+- **SQLite or other databases.** PostgreSQL's notifications and row
+  locking are what let web and workers coordinate without talking to
+  each other.
+- **Syntax highlighting.** Code is shown as it is.

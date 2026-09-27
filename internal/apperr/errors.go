@@ -1,3 +1,7 @@
+// Package apperr classifies errors by the response they deserve, so a
+// database call, a Git operation or a validation failure can all be turned
+// into the right HTTP status and the right message for the person who made
+// the request, without every call site repeating that decision.
 package apperr
 
 import (
@@ -5,97 +9,76 @@ import (
 	"fmt"
 )
 
+// Kind classifies an error by the response it deserves, independent of the
+// operation that produced it.
 type Kind uint8
 
 const (
+	// KindInternal is anything no one classified: a failure in Gitman or
+	// its host, never described to a person.
 	KindInternal Kind = iota
+	// KindInvalid is a request the person can correct.
 	KindInvalid
-	KindUnauthenticated
+	// KindForbidden is a request the person may not make.
 	KindForbidden
+	// KindNotFound names something that does not exist.
 	KindNotFound
+	// KindConflict is a request refused because of the state things are
+	// in, such as removing the last admin.
 	KindConflict
+	// KindTooLarge is a request, or a thing asked for, past a size limit.
 	KindTooLarge
-	KindUnsupported
-	KindMethodNotAllowed
+	// KindUnavailable is a request refused because a resource Gitman
+	// depends on, such as the database, could not be reached quickly
+	// enough — worth trying again, unlike the other kinds.
 	KindUnavailable
 )
 
-type Error struct {
-	Kind    Kind
-	Message string
-	Err     error
+type appError struct {
+	kind    Kind
+	message string
+	err     error
 }
 
-func (e *Error) Error() string {
-	if e == nil {
-		return ""
+func (e *appError) Error() string {
+	if e.err != nil {
+		return fmt.Sprintf("%s: %v", e.message, e.err)
 	}
-	if e.Message != "" && e.Err != nil {
-		return e.Message + ": " + e.Err.Error()
-	}
-	if e.Message != "" {
-		return e.Message
-	}
-	if e.Err != nil {
-		return e.Err.Error()
-	}
-	return "application error"
+	return e.message
 }
 
-func (e *Error) Unwrap() error { return e.Err }
+func (e *appError) Unwrap() error { return e.err }
 
+// New creates an error carrying the given kind and a message safe to show
+// to the person who made the request.
 func New(kind Kind, message string) error {
-	return &Error{Kind: kind, Message: message}
+	return &appError{kind: kind, message: message}
 }
 
+// Wrap attaches a kind and a public-facing message to an underlying error.
+// The underlying error is preserved for logs but is never shown to the
+// person who made the request.
 func Wrap(kind Kind, message string, err error) error {
-	// A public application failure must never disappear merely because its
-	// optional underlying cause is nil. Callers use New when there is no cause,
-	// but keeping Wrap non-nil makes accidental nil causes fail safe.
-	return &Error{Kind: kind, Message: message, Err: err}
+	return &appError{kind: kind, message: message, err: err}
 }
 
+// KindOf reports the kind of err, or KindInternal if err was not created by
+// New or Wrap.
 func KindOf(err error) Kind {
-	var appErr *Error
-	if errors.As(err, &appErr) {
-		return appErr.Kind
+	var ae *appError
+	if errors.As(err, &ae) {
+		return ae.kind
 	}
 	return KindInternal
 }
 
+// PublicMessage returns the message safe to show to the person who made the
+// request. For an error not created by New or Wrap, it returns a generic
+// message rather than leaking internal detail.
 func PublicMessage(err error) string {
-	var appErr *Error
-	if errors.As(err, &appErr) && appErr.Message != "" {
-		return appErr.Message
+	var ae *appError
+	if errors.As(err, &ae) {
+		return ae.message
 	}
 	return "Gitman could not complete this request"
-}
-
-func Is(err error, kind Kind) bool { return KindOf(err) == kind }
-
-func (k Kind) String() string {
-	switch k {
-	case KindInvalid:
-		return "invalid"
-	case KindUnauthenticated:
-		return "unauthenticated"
-	case KindForbidden:
-		return "forbidden"
-	case KindNotFound:
-		return "not_found"
-	case KindConflict:
-		return "conflict"
-	case KindTooLarge:
-		return "too_large"
-	case KindUnsupported:
-		return "unsupported"
-	case KindMethodNotAllowed:
-		return "method_not_allowed"
-	case KindUnavailable:
-		return "unavailable"
-	case KindInternal:
-		return "internal"
-	default:
-		return fmt.Sprintf("kind_%d", k)
-	}
 }

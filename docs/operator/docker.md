@@ -1,106 +1,119 @@
 # Docker deployment
 
-The included Compose stack defines:
+The supported deployment is Docker Compose, on a host that already runs
+Traefik and PostgreSQL in Docker. `compose.yaml` defines two services:
 
-| Service | Purpose | Privilege note |
-| --- | --- | --- |
-| `web` | Browser UI and Git smart HTTP | No Docker socket |
-| `worker` | Optional built-in CI executor | Mounts `/var/run/docker.sock` and controls sibling job containers |
+| Service | What it does | Networks | Privileges |
+| --- | --- | --- | --- |
+| `web` (`gitman-web`) | The web interface and Git over HTTPS. | `proxy`, `data`, `gitman_internal` | uid 1000, no capabilities, read-only root filesystem. |
+| `worker` (`gitman-worker`) | Runs pipelines: each step in its own container on the host's Docker. | `data`, `gitman_internal` | root, with the host's Docker socket. |
 
-Both services share a host data directory mounted at `/data`.
+Both read their settings from `.env` next to `compose.yaml`.
 
-## Web-only deployment
+## Prerequisites
 
-Use this when CI is not required:
+On the host, outside this repository:
 
-```bash
-export GIT_UID=$(id -u)
-export GITMAN_DATA_DIR="$(pwd)/data"
-mkdir -p "$GITMAN_DATA_DIR"
-chmod 700 "$GITMAN_DATA_DIR"
-docker compose up -d --build web
-```
+- Docker with the Compose plugin. Nothing needs the internet: images
+  are built or loaded on the host, and builds use the mirrors their build
+  arguments name.
+- Traefik, on an external Docker network named `proxy`, with an entry
+  point named `websecure`, TLS, and the file-provider middleware
+  `security-headers@file`.
+- PostgreSQL, reachable as `postgres` on an external Docker network
+  named `data`, with a database and a user for Gitman:
 
-## Web plus CI worker
+  ```sql
+  CREATE USER gitman PASSWORD '...';
+  CREATE DATABASE gitman OWNER gitman;
+  ```
 
-Use a Linux Docker host. Determine the Docker socket group ID so the non-root worker can access the daemon:
+## Setup
 
-```bash
-export GIT_UID=$(id -u)
-export DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)
-export GITMAN_DATA_DIR="$(pwd)/data"
-mkdir -p "$GITMAN_DATA_DIR"
-chmod 700 "$GITMAN_DATA_DIR"
-docker compose up -d --build
-```
+The image comes from one of three places:
 
-Pre-pull approved job images on the Docker host:
+- **Gitman itself**, once it runs: its own pipeline (`.gitman.yml`)
+  builds `gitman:<version>` on the host on every `v*` tag, given a ref
+  rule for `v*` tags with **run** and **Docker**.
+- **A release**, for the first install. A host with internet access
+  pulls `ghcr.io/mmrzaf/gitman:<version>`. A host without it loads the
+  Docker archive attached to the GitHub release, copied over:
+  `docker load < gitman-docker-image-linux-amd64-<version>.tar.gz`, which
+  gives `gitman:<version>`.
+- **By hand**, from a checkout of the tag. Behind mirrors, pass the same
+  build arguments `.gitman.yml` does:
 
-```bash
-docker pull golang:1.27-bookworm
-```
+  ```sh
+  docker build --build-arg VERSION=v1.0.0-beta.21 -t gitman:1.0.0-beta.21 .
+  ```
 
-## Create the first account
+Then, in the deployment directory (for example `/srv/apps/gitman`), with
+`compose.yaml` and a `.env` made from `.env.example`:
 
-```bash
-read -rsp 'Admin password: ' ADMIN_PASSWORD; printf '\n'
-printf '%s\n' "$ADMIN_PASSWORD" | docker compose exec -T web gitman admin users create admin
-unset ADMIN_PASSWORD
-```
-
-## Bind address
-
-Compose publishes the web service to `127.0.0.1:8080` by default. Change the host bind only when the service is intentionally exposed:
-
-```bash
-GITMAN_BIND_ADDRESS=0.0.0.0 docker compose up -d
-```
-
-Prefer a reverse proxy that listens publicly and forwards to `127.0.0.1:8080`.
-
-## CI secrets
-
-Generate and persist an encryption key in your deployment secret manager:
-
-```bash
-export GITMAN_SECRET_KEY=$(openssl rand -hex 32)
+```sh
+sudo install -d -o 1000 -g 1000 /srv/apps/gitman/data
 docker compose up -d
+docker compose exec web gitman admin person add --admin darius
 ```
 
-The same value must reach both `web` and `worker`.
+Migrations run whenever web or the worker starts. See [Configuration
+reference](configuration.md) for every `.env` setting.
 
-## HTTPS reverse proxy
+## Behind Traefik
 
-Terminate TLS at a trusted reverse proxy and configure:
+- `GITMAN_TRUSTED_PROXIES` must cover every proxy between the client and
+  Gitman, or every request appears to come from the nearest untrusted
+  one and the sign-in limiter counts everyone together. Gitman reads
+  `X-Forwarded-For` from the right, skipping trusted proxies, and takes
+  the first address that isn't one. For Traefik alone that is Docker's
+  networks, `172.16.0.0/12`. With a CDN such as ArvanCloud in front of
+  Traefik, add the CDN's published ranges too, comma-separated, and have
+  Traefik trust them as well (`forwardedHeaders.trustedIPs` on the entry
+  point); otherwise the client is the CDN's edge.
+- Clones and pushes stream, and can be large and slow. If the `websecure`
+  entry point sets a read timeout, raise it for Gitman, for example
+  `--entryPoints.websecure.transport.respondingTimeouts.readTimeout=0`.
+  A CDN in front of Traefik must not cache Gitman or cap request size.
 
-```bash
-export GITMAN_PUBLIC_URL=https://git.example.com
-export GITMAN_FORCE_SECURE_COOKIES=true
-export GITMAN_TRUST_PROXY_HEADERS=true
-docker compose up -d
+## The data directory
+
+`GITMAN_DATA_DIR` is bind-mounted into `web` and `worker` at the
+**identical path**. A pipeline step container is started by the *host's*
+Docker daemon, so the worker hands Docker a host path for the step's
+workspace, and must see that workspace at the same path the host does.
+Don't map it to a different path on either side.
+
+## Docker access for pipelines
+
+`worker` always has the host's Docker socket, but a pipeline only gets to
+use it (`docker: true` in `.gitman.yml`) on refs whose rule allows it:
+
+```sh
+docker compose exec web gitman admin rule set --docker --run myrepo branch main
 ```
 
-The proxy must set `X-Forwarded-Proto: https` or an equivalent standardized `Forwarded` header. Do not enable proxy-header trust when clients can bypass the trusted proxy.
+That hands the ref's pipeline the same power as anyone with the host's
+Docker socket: root, effectively. Grant it only on refs whose pushers
+you'd trust with that. See [Security model](security.md).
 
-## Compose-specific host variables
+Gitman never pulls images: every image a pipeline uses must already
+exist on the host before a run needs it.
 
-Compose adapts a few host-side variable names before passing values to the worker:
+## Mirrors
 
-| Host-side Compose variable | Worker environment variable |
-| --- | --- |
-| `GITMAN_CI_MEMORY_LIMIT` | `GITMAN_MEMORY_LIMIT` |
-| `GITMAN_CI_CPU_LIMIT` | `GITMAN_CPU_LIMIT` |
-
-Use the left column when invoking Docker Compose. Use the right column for direct worker deployments.
+Every download the image build makes is a build argument: `GO_IMAGE`,
+`RUNTIME_IMAGE`, `DOCKER_CLI_IMAGE`, `DEBIAN_MIRROR`,
+`DEBIAN_SECURITY_MIRROR` and `GOPROXY`. See the top of the `Dockerfile`;
+Gitman's own `.gitman.yml` builds it with Liara's mirrors.
 
 ## Operations
 
-```bash
+```sh
 docker compose ps
-docker compose logs -f web
-docker compose logs -f worker
+docker compose logs -f web worker
 docker compose restart web worker
 docker compose down
 ```
 
-Read [security](security.md), [configuration](configuration.md), and [backups and upgrades](backups-and-upgrades.md) before production use.
+Read [Security model](security.md) and [Backups and
+upgrades](backups-and-upgrades.md) before running it in production.

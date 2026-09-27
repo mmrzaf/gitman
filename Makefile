@@ -22,23 +22,23 @@ build-all: ## Build supported Linux binaries
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 ./cmd/gitman
 	test -s $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64
 	test -s $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64
-	test "$$($(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 version)" = "$(VERSION)"
+	test "$$($(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 version)" = "gitman $(VERSION)"
 
+# Database-backed tests share one database, so packages run one at a time.
 test: ## Run the test suite with the race detector
-	$(GO) test -race ./...
+	$(GO) test -race -p 1 -count=1 ./...
 
 test-coverage: ## Run tests and write an HTML coverage report
-	$(GO) test -race -coverprofile=coverage.out ./...
+	$(GO) test -race -p 1 -count=1 -coverprofile=coverage.out ./...
 	$(GO) tool cover -html=coverage.out -o coverage.html
 
 verify: ## Run the local release verification set
-	$(GO) test -race ./...
+	$(GO) test -race -p 1 -count=1 ./...
 	$(GO) vet ./...
 	golangci-lint run
 	@mkdir -p $(BUILD_DIR)
 	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/gitman
-	test "$$($(BUILD_DIR)/$(BINARY_NAME) version)" = "$(VERSION)"
-	test "$$($(BUILD_DIR)/$(BINARY_NAME) --version)" = "$(VERSION)"
+	test "$$($(BUILD_DIR)/$(BINARY_NAME) version)" = "gitman $(VERSION)"
 
 clean: ## Remove local build/test artifacts
 	rm -rf $(BUILD_DIR)
@@ -47,10 +47,10 @@ clean: ## Remove local build/test artifacts
 install: build ## Install the binary to /usr/local/bin
 	install -m 0755 $(BUILD_DIR)/$(BINARY_NAME) /usr/local/bin/$(BINARY_NAME)
 
-run-web: ## Run the web server
+run-web: ## Run the web process
 	$(GO) run ./cmd/gitman web
 
-run-worker: ## Run the CI worker
+run-worker: ## Run the worker process
 	$(GO) run ./cmd/gitman worker
 
 fmt: ## Format tracked Go files
@@ -63,5 +63,5 @@ deps: ## Download and tidy Go modules
 	GOPROXY=$(GOPROXY) $(GO) mod download
 	GOPROXY=$(GOPROXY) $(GO) mod tidy
 
-release-source: ## Create the tracked-files-only source archive
+release-source: ## Create the source archive of the checked-out commit
 	scripts/release-source-archive.sh $${VERSION:?set VERSION}

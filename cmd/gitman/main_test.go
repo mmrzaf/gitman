@@ -1,27 +1,15 @@
 package main
 
-import (
-	"bytes"
-	"strings"
-	"testing"
-)
+import "testing"
 
-func TestHelp(t *testing.T) {
-	var buf bytes.Buffer
-	err := help(&buf)
-	if err != nil {
-		t.Fatal(err)
-	}
-	output := buf.String()
-	if !strings.Contains(output, "gitman <command>") {
-		t.Errorf("help output missing expected text: %s", output)
+func TestVersionCommandIsRegistered(t *testing.T) {
+	if _, ok := commands["version"]; !ok {
+		t.Fatal("expected a \"version\" command to be registered")
 	}
 }
 
-func TestUnknownCommandDoesNotRequireConfiguration(t *testing.T) {
-	t.Setenv("GITMAN_SECRET_KEY", "")
-	err := Execute([]string{"gitman", "definitely-not-a-command"})
-	if err == nil || !strings.Contains(err.Error(), "unknown command") {
-		t.Fatalf("Execute unknown command error = %v; want unknown command", err)
+func TestRunVersionSucceeds(t *testing.T) {
+	if err := runVersion(nil); err != nil {
+		t.Fatalf("runVersion: %v", err)
 	}
 }

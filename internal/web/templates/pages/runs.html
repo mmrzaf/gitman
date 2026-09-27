@@ -1,0 +1,78 @@
+{{define "content"}}
+{{$d := .Data}}{{$repo := $d.Repo}}
+<div class="page">
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title" id="runs-title">Runs</h1>
+  </div>
+  {{- if $d.Runnable}}
+  <div class="page-actions">
+    <a class="btn btn-primary" href="/{{$repo.Name}}/runs?dialog=run-new" data-dialog-open="run-new" data-command="Run the pipeline of {{$repo.Name}}">{{template "icon" "play"}}Run</a>
+  </div>
+  {{- end}}
+</header>
+<section class="panel" aria-labelledby="runs-history-title">
+  <header class="panel-header"><h2 class="panel-title" id="runs-history-title">History</h2></header>
+  {{- if $d.Runs}}
+  <div class="table-scroll">
+    <table class="table">
+      <thead>
+        <tr>
+          <th scope="col">Run</th>
+          <th scope="col">Branch or tag</th>
+          <th scope="col">Triggered</th>
+          <th scope="col">Queued</th>
+        </tr>
+      </thead>
+      <tbody data-live-region="runs">
+      {{- range $d.Runs}}
+        <tr>
+          <th scope="row" class="table-rowheader"><a class="run-ref" href="/{{$repo.Name}}/runs/{{.Number}}">{{template "status" .Status}}<span>#{{.Number}}</span></a></th>
+          <td>{{template "ref" (dict "Kind" .RefKind "Name" .RefName "Href" (refURL $repo.Name .RefName ""))}}</td>
+          <td>{{if eq .Trigger "push"}}{{template "icon" "push"}}Pushed{{else}}{{template "icon" "play"}}Started{{end}} by {{template "person" .Actor}}</td>
+          <td class="cell-shrink cell-muted">{{template "time" .QueuedAt}}</td>
+        </tr>
+      {{- end}}
+      </tbody>
+    </table>
+  </div>
+  {{- if $d.More}}
+  <div class="panel-body"><a class="btn" href="/{{$repo.Name}}/runs?before={{$d.More}}">Older runs</a></div>
+  {{- end}}
+  {{- else}}
+  <div class="empty">
+    {{template "icon" "play"}}
+    <p class="empty-title">No runs yet</p>
+    <p>A push to a branch or tag whose ref rule has <strong>run</strong> on starts one{{if $d.Runnable}}, and so does <strong>Run</strong>{{end}}. The pipeline is <code>.gitman.yml</code> at the root of the commit.</p>
+    {{- if .Person.IsAdmin}}
+    <p><a href="/{{$repo.Name}}/settings?tab=rules">Set up ref rules</a></p>
+    {{- end}}
+  </div>
+  {{- end}}
+</section>
+{{- if $d.Runnable}}
+<dialog class="dialog" id="run-new" aria-labelledby="run-new-title" data-dialog{{if eq $d.Dialog "run-new"}} open{{end}}>
+  <form method="post" action="/{{$repo.Name}}/runs" class="form">
+    <header class="dialog-header"><h2 class="dialog-title" id="run-new-title">Run the pipeline</h2>{{template "dialog-close" (printf "/%s/runs" $repo.Name)}}</header>
+    <div class="dialog-body">
+      <div class="field">
+        <label class="field-label" for="f-run-ref">Branch or tag</label>
+        <span class="select-wrap">
+          <select class="select" id="f-run-ref" name="ref" aria-describedby="f-run-ref-hint" autofocus>
+            <optgroup label="Branches">
+              {{- range $d.Runnable}}{{if eq .Kind "branch"}}<option value="{{.FullName}}">{{.Name}}{{if .IsDefault}} (default){{end}}</option>{{end}}{{end}}
+            </optgroup>
+            <optgroup label="Tags">
+              {{- range $d.Runnable}}{{if eq .Kind "tag"}}<option value="{{.FullName}}">{{.Name}}</option>{{end}}{{end}}
+            </optgroup>
+          </select>
+        </span>
+        <p class="field-hint" id="f-run-ref-hint">Runs its latest commit, as a push would: with its rule's target, secrets and Docker.</p>
+      </div>
+    </div>
+    <footer class="dialog-footer"><button type="button" class="btn js-only" data-dialog-close>Cancel</button><button type="submit" class="btn btn-primary">Start run</button></footer>
+  </form>
+</dialog>
+{{- end}}
+</div>
+{{end}}

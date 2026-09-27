@@ -1,0 +1,87 @@
+# Gitman in production: web and one worker, behind the host's Traefik on
+# the external "proxy" network, using the PostgreSQL on the external
+# "data" network. Configuration comes from .env; .env.example lists it.
+#
+#   docker compose up -d
+name: gitman
+
+x-gitman: &gitman
+  image: ${GITMAN_IMAGE:?GITMAN_IMAGE missing}
+  # The host has no internet: the image is built or loaded here, never
+  # pulled.
+  pull_policy: never
+  restart: unless-stopped
+  env_file:
+    - .env
+  environment:
+    GITMAN_PUBLIC_URL: https://${GITMAN_DOMAIN:?GITMAN_DOMAIN missing}
+    # Workers fetch run checkouts from web directly, not through Traefik.
+    GITMAN_WEB_URL: http://gitman-web:8080
+  volumes:
+    # The same path inside and out: repositories, hooks and workspaces
+    # live here, and step containers mount workspaces by host path.
+    - ${GITMAN_DATA_DIR:?GITMAN_DATA_DIR missing}:${GITMAN_DATA_DIR}
+  security_opt:
+    - no-new-privileges:true
+  pids_limit: 512
+
+services:
+  web:
+    <<: *gitman
+    container_name: gitman-web
+    command: ["gitman", "web"]
+    networks:
+      - proxy
+      - data
+      - gitman_internal
+    expose:
+      - "8080"
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=proxy
+      - traefik.http.routers.gitman.rule=Host(`${GITMAN_DOMAIN:?GITMAN_DOMAIN missing}`)
+      - traefik.http.routers.gitman.entrypoints=websecure
+      - traefik.http.routers.gitman.tls=true
+      - traefik.http.routers.gitman.middlewares=security-headers@file
+      - traefik.http.routers.gitman.service=gitman
+      - traefik.http.services.gitman.loadbalancer.server.port=8080
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,noexec,nosuid,nodev
+    # In-flight clones and pushes get the web process's own grace period.
+    stop_grace_period: 35s
+
+  worker:
+    <<: *gitman
+    container_name: gitman-worker
+    command: ["gitman", "worker"]
+    # Root, with its capabilities: steps run as whatever user their image
+    # says, and the worker must remove whatever files they leave in a
+    # workspace. The Docker socket is root on the host anyway.
+    user: root
+    volumes:
+      - ${GITMAN_DATA_DIR:?GITMAN_DATA_DIR missing}:${GITMAN_DATA_DIR}
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - data
+      - gitman_internal
+    depends_on:
+      web:
+        condition: service_healthy
+    # The image's health check probes web's port, which a worker does not
+    # serve.
+    healthcheck:
+      disable: true
+    # Shutting down, a worker ends its running run and removes the step
+    # container, which may take up to 30 seconds.
+    stop_grace_period: 60s
+
+networks:
+  proxy:
+    external: true
+  data:
+    external: true
+  gitman_internal:
+    name: gitman_internal

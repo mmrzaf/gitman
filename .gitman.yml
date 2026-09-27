@@ -1,0 +1,31 @@
+# Gitman's pipeline on a Gitman server: a v* tag builds gitman:<version>
+# on the host's Docker, from the base images already there. Deploying it
+# is setting GITMAN_IMAGE in the deployment's .env and running
+# docker compose up -d; see docs/operator/docker.md. The ref rule for
+# v* tags needs run and docker.
+image: docker:29-cli
+docker: true
+requires:
+  - golang:1.27-bookworm
+  - debian:bookworm-slim
+env:
+  GOPROXY: https://package-mirror.liara.ir/repository/go/,direct
+  DEBIAN_MIRROR: http://linux-mirror.liara.ir/repository/debian
+  DEBIAN_SECURITY_MIRROR: http://linux-mirror.liara.ir/repository/debian-security
+steps:
+  - name: build image
+    run: |
+      set -eu
+      docker build --pull=false \
+        --build-arg GOPROXY="$GOPROXY" \
+        --build-arg DEBIAN_MIRROR="$DEBIAN_MIRROR" \
+        --build-arg DEBIAN_SECURITY_MIRROR="$DEBIAN_SECURITY_MIRROR" \
+        --build-arg VERSION="$GITMAN_VERSION" \
+        --label "org.opencontainers.image.revision=$GITMAN_COMMIT" \
+        --label "org.opencontainers.image.version=$GITMAN_VERSION" \
+        --tag "gitman:${GITMAN_VERSION#v}" \
+        .
+  - name: check image
+    run: |
+      set -eu
+      test "$(docker run --rm "gitman:${GITMAN_VERSION#v}" gitman version)" = "gitman $GITMAN_VERSION"

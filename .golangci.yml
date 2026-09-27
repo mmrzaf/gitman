@@ -12,10 +12,15 @@ linters:
     - ineffassign
     - unused
 
+  settings:
+    errcheck:
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+
   exclusions:
     warn-unused: true
-    paths:
-      - crypto/internal/randutil
     rules:
       - path: _test\.go
         linters:

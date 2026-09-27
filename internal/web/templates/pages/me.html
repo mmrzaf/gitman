@@ -1,0 +1,89 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="page page-narrow">
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title" id="account-title">Your account</h1>
+    <p class="page-subtitle">Signed in as <strong class="mono">{{.Person.Username}}</strong>{{if .Person.IsAdmin}}, an admin{{end}}.</p>
+  </div>
+</header>
+
+<nav class="tabs tabs-page" data-tabs aria-label="Account">
+  <a class="tab" id="tab-tokens" href="/me" data-tab="tokens"{{if eq $d.Tab "tokens"}} aria-current="page"{{end}}>{{template "icon" "key"}}Access tokens <span class="tab-count">{{len $d.Tokens}}</span></a>
+  <a class="tab" id="tab-password" href="/me?tab=password" data-tab="password"{{if eq $d.Tab "password"}} aria-current="page"{{end}}>{{template "icon" "lock"}}Password</a>
+</nav>
+
+<div class="stack" id="panel-tokens" data-tab-panel="tokens"{{if ne $d.Tab "tokens"}} hidden{{end}}>
+  {{- with $d.NewToken}}{{template "reveal" (dict "Label" "Your new token" "Value" . "Note" "Copy it now: it won't be shown again.")}}{{end}}
+  <section class="panel" aria-labelledby="tokens-title">
+    <header class="panel-header">
+      <h2 class="panel-title" id="tokens-title">Access tokens</h2>
+      <span class="panel-actions"><a class="btn btn-sm btn-primary" href="/me?dialog=token-new" data-dialog-open="token-new" data-command="Create an access token">{{template "icon" "plus"}}New token</a></span>
+    </header>
+    <p class="panel-intro">Git over HTTPS takes your username and a token as the password.</p>
+    {{- if $d.Tokens}}
+    <div class="table-scroll">
+      <table class="table">
+        <thead><tr><th scope="col">Name</th><th scope="col">Access</th><th scope="col">Last used</th><th scope="col">Expires</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+        <tbody>
+        {{- range $d.Tokens}}
+          <tr>
+            <th scope="row" class="table-rowheader">{{.Name}}<br><span class="cell-muted">created {{template "time" .CreatedAt}}</span></th>
+            <td>{{if eq .Scope "write"}}<span class="chip chip-accent">read and write</span>{{else}}<span class="chip">read</span>{{end}}</td>
+            <td class="cell-muted">{{if .LastUsedAt}}{{template "time" .LastUsedAt}}{{else}}never{{end}}</td>
+            <td class="cell-muted">{{if .ExpiresAt}}{{template "time" .ExpiresAt}}{{else}}never{{end}}</td>
+            <td class="cell-shrink cell-end">
+              <form method="post" action="/me/tokens/{{.ID}}/delete" data-confirm="Revoke the token “{{.Name}}”?" data-confirm-detail="Anything that uses it stops working at once." data-confirm-action="Revoke token">
+                <button type="submit" class="btn btn-sm btn-danger">Revoke</button>
+              </form>
+            </td>
+          </tr>
+        {{- end}}
+        </tbody>
+      </table>
+    </div>
+    {{- else}}
+    {{template "empty" (dict "Icon" "key" "Title" "No tokens yet" "Text" "Create one to clone and push over HTTPS.")}}
+    {{- end}}
+  </section>
+</div>
+
+<section class="panel" id="panel-password" data-tab-panel="password" aria-labelledby="password-title"{{if ne $d.Tab "password"}} hidden{{end}}>
+  <header class="panel-header"><h2 class="panel-title" id="password-title">Change password</h2></header>
+  <form method="post" action="/me/password" class="panel-body form form-narrow">
+    {{template "form-error" $d.PasswordForm.Error}}
+    {{template "field" field $d.PasswordForm "current_password" "Current password" "password" "required" "autocomplete:current-password"}}
+    {{template "field" field $d.PasswordForm "new_password" "New password" "password" "required" "autocomplete:new-password" "hint:At least 8 characters."}}
+    {{template "field" field $d.PasswordForm "confirm_password" "Confirm new password" "password" "required" "autocomplete:new-password"}}
+    <p class="field-hint">Changing it signs you out everywhere else.</p>
+    <div class="form-actions form-actions-start"><button type="submit" class="btn btn-primary">Change password</button></div>
+  </form>
+</section>
+
+<dialog class="dialog" id="token-new" aria-labelledby="token-new-title" data-dialog{{if eq $d.Dialog "token-new"}} open{{end}}>
+  <form method="post" action="/me/tokens" class="form">
+    <header class="dialog-header"><h2 class="dialog-title" id="token-new-title">New access token</h2>{{template "dialog-close" "/me"}}</header>
+    <div class="dialog-body">
+      {{template "form-error" $d.TokenForm.Error}}
+      {{template "field" field $d.TokenForm "name" "Name" "text" "required" "autofocus" "autocomplete:off" "hint:What it's for, like laptop or deploy script."}}
+      <fieldset class="choices">
+        <legend>Access</legend>
+        <label class="choice"><input type="radio" name="scope" value="read"{{if ne ($d.TokenForm.Get "scope") "write"}} checked{{end}}><span class="choice-label">Read</span><span class="choice-hint">Clone and fetch.</span></label>
+        <label class="choice"><input type="radio" name="scope" value="write"{{if eq ($d.TokenForm.Get "scope") "write"}} checked{{end}}><span class="choice-label">Read and write</span><span class="choice-hint">Also push, where the ref rules allow.</span></label>
+      </fieldset>
+      <div class="field">
+        <label class="field-label" for="f-expires">Expires</label>
+        <span class="select-wrap">
+          <select class="select" id="f-expires" name="expires"{{with index $d.TokenForm.Errors "expires"}} aria-invalid="true"{{end}}>
+            <option value="never">Never</option>
+            <option value="30"{{if eq ($d.TokenForm.Get "expires") "30"}} selected{{end}}>In 30 days</option>
+            <option value="90"{{if eq ($d.TokenForm.Get "expires") "90"}} selected{{end}}>In 90 days</option>
+          </select>
+        </span>
+      </div>
+    </div>
+    <footer class="dialog-footer"><button type="button" class="btn js-only" data-dialog-close>Cancel</button><button type="submit" class="btn btn-primary">Create token</button></footer>
+  </form>
+</dialog>
+</div>
+{{end}}

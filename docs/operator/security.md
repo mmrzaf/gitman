@@ -1,79 +1,110 @@
-# Security model and deployment hardening
+# Security model
 
-## CI worker privilege boundary
+## People
 
-The CI worker can mount `/var/run/docker.sock`. Access to that socket is effectively control of the Docker host. Ordinary job containers do not receive the socket. Pipelines with `docker: true` receive it only when the operator enables `GITMAN_CI_ALLOW_DOCKER_SOCKET=true` and the repository owner enables Docker socket trust for the matching branch, tag, or ref pattern. Those jobs effectively control the Docker host. Docker isolation is not a complete hostile multi-tenant boundary.
+- There are no anonymous users: every request, over the web or over Git,
+  authenticates as a specific person.
+- Anyone signed in can create a repository.
+- An **admin** additionally manages people (add, disable, enable, change
+  role) and every repository's settings: description, ref rules, secrets,
+  read access, and deletion. A person is disabled, never deleted, so
+  their name stays on what they did.
+- Authentication is a username plus either a password (web sign-in) or an
+  access token (Git over HTTPS, and any script using the token). There is
+  no SSH transport.
 
-Before allowing untrusted repository writers:
+## Repository read access
 
-- Run the worker on a dedicated machine or VM.
-- Put Docker storage and Gitman data on filesystems with kernel-enforced quotas.
-- Keep `GITMAN_CI_NETWORK=none` unless outbound access is explicitly required.
-- Keep worker concurrency low.
-- Pre-pull only approved images.
-- Run jobs as a numeric non-root UID:GID.
-- Leave `GITMAN_CI_ALLOW_DOCKER_SOCKET=false` unless Docker builds are restricted to trusted repositories on a dedicated runner.
-- Monitor Docker storage, Gitman data usage, free filesystem inodes, and worker logs.
-- Keep the worker storage reserve (`GITMAN_CI_STORAGE_MIN_FREE_BYTES` / `GITMAN_CI_STORAGE_MIN_FREE_INODES`) enabled. Gitman pauses new claims below the reserve, but kernel-enforced quotas remain the real containment boundary.
+Each repository has one visibility, set on its Settings page's **Access**
+tab or with `gitman admin repo visibility`:
 
-## Repository-writer trust
+- **Everyone** (the default) — any signed-in person can read it.
+- **Restricted** — only its explicit readers (`gitman admin reader
+  add`/`remove`/`list`) and admins can read it.
 
-A write collaborator can push a changed `.gitman-ci.yml` and manually trigger CI. Gitman always reads `.gitman-ci.yml` from the exact commit being run. Non-default branches and tags do not auto-run by default and do not receive secrets unless the owner adds a matching trust rule. Assume repository writers can read every secret exposed to jobs for that repository. Secret masking in logs is defense in depth only.
+To anyone who cannot read a restricted repository, it does not exist: it
+is left out of Home, the go-to-file finder, activity, live updates and
+every other list, and every route that names it — including Git's own
+clone, fetch and push — answers as if no repository by that name had ever
+existed, never with a distinguishable "forbidden." Nobody can push to a
+repository they cannot read, regardless of what its ref rules allow.
 
-## Git HTTP authentication
+## Ref rules
 
-Git Smart HTTP uses HTTP Basic for client compatibility, but the password field must be a personal access token. Account passwords are not accepted for Git clone, fetch, or push. Public read-only HTTP clones remain public for public repositories. New personal access tokens have a finite lifetime (30, 90, 180, or 365 days), an explicit repository scope, and an approximate last-use timestamp. `repo:read` tokens can clone/fetch and use read-only repository APIs; `repo:write` tokens can additionally push. New tokens default to read-only. Tokens that existed before beta 18 receive a 90-day rotation deadline and retain `repo:write` compatibility during migration. PATs are not accepted as browser-session credentials, preventing a read-only token from reaching HTML mutation flows through CSRF forms.
+Ref rules are the only other permission system, and the only thing that
+gates a pipeline's privileges. A rule matches branches or tags by pattern
+(`main`, `release/*`, `v*`); when more than one rule could match a given
+ref, the most specific pattern wins. A rule decides:
 
-Admin password resets revoke all existing browser sessions and personal access tokens for the user. Successful and failed login checks, self-registration, admin user/password operations, token and SSH-key changes, repository lifecycle/settings changes, collaborator changes, and CI secret/trusted-ref changes are written to Gitman's database audit trail. Audit metadata never includes token plaintext, passwords, SSH private material, or CI secret values. Requests rejected by the login rate limiter are not appended repeatedly after the source is already blocked.
+- **who may push** — everyone, admins only, or a named list of people
+  (`--push`, `--people`);
+- **whether force-push and deletion are allowed** (`--force`, `--delete`);
+- **whether a push runs the pipeline** (`--run`);
+- **whether a triggered run may use Docker** (`--docker`), **receive the
+  repository's secrets** (`--secrets`), and **record a deployment when it
+  ships to a target** (`--ship`).
 
-## Public repositories
+A ref that no rule matches is otherwise unprotected — force-push and
+deletion are always allowed on it, and pushes to it trigger nothing — but
+who may push to it follows the repository's **default push policy**
+(everyone, admins, or a named list of people; everyone by default), set
+next to its ref rules. A rule for that specific branch or tag overrides
+the default; force-push and deletion on an unmatched ref are unaffected
+either way. A brand new repository is fully usable immediately — rules
+and the default push policy only add restriction and grant pipeline
+capabilities, they're never required to use a repository at all.
 
-Public source is browseable anonymously and cloneable anonymously over HTTP. CI logs and artifacts remain limited to owners and explicit collaborators because they can contain sensitive build output.
+Set rules and the default push policy with `gitman admin rule set` /
+`gitman admin repo default-push` (see the
+[CLI reference](../reference/cli.md)) or from a repository's Settings
+page.
 
-## HTTPS and cookies
+## Docker access is the sensitive one
 
-For any non-local deployment:
+Allowing Docker (`--docker`) hands a pipeline the host's Docker socket,
+which is effectively root on the worker's host. Grant it only on refs
+whose pushers you'd trust with root on that machine — for example `main`
+restricted to admins, not every branch. Containers a step starts through
+the socket belong to that step; Gitman only stops and removes the step
+containers it started itself, never anything else on the host.
 
-```bash
-export GITMAN_PUBLIC_URL=https://git.example.com
-export GITMAN_FORCE_SECURE_COOKIES=true
-export GITMAN_TRUST_PROXY_HEADERS=true
-```
+The worker process itself runs as `root` in the supported Compose setup.
+Step containers run as whatever user their own image specifies, often
+root, and Gitman does not force a non-root user inside them; the worker
+must be able to remove whatever files they leave in a run's workspace.
+Holding the Docker socket makes the worker root-equivalent on the host
+either way. This is a property of how the worker is deployed, not
+something a ref rule changes.
 
-Enable proxy-header trust only when requests cannot bypass the trusted reverse proxy. Gitman sets strict SameSite cookies and sends security headers, including HSTS when HTTPS is detected or secure cookies are forced.
+A step's container has full outbound network access, the same as any
+other container on the host's Docker network: nothing in Gitman isolates
+a pipeline's network access per ref or per repository. This is what lets
+a step push an image to a registry, deploy over SSH, or upload a build
+artifact — see [Pipelines](../../README.md#pipelines) for examples — and
+it is also why `--docker` and, to a lesser extent, unrestricted outbound
+access are only for refs whose pushers are trusted.
 
-Browser login attempts are throttled in memory per normalized username/client-IP pair and per client IP. Proxy client IP headers are ignored unless `GITMAN_TRUST_PROXY_HEADERS=true`.
+## Secrets
 
-## Registration
+See [Secrets](../ci/secrets.md) — encrypted with `GITMAN_SECRET_KEY`,
+gated per-ref by `--secrets`, masked in stored run output, and never
+placed on a command line.
 
-Public account registration is off by default. Keep `GITMAN_ALLOW_REGISTER=false` unless open registration is intentional.
+## Cross-site request forgery
 
-## Secrets key management
+Every state-changing request (anything but GET/HEAD/OPTIONS) is checked
+against where it came from: the browser's `Sec-Fetch-Site` header, or
+failing that its `Origin` header, must say the request is same-origin. A
+cross-site request — from another site's form or script — is refused
+before it reaches a handler. A request carrying neither header does not
+come from a browser, so there is no forgery to prevent; this, together
+with the session cookie's `SameSite=Lax`, is the whole defense — there
+are no separate per-form CSRF tokens to keep in sync.
 
-Keep `GITMAN_SECRET_KEY` outside the data directory in a secret manager. Back it up separately. Rotation requires an application-level re-encryption plan; changing the value directly makes stored secrets unreadable.
+## Cookies and proxies
 
-## Backups are sensitive
-
-Full backups contain the SQLite database, repositories, and artifacts. Protect backups as production data. Generated `authorized_keys`, CI caches, and temporary workspaces are intentionally excluded; `authorized_keys` is rebuilt from the database on web startup.
-
-## Release hygiene
-
-Never distribute `.data/`, `data/`, SQLite files, repositories, artifacts, CI logs, generated `authorized_keys`, `.git/`, or local credentials in release archives. `.gitignore` is not a packaging control.
-
-## Security activity and audit review
-
-Authenticated users can open **Security** in the main navigation to review the most recent account-relevant events. The page includes actions performed by the account plus events that target it, such as failed sign-ins and administrator password resets. It deliberately renders a small allow-listed summary of audit metadata rather than dumping raw metadata into the browser.
-
-Operators can inspect the full bounded audit stream with:
-
-```bash
-gitman admin audit --limit 100
-```
-
-For log ingestion, use newline-delimited JSON:
-
-```bash
-gitman admin audit --limit 500 --json
-```
-
-Audit output is sensitive because it can contain usernames, source IPs, repository identifiers, token/key names, and CI secret **names**. It does not contain PAT plaintext, account passwords, SSH private material, or CI secret values.
+The session cookie's `Secure` attribute follows `GITMAN_PUBLIC_URL`'s
+scheme automatically. If Gitman is behind a reverse proxy, set
+`GITMAN_TRUSTED_PROXIES` to the proxy's actual reachable address —
+otherwise the sign-in rate limiter (and anything else keyed on client IP)
+treats every proxied client as the same one.

@@ -1,0 +1,88 @@
+# sms-gateway on Gitman. Every run builds sms-gateway:<version> on the
+# host's Docker; a v* tag also deploys it to production.
+#
+# Ref rules: develop and main need run and docker; v* tags need run,
+# docker and ship.
+image: docker:29-cli
+docker: true
+requires:
+  - golang:1.26-bookworm
+  - gcr.io/distroless/static-debian12:nonroot
+
+env:
+  DOCKER_BUILDKIT: "1"
+  GO_IMAGE: golang:1.26-bookworm
+  RUNTIME_IMAGE: gcr.io/distroless/static-debian12:nonroot
+  DEBIAN_MIRROR: http://linux-mirror.liara.ir/repository/debian
+  DEBIAN_SECURITY_MIRROR: http://linux-mirror.liara.ir/repository/debian-security
+  GOPROXY: https://mirror.abrha.net/repository/go/,direct
+
+targets:
+  production:
+    tag: "v*"
+    env:
+      DEPLOY_DIR: /srv/apps/sms-gateway
+
+steps:
+  - name: build image
+    run: |
+      set -eu
+      image="sms-gateway:$GITMAN_VERSION"
+      docker build \
+        --pull=false \
+        --build-arg GO_IMAGE="$GO_IMAGE" \
+        --build-arg RUNTIME_IMAGE="$RUNTIME_IMAGE" \
+        --build-arg DEBIAN_MIRROR="$DEBIAN_MIRROR" \
+        --build-arg DEBIAN_SECURITY_MIRROR="$DEBIAN_SECURITY_MIRROR" \
+        --build-arg GOPROXY="$GOPROXY" \
+        --build-arg VERSION="$GITMAN_VERSION" \
+        --build-arg COMMIT="$GITMAN_COMMIT" \
+        --label "org.opencontainers.image.title=sms-gateway" \
+        --label "org.opencontainers.image.revision=$GITMAN_COMMIT" \
+        --label "org.opencontainers.image.ref.name=$GITMAN_REF" \
+        --label "org.opencontainers.image.version=$GITMAN_VERSION" \
+        --tag "$image" \
+        -f deploy/Dockerfile \
+        .
+      echo "image=$image" >> "$GITMAN_SUMMARY"
+
+  - name: check image
+    run: |
+      set -eu
+      image="sms-gateway:$GITMAN_VERSION"
+      docker run --rm "$image" gateway version
+      revision="$(docker image inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")"
+      test "$revision" = "$GITMAN_COMMIT"
+
+  - name: deploy
+    when: production
+    run: |
+      set -eu
+      image="sms-gateway:$GITMAN_VERSION"
+      compose="$(cat deploy/docker-compose.prod.yml)"
+      docker run --rm \
+        --network host \
+        --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
+        --mount type=bind,src=/srv,dst=/srv \
+        --env DOCKER_HOST=unix:///var/run/docker.sock \
+        --env DEPLOY_DIR="$DEPLOY_DIR" \
+        --env IMAGE_REF="$image" \
+        --env COMPOSE_CONTENT="$compose" \
+        docker:29-cli sh -c '
+          set -eu
+          if [ ! -f "$DEPLOY_DIR/.env" ]; then
+            echo "Missing $DEPLOY_DIR/.env" >&2
+            exit 1
+          fi
+          printf "%s\n" "$COMPOSE_CONTENT" > "$DEPLOY_DIR/docker-compose.yml"
+          if grep -q "^APP_IMAGE=" "$DEPLOY_DIR/.env"; then
+            sed -i "s#^APP_IMAGE=.*#APP_IMAGE=$IMAGE_REF#" "$DEPLOY_DIR/.env"
+          else
+            printf "APP_IMAGE=%s\n" "$IMAGE_REF" >> "$DEPLOY_DIR/.env"
+          fi
+          docker compose \
+            --project-directory "$DEPLOY_DIR" \
+            --env-file "$DEPLOY_DIR/.env" \
+            -f "$DEPLOY_DIR/docker-compose.yml" \
+            up -d --remove-orphans
+        '

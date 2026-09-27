@@ -1,0 +1,52 @@
+# cerv on Gitman. A v* tag, which must match the VERSION file, builds
+# cerv:<version> on the host's Docker. A branch runs nothing.
+#
+# Ref rule: v* tags need run and docker.
+image: docker:29-cli
+docker: true
+requires:
+  - debian:trixie
+
+env:
+  DOCKER_BUILDKIT: "1"
+  BASE_IMAGE: debian:trixie
+  DEBIAN_MIRROR: http://linux-mirror.liara.ir/repository/debian
+  DEBIAN_SECURITY_MIRROR: http://linux-mirror.liara.ir/repository/debian-security
+
+steps:
+  - name: check the tag matches VERSION
+    when: tag
+    run: |
+      set -eu
+      tagged="${GITMAN_REF#v}"
+      version="$(cat VERSION)"
+      case "$tagged" in
+        "$version"|"$version"-*) ;;
+        *)
+          echo "Tag $GITMAN_REF does not match VERSION $version" >&2
+          exit 1
+          ;;
+      esac
+
+  - name: build image
+    when: tag
+    run: |
+      set -eu
+      image="cerv:${GITMAN_VERSION#v}"
+      docker build \
+        --pull=false \
+        --build-arg BASE_IMAGE="$BASE_IMAGE" \
+        --build-arg DEBIAN_MIRROR="$DEBIAN_MIRROR" \
+        --build-arg DEBIAN_SECURITY_MIRROR="$DEBIAN_SECURITY_MIRROR" \
+        --label "org.opencontainers.image.revision=$GITMAN_COMMIT" \
+        --label "org.opencontainers.image.ref.name=$GITMAN_REF" \
+        --label "org.opencontainers.image.version=${GITMAN_VERSION#v}" \
+        --tag "$image" \
+        .
+      echo "image=$image" >> "$GITMAN_SUMMARY"
+
+  - name: check image
+    when: tag
+    run: |
+      set -eu
+      docker run --rm "cerv:${GITMAN_VERSION#v}" --version | grep -qx "cerv $(cat VERSION)"

@@ -1,79 +1,46 @@
 # Getting started
 
-The fastest supported setup is Docker Compose on a Linux Docker host.
+Gitman runs with Docker Compose on a host that already runs Traefik and
+PostgreSQL in Docker. See [Docker deployment](operator/docker.md) for the
+full picture; this is the quickest path to a running instance.
 
-## 1. Choose web-only or web plus CI
+## Prerequisites
 
-A web-only server provides the browser UI and Git over HTTP:
+- Docker with the Compose plugin.
+- Traefik on an external Docker network named `proxy`.
+- PostgreSQL reachable as `postgres` on an external Docker network named
+  `data`, with a database and user for Gitman.
 
-```bash
-export GIT_UID=$(id -u)
-export GITMAN_DATA_DIR="$(pwd)/data"
-mkdir -p "$GITMAN_DATA_DIR"
-chmod 700 "$GITMAN_DATA_DIR"
-docker compose up -d --build web
+## Steps
+
+```sh
+docker build --build-arg VERSION=v1.0.0-beta.21 -t gitman:1.0.0-beta.21 .
+cp .env.example .env            # then fill it in — see operator/configuration.md
+sudo install -d -o 1000 -g 1000 /srv/apps/gitman/data
+docker compose up -d
 ```
 
-To run the built-in CI worker too, grant the worker access to the Docker socket and start both services:
+`.env` needs at least `GITMAN_IMAGE`, `GITMAN_DOMAIN`,
+`GITMAN_DATABASE_URL` and `GITMAN_DATA_DIR`. See [Configuration
+reference](operator/configuration.md) for every setting.
 
-```bash
-export GIT_UID=$(id -u)
-export DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)
-export GITMAN_DATA_DIR="$(pwd)/data"
-mkdir -p "$GITMAN_DATA_DIR"
-chmod 700 "$GITMAN_DATA_DIR"
-docker compose up -d --build
+Create the first admin; the command prints their generated password:
+
+```sh
+docker compose exec web gitman admin person add --admin darius
 ```
 
-The default published address is `127.0.0.1:8080`.
+Sign in at `https://<GITMAN_DOMAIN>`, create a repository from Home, and
+create an access token for yourself under **Access tokens** (in the menu
+under your username, top right of every page). Git uses your username and
+that token as the password:
 
-## 2. Create the first account
-
-Passwords are read from standard input so they do not appear in shell history or process listings.
-
-```bash
-read -rsp 'Admin password: ' ADMIN_PASSWORD; printf '\n'
-printf '%s\n' "$ADMIN_PASSWORD" | docker compose exec -T web gitman admin users create admin
-unset ADMIN_PASSWORD
+```sh
+git clone https://git.example.com/waiotech.git
 ```
 
-Usernames must be 3 to 32 characters and contain only letters, numbers, dashes, and underscores. Passwords must be 8 to 72 bytes and contain at least one letter and one digit. The maximum matches Gitman's bcrypt password-hashing limit.
+A read token can clone and fetch; pushing needs a write token.
 
-## 3. Sign in and create a repository
-
-Open `http://localhost:8080`, sign in, open **Repositories**, and create a repository. Repositories can be public or private.
-
-## 4. Push over HTTP
-
-Create a personal access token from **Access Tokens** and choose **Read & write (push)** for this walkthrough. New tokens default to read-only, which is sufficient for clone/fetch but intentionally cannot push. The token is displayed once.
-
-```bash
-git remote add origin http://localhost:8080/admin/example.git
-git branch -M main
-git push -u origin main
-```
-
-When Git prompts for credentials, use your Gitman username and a personal access token as the password. Account passwords are not accepted for Git Smart HTTP.
-
-## 5. Enable CI only when needed
-
-Pre-pull each approved job image on the Docker host. Gitman will not pull images during a run.
-
-```bash
-docker pull debian:bookworm-slim
-```
-
-Add a root-level `.gitman-ci.yml` to a repository:
-
-```yaml
-image: debian:bookworm-slim
-steps:
-  - name: verify
-    run: echo "CI is working"
-```
-
-Push the file, open the repository's **CI** page, and select **Run CI**. Gitman manages the repository's durable post-receive trigger automatically.
-
-## 6. Before exposing Gitman
-
-Configure HTTPS, set `GITMAN_PUBLIC_URL`, enable secure cookies, and read the [security guide](operator/security.md). SSH transport is separate and optional; see [SSH setup](operator/ssh.md).
+Gitman never pulls Docker images itself — every image a pipeline uses
+(its `image`, and anything in `requires`) must already exist on the
+worker's Docker host before a run needs it.

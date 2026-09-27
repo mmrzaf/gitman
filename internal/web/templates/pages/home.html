@@ -1,0 +1,114 @@
+{{define "content"}}
+<div class="page">
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title" id="home-title">Home</h1>
+  </div>
+  <div class="page-actions">
+    <span class="live js-only" data-live-status data-state="connecting" role="status">{{template "icon" "live"}}<span data-live-label>Connecting…</span></span>
+    <a class="btn btn-primary" href="/?dialog=new-repo" data-dialog-open="new-repo" data-command="Create a repository">{{template "icon" "plus"}}New repository</a>
+  </div>
+</header>
+
+<div class="split">
+  <div class="split-main">
+    <section class="panel" aria-labelledby="progress-title">
+      <header class="panel-header"><h2 class="panel-title" id="progress-title">{{template "icon" "running"}}Running now</h2></header>
+      <div data-live-region="progress">
+        {{- if .Data.NoWorker}}
+        <div class="panel-body"><div class="callout is-queued" role="note">{{template "icon" "queued"}}<p class="callout-body">No worker is online, so queued runs wait until one starts.</p></div></div>
+        {{- end}}
+        {{- if .Data.InProgress}}
+        <ol class="runlist">
+          {{- range .Data.InProgress}}
+          <li class="runlist-item">
+            {{template "status" .Status}}
+            <p class="runlist-main">
+              <a class="feed-repo" href="/{{.RepoName}}">{{.RepoName}}</a>
+              <a href="/{{.RepoName}}/runs/{{.Number}}">Run #{{.Number}}</a>
+              {{template "ref" (dict "Kind" .RefKind "Name" .RefName)}}
+              {{if .Actor}}<span class="muted">by {{.Actor}}</span>{{end}}
+            </p>
+            <span class="runlist-meta">{{if .StartedAt}}started {{template "time" .StartedAt}}{{else}}queued {{template "time" .QueuedAt}}{{end}}</span>
+          </li>
+          {{- end}}
+        </ol>
+        {{- else}}
+        <p class="empty empty-compact">Nothing is running.</p>
+        {{- end}}
+      </div>
+    </section>
+
+    <section class="panel board" aria-labelledby="board-title">
+      <header class="panel-header"><h2 class="panel-title" id="board-title">{{template "icon" "ship"}}Deployed</h2></header>
+      <div data-live-region="board">
+        {{- if .Data.Board}}
+        <div class="table-scroll">
+          <table class="table">
+            <thead>
+              <tr>
+                <th scope="col">Repository</th>
+                {{- range .Data.Targets}}<th scope="col">{{.}}</th>{{end}}
+                {{- if not .Data.Targets}}<th scope="col">Targets</th>{{end}}
+              </tr>
+            </thead>
+            <tbody>
+            {{- range $repo := .Data.Board}}
+              <tr>
+                <th scope="row">
+                  <div class="board-repo">
+                    <a href="/{{$repo.Name}}" class="truncate">{{$repo.Name}}</a>
+                    {{with $repo.Description}}<span class="board-repo-description">{{.}}</span>{{end}}
+                  </div>
+                </th>
+                {{- range $.Data.Targets}}
+                <td>
+                  {{- with index $repo.Live .}}
+                  <div class="board-cell">
+                    <span class="version truncate" title="{{.Version}}">{{.Version}}</span>
+                    <span class="board-cell-meta">{{template "commit" (dict "Repo" $repo.Name "Hash" .Commit)}}{{template "time" .At}}{{if .RunNumber}}<a href="/{{$repo.Name}}/runs/{{.RunNumber}}">#{{.RunNumber}}</a>{{end}}</span>
+                  </div>
+                  {{- else}}<span class="board-none">—<span class="visually-hidden">nothing shipped</span></span>{{end}}
+                </td>
+                {{- end}}
+                {{- if not $.Data.Targets}}<td class="cell-muted">Nothing shipped yet</td>{{end}}
+              </tr>
+            {{- end}}
+            </tbody>
+          </table>
+        </div>
+        {{- else}}
+        {{template "empty" (dict "Icon" "repo" "Title" "No repositories yet")}}
+        {{- end}}
+      </div>
+    </section>
+  </div>
+
+  <aside class="split-side">
+    <section class="panel" aria-labelledby="timeline-title">
+      <header class="panel-header"><h2 class="panel-title" id="timeline-title">{{template "icon" "history"}}Activity</h2></header>
+      <div class="feed-scroll" data-live-region="timeline">{{template "feed" (dict "Entries" .Data.Timeline "ShowRepo" true)}}</div>
+    </section>
+  </aside>
+</div>
+
+<dialog class="dialog" id="new-repo" aria-labelledby="new-repo-title" data-dialog{{if eq .Data.Dialog "new-repo"}} open{{end}}>
+  <form method="post" action="/repos" class="form">
+    <header class="dialog-header">
+      <h2 class="dialog-title" id="new-repo-title">New repository</h2>
+      {{template "dialog-close" "/"}}
+    </header>
+    <div class="dialog-body">
+      {{template "form-error" .Data.CreateForm.Error}}
+      {{template "field" field .Data.CreateForm "name" "Name" "text" "required" "autofocus" "autocomplete:off" "hint:Letters, digits, dashes and underscores."}}
+      {{template "field" field .Data.CreateForm "description" "Description" "text" "hint:Optional."}}
+      {{template "field" field .Data.CreateForm "default_branch" "Default branch" "text" "hint:main, if left blank."}}
+    </div>
+    <footer class="dialog-footer">
+      <button type="button" class="btn js-only" data-dialog-close>Cancel</button>
+      <button type="submit" class="btn btn-primary">Create repository</button>
+    </footer>
+  </form>
+</dialog>
+</div>
+{{end}}

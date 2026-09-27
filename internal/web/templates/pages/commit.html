@@ -1,0 +1,28 @@
+{{define "content"}}
+{{$d := .Data}}{{$repo := $d.Repo}}{{$c := $d.Commit}}
+<div class="page">
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="commit-message" id="commit-title">{{$c.Subject}}</h1>
+    {{- if $c.Body}}<pre class="commit-body">{{$c.Body}}</pre>{{end}}
+    <p class="commit-meta">
+      <span>{{template "icon" "person"}}{{template "person" $c.Author.Name}} committed {{template "time" $c.Author.When}}</span>
+      {{- if ne $c.Author.Name $c.Committer.Name}}
+      <span>with {{template "person" $c.Committer.Name}}</span>
+      {{- end}}
+      <span>{{template "icon" "commit"}}<span class="hash">{{$c.Hash}}</span>
+        <button type="button" class="btn btn-ghost btn-icon btn-sm js-only" data-copy="{{$c.Hash}}" aria-label="Copy the full commit hash">{{template "icon" "copy"}}</button></span>
+      {{- range $c.Parents}}
+      <span>parent {{template "commit" (dict "Repo" $repo.Name "Hash" .)}}</span>
+      {{- end}}
+    </p>
+  </div>
+  <div class="page-actions">
+    <a class="btn" href="{{refURL $repo.Name $c.Hash ""}}" data-command="Browse files at this commit">{{template "icon" "code"}}Browse files</a>
+  </div>
+</header>
+<div class="stack">
+{{template "diff" (dict "Diff" $d.Diff)}}
+</div>
+</div>
+{{end}}

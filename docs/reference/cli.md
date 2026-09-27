@@ -1,76 +1,73 @@
 # CLI reference
 
-## General help
+The `gitman` binary picks its role from its first argument.
 
-```bash
-gitman
-gitman version
-gitman --version
+## Top-level commands
+
+| Command | Purpose |
+|---|---|
+| `gitman web` | Run the web process (Git over HTTP and the web interface). |
+| `gitman worker` | Run the worker process (claims and runs pipelines). |
+| `gitman admin ...` | Manage people, tokens, repositories and rules. |
+| `gitman hook ...` | Run a Git hook. Started by Git itself, not by hand. |
+| `gitman check <file>` | Validate a `.gitman.yml` pipeline file. |
+| `gitman version` | Print the Gitman version (`gitman <version>`). |
+
+## `gitman admin`
+
+Run inside the `web` container in the supported Compose setup:
+`docker compose exec web gitman admin ...`.
+
+```
+gitman admin person add [--admin] <username>
+gitman admin person list | disable | enable | reset-password <username>
+gitman admin person role <username> admin|member
+gitman admin token create [--write] [--days N] <username> <name>
+gitman admin repo create [--description TEXT] [--default-branch NAME] <name>
+gitman admin repo list | delete <name> | sync <name>
+gitman admin repo visibility <name> everyone|restricted
+gitman admin repo default-branch <name> <branch>
+gitman admin repo default-push [--push everyone|admins|people] [--people a,b] <name>
+gitman admin reader add | remove <repo> <username>
+gitman admin reader list <repo>
+gitman admin rule list <repo>
+gitman admin rule set [--push everyone|admins|people] [--people a,b] [--force] [--delete]
+                      [--run] [--docker] [--secrets] [--ship] <repo> branch|tag <pattern>
+gitman admin rule delete <repo> branch|tag <pattern>
+gitman admin run cancel <repo> <number>
+gitman admin worker cleanup
+gitman admin migrate
 ```
 
-## Start web
+Flags go before the positional arguments.
 
-```bash
-gitman web
-gitman web --port 8081
-```
+### Notes
 
-## Start CI worker
-
-```bash
-gitman worker
-```
-
-## SSH forced-command handler
-
-```bash
-gitman serve <keyID>
-```
-
-This command is invoked by generated OpenSSH forced commands. Users should not invoke it directly.
-
-## User administration
-
-```bash
-read -rsp 'Password: ' USER_PASSWORD; printf '\n'
-printf '%s\n' "$USER_PASSWORD" | gitman admin users create alice
-unset USER_PASSWORD
-
-read -rsp 'New password: ' USER_PASSWORD; printf '\n'
-printf '%s\n' "$USER_PASSWORD" | gitman admin users reset-password alice
-unset USER_PASSWORD
-
-gitman admin users delete alice
-```
-
-Deleting a user removes their database record, repositories, artifacts, caches, and SSH-key entries after moving active repository files out of the live namespace.
-
-## Backups
-
-```bash
-gitman admin repos backup <destination>
-gitman admin repos backup-all <destination>
-gitman admin repos configure-all
-```
-
-See [backups and upgrades](../operator/backups-and-upgrades.md).
-
-`configure-all` verifies managed repository storage, applies the configured Git receive-pack input ceiling, and reconciles Gitman's managed CI post-receive hook. It refuses to overwrite an operator-owned hook.
-
-## Operational status
-
-```bash
-gitman admin status
-```
-
-Reports the Gitman version, current database schema, repository/artifact storage readiness, recent CI worker counts, active jobs, pending queue depth/oldest queued time, and production-configuration warnings. The command exits non-zero when core readiness checks fail, CI status cannot be queried, or pending CI work has no healthy worker.
-
-## Audit trail
-
-```bash
-gitman admin audit
-gitman admin audit --limit 250
-gitman admin audit --json
-```
-
-The audit command prints newest-first security events. `--json` emits newline-delimited JSON for ingestion into log tooling. Output can include usernames, source IPs, repository/token/key identifiers, and non-secret event metadata, so treat it as security-sensitive operational data.
+- `admin person add --admin` creates an admin account; the command prints
+  the generated password. `disable`/`enable` toggle sign-in without
+  deleting the account — people are never deleted.
+- `admin token create --write` grants a token push access, not just
+  clone/fetch. `--days N` sets an expiry.
+- `admin repo sync <name>` rebuilds a repository's ref index from Git —
+  needed after restoring `repos/` from a different point in time than the
+  database. See [Backups and upgrades](../operator/backups-and-upgrades.md).
+- `admin repo visibility` sets who may read a repository; `restricted`
+  limits it to its readers (`admin reader add`/`remove`/`list`) and
+  admins. `admin repo default-push` sets who may push to a branch or tag
+  no rule matches. See [Repository read
+  access](../operator/security.md#repository-read-access).
+- `admin repo default-branch` moves a repository's default branch — what
+  a clone checks out — to a branch it already has. See [Default
+  branch](../user-guide.md#default-branch).
+- `admin rule set` flags map directly to what a rule grants: `--force`/
+  `--delete` (force-push/deletion), `--run` (pushes trigger the
+  pipeline), `--docker`/`--secrets`/`--ship` (what a triggered run may
+  use). See [Security model](../operator/security.md).
+- `admin run cancel` stops a run in progress; the same is available from
+  a run's page in the UI to anyone allowed to push to its ref.
+- `admin worker cleanup` reclaims step containers and workspaces left
+  behind by a worker that was killed outright (SIGKILL, OOM) rather than
+  shut down normally. See [Troubleshooting](../troubleshooting.md).
+- `admin migrate` runs pending database migrations by hand; normally
+  unnecessary, since `web` and `worker` both run migrations automatically
+  on start.

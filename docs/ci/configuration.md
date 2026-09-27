@@ -1,116 +1,79 @@
-# CI configuration
-
-Gitman reads `.gitman-ci.yml` from the repository root of the selected commit.
-
-## Minimal example
+# Pipeline configuration (`.gitman.yml`)
 
 ```yaml
-image: debian:bookworm-slim
+image: docker:29-cli           # every step runs in this image
+docker: true                   # steps use the host's Docker; a ref rule must allow it
+timeout: 20m                   # the whole run; default 30m, at most 24h
+requires:                      # images that must already be on the host
+  - golang:1.27-bookworm
+  - debian:bookworm-slim
+env:                           # for every step
+  GOPROXY: https://goproxy.example.com,direct
+
+targets:                       # where a ref ships to
+  staging:
+    branch: develop
+    env:
+      DEPLOY_DIR: /srv/apps/waiotech-stage
+  production:
+    tag: "v*"
+    env:
+      DEPLOY_DIR: /srv/apps/waiotech
+
 steps:
-  - name: verify
-    run: |
-      echo "Repository: $GITMAN_REPO"
-      echo "Commit: $GITMAN_COMMIT"
+  - name: build
+    run: docker build --pull=false --build-arg GOPROXY="$GOPROXY" -t "waiotech:$GITMAN_VERSION" .
+  - name: check
+    run: docker run --rm "waiotech:$GITMAN_VERSION" waiotech version
+  - name: deploy
+    when: target               # always (default), target, branch, tag, or a target's name
+    run: ./deploy.sh "$DEPLOY_DIR" "waiotech:$GITMAN_VERSION"
 ```
 
-## Full example
+A pipeline is meant to stay this light: build, check, and deploy. Each
+step is one container; Gitman starts no databases or other services
+next to it, so tests that need them belong in a CI that has them.
 
-```yaml
-image: golang:1.27-bookworm
-env:
-  APP_ENV: test
-  GOMODCACHE: /gitman/cache/go/pkg/mod
-  GOCACHE: /gitman/cache/go/build
-  DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
-steps:
-  - name: prepare cache
-    run: |
-      mkdir -p "$GOMODCACHE" "$GOCACHE"
-  - name: test
-    run: go test -coverprofile=coverage.out ./...
-  - name: save report
-    run: cp coverage.out /gitman/artifacts/coverage.out
+## Fields
+
+- **`image`** (required) — the Docker image every step runs in.
+- **`docker`** — when `true`, steps get the host's Docker socket. This is
+  root on the worker's host; a ref rule must separately allow it
+  (`--docker` on `gitman admin rule set`) before a run on that ref can use
+  it. See [Security model](../operator/security.md).
+- **`timeout`** — the whole run's limit, not per step. Defaults to 30
+  minutes; at most 24 hours.
+- **`requires`** — images that must already be on the worker's host,
+  such as the base images a `docker build --pull=false` uses. A run
+  checks them, and `image`, before its first step, and fails naming any
+  that is missing. Gitman never pulls them, and starts nothing from
+  them.
+- **`env`** — variables set for every step. Keys starting with `GITMAN_`
+  are rejected — that prefix is reserved for the variables below.
+- **`targets`** — a map of name to where a ref ships. Each target matches
+  either a `branch` or a `tag` pattern (`main`, `release/*`, `v*`). When a
+  run's ref matches more than one target's pattern, the most specific
+  pattern wins. A target's own `env` is merged over the pipeline's `env`
+  only for a run that resolved to it.
+- **`steps`** — run in order. The first failing step ends the run; later
+  steps are skipped. Each step is:
+  - **`name`** — shown on the run's page.
+  - **`when`** — `always` (the default), `target` (any target matched),
+    `branch`, `tag`, or a target's own name (only that target matched).
+  - **`run`** — the shell script for the step.
+
+## Variables every step gets
+
+- `GITMAN_REPO`, `GITMAN_RUN`, `GITMAN_COMMIT`, `GITMAN_SHORT`
+- `GITMAN_REF`, `GITMAN_REF_KIND`, `GITMAN_TARGET`
+- `GITMAN_VERSION` — for a tag, its name with anything but letters, digits,
+  `.`, `-` and `_` replaced by `-`; for a branch, the commit's first 12
+  characters. It is safe as a Docker image tag.
+- `GITMAN_SUMMARY` — a file path; lines of `key=value` appended to it
+  appear on the run's page
+
+## Checking a file
+
+```sh
+gitman check .gitman.yml
 ```
-
-This Go example assumes required modules are already present in the image or a warmed cache. The default CI network mode is `none`.
-
-## Schema
-
-| Key | Required | Type | Notes |
-| --- | --- | --- | --- |
-| `image` | Yes | String | Docker image reference. Must already exist on the runner. |
-| `docker` | No | Boolean | Request host Docker socket access. Requires operator opt-in and matching ref-rule approval. Use only for trusted repositories and refs. |
-| `env` | No | Mapping of strings | Environment keys must match `[A-Z][A-Z0-9_]*`. Keys starting with `GITMAN_` are reserved. |
-| `steps` | Yes | List | At least one step, maximum 200. |
-| `steps[].name` | Yes | String | Non-empty, maximum 120 characters, no CR/LF/NUL. |
-| `steps[].run` | Yes | String | Non-empty shell content, no NUL. Executed by `/bin/sh` with `set -eu`. |
-
-The file must be a regular file, not a symlink. Its maximum size is 256 KiB. Unknown YAML fields and multiple YAML documents are rejected.
-
-## Secret references
-
-A secret reference must be the complete environment value:
-
-```yaml
-env:
-  DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
-```
-
-Interpolation inside a larger string is not supported.
-
-## Built-in environment variables
-
-Every run receives:
-
-| Variable | Meaning |
-| --- | --- |
-| `GITMAN_REPO` | `<owner>/<repository>` |
-| `GITMAN_COMMIT` | Resolved commit hash |
-| `GITMAN_BRANCH` | Branch name when applicable |
-| `GITMAN_TAG` | Tag name when applicable |
-| `GITMAN_EVENT` | `manual` or `push` |
-| `GITMAN_RUN_ID` | CI run identifier |
-
-User-defined environment values and stored secret values cannot contain NUL, carriage-return, or newline characters.
-
-## Container filesystem
-
-| Path | Mode | Purpose |
-| --- | --- | --- |
-| `/workspace` | Writable bind mount | Repository checkout and current working directory |
-| `/gitman/artifacts` | Writable bind mount | Files copied out as artifacts |
-| `/gitman/cache` | Writable bind mount when cache lock succeeds | Persistent repository-scoped cache |
-| `/tmp` | Writable tmpfs, 256 MiB, executable | Temporary files and generated home directory |
-| Container root filesystem | Read-only | Image contents |
-
-The selected image must contain `/bin/sh`.
-
-## Docker builds
-
-A trusted repository can request access to the runner host Docker daemon:
-
-```yaml
-image: docker:29-cli
-docker: true
-steps:
-  - name: verify Docker access
-    run: docker version
-```
-
-The worker mounts `/var/run/docker.sock`, adds the socket group ID to the job container, and sets `DOCKER_HOST=unix:///var/run/docker.sock`. Operators must explicitly enable this with `GITMAN_CI_ALLOW_DOCKER_SOCKET=true`. Docker-enabled jobs effectively control the runner host Docker daemon. Do not enable this for untrusted repositories or shared multi-tenant runners.
-
-## Network and images
-
-The default network mode is `none`. Dependencies must come from the image, repository, or a warmed `/gitman/cache` mount. Operators can change `GITMAN_CI_NETWORK`, but doing so expands the trust boundary.
-
-Gitman uses `docker run --pull never`. Ask an operator to pre-pull or build approved images before referencing them.
-
-## Log format and failure handling
-
-Gitman writes timestamped CI logs. Each shell step prints a start marker and either a success marker or a failure marker with the exit code. Failures that happen before the job container starts, such as Docker socket policy denial, missing local image, bad path mapping, or disk-limit failures, are printed with `ERROR`, `Details`, and a practical `Fix` line.
-
-Git checkout uses detached commits internally, but Gitman's worker suppresses Git's detached-head advice so logs stay focused on CI output.
-
-## Cache behavior
-
-The worker serializes cache writes per repository. If it cannot obtain the cache lock promptly, the job runs without `/gitman/cache`. Keep jobs correct when the cache is absent.

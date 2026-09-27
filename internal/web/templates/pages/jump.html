@@ -1,0 +1,42 @@
+{{define "content"}}
+<div class="page page-narrow">
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title" id="jump-title">Jump to</h1>
+  </div>
+</header>
+<div class="stack" data-jump>
+  <section class="panel" aria-labelledby="jump-pages">
+    <header class="panel-header"><h2 class="panel-title" id="jump-pages">Pages</h2></header>
+    <ul class="jump-list">
+      <li><a href="/" data-group="Go to" data-icon="home">{{template "icon" "home"}}Home</a></li>
+      <li><a href="/me" data-group="Go to" data-icon="key">{{template "icon" "key"}}Access tokens</a></li>
+      <li><a href="/me?tab=password" data-group="Go to" data-icon="lock">{{template "icon" "lock"}}Change password</a></li>
+      {{- if .Person.IsAdmin}}
+      <li><a href="/people" data-group="Go to" data-icon="person">{{template "icon" "person"}}People</a></li>
+      {{- end}}
+    </ul>
+  </section>
+  <section class="panel" aria-labelledby="jump-repos">
+    <header class="panel-header"><h2 class="panel-title" id="jump-repos">Repositories <span class="panel-count">{{len .Data.Repos}}</span></h2></header>
+    {{- if .Data.Repos}}
+    <ul class="jump-list">
+      {{- range .Data.Repos}}
+      <li>
+        <a href="/{{.Name}}" data-group="Repositories" data-icon="repo" data-hint="{{.Description}}">{{template "icon" "repo"}}{{.Name}}</a>
+        <span class="jump-more">
+          <a href="{{refURL .Name .DefaultBranch ""}}" data-group="Files" data-icon="code" data-label="{{.Name}} files">Files</a>
+          {{- if $.Person.IsAdmin}}
+          <a href="/{{.Name}}/settings" data-group="Settings" data-icon="settings" data-label="{{.Name}} settings">Settings</a>
+          {{- end}}
+        </span>
+      </li>
+      {{- end}}
+    </ul>
+    {{- else}}
+    {{template "empty" (dict "Icon" "repo" "Title" "No repositories yet")}}
+    {{- end}}
+  </section>
+</div>
+</div>
+{{end}}

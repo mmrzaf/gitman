@@ -1,0 +1,22 @@
+{{define "content"}}
+<div class="centered">
+  <section class="signin" aria-labelledby="login-title">
+    <div class="signin-brand">
+      <img class="signin-mark" src="{{asset "brand/gitman-mark-64.png"}}" alt="" width="40" height="40">
+      <div>
+        <h1 id="login-title">Sign in to Gitman</h1>
+        <p class="signin-host">{{.Data.Host}}</p>
+      </div>
+    </div>
+    <div class="panel">
+      <form method="post" action="/login" class="panel-body form">
+        {{template "form-error" .Data.Form.Error}}
+        <input type="hidden" name="next" value="{{.Data.Next}}">
+        {{template "field" field .Data.Form "username" "Username" "text" "required" "autofocus" "autocomplete:username"}}
+        {{template "field" field .Data.Form "password" "Password" "password" "required" "autocomplete:current-password"}}
+        <button type="submit" class="btn btn-primary btn-block">Sign in</button>
+      </form>
+    </div>
+  </section>
+</div>
+{{end}}
