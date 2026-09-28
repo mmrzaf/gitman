@@ -6,16 +6,20 @@ Releases are cut by pushing a tag matching `v*` (e.g. `v1.0.0`,
 1. On `develop` (or the branch you're releasing from), make sure `main`
    is up to date and `go.mod`'s `go` directive matches the Go version you
    intend to ship with.
-2. Run the local verification set before tagging:
+2. Add the release's section to [`CHANGELOG.md`](../../CHANGELOG.md),
+   headed `## [1.2.3] - YYYY-MM-DD`, and tick off what shipped in
+   [`ROADMAP.md`](../../ROADMAP.md). The release workflow publishes that
+   section as the release notes, and fails without one.
+3. Run the local verification set before tagging:
    ```sh
    make verify
    ```
-3. Tag and push:
+4. Tag and push:
    ```sh
    git tag v1.2.3
    git push origin v1.2.3
    ```
-4. The `release` workflow runs, in order:
+5. The `release` workflow runs, in order:
    - **release-metadata** — validates the tag looks like `v1.2.3` or
      `v1.2.3-beta.4` and derives whether it's a prerelease.
    - **verify** — checks out the tag, with the Go version `go.mod` names,
@@ -33,11 +37,11 @@ Releases are cut by pushing a tag matching `v*` (e.g. `v1.0.0`,
      downloadable `.tar.gz`, for offline installs.
    - **create-release** — publishes a GitHub Release with every artifact
      above, their `SHA256SUMS` (check a download with
-     `sha256sum -c --ignore-missing SHA256SUMS`), and generated release
-     notes.
-5. To republish an existing tag (for example after a workflow-only fix),
+     `sha256sum -c --ignore-missing SHA256SUMS`), and its `CHANGELOG.md`
+     section as the notes.
+6. To republish an existing tag (for example after a workflow-only fix),
    use the workflow's `workflow_dispatch` input instead of re-tagging.
-6. Verify after the workflow completes:
+7. Verify after the workflow completes:
    - The GHCR image pulls and runs: `docker run --rm ghcr.io/<repo>:1.2.3 gitman version`.
    - The GitHub Release has all expected assets and a `SHA256SUMS` file.
 
