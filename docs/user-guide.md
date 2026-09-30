@@ -52,8 +52,8 @@ Its nav has four items:
 
 The files of a branch, tag or commit are a step down from where you are
 looking at changes, not a section of their own: a branch or tag's name on the
-Overview opens its files, **Browse files** is on the Overview and on
-Commits, and a commit's page has one too. Jump to a file by path with the
+Overview opens its files, **Browse files** is on Commits, and a commit's
+page has one too. Jump to a file by path with the
 go-to-file finder, and **Commits** on a file or directory lists the commits
 that changed it. **Download**, next to the ref picker, gives the whole tree
 as a `.tar.gz`.
@@ -62,8 +62,7 @@ as a `.tar.gz`.
 
 An archive of any branch, tag or commit is at
 `/<repo>/archive/<ref>.tar.gz` or `.zip`; **Download** next to the ref
-picker on Files, and on the Overview, is the `.tar.gz`, and the `.zip` is at
-its address. You
+picker on Files is the `.tar.gz`, and the `.zip` is at its address. You
 must be signed in, as for any page: access tokens are for Git.
 
 The file is named `<repo>-<ref>`, with any `/` in the ref written as `-`,

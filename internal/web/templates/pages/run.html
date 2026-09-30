@@ -62,7 +62,7 @@
   <div class="run-side">
     <nav class="panel" aria-labelledby="steps-title">
       <header class="panel-header">
-        <h2 class="panel-title" id="steps-title">Steps <span class="panel-count">{{len $run.Steps}}</span></h2>
+        <h2 class="panel-title" id="steps-title">{{template "icon" "play"}}Steps <span class="count">{{len $run.Steps}}</span></h2>
       </header>
       <ol class="steps" data-live-region="run-steps">
         {{- range $run.Steps}}
@@ -77,7 +77,7 @@
     <div data-live-region="run-results">
       {{- if $run.Results}}
       <section class="panel" aria-labelledby="results-title">
-        <header class="panel-header"><h2 class="panel-title" id="results-title">Summary</h2></header>
+        <header class="panel-header"><h2 class="panel-title" id="results-title">{{template "icon" "info"}}Summary</h2></header>
         <dl class="summary">
           {{- range $run.Results}}
           <div><dt>{{.Key}}</dt><dd>{{.Value}}</dd></div>

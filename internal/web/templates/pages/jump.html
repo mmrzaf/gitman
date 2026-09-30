@@ -7,7 +7,7 @@
 </header>
 <div class="stack" data-jump>
   <section class="panel" aria-labelledby="jump-pages">
-    <header class="panel-header"><h2 class="panel-title" id="jump-pages">Pages</h2></header>
+    <header class="panel-header"><h2 class="panel-title" id="jump-pages">{{template "icon" "search"}}Pages</h2></header>
     <ul class="jump-list">
       <li><a href="/" data-group="Go to" data-icon="home">{{template "icon" "home"}}Home</a></li>
       <li><a href="/me" data-group="Go to" data-icon="key">{{template "icon" "key"}}Access tokens</a></li>
@@ -18,7 +18,7 @@
     </ul>
   </section>
   <section class="panel" aria-labelledby="jump-repos">
-    <header class="panel-header"><h2 class="panel-title" id="jump-repos">Repositories <span class="panel-count">{{len .Data.Repos}}</span></h2></header>
+    <header class="panel-header"><h2 class="panel-title" id="jump-repos">{{template "icon" "repo"}}Repositories <span class="count">{{len .Data.Repos}}</span></h2></header>
     {{- if .Data.Repos}}
     <ul class="jump-list">
       {{- range .Data.Repos}}

@@ -29,12 +29,29 @@
 {{define "time"}}<time datetime="{{iso .}}" title="{{datetime .}}" data-relative>{{ago .}}</time>{{end}}
 
 {{/* empty: what a list says when it has nothing to show. Takes (dict
-     "Icon" "Title" and optionally "Text"). */}}
+     "Icon" "Title" and optionally "Text"); with "Compact" true it is the
+     title alone, on one line, for a small panel. */}}
 {{define "empty"}}
+{{- if .Compact}}
+<p class="empty empty-compact">{{.Title}}</p>
+{{- else}}
 <div class="empty">
   {{template "icon" .Icon}}
   <p class="empty-title">{{.Title}}</p>
   {{with .Text}}<p>{{.}}</p>{{end}}
+</div>
+{{- end}}
+{{end}}
+
+{{/* first-push: what a repository with nothing pushed says, and the two
+     commands that change that. Takes (dict "Clone" url "Branch" name). */}}
+{{define "first-push"}}
+<div class="empty">
+  {{template "icon" "push"}}
+  <p class="empty-title">No pushes yet</p>
+  <p>Push an existing repository to start:</p>
+  <pre class="secret-value"><code>git remote add origin {{.Clone}}
+git push -u origin {{.Branch}}</code></pre>
 </div>
 {{end}}
 

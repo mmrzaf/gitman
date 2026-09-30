@@ -50,19 +50,12 @@ type targetView struct {
 // Overview's strip shows.
 const runStripLength = 12
 
-// overviewTags is how many tags the Overview lists before "all tags".
-const overviewTags = 10
-
 type repositoryPage struct {
 	repoFrame
 	CloneURL string
 	Targets  []targetView
 	Branches []refRow
-	// Tags are the most recently moved, unless all are asked for;
-	// TagsTotal counts every one.
-	Tags      []refRow
-	TagsTotal int
-	AllTags   bool
+	Tags     []refRow
 	// DefaultExists is false until the default branch is first pushed:
 	// the only way it can be missing, since a push may not delete it.
 	DefaultExists bool
@@ -70,9 +63,6 @@ type repositoryPage struct {
 	// Runs are the default branch's latest runs, oldest first, for the strip.
 	Runs []ci.Summary
 }
-
-// MoreTags reports tags the page leaves out.
-func (p repositoryPage) MoreTags() bool { return p.TagsTotal > len(p.Tags) }
 
 // LiveEvents keeps a Repository page's targets, refs and timeline
 // current.
@@ -140,8 +130,6 @@ func (a *App) repository(w http.ResponseWriter, r *http.Request) error {
 	page := repositoryPage{
 		repoFrame: repoFrame{Repo: repo, Section: "overview"},
 		CloneURL:  a.cloneURL(repo),
-		// ?tab=tags is where the tags were when they were a tab.
-		AllTags: r.URL.Query().Get("tags") == "all" || r.URL.Query().Get("tab") == "tags",
 	}
 	for _, ref := range indexed {
 		row := refRow{IndexedRef: ref, IsDefault: ref.Kind == git.KindBranch && ref.Name == repo.DefaultBranch}
@@ -170,10 +158,6 @@ func (a *App) repository(w http.ResponseWriter, r *http.Request) error {
 	// default branch leads the branches, the rest by how lately they moved.
 	sort.SliceStable(page.Tags, func(i, j int) bool { return git.VersionLess(page.Tags[j].Name, page.Tags[i].Name) })
 	sort.SliceStable(page.Branches, func(i, j int) bool { return page.Branches[i].IsDefault && !page.Branches[j].IsDefault })
-	page.TagsTotal = len(page.Tags)
-	if !page.AllTags && len(page.Tags) > overviewTags {
-		page.Tags = page.Tags[:overviewTags]
-	}
 	var defaultHead string
 	for _, row := range page.Branches {
 		if row.IsDefault {

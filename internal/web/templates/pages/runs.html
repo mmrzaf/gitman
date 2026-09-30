@@ -1,17 +1,14 @@
 {{define "content"}}
 {{$d := .Data}}{{$repo := $d.Repo}}
 <div class="page">
-<header class="page-header">
-  <div class="page-header-text">
-    <h1 class="page-title" id="runs-title">Runs</h1>
-  </div>
-  {{- if $d.Runnable}}
-  <div class="page-actions">
-    <a class="btn btn-primary" href="/{{$repo.Name}}/runs?dialog=run-new" data-dialog-open="run-new" data-command="Run the pipeline of {{$repo.Name}}">{{template "icon" "play"}}Run</a>
-  </div>
-  {{- end}}
-</header>
-<section class="panel" aria-labelledby="runs-title">
+<h1 class="visually-hidden" id="runs-title">Runs of {{$repo.Name}}</h1>
+<section class="panel" aria-labelledby="runs-panel-title">
+  <header class="panel-header">
+    <h2 class="panel-title" id="runs-panel-title">{{template "icon" "play"}}Runs</h2>
+    {{- if $d.Runnable}}
+    <span class="panel-actions"><a class="btn btn-sm btn-primary" href="/{{$repo.Name}}/runs?dialog=run-new" data-dialog-open="run-new" data-command="Run the pipeline of {{$repo.Name}}">{{template "icon" "play"}}Run</a></span>
+    {{- end}}
+  </header>
   {{- if $d.Runs}}
   {{$ran := anyRan $d.Runs}}{{$shipped := anyShipped $d.Runs}}
   <div class="table-scroll" data-live-region="runs">
@@ -33,7 +30,7 @@
           <th scope="row" class="table-rowheader"><a class="run-ref" href="/{{$repo.Name}}/runs/{{.Number}}">{{template "status" .Status}}<span>#{{.Number}}</span></a></th>
           <td>{{template "ref" (dict "Kind" .RefKind "Name" .RefName "Href" (refURL $repo.Name .RefName ""))}}</td>
           <td class="cell-shrink">{{template "commit" (dict "Repo" $repo.Name "Hash" .Commit)}}</td>
-          <td>{{if eq .Trigger "push"}}{{template "icon" "push"}}<span class="visually-hidden">Pushed by </span>{{else}}{{template "icon" "play"}}<span class="visually-hidden">Started by </span>{{end}}{{template "person" .Actor}}</td>
+          <td><span class="cluster nowrap">{{if eq .Trigger "push"}}{{template "icon" "push"}}<span class="visually-hidden">Pushed by </span>{{else}}{{template "icon" "play"}}<span class="visually-hidden">Started by </span>{{end}}{{template "person" .Actor}}</span></td>
           {{- if $ran}}<td class="cell-shrink">{{if .Ran}}{{duration .Took}}{{else}}<span class="muted">—</span>{{end}}</td>{{end}}
           {{- if $shipped}}<td class="cell-shrink">{{if and (eq .Status "passed") .Target}}{{.Target}}{{else}}<span class="muted">—</span>{{end}}</td>{{end}}
           <td class="cell-shrink cell-muted">{{template "time" .QueuedAt}}</td>

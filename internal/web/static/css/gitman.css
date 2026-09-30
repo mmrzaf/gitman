@@ -284,6 +284,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .split-main > *, .split-side > * { min-width: 0; }
 
 .stack { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-4); }
+.cluster.nowrap { flex-wrap: nowrap; }
 .cluster { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
 
 @media (max-width: 1000px) {
@@ -643,7 +644,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .ref .icon { width: 13px; height: 13px; }
 .ref-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 a.ref:hover { text-decoration: none; background: var(--accent-border); color: var(--accent-hover); }
-.table .ref, .runlist .ref, .feed .ref { max-width: 36ch; }
+.table .ref, .feed .ref { max-width: 36ch; }
 .run-ref { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .run-ref:hover { text-decoration: none; }
 .run-ref:hover > span:last-child { text-decoration: underline; }
@@ -690,19 +691,10 @@ time { white-space: nowrap; }
   border-bottom: 1px solid var(--border);
 }
 .panel-title { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--text-md); }
-.panel-count { color: var(--muted); font-weight: 400; }
 .panel-header .panel-actions { margin-left: auto; display: flex; gap: var(--sp-2); align-items: center; }
 .panel-body { padding: var(--sp-4); }
 .panel-footer { padding: var(--sp-2) var(--sp-4); border-top: 1px solid var(--border); color: var(--muted); font-size: var(--text-sm); }
 .panel > .table-scroll:last-child .table tr:last-child td { border-bottom: 0; }
-
-.section-title {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  margin-bottom: var(--sp-3);
-  font-size: var(--text-md);
-}
 
 /* Key facts as label/value pairs. */
 .facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--sp-2) var(--sp-4); }
@@ -772,7 +764,7 @@ time { white-space: nowrap; }
 }
 .tab:hover { color: var(--text); text-decoration: none; border-bottom-color: var(--border-strong); }
 .tab[aria-selected="true"], .tab[aria-current="page"] { color: var(--text); border-bottom-color: var(--accent); }
-.tab-count {
+.count {
   min-width: 20px;
   padding: 0 6px;
   border-radius: var(--radius-full);
@@ -1019,12 +1011,10 @@ time { white-space: nowrap; }
 /* ---- Activity feed ------------------------------------------------ */
 
 .feed { display: grid; }
-/* A feed scrolls inside its panel and leaves the page itself still. Its
-   script (fit.js) gives it what is left of the window below where it
-   starts; these heights are what it has without the script, and on a narrow
-   screen. */
-.feed-scroll { max-height: max(240px, calc(100dvh - 245px)); overflow-y: auto; overscroll-behavior: contain; }
-.page-repository .feed-scroll { max-height: max(240px, calc(100dvh - 475px)); }
+/* A feed that has to scroll does so inside its panel. On a dashboard that
+   fits the window (see "The dashboards" below) its panel gives it the
+   height; everywhere else this caps it. */
+.feed-scroll { max-height: min(70dvh, 560px); overflow-y: auto; overscroll-behavior: contain; }
 .feed-item {
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr) auto;
@@ -1061,22 +1051,6 @@ time { white-space: nowrap; }
 /* ---- Home board: repositories × targets. -------------------------- */
 
 
-/* A list of runs in progress. */
-.runlist { display: grid; }
-.runlist-item {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: var(--sp-3);
-  align-items: center;
-  padding: var(--sp-2) var(--sp-4);
-  border-bottom: 1px solid var(--border);
-}
-.runlist-item:last-child { border-bottom: 0; }
-.runlist-main { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1) var(--sp-2); min-width: 0; }
-.runlist-meta { color: var(--muted); font-size: var(--text-xs); text-align: right; }
-
-/* ---- Targets on a repository -------------------------------------- */
-
 /* ---- Lists of repositories and deployments ------------------------ */
 
 .cell-stack { display: grid; gap: 2px; min-width: 0; }
@@ -1088,15 +1062,15 @@ time { white-space: nowrap; }
 /* A region a live refresh can fill or empty takes no room while empty. */
 .region:empty { display: none; }
 
-.attention { border-color: var(--queued-border); }
-.attention .panel-header { background: var(--queued-bg); color: var(--queued); border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
+.attention.is-alert { border-color: var(--queued-border); }
+.attention.is-alert .panel-header { background: var(--queued-bg); color: var(--queued); border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
 .attention-list { list-style: none; margin: 0; padding: 0; }
 .attention-item { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: var(--sp-2); align-items: baseline; padding: var(--sp-2) var(--sp-4); border-bottom: 1px solid var(--border); font-size: var(--text-sm); }
 .attention-item:last-child { border-bottom: 0; }
 .attention-item > .icon { align-self: center; color: var(--muted); }
 
-.run-strip { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--sp-2); }
-.run-pill { display: inline-flex; align-items: center; gap: var(--sp-1); height: 26px; padding: 0 var(--sp-2); border-radius: 999px; border: 1px solid var(--status-border, var(--border)); background: var(--status-bg, var(--surface-2)); color: var(--status, var(--muted)); font-size: var(--text-xs); font-weight: var(--weight-bold); }
+.run-strip { list-style: none; margin: 0; padding: var(--sp-4); display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.run-pill { display: inline-flex; align-items: center; gap: var(--sp-1); height: 26px; padding: 0 var(--sp-2); border-radius: var(--radius-full); border: 1px solid var(--status-border, var(--border)); background: var(--status-bg, var(--surface-2)); color: var(--status, var(--muted)); font-size: var(--text-xs); font-weight: var(--weight-bold); }
 .run-pill:hover { text-decoration: none; filter: brightness(0.96); }
 
 /* ---- Paths and breadcrumbs ---------------------------------------- */
@@ -1288,6 +1262,32 @@ h1.path { font-size: var(--text-xl); letter-spacing: -0.01em; }
   .run-layout { flex: 1; min-height: 260px; align-items: stretch; }
   .run-side { position: static; min-height: 0; overflow-y: auto; align-content: start; }
   .run-output { position: static; height: auto; min-height: 0; }
+}
+
+/* ---- The dashboards: Home and a repository's Overview -----------------
+   On a window big enough for it they fit the window exactly. The panels
+   share the height between them and each scrolls inside itself when it has
+   more than its share, and keeps its share when it has nothing, so what is on
+   the page, and where, never depends on how much there is. A window too
+   small for it scrolls as a page instead. */
+@media (min-width: 1001px) and (min-height: 560px) {
+  body.page-home, body.page-repository { display: flex; flex-direction: column; height: 100dvh; min-height: 0; }
+  .page-home > main, .page-repository > main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .page-home .page, .page-repository .page { flex: 1; min-height: 0; display: flex; flex-direction: column; padding-bottom: var(--sp-6); }
+  .page-home .split, .page-repository .split { flex: 1; min-height: 0; grid-template-rows: minmax(0, 1fr); align-items: stretch; }
+  .page-home .split-main, .page-home .split-side, .page-repository .split-main, .page-repository .split-side { display: flex; flex-direction: column; min-height: 0; }
+
+  .fit { display: flex; flex-direction: column; min-height: 132px; }
+  .fit-1 { flex: 1 1 0; }
+  .fit-2 { flex: 2 1 0; }
+  .fit-3 { flex: 3 1 0; }
+  .fit-auto { flex: 0 1 auto; min-height: 0; max-height: 45%; }
+  .fit-4 { flex: 4 1 0; }
+  .fit > .panel-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+  .fit > .panel-scroll > .empty { min-height: 100%; align-content: center; }
+  .fit .feed-scroll { max-height: none; }
+  .fit .panel-scroll .table-scroll { overflow: visible; }
+  .fit .panel-scroll .table thead th { position: sticky; top: 0; z-index: 2; }
 }
 
 @media (max-width: 900px) {

@@ -12,9 +12,9 @@
 
 <div class="split">
   <div class="split-main">
-    <section class="panel" aria-labelledby="repos-title">
-      <header class="panel-header"><h2 class="panel-title" id="repos-title">{{template "icon" "repo"}}Repositories <span class="tab-count">{{len .Data.Repos}}</span></h2></header>
-      <div data-live-region="repos">
+    <section class="panel fit fit-3" aria-labelledby="repos-title" data-live-region="repos">
+      <header class="panel-header"><h2 class="panel-title" id="repos-title">{{template "icon" "repo"}}Repositories <span class="count">{{len .Data.Repos}}</span></h2></header>
+      <div class="panel-scroll">
         {{- if .Data.Repos}}
         {{$run := .Data.HasRun}}
         <div class="table-scroll">
@@ -60,10 +60,10 @@
       </div>
     </section>
 
-    <div class="region" data-live-region="deployments">
-      {{- if .Data.Deployments -}}
-      <section class="panel" aria-labelledby="deployments-title">
-        <header class="panel-header"><h2 class="panel-title" id="deployments-title">{{template "icon" "ship"}}Deployed <span class="tab-count">{{len .Data.Deployments}}</span></h2></header>
+    <section class="panel fit fit-2" aria-labelledby="deployments-title" data-live-region="deployments">
+      <header class="panel-header"><h2 class="panel-title" id="deployments-title">{{template "icon" "ship"}}Deployed <span class="count">{{len .Data.Deployments}}</span></h2></header>
+      <div class="panel-scroll">
+        {{- if .Data.Deployments}}
         <div class="table-scroll">
           <table class="table">
             <thead><tr>
@@ -79,35 +79,39 @@
                 <th scope="row" class="table-rowheader"><a href="/{{.Repo}}">{{.Repo}}</a></th>
                 <td>{{.Target}}</td>
                 <td class="cell-shrink">{{if ownVersion .Live.Version .Live.Commit}}<span class="version">{{.Live.Version}}</span> {{end}}{{template "commit" (dict "Repo" .Repo "Hash" .Live.Commit)}}</td>
-                <td class="cell-shrink cell-muted">{{template "time" .Live.At}}{{if .Live.Person}} by {{.Live.Person}}{{end}}{{if .Live.RunNumber}} <a href="/{{.Repo}}/runs/{{.Live.RunNumber}}">#{{.Live.RunNumber}}</a>{{end}}</td>
+                <td class="cell-muted">{{template "time" .Live.At}}{{if .Live.Person}} by {{.Live.Person}}{{end}}{{if .Live.RunNumber}} <a href="/{{.Repo}}/runs/{{.Live.RunNumber}}">#{{.Live.RunNumber}}</a>{{end}}</td>
                 <td class="cell-shrink">{{if .SinceURL}}<a href="{{.SinceURL}}">{{.Behind}} commit{{if ne .Behind 1}}s{{end}}</a>{{else}}<span class="muted">Up to date</span>{{end}}</td>
               </tr>
             {{- end}}
             </tbody>
           </table>
         </div>
-      </section>
-      {{- end -}}
-    </div>
+        {{- else}}
+        {{template "empty" (dict "Icon" "ship" "Title" "Nothing shipped yet" "Text" "A passing run shows here when its ref's rule allows shipping and the pipeline names a target for it.")}}
+        {{- end}}
+      </div>
+    </section>
   </div>
 
   <aside class="split-side">
-    <div class="region" data-live-region="attention">
-      {{- if .Data.Attention -}}
-      <section class="panel attention" aria-labelledby="attention-title">
-        <header class="panel-header"><h2 class="panel-title" id="attention-title">{{template "icon" "warning"}}Needs attention</h2></header>
+    <section class="panel fit fit-auto attention{{if .Data.Attention}} is-alert{{end}}" aria-labelledby="attention-title" data-live-region="attention">
+      <header class="panel-header"><h2 class="panel-title" id="attention-title">{{template "icon" "warning"}}Needs attention</h2></header>
+      <div class="panel-scroll">
+        {{- if .Data.Attention}}
         <ul class="attention-list">
           {{- range .Data.Attention}}
           <li class="attention-item">{{template "icon" .Icon}}{{if .URL}}<a href="{{.URL}}">{{.Text}}</a>{{else}}<span>{{.Text}}</span>{{end}}</li>
           {{- end}}
         </ul>
         {{- if .Data.AttentionMore}}<p class="panel-footer">And {{.Data.AttentionMore}} more.</p>{{end}}
-      </section>
-      {{- end -}}
-    </div>
-    <section class="panel" aria-labelledby="timeline-title">
+        {{- else}}
+        {{template "empty" (dict "Title" "Nothing needs attention" "Compact" true)}}
+        {{- end}}
+      </div>
+    </section>
+    <section class="panel fit fit-1" aria-labelledby="timeline-title">
       <header class="panel-header"><h2 class="panel-title" id="timeline-title">{{template "icon" "history"}}Activity</h2></header>
-      <div class="feed-scroll" data-fit data-live-region="timeline">{{template "feed" (dict "Entries" .Data.Timeline "ShowRepo" true)}}</div>
+      <div class="panel-scroll feed-scroll" data-live-region="timeline">{{template "feed" (dict "Entries" .Data.Timeline "ShowRepo" true)}}</div>
     </section>
   </aside>
 </div>

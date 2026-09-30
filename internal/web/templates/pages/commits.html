@@ -1,11 +1,7 @@
 {{define "content"}}
 {{$d := .Data}}{{$repo := $d.Repo}}{{$cmp := $d.Comparison}}
 <div class="page" data-swap-region>
-<header class="page-header">
-  <div class="page-header-text">
-    <h1 class="page-title" id="commits-title">Commits</h1>
-  </div>
-</header>
+<h1 class="visually-hidden" id="commits-title">Commits</h1>
 
 <div class="stack">
 {{- if $d.Unpushed}}
@@ -54,8 +50,8 @@
 {{- if $cmp}}
 {{- if $d.Commits}}
 <nav class="tabs tabs-page" data-tabs aria-label="Comparison">
-  <a class="tab" id="tab-commits" href="{{$d.TabURL "commits"}}" data-tab="commits"{{if eq $d.Tab "commits"}} aria-current="page"{{end}}>{{template "icon" "commit"}}Commits <span class="tab-count">{{len $d.Commits}}{{if $cmp.MoreCommits}}+{{end}}</span></a>
-  <a class="tab" id="tab-changes" href="{{$d.TabURL "changes"}}" data-tab="changes"{{if eq $d.Tab "changes"}} aria-current="page"{{end}}>{{template "icon" "code"}}Changes <span class="tab-count">{{(diffTotals $cmp.Diff).Files}}</span><span class="diffstat tab-diffstat"><span class="diffstat-add">+{{(diffTotals $cmp.Diff).Additions}}</span><span class="diffstat-del">−{{(diffTotals $cmp.Diff).Deletions}}</span></span></a>
+  <a class="tab" id="tab-commits" href="{{$d.TabURL "commits"}}" data-tab="commits"{{if eq $d.Tab "commits"}} aria-current="page"{{end}}>{{template "icon" "commit"}}Commits <span class="count">{{len $d.Commits}}{{if $cmp.MoreCommits}}+{{end}}</span></a>
+  <a class="tab" id="tab-changes" href="{{$d.TabURL "changes"}}" data-tab="changes"{{if eq $d.Tab "changes"}} aria-current="page"{{end}}>{{template "icon" "code"}}Changes <span class="count">{{(diffTotals $cmp.Diff).Files}}</span><span class="diffstat tab-diffstat"><span class="diffstat-add">+{{(diffTotals $cmp.Diff).Additions}}</span><span class="diffstat-del">−{{(diffTotals $cmp.Diff).Deletions}}</span></span></a>
 </nav>
 <div id="panel-commits" data-tab-panel="commits"{{if ne $d.Tab "commits"}} hidden{{end}}>
   <section class="panel" aria-label="Commits">

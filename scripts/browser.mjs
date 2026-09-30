@@ -397,6 +397,7 @@ const screens = [
   ["commits", "/demo/commits", "#commits-title"],
   ["commits-path", "/demo/commits?ref=main&path=internal/pay/charge.go", "#commits-title"],
   ["activity", "/demo/activity", "#activity-title"],
+  ["runs", "/demo/runs", "#runs-title"],
   ["commit", `/demo/commit/${commit}`, "#commit-title"],
   ["compare", `/demo/commits?base=main&ref=${encodeURIComponent(feature)}`, "#commits-title"],
   ["compare-files", `/demo/commits?base=main&ref=${encodeURIComponent(feature)}&tab=changes`, "#commits-title"],
@@ -462,16 +463,21 @@ for (const scheme of ["light", "dark"]) {
   await out.close();
 }
 
-// ---- A feed scrolls inside its panel, and ends inside the window ------
+// ---- The dashboards fit the window ---------------------------------------
 {
   const { context, page } = await signedIn({ viewport: { width: 1440, height: 900 } });
-  for (const path of ["/", "/demo"]) {
+  for (const path of ["/", "/demo", "/sms-gateway"]) {
     await page.goto(base + path);
-    const feed = await page.evaluate(() => {
-      const box = document.querySelector(".feed-scroll")?.getBoundingClientRect();
-      return box ? { bottom: Math.round(box.bottom), height: innerHeight } : null;
-    });
-    check(`the activity feed ends inside the window: ${path}`, feed && feed.bottom <= feed.height, JSON.stringify(feed));
+    const fit = await page.evaluate(() => ({
+      scroll: document.documentElement.scrollHeight, height: innerHeight,
+      panels: [...document.querySelectorAll(".fit")].map((el) => Math.round(el.getBoundingClientRect().height)),
+      shared: [...document.querySelectorAll(".fit:not(.fit-auto)")].map((el) => Math.round(el.getBoundingClientRect().height)),
+      overflowing: [...document.querySelectorAll(".fit > .panel-scroll")].filter((el) => el.scrollWidth > el.clientWidth + 1)
+        .map((el) => `${el.parentElement.getAttribute("aria-labelledby")} +${el.scrollWidth - el.clientWidth}px`),
+    }));
+    check(`the page does not scroll, only its panels: ${path}`, fit.scroll <= fit.height, JSON.stringify(fit));
+    check(`every panel keeps a usable share of the window, empty or not: ${path}`, fit.panels.length >= 4 && fit.shared.every((h) => h >= 100), JSON.stringify(fit));
+    check(`nothing inside a panel spills sideways: ${path}`, fit.overflowing.length === 0, JSON.stringify(fit));
   }
   await context.close();
 }

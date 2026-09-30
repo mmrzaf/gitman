@@ -4,10 +4,10 @@
 <h1 class="visually-hidden" id="repo-title">{{$repo.Name}}</h1>
 <div class="split">
   <div class="split-main">
-    <div class="region" data-live-region="targets">
-      {{- if .Data.Targets -}}
-      <section class="panel" aria-labelledby="targets-title">
-        <header class="panel-header"><h2 class="panel-title" id="targets-title">{{template "icon" "ship"}}Deployed <span class="tab-count">{{len .Data.Targets}}</span></h2></header>
+    <section class="panel fit fit-2" aria-labelledby="targets-title" data-live-region="targets">
+      <header class="panel-header"><h2 class="panel-title" id="targets-title">{{template "icon" "ship"}}Deployed <span class="count">{{len .Data.Targets}}</span></h2></header>
+      <div class="panel-scroll">
+        {{- if .Data.Targets}}
         <div class="table-scroll">
           <table class="table">
             <thead><tr>
@@ -21,67 +21,63 @@
               <tr>
                 <th scope="row" class="table-rowheader">{{.Target}}</th>
                 <td class="cell-shrink">{{if ownVersion .Version .Commit}}<span class="version">{{.Version}}</span> {{end}}{{template "commit" (dict "Repo" $repo.Name "Hash" .Commit)}}</td>
-                <td class="cell-shrink cell-muted">{{template "time" .At}}{{if .Person}} by {{.Person}}{{end}}{{if .RunNumber}} <a href="/{{$repo.Name}}/runs/{{.RunNumber}}">#{{.RunNumber}}</a>{{end}}</td>
+                <td class="cell-muted">{{template "time" .At}}{{if .Person}} by {{.Person}}{{end}}{{if .RunNumber}} <a href="/{{$repo.Name}}/runs/{{.RunNumber}}">#{{.RunNumber}}</a>{{end}}</td>
                 <td class="cell-shrink">{{if .SinceURL}}<a href="{{.SinceURL}}">{{.Behind}} commit{{if ne .Behind 1}}s{{end}}</a>{{else}}<span class="muted">Up to date</span>{{end}}</td>
               </tr>
             {{- end}}
             </tbody>
           </table>
         </div>
-      </section>
-      {{- end -}}
-    </div>
-
-    <section class="panel" aria-labelledby="branches-title">
-      <header class="panel-header"><h2 class="panel-title" id="branches-title">{{template "icon" "branch"}}Branches <span class="tab-count">{{len .Data.Branches}}</span></h2></header>
-      <div data-live-region="branches">{{template "refs" (dict "Refs" .Data.Branches "Repo" $repo "Clone" .Data.CloneURL "Kind" "branch" "DefaultExists" .Data.DefaultExists "Admin" .Person.IsAdmin)}}</div>
+        {{- else}}
+        {{template "empty" (dict "Icon" "ship" "Title" "Nothing shipped yet" "Text" "A passing run shows here when its ref's rule allows shipping and the pipeline names a target for it.")}}
+        {{- end}}
+      </div>
     </section>
 
-    <section class="panel" aria-labelledby="tags-title">
-      <header class="panel-header"><h2 class="panel-title" id="tags-title">{{template "icon" "tag"}}Tags <span class="tab-count">{{.Data.TagsTotal}}</span></h2>
-        {{- if .Data.MoreTags}}<span class="panel-actions"><a class="btn btn-sm" href="/{{$repo.Name}}?tags=all">All {{.Data.TagsTotal}} tags</a></span>{{end}}
-      </header>
-      <div data-live-region="tags">{{template "refs" (dict "Refs" .Data.Tags "Repo" $repo "Clone" .Data.CloneURL "Kind" "tag" "DefaultExists" .Data.DefaultExists "Admin" .Person.IsAdmin)}}</div>
+    <section class="panel fit fit-4" aria-labelledby="branches-title" data-live-region="branches">
+      <header class="panel-header"><h2 class="panel-title" id="branches-title">{{template "icon" "branch"}}Branches <span class="count">{{len .Data.Branches}}</span></h2></header>
+      <div class="panel-scroll">{{template "refs" (dict "Refs" .Data.Branches "Repo" $repo "Clone" .Data.CloneURL "Kind" "branch" "DefaultExists" .Data.DefaultExists "Admin" .Person.IsAdmin)}}</div>
+    </section>
+
+    <section class="panel fit fit-2" aria-labelledby="tags-title" data-live-region="tags">
+      <header class="panel-header"><h2 class="panel-title" id="tags-title">{{template "icon" "tag"}}Tags <span class="count">{{len .Data.Tags}}</span></h2></header>
+      <div class="panel-scroll">{{template "refs" (dict "Refs" .Data.Tags "Repo" $repo "Clone" .Data.CloneURL "Kind" "tag" "DefaultExists" .Data.DefaultExists "Admin" .Person.IsAdmin)}}</div>
     </section>
   </div>
 
   <aside class="split-side">
-    <section class="panel" aria-labelledby="clone-title">
+    <section class="panel fit fit-auto" aria-labelledby="clone-title">
       <header class="panel-header"><h2 class="panel-title" id="clone-title">{{template "icon" "code"}}Clone</h2></header>
-      <div class="panel-body stack">
+      <div class="panel-scroll panel-body stack">
         {{template "copy-field" (dict "ID" "clone-url" "Label" "HTTPS" "Value" .Data.CloneURL)}}
         <dl class="facts">
           <dt>Default branch</dt><dd>{{if .Data.DefaultExists}}{{template "ref" (dict "Kind" "branch" "Name" $repo.DefaultBranch "Href" (commitsURL $repo.Name $repo.DefaultBranch ""))}}{{else}}<span class="cluster">{{template "ref" (dict "Kind" "branch" "Name" $repo.DefaultBranch)}}<span class="muted">not pushed yet</span></span>{{end}}</dd>
           <dt>Created</dt><dd>{{template "time" $repo.CreatedAt}}</dd>
         </dl>
-        {{- if .Data.DefaultExists}}
-        <div class="cluster">
-          <a class="btn btn-sm" href="{{refURL $repo.Name $repo.DefaultBranch ""}}">{{template "icon" "code"}}Browse files</a>
-          <a class="btn btn-sm" href="{{archiveURL $repo.Name $repo.DefaultBranch "tar.gz"}}" title="Download as .tar.gz">{{template "icon" "download"}}Download</a>
-        </div>
-        {{- end}}
       </div>
     </section>
-    {{- if .Data.Runs}}
-    <section class="panel" aria-labelledby="strip-title">
+    <section class="panel fit fit-auto" aria-labelledby="strip-title" data-live-region="strip">
       <header class="panel-header"><h2 class="panel-title" id="strip-title">{{template "icon" "play"}}Runs of {{template "ref" (dict "Kind" "branch" "Name" $repo.DefaultBranch)}}</h2>
         <span class="panel-actions"><a class="btn btn-sm" href="/{{$repo.Name}}/runs">All runs</a></span>
       </header>
-      <div class="panel-body" data-live-region="strip">
+      <div class="panel-scroll">
+        {{- if .Data.Runs}}
         <ol class="run-strip" aria-label="Latest runs, oldest first">
           {{- range .Data.Runs}}
           <li><a class="run-pill is-{{.Status}}" href="/{{$repo.Name}}/runs/{{.Number}}" title="Run #{{.Number}} {{.Status}}">{{template "icon" .Status}}<span>#{{.Number}}</span><span class="visually-hidden"> {{.Status}}</span></a></li>
           {{- end}}
         </ol>
+        {{- else}}
+        {{template "empty" (dict "Title" "No runs yet" "Compact" true)}}
+        {{- end}}
       </div>
     </section>
-    {{- end}}
-    <section class="panel" aria-labelledby="repo-timeline-title">
+    <section class="panel fit fit-1" aria-labelledby="repo-timeline-title">
       <header class="panel-header"><h2 class="panel-title" id="repo-timeline-title">{{template "icon" "history"}}Activity</h2>
         <span class="panel-actions"><span class="live js-only" data-live-status data-state="connecting" role="status">{{template "icon" "live"}}<span data-live-label>Connecting…</span></span>
           <a class="btn btn-sm" href="/{{$repo.Name}}/activity">All activity</a></span>
       </header>
-      <div class="feed-scroll" data-fit data-live-region="timeline">{{template "repo-feed" (dict "Entries" .Data.Timeline "Repo" $repo)}}</div>
+      <div class="panel-scroll feed-scroll" data-live-region="timeline">{{template "repo-feed" (dict "Entries" .Data.Timeline "Repo" $repo)}}</div>
     </section>
   </aside>
 </div>
@@ -113,8 +109,8 @@
     <tbody>
     {{range .Refs}}{{$name := .Name}}
       <tr>
-        <th scope="row" class="table-rowheader">
-          <span class="cluster">{{template "ref" (dict "Kind" .Kind "Name" .Name "Href" (refURL $repo.Name .Name ""))}}{{if .IsDefault}}<span class="chip">default</span>{{end}}</span>
+        <th scope="row" class="table-rowheader cell-truncate">
+          <span class="cluster nowrap">{{template "ref" (dict "Kind" .Kind "Name" .Name "Href" (refURL $repo.Name .Name ""))}}{{if .IsDefault}}<span class="chip">default</span>{{end}}</span>
         </th>
         {{- if $counts}}
         <td class="cell-shrink">{{with .Divergence}}<a href="{{compareURL $repo.Name $repo.DefaultBranch $name}}">{{if or .Ahead .Behind}}{{if .Ahead}}{{.Ahead}} ahead{{end}}{{if and .Ahead .Behind}}, {{end}}{{if .Behind}}{{.Behind}} behind{{end}}{{else}}even{{end}}</a>{{else}}<span class="muted">—</span>{{end}}</td>
@@ -122,7 +118,7 @@
         {{- if $runs}}<td class="cell-shrink">{{with .LatestRun}}<a class="run-ref" href="/{{$repo.Name}}/runs/{{.Number}}">{{template "status" .Status}}<span>#{{.Number}}</span></a>{{else}}<span class="muted">—</span>{{end}}</td>{{end}}
         {{- if $shipped}}<td class="cell-shrink">{{with .LatestDeployment}}{{if ownVersion .Version .Commit}}<span class="version">{{.Version}}</span> <span class="muted">→</span> {{end}}{{.Target}}{{else}}<span class="muted">—</span>{{end}}</td>{{end}}
         <td class="cell-shrink">{{template "commit" (dict "Repo" $repo.Name "Hash" .Commit)}}</td>
-        <td class="cell-shrink cell-muted">{{template "time" .UpdatedAt}}{{if .UpdatedByUsername}} by {{.UpdatedByUsername}}{{end}}</td>
+        <td class="cell-muted">{{template "time" .UpdatedAt}}{{if .UpdatedByUsername}} by {{.UpdatedByUsername}}{{end}}</td>
         <td class="cell-shrink cell-end"><span class="cell-actions">
           {{- if .CanRun}}
           <form method="post" action="/{{$repo.Name}}/runs" data-confirm="Run the pipeline of {{.Kind}} {{.Name}}?" data-confirm-detail="It runs the latest commit, as a push would." data-confirm-action="Start run" data-confirm-tone="primary">
@@ -146,12 +142,6 @@
 {{else if eq .Kind "tag"}}
 {{template "empty" (dict "Icon" "tag" "Title" "No tags yet")}}
 {{else}}
-<div class="empty">
-  {{template "icon" "push"}}
-  <p class="empty-title">No pushes yet</p>
-  <p>Push an existing repository to start:</p>
-  <pre class="secret-value"><code>git remote add origin {{.Clone}}
-git push -u origin {{$repo.DefaultBranch}}</code></pre>
-</div>
+{{template "first-push" (dict "Clone" .Clone "Branch" $repo.DefaultBranch)}}
 {{end}}
 {{end}}

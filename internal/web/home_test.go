@@ -24,12 +24,13 @@ func TestHomeListsRepositoriesAndWhatIsDeployed(t *testing.T) {
 		t.Fatalf("create repo: %d\n%s", resp.StatusCode, body)
 	}
 
-	// Before anything has run or shipped, there are no columns or lists for
-	// either.
+	// Before anything has run or shipped, the lists are there and say so, and
+	// there is no column for runs.
 	resp, body := b.do(http.MethodGet, "/", nil, nil)
-	expect(t, resp, body, http.StatusOK, `id="repos-title"`, "Nothing in it", "Nothing pushed yet", "Update README", `<div class="region" data-live-region="deployments"></div>`)
-	if strings.Contains(body, `<th scope="col">Run</th>`) || strings.Contains(body, `id="deployments-title"`) {
-		t.Error("Home has a column or a list with nothing in it")
+	expect(t, resp, body, http.StatusOK, `id="repos-title"`, "Nothing in it", "Nothing pushed yet", "Update README",
+		`id="deployments-title"`, "Nothing shipped yet", "Nothing needs attention", `data-live-region="attention"`)
+	if strings.Contains(body, `<th scope="col">Run</th>`) || strings.Contains(body, `<th scope="col">Not shipped</th>`) {
+		t.Error("Home has a column with nothing in it")
 	}
 
 	insert := func(q string, args ...any) {
@@ -82,11 +83,11 @@ func TestHomeNeedsAttention(t *testing.T) {
 	head := mustResolve(t, mustOpen(t, store, repo), "main")
 	old := mustResolve(t, mustOpen(t, store, repo), "v1.0.0")
 
-	// All is well: nothing to look at, and no strip to say so.
+	// All is well: the card is there, and says so, without the alert look.
 	resp, body := b.do(http.MethodGet, "/", nil, nil)
-	expect(t, resp, body, http.StatusOK)
-	if strings.Contains(body, "Needs attention") {
-		t.Error("Home asks for attention when nothing wants it")
+	expect(t, resp, body, http.StatusOK, "Needs attention", "Nothing needs attention")
+	if strings.Contains(body, "is-alert") {
+		t.Error("Home looks alarmed when nothing wants attention")
 	}
 
 	insert := func(q string, args ...any) {
@@ -105,7 +106,7 @@ func TestHomeNeedsAttention(t *testing.T) {
 	insert(`INSERT INTO push_refusal_refs (refusal_id, position, ref, reason) VALUES ('f1', 0, 'refs/heads/main', 'this rewrites history'), ('f0', 0, 'refs/heads/x', 'a month ago')`)
 
 	resp, body = b.do(http.MethodGet, "/", nil, nil)
-	expect(t, resp, body, http.StatusOK, "Needs attention",
+	expect(t, resp, body, http.StatusOK, "Needs attention", "is-alert",
 		// The latest run of the default branch failed, and links to it.
 		`href="/waiotech/runs/1">waiotech: the latest run of main failed.`,
 		// Production lags the default branch, and links to what it lacks.
@@ -132,12 +133,12 @@ func TestOverviewHasBranchesTagsAndTheRunStrip(t *testing.T) {
 	person := mustPerson(t, database, "darius")
 	head := mustResolve(t, mustOpen(t, store, repo), "main")
 
-	// No runs yet: no strip. The Overview is branches and tags, with what
-	// leads to the files and the download beside them.
+	// No runs yet: the strip is there and says so. The Overview is what is
+	// deployed, branches and tags, with nothing about the latest commits, and
+	// no buttons for the files or the download in Clone.
 	resp, body := b.do(http.MethodGet, "/waiotech", nil, nil)
-	expect(t, resp, body, http.StatusOK, `id="branches-title"`, `id="tags-title"`,
-		`href="/waiotech@main">`, `href="/waiotech/archive/main.tar.gz"`)
-	for _, absent := range []string{`id="strip-title"`, `id="latest-title"`, "Latest on"} {
+	expect(t, resp, body, http.StatusOK, `id="targets-title"`, `id="branches-title"`, `id="tags-title"`, `id="strip-title"`, "No runs yet")
+	for _, absent := range []string{`id="latest-title"`, "Latest on", "Browse files", `href="/waiotech/archive/main.tar.gz"`} {
 		if strings.Contains(body, absent) {
 			t.Errorf("the Overview has %s", absent)
 		}

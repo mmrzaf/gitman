@@ -18,13 +18,7 @@
     </ul>
   </div>
   {{- else}}
-  <div class="empty">
-    {{template "icon" "push"}}
-    <p class="empty-title">No pushes yet</p>
-    <p>Push an existing repository to start:</p>
-    <pre class="secret-value"><code>git remote add origin {{$d.CloneURL}}
-git push -u origin {{$repo.DefaultBranch}}</code></pre>
-  </div>
+  {{template "first-push" (dict "Clone" $d.CloneURL "Branch" $repo.DefaultBranch)}}
   {{- end}}
 </section>
 </div>

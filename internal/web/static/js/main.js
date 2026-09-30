@@ -11,7 +11,6 @@ import "./menu.js";
 import "./dialog.js";
 import "./confirm.js";
 import "./diff.js";
-import "./fit.js";
 import "./show-when.js";
 import "./inline-edit.js";
 import "./ref-picker.js";

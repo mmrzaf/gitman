@@ -5,15 +5,15 @@
 <div class="with-sidenav">
   <nav class="sidenav tabs tabs-vertical" data-tabs aria-label="Settings" aria-orientation="vertical">
     <a class="tab" id="tab-general" href="{{$base}}" data-tab="general"{{if eq $d.Tab "general"}} aria-current="page"{{end}}>{{template "icon" "settings"}}General</a>
-    <a class="tab" id="tab-rules" href="{{$base}}?tab=rules" data-tab="rules"{{if eq $d.Tab "rules"}} aria-current="page"{{end}}>{{template "icon" "shield"}}Ref rules <span class="tab-count">{{len $d.Rules}}</span></a>
-    <a class="tab" id="tab-secrets" href="{{$base}}?tab=secrets" data-tab="secrets"{{if eq $d.Tab "secrets"}} aria-current="page"{{end}}>{{template "icon" "key"}}Secrets <span class="tab-count">{{len $d.Secrets}}</span></a>
+    <a class="tab" id="tab-rules" href="{{$base}}?tab=rules" data-tab="rules"{{if eq $d.Tab "rules"}} aria-current="page"{{end}}>{{template "icon" "shield"}}Ref rules <span class="count">{{len $d.Rules}}</span></a>
+    <a class="tab" id="tab-secrets" href="{{$base}}?tab=secrets" data-tab="secrets"{{if eq $d.Tab "secrets"}} aria-current="page"{{end}}>{{template "icon" "key"}}Secrets <span class="count">{{len $d.Secrets}}</span></a>
     <a class="tab" id="tab-access" href="{{$base}}?tab=access" data-tab="access"{{if eq $d.Tab "access"}} aria-current="page"{{end}}>{{template "icon" "lock"}}Access</a>
     <a class="tab" id="tab-danger" href="{{$base}}?tab=danger" data-tab="danger"{{if eq $d.Tab "danger"}} aria-current="page"{{end}}>{{template "icon" "warning"}}Danger zone</a>
   </nav>
 
   <div>
     <section class="panel" id="panel-general" data-tab-panel="general" aria-labelledby="general-title"{{if ne $d.Tab "general"}} hidden{{end}}>
-      <header class="panel-header"><h2 class="panel-title" id="general-title">General</h2></header>
+      <header class="panel-header"><h2 class="panel-title" id="general-title">{{template "icon" "settings"}}General</h2></header>
       <div class="panel-body stack">
         <div class="inline-edit" data-inline-edit{{if not $d.DescForm.Valid}} data-inline-editing{{end}}>
           <div class="inline-edit-view" data-inline-view>
@@ -70,7 +70,7 @@
 
     <section class="panel" id="panel-rules" data-tab-panel="rules" aria-labelledby="rules-title"{{if ne $d.Tab "rules"}} hidden{{end}}>
       <header class="panel-header">
-        <h2 class="panel-title" id="rules-title">Ref rules</h2>
+        <h2 class="panel-title" id="rules-title">{{template "icon" "shield"}}Ref rules</h2>
         <span class="panel-actions"><a class="btn btn-sm btn-primary" href="{{$base}}?tab=rules&amp;dialog=rule-new" data-dialog-open="rule-new" data-command="Add a ref rule to {{$repo.Name}}">{{template "icon" "plus"}}New rule</a></span>
       </header>
       <p class="panel-intro">A branch or tag no rule matches is unprotected: anyone may push, force-push or delete it, and pushing to it never starts a run.</p>
@@ -117,7 +117,7 @@
 
     <section class="panel" id="panel-secrets" data-tab-panel="secrets" aria-labelledby="secrets-title"{{if ne $d.Tab "secrets"}} hidden{{end}}>
       <header class="panel-header">
-        <h2 class="panel-title" id="secrets-title">Secrets</h2>
+        <h2 class="panel-title" id="secrets-title">{{template "icon" "key"}}Secrets</h2>
         {{- if $d.SecretsReady}}
         <span class="panel-actions"><a class="btn btn-sm btn-primary" href="{{$base}}?tab=secrets&amp;dialog=secret-new" data-dialog-open="secret-new" data-command="Add a secret to {{$repo.Name}}">{{template "icon" "plus"}}New secret</a></span>
         {{- end}}
@@ -157,7 +157,7 @@
     </section>
 
     <section class="panel" id="panel-access" data-tab-panel="access" aria-labelledby="access-title"{{if ne $d.Tab "access"}} hidden{{end}}>
-      <header class="panel-header"><h2 class="panel-title" id="access-title">Access</h2></header>
+      <header class="panel-header"><h2 class="panel-title" id="access-title">{{template "icon" "lock"}}Access</h2></header>
       <p class="panel-intro">A restricted repository is invisible to everyone but its readers and admins, in Gitman and over Git.</p>
       <form method="post" action="{{$base}}/access" class="panel-body form">
         {{$af := $d.AccessForm}}
@@ -195,7 +195,7 @@
     </section>
 
     <section class="panel panel-danger" id="panel-danger" data-tab-panel="danger" aria-labelledby="danger-title"{{if ne $d.Tab "danger"}} hidden{{end}}>
-      <header class="panel-header"><h2 class="panel-title" id="danger-title">Delete this repository</h2></header>
+      <header class="panel-header"><h2 class="panel-title" id="danger-title">{{template "icon" "trash"}}Delete this repository</h2></header>
       <form method="post" action="{{$base}}/delete" class="panel-body form">
         <p>Deletes <strong>{{$repo.Name}}</strong> with its whole history, every run and every deployment record. This can't be undone.</p>
         {{template "field" field $d.DeleteForm "confirm_name" (printf "Type %s to confirm" $repo.Name) "text" "required" "autocomplete:off"}}

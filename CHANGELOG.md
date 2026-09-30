@@ -65,6 +65,10 @@ worker starts.
 - Tags are listed newest version first, in the Overview and in the
   pickers. A push that creates, moves or deletes many refs at once is one
   line of Activity that names the newest and counts the rest.
+- Home and the Overview fit the window: their panels share its height and
+  scroll inside themselves, whether empty or full. Every page's tables
+  and panels have a titled header with their action beside it, and Commits
+  and Runs no longer repeat the active tab as a heading.
 - Home no longer has a Running now panel: a run in progress shows on its
   repository's row.
 - The Run dialog chooses its branch or tag with the same searchable list as

@@ -391,12 +391,9 @@ func TestRepositoryPage(t *testing.T) {
 	resp, body := b.do(http.MethodGet, "/waiotech", nil, nil)
 	expect(t, resp, body, http.StatusOK, "Created waiotech.")
 	expect(t, resp, body, http.StatusOK, "waiotech", "Plant maintenance", "http://gitman.test/waiotech.git", "No pushes yet",
-		// Nothing has shipped, so there is no list of it; its region is
-		// there, empty, for the first deployment to appear in on a live page.
-		`<div class="region" data-live-region="targets"></div>`)
-	if strings.Contains(body, "Nothing shipped yet") {
-		t.Error("the Overview has a panel for deployments there are none of")
-	}
+		// Nothing has shipped, and the Overview says so, in a panel that is
+		// there for the first deployment to appear in on a live page.
+		`data-live-region="targets"`, "Nothing shipped yet")
 	if strings.Contains(body, "Settings") {
 		t.Error("a non-admin should not see a Settings link")
 	}

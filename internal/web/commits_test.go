@@ -311,7 +311,7 @@ func TestOverviewHasNoTabsAndLinksToWhatIsNotDeployed(t *testing.T) {
 	gitRepo := mustOpen(t, store, repo)
 	head, old := mustResolve(t, gitRepo, "main"), mustResolve(t, gitRepo, "v1.0.0")
 
-	// Twelve tags more than the Overview lists.
+	// Twelve tags more than before.
 	bare, err := store.Path(repo.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -346,17 +346,14 @@ func TestOverviewHasNoTabsAndLinksToWhatIsNotDeployed(t *testing.T) {
 		t.Fatalf("%d targets are up to date, want only staging", n)
 	}
 
-	// Twelve tags of thirteen? The newest ten, and a way to all of them.
-	expect(t, resp, body, http.StatusOK, `All 14 tags`, `href="/waiotech?tags=all"`)
-	if n := strings.Count(body, `aria-label="Run tag `); n > overviewTags {
-		t.Errorf("%d tags listed, at most %d", n, overviewTags)
+	// Every tag is listed: the panel scrolls, so there is no "all tags" to
+	// go to, and nothing to cut the list short.
+	expect(t, resp, body, http.StatusOK, `Tags <span class="count">14</span>`, "r00", "r11", "v1.0.0")
+	if n := strings.Count(body, `aria-label="Run tag `); n != 14 {
+		t.Errorf("%d tags listed, want all 14", n)
 	}
-	for _, path := range []string{"/waiotech?tags=all", "/waiotech?tab=tags"} {
-		resp, body = b.do(http.MethodGet, path, nil, nil)
-		expect(t, resp, body, http.StatusOK, "r00", "r11", "v1.0.0")
-		if strings.Contains(body, "All 14 tags") {
-			t.Errorf("%s still offers all tags", path)
-		}
+	if strings.Contains(body, "All 14 tags") || strings.Contains(body, "tags=all") {
+		t.Error("the Overview still offers a separate list of all tags")
 	}
 }
 
@@ -464,7 +461,7 @@ func TestLongDiffsOpenOnlyTheFirstFiles(t *testing.T) {
 	syncRepoRefs(t, database, store, repo.ID)
 
 	resp, body := b.do(http.MethodGet, "/waiotech/commits?base=main&ref=wide&tab=changes", nil, nil)
-	expect(t, resp, body, http.StatusOK, `Changes <span class="tab-count">14</span>`, `data-diff-all="open"`, `data-diff-all="closed"`)
+	expect(t, resp, body, http.StatusOK, `Changes <span class="count">14</span>`, `data-diff-all="open"`, `data-diff-all="closed"`)
 	if strings.Contains(body, "changed files") {
 		t.Error("the Changes tab repeats its count in a title under the tab")
 	}
@@ -486,11 +483,11 @@ func TestLongDiffsOpenOnlyTheFirstFiles(t *testing.T) {
 	runGit(t, work, "push", "--quiet", "origin", "narrow")
 	syncRepoRefs(t, database, store, repo.ID)
 	resp, body = b.do(http.MethodGet, "/waiotech/commits?base=main&ref=narrow&tab=changes", nil, nil)
-	expect(t, resp, body, http.StatusOK, `Changes <span class="tab-count">3</span>`, `id="diff-0" open>`, `id="diff-2" open>`)
+	expect(t, resp, body, http.StatusOK, `Changes <span class="count">3</span>`, `id="diff-0" open>`, `id="diff-2" open>`)
 	resp, body = b.do(http.MethodGet, "/waiotech/commit/"+mustResolve(t, mustOpen(t, store, repo), "narrow"), nil, nil)
 	expect(t, resp, body, http.StatusOK, "3 changed files", `id="diff-1" open>`)
 	resp, body = b.do(http.MethodGet, "/waiotech/commits?base=main&ref=release&tab=changes", nil, nil)
-	expect(t, resp, body, http.StatusOK, `Changes <span class="tab-count">1</span>`)
+	expect(t, resp, body, http.StatusOK, `Changes <span class="count">1</span>`)
 	if strings.Contains(body, "data-diff-all") || strings.Contains(body, `class="panel-header"><h2 class="panel-title" id="diff-summary-title"`) {
 		t.Error("a single file offers Expand all")
 	}
