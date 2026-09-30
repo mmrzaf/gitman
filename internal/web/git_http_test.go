@@ -553,6 +553,10 @@ func TestDefaultBranchNotPushedYet(t *testing.T) {
 	if strings.Contains(body, "/demo/compare/") {
 		t.Error("the overview links to a comparison with a default branch that does not exist")
 	}
+	resp, _ = admin.do(http.MethodGet, "/demo.git", nil, nil)
+	if resp.StatusCode != http.StatusMovedPermanently || resp.Header.Get("Location") != "/demo" {
+		t.Fatalf("clone URL in a browser: %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
 
 	resp, body = admin.do(http.MethodPost, "/demo/settings/default-branch", url.Values{"default_branch": {"nope"}}, nil)
 	expect(t, resp, body, http.StatusUnprocessableEntity, "no branch named")

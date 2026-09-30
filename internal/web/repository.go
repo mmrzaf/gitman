@@ -2,6 +2,7 @@ package web
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/mmrzaf/gitman/internal/activity"
 	"github.com/mmrzaf/gitman/internal/ci"
@@ -51,6 +52,12 @@ func (a *App) cloneURL(repo *reposvc.Repo) string {
 const repositoryPageLimit = 20
 
 func (a *App) repository(w http.ResponseWriter, r *http.Request) error {
+	// The clone URL opened in a browser lands on the repository. A name
+	// never contains ".", so this can't shadow one.
+	if name, ok := strings.CutSuffix(r.PathValue("repo"), ".git"); ok {
+		http.Redirect(w, r, "/"+name, http.StatusMovedPermanently)
+		return nil
+	}
 	repo, err := a.repoByName(r)
 	if err != nil {
 		return err
