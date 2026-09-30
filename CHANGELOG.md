@@ -34,10 +34,10 @@ worker starts.
   the server, and a branch's confirmation says whether it is merged into
   the default branch. It is recorded like a pushed delete, so it shows in
   Activity.
-- Download a branch, tag or commit as a `.tar.gz` or `.zip`, from
-  **Download** next to the ref picker on Files. It is streamed from
-  `git archive`, follows the repository's read access, and shares the limit
-  on concurrent Git requests.
+- Download a branch, tag or commit as a `.tar.gz`, from **Download** next
+  to the ref picker on Files; the `.zip` is at `/<repo>/archive/<ref>.zip`.
+  It is streamed from `git archive`, follows the repository's read access,
+  and shares the limit on concurrent Git requests.
 
 ### Changed
 
@@ -48,6 +48,16 @@ worker starts.
   branches and tags one under the other, not as tabs.
 - The Runs table shows each run's commit, who started it, how long it
   took, and the target it shipped to.
+- Tables show only the columns that have something in them: a repository
+  with no runs has no run columns on its Overview, and the commit list has
+  no Run column until a commit has one.
+- Tags are listed newest version first, in the Overview and in the
+  pickers. A push that creates, moves or deletes many refs at once is one
+  line of Activity that names the newest and counts the rest.
+- Home no longer has a Running now panel: a run in progress shows beside
+  its repository on the board, which is now called Repositories.
+- The Run dialog chooses its branch or tag with the same searchable list as
+  Commits. The activity feed and the page itself no longer both scroll.
 - A deployment shows its version only when it isn't its commit. A branch
   deploy no longer shows the same commit twice on the Overview and Home.
 

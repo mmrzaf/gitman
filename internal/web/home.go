@@ -12,11 +12,12 @@ import (
 	"github.com/mmrzaf/gitman/internal/postgres"
 )
 
-// homeTimelineLimit and homeInProgressLimit bound the two lists below the
-// board, so Home stays a quick read rather than a full history.
+// homeTimelineLimit and homeInProgressLimit bound the feed and the runs
+// shown beside their repositories, so Home stays a quick read rather than a
+// full history.
 const (
 	homeTimelineLimit   = 30
-	homeInProgressLimit = 15
+	homeInProgressLimit = 50
 )
 
 // boardRepo is one row of Home's board: a repository and what is live
@@ -30,9 +31,11 @@ type boardRepo struct {
 type homePage struct {
 	// Targets names every target anything has shipped to, in order: the
 	// board's columns.
-	Targets    []string
-	Board      []boardRepo
-	InProgress []ci.Summary
+	Targets []string
+	Board   []boardRepo
+	// Running are the runs queued or running, by repository name, shown
+	// beside their repository on the board.
+	Running map[string][]ci.Summary
 	// NoWorker reports that runs are queued with no worker online to
 	// claim them.
 	NoWorker   bool
@@ -69,7 +72,10 @@ func (a *App) buildHomeData(r *http.Request, createForm *form) (homePage, error)
 		return homePage{}, err
 	}
 
-	page := homePage{CreateForm: createForm, InProgress: inProgress, Timeline: feed}
+	page := homePage{CreateForm: createForm, Running: map[string][]ci.Summary{}, Timeline: feed}
+	for _, run := range inProgress {
+		page.Running[run.RepoName] = append(page.Running[run.RepoName], run)
+	}
 	if slices.ContainsFunc(inProgress, func(run ci.Summary) bool { return run.Status == ci.StatusQueued }) {
 		online, err := a.ci.AnyWorkerOnline(ctx)
 		if err != nil {

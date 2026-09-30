@@ -42,35 +42,45 @@
   <p class="panel-footer cluster"><span class="chip">{{template "icon" "file"}}<span class="mono">{{.}}</span></span>
     <a class="btn btn-ghost btn-sm" href="{{commitsURL $repo.Name $d.Head.Name ""}}">{{template "icon" "close"}}All paths</a></p>
   {{- end}}
-</section>
-
-{{- if $cmp}}
-<section class="panel" aria-labelledby="summary-title">
-  <header class="panel-header"><h2 class="panel-title" id="summary-title">{{template "icon" "compare"}}What {{$d.Head.Name}} has that {{$d.Base.Name}} lacks</h2></header>
-  <p class="panel-body compare-summary">
+  {{- if $cmp}}
+  <p class="panel-footer compare-summary">
     {{- if or $d.Ahead $d.Behind}}
     <strong class="mono">{{$d.Head.Name}}</strong> is {{$d.Ahead}} commit{{if ne $d.Ahead 1}}s{{end}} ahead of and {{$d.Behind}} behind <strong class="mono">{{$d.Base.Name}}</strong>.
     {{- if $d.Behind}} <a href="{{$d.SwapURL}}">See the {{$d.Behind}} commit{{if ne $d.Behind 1}}s{{end}} {{$d.Base.Name}} has</a>.{{end}}
     {{- else}}
     <strong class="mono">{{$d.Head.Name}}</strong> and <strong class="mono">{{$d.Base.Name}}</strong> are at the same commit.
     {{- end}}
-    Common ancestor {{template "commit" (dict "Repo" $repo.Name "Hash" $cmp.MergeBase)}}.
+    <span class="muted">Common ancestor {{template "commit" (dict "Repo" $repo.Name "Hash" $cmp.MergeBase)}}.</span>
   </p>
+  {{- end}}
 </section>
-{{- end}}
 
+{{- if $cmp}}
+{{- if $d.Commits}}
+<nav class="tabs tabs-page" data-tabs aria-label="Comparison">
+  <a class="tab" id="tab-commits" href="{{$d.TabURL "commits"}}" data-tab="commits"{{if eq $d.Tab "commits"}} aria-current="page"{{end}}>{{template "icon" "commit"}}Commits <span class="tab-count">{{len $d.Commits}}{{if $cmp.MoreCommits}}+{{end}}</span></a>
+  <a class="tab" id="tab-files" href="{{$d.TabURL "files"}}" data-tab="files"{{if eq $d.Tab "files"}} aria-current="page"{{end}}>{{template "icon" "code"}}Files changed <span class="tab-count">{{(diffTotals $cmp.Diff).Files}}</span></a>
+</nav>
+<div id="panel-commits" data-tab-panel="commits"{{if ne $d.Tab "commits"}} hidden{{end}}>
+  <section class="panel" aria-label="Commits">
+    {{template "commit-table" (dict "Rows" $d.Commits "Repo" $repo)}}
+    {{- if $cmp.MoreCommits}}<p class="panel-footer">There are more commits than are listed here.</p>{{end}}
+  </section>
+</div>
+<div class="stack" id="panel-files" data-tab-panel="files"{{if ne $d.Tab "files"}} hidden{{end}}>
+  {{template "diff" (dict "Diff" $cmp.Diff)}}
+</div>
+{{- end}}
+{{- else}}
 <section class="panel" aria-labelledby="list-title">
-  <header class="panel-header"><h2 class="panel-title" id="list-title">{{template "icon" "commit"}}{{if $cmp}}Commits <span class="tab-count">{{len $d.Commits}}{{if $cmp.MoreCommits}}+{{end}}</span>{{else}}{{$d.Head.Name}}{{end}}</h2></header>
+  <header class="panel-header"><h2 class="panel-title" id="list-title">{{template "icon" "commit"}}{{$d.Head.Name}}</h2></header>
   <div data-live-region="commits">
   {{- if $d.Commits}}
   {{template "commit-table" (dict "Rows" $d.Commits "Repo" $repo)}}
-  {{- else if $cmp}}
-  {{template "empty" (dict "Icon" "commit" "Title" "No commits" "Text" "Nothing in the first that the second lacks.")}}
   {{- else}}
   {{template "empty" (dict "Icon" "commit" "Title" "No commits" "Text" "None changed this path.")}}
   {{- end}}
   </div>
-  {{- if and $cmp $cmp.MoreCommits}}<p class="panel-footer">There are more commits than are listed here.</p>{{end}}
   {{- if or $d.Skip $d.More}}
   <nav class="panel-footer cluster" aria-label="Pages of commits">
     {{- if $d.Skip}}<a class="btn btn-sm" href="{{$d.PageURL $d.NewerSkip}}">Newer</a>{{end}}
@@ -78,10 +88,6 @@
   </nav>
   {{- end}}
 </section>
-
-{{- if $cmp}}
-<h2 class="section-title" id="changes-title">{{template "icon" "code"}}Files changed</h2>
-{{template "diff" (dict "Diff" $cmp.Diff)}}
 {{- end}}
 {{- end}}
 </div>
@@ -94,28 +100,31 @@
      "Label" "Value" "Required" and, if it can be left empty, "Clear": what
      leaving it empty is called). */}}
 {{define "ref-field"}}
-<div class="field ref-field" data-ref-field{{with .Clear}} data-ref-clear="{{.}}"{{end}}>
+<div class="field ref-field" data-ref-field data-ref-submit{{with .Clear}} data-ref-clear="{{.}}"{{end}}>
   <label class="field-label" for="{{.ID}}">{{.Label}}</label>
   <input class="input" id="{{.ID}}" name="{{.Name}}" value="{{.Value}}" list="commit-refs" placeholder="Branch, tag or commit" autocomplete="off" spellcheck="false"{{if .Required}} required{{end}}>
 </div>
 {{end}}
 
 {{/* commit-table: commits, each with its branches and tags, its latest run
-     and its author. Takes (dict "Rows" []commitRow "Repo" *repo.Repo). */}}
+     and its author; a column nothing fills is left out. Takes (dict "Rows"
+     []commitRow "Repo" *repo.Repo). */}}
 {{define "commit-table"}}
-{{$repo := .Repo}}
+{{$repo := .Repo}}{{$refs := anyRefs .Rows}}{{$runs := anyRun .Rows}}
 <div class="table-scroll">
   <table class="table">
-    <thead><tr><th scope="col">Commit</th><th scope="col">At</th><th scope="col">Run</th><th scope="col">Author</th><th scope="col">When</th><th scope="col"><span class="visually-hidden">Hash</span></th></tr></thead>
+    <thead><tr>
+      <th scope="col">Commit</th>
+      {{- if $refs}}<th scope="col">Refs</th>{{end}}
+      {{- if $runs}}<th scope="col">Run</th>{{end}}
+      <th scope="col">Author</th><th scope="col">When</th><th scope="col"><span class="visually-hidden">Hash</span></th>
+    </tr></thead>
     <tbody>
     {{- range .Rows}}
       <tr>
-        <td class="cell-truncate"><a href="/{{$repo.Name}}/commit/{{.Hash}}">{{.Subject}}</a></td>
-        <td class="cell-shrink"><span class="cluster">
-          {{- if .Merge}}<span class="chip">merge</span>{{end}}
-          {{- range .Refs}}{{template "ref" (dict "Kind" .Kind "Name" .Name "Href" (commitsURL $repo.Name .Name ""))}}{{end}}
-        </span></td>
-        <td class="cell-shrink">{{with .Run}}<a class="run-ref" href="/{{$repo.Name}}/runs/{{.Number}}">{{template "status" .Status}}<span>#{{.Number}}</span></a>{{else}}<span class="muted">—</span>{{end}}</td>
+        <td class="cell-truncate"><a href="/{{$repo.Name}}/commit/{{.Hash}}">{{.Subject}}</a>{{if .Merge}} <span class="chip">merge</span>{{end}}</td>
+        {{- if $refs}}<td class="cell-shrink"><span class="cluster">{{range .Refs}}{{template "ref" (dict "Kind" .Kind "Name" .Name "Href" (commitsURL $repo.Name .Name ""))}}{{end}}</span></td>{{end}}
+        {{- if $runs}}<td class="cell-shrink">{{with .Run}}<a class="run-ref" href="/{{$repo.Name}}/runs/{{.Number}}">{{template "status" .Status}}<span>#{{.Number}}</span></a>{{else}}<span class="muted">—</span>{{end}}</td>{{end}}
         <td class="cell-shrink">{{template "person" .Author.Name}}</td>
         <td class="cell-shrink cell-muted">{{template "time" .Author.When}}</td>
         <td class="cell-shrink">{{template "commit" (dict "Repo" $repo.Name "Hash" .Hash)}}</td>

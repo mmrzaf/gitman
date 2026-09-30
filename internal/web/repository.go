@@ -2,6 +2,8 @@ package web
 
 import (
 	"net/http"
+	"slices"
+	"sort"
 	"strings"
 
 	"github.com/mmrzaf/gitman/internal/activity"
@@ -156,6 +158,10 @@ func (a *App) repository(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 
+	// The newest release first, however the tags happened to be pushed; the
+	// default branch leads the branches, the rest by how lately they moved.
+	sort.SliceStable(page.Tags, func(i, j int) bool { return git.VersionLess(page.Tags[j].Name, page.Tags[i].Name) })
+	sort.SliceStable(page.Branches, func(i, j int) bool { return page.Branches[i].IsDefault && !page.Branches[j].IsDefault })
 	page.TagsTotal = len(page.Tags)
 	if !page.AllTags && len(page.Tags) > overviewTags {
 		page.Tags = page.Tags[:overviewTags]
@@ -242,4 +248,19 @@ func noteDeletes(repo *reposvc.Repo, page *repositoryPage) {
 			row.DeleteNote = "It is not merged into " + repo.DefaultBranch + ". Commits only it has are left without a branch. " + cannotRestore
 		}
 	}
+}
+
+// hasRun, hasShipped and hasCounts report whether any ref of a list has a
+// run, has shipped something, or has been counted against the default
+// branch: a column nothing would fill is left out.
+func hasRun(rows []refRow) bool {
+	return slices.ContainsFunc(rows, func(r refRow) bool { return r.LatestRun != nil })
+}
+
+func hasShipped(rows []refRow) bool {
+	return slices.ContainsFunc(rows, func(r refRow) bool { return r.LatestDeployment != nil })
+}
+
+func hasCounts(rows []refRow) bool {
+	return slices.ContainsFunc(rows, func(r refRow) bool { return r.Divergence != nil })
 }

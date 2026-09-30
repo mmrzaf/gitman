@@ -52,6 +52,12 @@ type RepoEntry struct {
 	RunNumber int64
 	RunStatus string
 
+	// Count is how many refs this line is about: one, unless a push made so
+	// many of the same change that they are one line. Names are the first
+	// of them, newest version first.
+	Count int
+	Names []string
+
 	// deployment
 	Target  string
 	Version string
@@ -67,6 +73,9 @@ type RepoEntry struct {
 	// id orders entries of the same moment.
 	id string
 }
+
+// bulkNamed is how many refs of a bulk change a line names.
+const bulkNamed = 3
 
 // changeOf classifies one ref update.
 func changeOf(kind git.Kind, isCreate, isDelete, isForce bool) Change {

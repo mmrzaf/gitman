@@ -3,6 +3,7 @@ package activity
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/mmrzaf/gitman/internal/git"
@@ -214,20 +215,42 @@ func recentEvents(ctx context.Context, q postgres.Querier, f filter) ([]Entry, e
 	return entries, rows.Err()
 }
 
+// bulkUpdates is how many updates of one kind in one push make a line of
+// their own, instead of a line each: a push that creates twenty tags would
+// otherwise be all a feed shows.
+const bulkUpdates = 4
+
 // repoRefChanges lists a repository's ref updates newest first, each with
-// the run it started: one row per push_updates row, not per push.
+// the run it started: one row per push_updates row, except that a push's
+// updates of the same kind and change, when there are bulkUpdates or more,
+// are one row that counts and names them.
 func repoRefChanges(ctx context.Context, q postgres.Querier, repoID string, limit int) ([]RepoEntry, error) {
 	rows, err := q.Query(ctx, `
-		SELECT u.id, p.created_at, COALESCE(pe.username, ''), u.kind, u.name, u.old_commit, u.new_commit,
-		       u.is_create, u.is_delete, u.is_force, COALESCE(r.number, 0), COALESCE(r.status, '')
-		FROM push_updates u
-		JOIN pushes p ON p.id = u.push_id
-		LEFT JOIN people pe ON pe.id = p.person_id
-		LEFT JOIN runs r ON r.push_id = p.id AND r.ref_kind = u.kind AND r.ref_name = u.name
-		WHERE p.repo_id = $1
-		ORDER BY p.created_at DESC, u.id DESC
+		WITH changes AS (
+			SELECT u.id, u.push_id, p.created_at, COALESCE(pe.username, '') AS actor, u.kind, u.name,
+			       u.old_commit, u.new_commit, u.is_create, u.is_delete, u.is_force,
+			       count(*) OVER (PARTITION BY u.push_id, u.kind, u.is_create, u.is_delete, u.is_force) AS n
+			FROM push_updates u
+			JOIN pushes p ON p.id = u.push_id
+			LEFT JOIN people pe ON pe.id = p.person_id
+			WHERE p.repo_id = $1
+		)
+		SELECT c.id, c.created_at, c.actor, c.kind, c.name, c.old_commit, c.new_commit,
+		       c.is_create, c.is_delete, c.is_force, COALESCE(r.number, 0), COALESCE(r.status, ''),
+		       1 AS total, ARRAY[]::text[] AS names
+		FROM changes c
+		LEFT JOIN runs r ON r.push_id = c.push_id AND r.ref_kind = c.kind AND r.ref_name = c.name
+		WHERE c.n < $3
+		UNION ALL
+		SELECT min(c.id), c.created_at, c.actor, c.kind, '', '', '',
+		       c.is_create, c.is_delete, c.is_force, 0, '',
+		       count(*)::int, array_agg(c.name)
+		FROM changes c
+		WHERE c.n >= $3
+		GROUP BY c.push_id, c.created_at, c.actor, c.kind, c.is_create, c.is_delete, c.is_force
+		ORDER BY created_at DESC, id DESC
 		LIMIT $2
-	`, repoID, limit)
+	`, repoID, limit, bulkUpdates)
 	if err != nil {
 		return nil, fmt.Errorf("list ref changes: %w", err)
 	}
@@ -238,11 +261,18 @@ func repoRefChanges(ctx context.Context, q postgres.Querier, repoID string, limi
 		var kind string
 		var isCreate, isDelete, isForce bool
 		if err := rows.Scan(&e.id, &e.At, &e.Actor, &kind, &e.RefName, &e.OldCommit, &e.NewCommit,
-			&isCreate, &isDelete, &isForce, &e.RunNumber, &e.RunStatus); err != nil {
+			&isCreate, &isDelete, &isForce, &e.RunNumber, &e.RunStatus, &e.Count, &e.Names); err != nil {
 			return nil, fmt.Errorf("scan ref change: %w", err)
 		}
 		e.RefKind = git.Kind(kind)
 		e.Change = changeOf(e.RefKind, isCreate, isDelete, isForce)
+		if e.Count > 1 {
+			// The newest versions lead, and the rest are counted.
+			sort.Slice(e.Names, func(i, j int) bool { return git.VersionLess(e.Names[j], e.Names[i]) })
+			if len(e.Names) > bulkNamed {
+				e.Names = e.Names[:bulkNamed]
+			}
+		}
 		entries = append(entries, e)
 	}
 	return entries, rows.Err()

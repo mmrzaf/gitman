@@ -199,3 +199,56 @@ func SelectPattern(patterns []string, name string) int {
 	}
 	return best
 }
+
+// VersionLess orders names the way a person reads versions: runs of digits
+// compare as numbers, so "v1.0.0-beta.9" comes before "v1.0.0-beta.10", and
+// everything else compares as text. Names that read the same, such as "v01"
+// and "v1", fall back to plain text order, so the order is always total.
+func VersionLess(a, b string) bool {
+	if c := versionCompare(a, b); c != 0 {
+		return c < 0
+	}
+	return a < b
+}
+
+// versionCompare is -1, 0 or 1 for a before, the same as, or after b.
+func versionCompare(a, b string) int {
+	for a != "" && b != "" {
+		da, db := leadingDigits(a), leadingDigits(b)
+		if da != "" && db != "" {
+			na, nb := strings.TrimLeft(da, "0"), strings.TrimLeft(db, "0")
+			switch {
+			case len(na) != len(nb):
+				return cmpInt(len(na), len(nb))
+			case na != nb:
+				return strings.Compare(na, nb)
+			}
+			a, b = a[len(da):], b[len(db):]
+			continue
+		}
+		if a[0] != b[0] {
+			return cmpInt(int(a[0]), int(b[0]))
+		}
+		a, b = a[1:], b[1:]
+	}
+	return cmpInt(len(a), len(b))
+}
+
+func cmpInt(a, b int) int {
+	switch {
+	case a < b:
+		return -1
+	case a > b:
+		return 1
+	}
+	return 0
+}
+
+// leadingDigits is the run of ASCII digits s starts with.
+func leadingDigits(s string) string {
+	i := 0
+	for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+		i++
+	}
+	return s[:i]
+}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -101,6 +102,16 @@ type runsPage struct {
 	// More is the run number the "Older" link continues from, or 0 when
 	// this is the last page.
 	More int64
+}
+
+// anyShipped and anyRan report whether any run of a list shipped to a target,
+// or ran at all: a column nothing would fill is left out.
+func anyShipped(runs []ci.Summary) bool {
+	return slices.ContainsFunc(runs, func(r ci.Summary) bool { return r.Status == ci.StatusPassed && r.Target != "" })
+}
+
+func anyRan(runs []ci.Summary) bool {
+	return slices.ContainsFunc(runs, func(r ci.Summary) bool { return r.Ran() })
 }
 
 // LiveEvents keeps the Runs page's in-progress rows current.

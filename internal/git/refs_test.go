@@ -148,3 +148,23 @@ func TestSplitFullNameRejectsOtherNamespaces(t *testing.T) {
 		}
 	}
 }
+
+func TestVersionLessReadsNumbersAsNumbers(t *testing.T) {
+	ordered := []string{
+		"beta", "v1", "v1.0.0-beta.2", "v1.0.0-beta.9", "v1.0.0-beta.10", "v1.0.0-beta.21", "v1.0.0-rc1", "v1.2", "v1.10", "v2",
+	}
+	for i, a := range ordered {
+		for j, b := range ordered {
+			if got, want := VersionLess(a, b), i < j; got != want {
+				t.Errorf("VersionLess(%q, %q) = %v, want %v", a, b, got, want)
+			}
+		}
+	}
+	// Leading zeros do not change a number, and never make the order unstable.
+	if VersionLess("v01", "v1") == VersionLess("v1", "v01") {
+		t.Error("v01 and v1 have no order between them")
+	}
+	if VersionLess("v1", "v1") {
+		t.Error("a name is less than itself")
+	}
+}

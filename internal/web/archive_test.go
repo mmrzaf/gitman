@@ -168,11 +168,14 @@ func TestFilesOffersDownloadsNextToTheRefPicker(t *testing.T) {
 	seedFilesRepo(t, database, store, b)
 
 	resp, body := b.do(http.MethodGet, "/waiotech@main/server", nil, nil)
-	expect(t, resp, body, http.StatusOK, `aria-label="Download main"`,
-		`href="/waiotech/archive/main.tar.gz"`, `href="/waiotech/archive/main.zip"`)
+	// One button, for the .tar.gz; the .zip is still there at its address.
+	expect(t, resp, body, http.StatusOK, `aria-label="Download main"`, `href="/waiotech/archive/main.tar.gz"`)
+	if strings.Contains(body, "/archive/main.zip") || strings.Contains(body, `aria-label="Download main"><`) && strings.Contains(body, "<summary class=\"btn btn-sm\" aria-label=\"Download") {
+		t.Error("Files offers a menu of formats, not one download")
+	}
 	resp, body = b.do(http.MethodGet, "/waiotech@release/1.2/which.txt", nil, nil)
 	expect(t, resp, body, http.StatusOK, `aria-label="Download release/1.2"`, `href="/waiotech/archive/release/1.2.tar.gz"`)
 	head := mustResolve(t, mustOpenByName(t, database, store, "waiotech"), "main")
 	resp, body = b.do(http.MethodGet, "/waiotech@"+head[:9], nil, nil)
-	expect(t, resp, body, http.StatusOK, `aria-label="Download commit `+head[:7]+`"`, `href="/waiotech/archive/`+head+`.zip"`)
+	expect(t, resp, body, http.StatusOK, `aria-label="Download commit `+head[:7]+`"`, `href="/waiotech/archive/`+head+`.tar.gz"`)
 }

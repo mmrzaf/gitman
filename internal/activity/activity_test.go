@@ -2,6 +2,7 @@ package activity
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -306,7 +307,7 @@ func TestForRepoPages(t *testing.T) {
 	if _, err := database.Pool.Exec(ctx, `INSERT INTO pushes (id, repo_id, person_id) VALUES ('big', $1, 'p1')`, repoID); err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 3; i++ {
 		if _, err := database.Pool.Exec(ctx, `
 			INSERT INTO push_updates (id, push_id, kind, name, old_commit, new_commit, is_create)
 			VALUES ($1, 'big', 'branch', $2, repeat('0',40), repeat('a',40), true)
@@ -337,8 +338,8 @@ func TestForRepoPages(t *testing.T) {
 		}
 		skip += 2
 	}
-	if len(seen) != 9 {
-		t.Fatalf("paging listed %d entries, want 9: %v", len(seen), seen)
+	if len(seen) != 7 {
+		t.Fatalf("paging listed %d entries, want 7: %v", len(seen), seen)
 	}
 	if entries, more, err := svc.ForRepo(ctx, repoID, 100, 2); err != nil || more || len(entries) != 0 {
 		t.Fatalf("past the end = %v, %v, %v", entries, more, err)
@@ -379,5 +380,79 @@ func TestForRepoListsRefusedPushesWithTheirReasons(t *testing.T) {
 	}
 	if got[0].RefKind != git.KindBranch || got[0].RefName != "main" || got[1].RefKind != git.KindTag || got[2].RefName != "" {
 		t.Errorf("refs are not told apart: %+v", got)
+	}
+}
+
+// A push that makes many of the same change is one line, not a feed's worth.
+func TestForRepoGroupsABulkPush(t *testing.T) {
+	database := pgtest.Open(t)
+	ctx := context.Background()
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := database.Pool.Exec(ctx, q, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec(`INSERT INTO repos (id, name) VALUES ('r1', 'demo')`)
+	exec(`INSERT INTO people (id, username, password_hash) VALUES ('p1', 'darius', 'x')`)
+	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	// Twelve tags created at once, three branches created at once (fewer
+	// than a bulk), and one tag moved in the same push.
+	exec(`INSERT INTO pushes (id, repo_id, person_id, created_at) VALUES ('big', 'r1', 'p1', $1)`, base)
+	for i := 1; i <= 12; i++ {
+		exec(`INSERT INTO push_updates (id, push_id, kind, name, old_commit, new_commit, is_create)
+		      VALUES ($1, 'big', 'tag', $2, repeat('0',40), repeat('a',40), true)`, fmt.Sprintf("t%02d", i), fmt.Sprintf("v1.0.0-beta.%d", i))
+	}
+	for _, name := range []string{"a", "b", "c"} {
+		exec(`INSERT INTO push_updates (id, push_id, kind, name, old_commit, new_commit, is_create)
+		      VALUES ($1, 'big', 'branch', $2, repeat('0',40), repeat('b',40), true)`, "b-"+name, name)
+	}
+	exec(`INSERT INTO push_updates (id, push_id, kind, name, old_commit, new_commit)
+	      VALUES ('mv', 'big', 'tag', 'latest', repeat('c',40), repeat('d',40))`)
+	// An older push with one update is unaffected.
+	exec(`INSERT INTO pushes (id, repo_id, person_id, created_at) VALUES ('old', 'r1', 'p1', $1)`, base.Add(-time.Hour))
+	exec(`INSERT INTO push_updates (id, push_id, kind, name, old_commit, new_commit, is_create)
+	      VALUES ('o1', 'old', 'branch', 'main', repeat('0',40), repeat('e',40), true)`)
+
+	svc := NewService(database)
+	entries, more, err := svc.ForRepo(ctx, "r1", 0, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// One line for the twelve tags, one each for the three branches, the moved
+	// tag and the older push: six, not seventeen.
+	if more || len(entries) != 6 {
+		t.Fatalf("got %d entries (more=%v), want 6: %+v", len(entries), more, entries)
+	}
+	var bulk *RepoEntry
+	for i := range entries {
+		if entries[i].Count > 1 {
+			if bulk != nil {
+				t.Fatal("two bulk lines")
+			}
+			bulk = &entries[i]
+		}
+	}
+	if bulk == nil || bulk.Count != 12 || bulk.Change != Created || bulk.RefKind != git.KindTag || bulk.Actor != "darius" {
+		t.Fatalf("the bulk line = %+v", bulk)
+	}
+	if strings.Join(bulk.Names, " ") != "v1.0.0-beta.12 v1.0.0-beta.11 v1.0.0-beta.10" {
+		t.Errorf("the bulk line names %v, want the newest three versions", bulk.Names)
+	}
+	for _, e := range entries {
+		if e.Count != 1 && e.Count != 12 {
+			t.Errorf("a line counts %d refs: %+v", e.Count, e)
+		}
+	}
+
+	// Paging counts lines, so a page never splits or repeats a bulk.
+	first, more, err := svc.ForRepo(ctx, "r1", 0, 3)
+	if err != nil || !more || len(first) != 3 {
+		t.Fatalf("first page = %d, more=%v, %v", len(first), more, err)
+	}
+	rest, more, err := svc.ForRepo(ctx, "r1", 3, 3)
+	if err != nil || more || len(rest) != 3 {
+		t.Fatalf("second page = %d, more=%v, %v", len(rest), more, err)
 	}
 }

@@ -78,20 +78,20 @@ const query = (page) => new URL(page.url()).searchParams;
   await repo.goto(`${base}/demo`);
 
   sh(process.env.STOP_WORKER);
-  const homeBefore = await home.locator("[data-live-region=progress]").innerText();
+  const homeBefore = await home.locator("[data-live-region=board]").innerText();
   sh(process.env.PUSH_SLOW);
 
-  const homeUpdated = await until(async () => /Run #6/.test(await home.locator("[data-live-region=progress]").innerText()));
-  check("Home shows a new run live", homeUpdated && !/Run #6/.test(homeBefore));
+  const homeUpdated = await until(async () => /#6/.test(await home.locator("[data-live-region=board]").innerText()));
+  check("Home shows a new run live", homeUpdated && !/#6/.test(homeBefore));
   check("Home says it is live", (await home.locator("[data-live-status]").getAttribute("data-state")) === "open");
   const repoUpdated = await until(async () => /slow\/one/.test(await repo.locator("[data-live-region=branches]").innerText()));
   check("the Repository page shows the new branch and its run live", repoUpdated);
   await repo.close();
 
   // Focus on Home, inside a region that is about to be replaced.
-  const runLink = home.locator("[data-live-region=progress] a[href$='/runs/6']");
+  const runLink = home.locator("[data-live-region=board] a[href$='/runs/6']");
   await runLink.focus();
-  const regionBefore = await home.locator("[data-live-region=progress]").elementHandle();
+  const regionBefore = await home.locator("[data-live-region=board]").elementHandle();
 
   const run = watch(await context.newPage());
   await run.goto(`${base}/demo/runs/6`);
@@ -100,7 +100,7 @@ const query = (page) => new URL(page.url()).searchParams;
   sh(process.env.START_WORKER);
 
   const swapped = await until(async () => !(await regionBefore.evaluate((el) => el.isConnected))
-    && /running/i.test(await home.locator("[data-live-region=progress]").innerText()));
+    && /running/i.test(await home.locator("[data-live-region=board]").innerText()));
   const after = await focused(home);
   check("focus survives a live update", swapped && after?.href === "/demo/runs/6", JSON.stringify(after));
 
@@ -316,7 +316,10 @@ const query = (page) => new URL(page.url()).searchParams;
   await until(() => page.locator("dialog[open] [role=option]").count(), 5000);
   await Promise.all([page.waitForURL(/base=v1\.4\.0/), page.keyboard.press("Enter")]);
   check("choosing a base compares it with the ref", query(page).get("base") === "v1.4.0" && query(page).get("ref") === "main"
-    && (await page.locator("#summary-title").count()) === 1 && (await page.locator("#changes-title").count()) === 1);
+    && (await page.locator(".compare-summary").count()) === 1 && (await page.locator("[data-tab=files]").count()) === 1);
+  await page.click("[data-tab=files]");
+  check("the files tab shows the changes, and the address follows",
+    query(page).get("tab") === "files" && (await page.locator("#panel-files").isVisible()) && !(await page.locator("#panel-commits").isVisible()));
   await page.click("#commits-ref-button");
   await page.locator("dialog[open] input[role=combobox]").fill(process.env.COMMIT.slice(0, 9));
   check("a typed hash is offered as a commit", (await page.locator("dialog[open] [role=option]").first().innerText()).includes(`Commit ${process.env.COMMIT.slice(0, 9)}`));
@@ -324,14 +327,24 @@ const query = (page) => new URL(page.url()).searchParams;
   check("choosing a commit keeps the base", query(page).get("base") === "v1.4.0");
   await page.click("#commits-base-button");
   await Promise.all([page.waitForURL((url) => !url.searchParams.get("base")), page.locator("dialog[open] [role=option]").first().click()]);
-  check("No comparison goes back to the log", (await page.locator("#summary-title").count()) === 0);
+  check("No comparison goes back to the log", (await page.locator(".compare-summary").count()) === 0);
 
   // Downloading an archive of what the page shows.
   await page.goto(`${base}/demo@main`);
-  await page.click("summary[aria-label^='Download']");
   const download = page.waitForEvent("download");
-  await page.click("a.menu-item:has-text('.zip')");
-  check("Download saves an archive named for the repository and ref", (await download).suggestedFilename() === "demo-main.zip");
+  await page.click("a:has-text('Download')");
+  check("Download saves an archive named for the repository and ref", (await download).suggestedFilename() === "demo-main.tar.gz");
+
+  // The Run dialog picks its branch or tag the way Commits does.
+  await page.goto(`${base}/demo/runs?dialog=run-new`);
+  check("the run dialog's ref is a searchable button", (await page.locator("#f-run-ref-button").count()) === 1
+    && (await page.locator("#f-run-ref-button").innerText()).includes("main"));
+  await page.click("#f-run-ref-button");
+  await page.locator("dialog[open] input[role=combobox]").fill("broken");
+  await until(() => page.locator("dialog[open] [role=option]").count(), 5000);
+  await page.keyboard.press("Enter");
+  check("choosing a ref fills the run form without sending it", (await page.locator("#f-run-ref").inputValue()) === "refs/heads/broken"
+    && (await page.locator("#f-run-ref-button").innerText()).includes("broken") && page.url().includes("/demo/runs"));
 
   // Copying, inline editing, times.
   await page.goto(`${base}/demo`);
@@ -368,6 +381,7 @@ const screens = [
   ["activity", "/demo/activity", "#activity-title"],
   ["commit", `/demo/commit/${commit}`, "#commit-title"],
   ["compare", `/demo/commits?base=main&ref=${encodeURIComponent(feature)}`, "#commits-title"],
+  ["compare-files", `/demo/commits?base=main&ref=${encodeURIComponent(feature)}&tab=files`, "#commits-title"],
   ["compare-diverged", "/demo/commits?base=broken&ref=main", "#commits-title"],
   ["run-failed", "/demo/runs/3", "#run-title"],
   ["run-passed", "/demo/runs/4", "#run-title"],
@@ -395,7 +409,7 @@ const states = [
     await p.locator("details[open] .menu-list").getByRole("menuitem", { name: "Disable" }).click();
   }],
   ["commits-ref-picker", "/demo/commits", async (p) => { await p.click("#commits-ref-button"); await p.locator("dialog[open] input").fill("v1"); }],
-  ["download-menu", "/demo@main", async (p) => { await p.click("summary[aria-label^='Download']"); }],
+  ["run-ref-picker", "/demo/runs?dialog=run-new", async (p) => { await p.click("#f-run-ref-button"); }],
   ["delete-confirm", "/demo", async (p) => { await p.click("button[aria-label^='Delete branch feature']"); }],
   ["new-repo", "/", async (p) => { await p.click("[data-dialog-open=new-repo]"); }],
   ["account-menu", "/", async (p) => { await p.click("summary[aria-label^='Account menu']"); }],
@@ -428,6 +442,20 @@ for (const scheme of ["light", "dark"]) {
   await signin.goto(`${base}/login`);
   await scan(signin, `sign in, ${scheme}`);
   await out.close();
+}
+
+// ---- A feed scrolls inside its panel, and ends inside the window ------
+{
+  const { context, page } = await signedIn({ viewport: { width: 1440, height: 900 } });
+  for (const path of ["/", "/demo"]) {
+    await page.goto(base + path);
+    const feed = await page.evaluate(() => {
+      const box = document.querySelector(".feed-scroll")?.getBoundingClientRect();
+      return box ? { bottom: Math.round(box.bottom), height: innerHeight } : null;
+    });
+    check(`the activity feed ends inside the window: ${path}`, feed && feed.bottom <= feed.height, JSON.stringify(feed));
+  }
+  await context.close();
 }
 
 // ---- Phone width: nothing scrolls sideways but what is meant to --------
@@ -473,7 +501,7 @@ for (const scheme of ["light", "dark"]) {
     query(page).get("ref") === "broken" && query(page).get("path") === "internal/pay/charge.go");
   await page.fill("#commits-base", "main");
   await Promise.all([page.waitForURL(/base=main/), page.click("form.commit-picker button:has-text('Show')")]);
-  check("comparing two refs works without JavaScript", query(page).get("base") === "main" && (await page.locator("#summary-title").count()) === 1);
+  check("comparing two refs works without JavaScript", query(page).get("base") === "main" && (await page.locator(".compare-summary").count()) === 1);
   await page.goto(`${base}/demo/settings?tab=secrets`);
   check("a tab's address works without JavaScript", (await page.locator("#panel-secrets").isVisible()) && !(await page.locator("#panel-general").isVisible()));
   await page.click("a:has-text('New secret')");

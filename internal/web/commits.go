@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -93,6 +94,18 @@ type commitsPage struct {
 	// far Head is from Base, and Capped reports more commits than listed.
 	Comparison    *git.Comparison
 	Ahead, Behind int
+	// Tab is what a comparison shows: its "commits", or the "files" they
+	// change.
+	Tab string
+}
+
+// TabURL is this comparison's address with a tab open.
+func (p commitsPage) TabURL(tab string) string {
+	u := compareURL(p.Repo.Name, p.Base.Name, p.Head.Name)
+	if tab != "commits" {
+		u += "&tab=" + tab
+	}
+	return u
 }
 
 // Comparing reports a page that compares two refs.
@@ -148,6 +161,7 @@ func (a *App) commits(w http.ResponseWriter, r *http.Request) error {
 	if page.Refs, err = a.repos.ListRefs(ctx, repo.ID); err != nil {
 		return err
 	}
+	page.Refs = orderedRefs(page.Refs, repo.DefaultBranch)
 
 	// A side is a ref or a commit and nothing more: a path after it is not
 	// part of it.
@@ -200,6 +214,7 @@ func (a *App) commits(w http.ResponseWriter, r *http.Request) error {
 			return tooLargeToShow(err)
 		}
 		page.Comparison, commits = cmp, cmp.Commits
+		page.Tab = tabFrom(r, "commits", "files")
 		counts, err := gitRepo.Divergences(ctx, base.Commit, []string{head.Commit})
 		if err != nil {
 			return tooLargeToShow(err)
@@ -302,4 +317,47 @@ func (a *App) compareRedirect(w http.ResponseWriter, r *http.Request) error {
 	}
 	http.Redirect(w, r, compareURL(repo.Name, base, head), http.StatusMovedPermanently)
 	return nil
+}
+
+// orderedRefs puts refs in the order a list of them is read in: the default
+// branch, then the other branches by name, then tags, newest version first.
+func orderedRefs(refs []reposvc.IndexedRef, defaultBranch string) []reposvc.IndexedRef {
+	out := slices.Clone(refs)
+	slices.SortStableFunc(out, func(a, b reposvc.IndexedRef) int {
+		switch {
+		case a.Kind != b.Kind:
+			if a.Kind == git.KindBranch {
+				return -1
+			}
+			return 1
+		case a.Kind == git.KindTag:
+			return versionOrder(b.Name, a.Name)
+		case a.Name == defaultBranch:
+			return -1
+		case b.Name == defaultBranch:
+			return 1
+		}
+		return strings.Compare(a.Name, b.Name)
+	})
+	return out
+}
+
+func versionOrder(a, b string) int {
+	switch {
+	case git.VersionLess(a, b):
+		return -1
+	case git.VersionLess(b, a):
+		return 1
+	}
+	return 0
+}
+
+// anyRun and anyRefs report whether any commit of a list has a run, or a
+// branch or tag at it: a column nothing would fill is left out.
+func anyRun(rows []commitRow) bool {
+	return slices.ContainsFunc(rows, func(r commitRow) bool { return r.Run != nil })
+}
+
+func anyRefs(rows []commitRow) bool {
+	return slices.ContainsFunc(rows, func(r commitRow) bool { return len(r.Refs) > 0 })
 }

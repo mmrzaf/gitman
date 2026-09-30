@@ -8,9 +8,11 @@ an admin with `gitman admin person add`.
 
 ## Home
 
-Lists every repository you can read. Anyone signed in can create a new
-one from here; there are no organizations or namespaces, just one flat
-list of what's readable to you.
+Lists every repository you can read, with what is live on each target and
+any run in progress beside its repository, and a feed of what has been
+happening. Anyone signed in can create a new one from here; there are no
+organizations or namespaces, just one flat list of what's readable to you.
+When runs are queued and no worker is online, Home says so.
 
 ## A repository
 
@@ -26,7 +28,7 @@ Its nav has five items:
   file by path with the go-to-file finder. **Commits** on a file or
   directory lists the commits that changed it. **Download**, next to the
   ref picker, gives the whole tree of the branch, tag or commit you are
-  looking at as a `.tar.gz` or a `.zip`.
+  looking at as a `.tar.gz`.
 - **Commits** — a branch's, tag's or commit's commits, newest first, each
   with its latest run, the branches and tags now at it, and a marker on
   merges. To see what differs between two refs, choose the second in
@@ -42,8 +44,8 @@ Its nav has five items:
 
 An archive of any branch, tag or commit is at
 `/<repo>/archive/<ref>.tar.gz` or `.zip`; **Download** next to the ref
-picker on Files links to it. You must be signed in, as for any page:
-access tokens are for Git.
+picker on Files is the `.tar.gz`, and the `.zip` is at its address. You
+must be signed in, as for any page: access tokens are for Git.
 
 The file is named `<repo>-<ref>`, with any `/` in the ref written as `-`,
 and everything in it is under a folder of that name. A commit is named by

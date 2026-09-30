@@ -1,71 +1,94 @@
 // A ref field chooses a branch, a tag or a commit. Without scripting it is
-// a text box that lists the repository's refs. Here it becomes a button
-// that opens a searchable list, the picker the command palette uses: type
-// to narrow it, or type a commit's hash to use that commit. Choosing
-// sends the form, so what the page shows is always what is chosen.
-import { el, icon, on } from "./dom.js";
+// a text box that lists the repository's refs, or a plain select. Here it
+// becomes a button that opens a searchable list, the picker the command
+// palette uses: type to narrow it, or, where a commit can be chosen, type
+// its hash. A field with data-ref-submit sends its form once chosen, so what
+// a page shows is always what is chosen.
+import { el, icon } from "./dom.js";
 import { Picker } from "./picker.js";
 
 const hashLike = /^[0-9a-f]{7,40}$/i;
 
-function refsOf(input) {
-  const list = document.getElementById(input.getAttribute("list"));
-  return [...(list?.options || [])].map((option) => ({ name: option.value, kind: option.textContent }));
+// choicesOf is what a field offers: from the options of a select, grouped
+// as its optgroups are, or from the datalist beside a text box.
+function choicesOf(control) {
+  if (control.tagName === "SELECT") {
+    return [...control.options].map((option) => ({
+      value: option.value, label: option.textContent.trim(),
+      kind: option.parentElement.label === "Tags" ? "tag" : "branch",
+    }));
+  }
+  const list = document.getElementById(control.getAttribute("list"));
+  return [...(list?.options || [])].map((option) => ({ value: option.value, label: option.value, kind: option.textContent }));
 }
 
 function upgrade(field) {
-  const input = field.querySelector("input");
+  const control = field.querySelector("input, select");
   const label = field.querySelector("label");
-  const refs = refsOf(input);
+  const isSelect = control.tagName === "SELECT";
+  const choices = choicesOf(control);
   const clear = field.dataset.refClear;
-  const kindOf = (value) => refs.find((ref) => ref.name === value)?.kind || "commit";
+  const find = (value) => choices.find((choice) => choice.value === value);
 
-  const name = el("span", { class: "ref-button-name", id: `${input.id}-value` });
+  const name = el("span", { class: "ref-button-name", id: `${control.id}-value` });
   const glyph = el("span", { class: "ref-button-icon" });
   const button = el("button", {
-    type: "button", class: "btn ref-button", id: `${input.id}-button`,
-    "aria-haspopup": "dialog", "aria-labelledby": `${label.id ||= `${input.id}-label`} ${name.id}`,
+    type: "button", class: "btn ref-button", id: `${control.id}-button`,
+    "aria-haspopup": "dialog", "aria-labelledby": `${label.id ||= `${control.id}-label`} ${name.id}`,
+    "aria-describedby": control.getAttribute("aria-describedby"), autofocus: control.hasAttribute("autofocus"),
   }, glyph, name, icon("chevron-down"));
   const show = () => {
-    const value = input.value.trim();
-    name.textContent = value || clear || "Choose…";
+    const value = control.value.trim();
+    const chosen = find(value);
+    name.textContent = chosen?.label || value || clear || "Choose…";
     name.classList.toggle("muted", !value);
-    glyph.replaceChildren(value ? icon(kindOf(value)) : "");
+    glyph.replaceChildren(value ? icon(chosen?.kind || "commit") : "");
   };
   show();
-  input.type = "hidden";
   label.htmlFor = button.id;
-  input.after(button);
+  if (isSelect) {
+    control.hidden = true;
+    (control.closest(".select-wrap") || control).after(button);
+    control.closest(".select-wrap")?.setAttribute("hidden", "");
+  } else {
+    control.type = "hidden";
+    control.after(button);
+  }
 
   let picker = null;
   let items = [];
   let hashShown = false;
   const choose = (value) => {
-    input.value = value;
+    control.value = value;
     show();
-    input.form.requestSubmit();
+    if (field.hasAttribute("data-ref-submit")) control.form.requestSubmit();
   };
   const build = () => {
     items = [];
     if (clear) items.push({ label: clear, icon: "close", run: () => choose("") });
     for (const [kind, group] of [["branch", "Branches"], ["tag", "Tags"]]) {
-      for (const ref of refs.filter((r) => r.kind === kind)) {
-        items.push({ label: ref.name, group, icon: kind, run: () => choose(ref.name) });
+      for (const choice of choices.filter((c) => c.kind === kind)) {
+        items.push({ label: choice.label, group, icon: kind, run: () => choose(choice.value) });
       }
     }
   };
 
   button.addEventListener("click", () => {
     if (!picker) {
-      picker = new Picker({ label: label.textContent.trim(), placeholder: "Find a branch or tag, or type a commit…" });
-      // A typed hash is offered as a choice of its own.
-      picker.input.addEventListener("input", () => {
-        const typed = picker.input.value.trim();
-        const offer = hashLike.test(typed);
-        if (offer === hashShown && !offer) return;
-        hashShown = offer;
-        picker.setItems(offer ? [{ label: `Commit ${typed}`, icon: "commit", run: () => choose(typed) }, ...items] : items);
+      picker = new Picker({
+        label: label.textContent.trim(),
+        placeholder: isSelect ? "Find a branch or tag…" : "Find a branch or tag, or type a commit…",
       });
+      if (!isSelect) {
+        // A typed hash is offered as a choice of its own.
+        picker.input.addEventListener("input", () => {
+          const typed = picker.input.value.trim();
+          const offer = hashLike.test(typed);
+          if (offer === hashShown && !offer) return;
+          hashShown = offer;
+          picker.setItems(offer ? [{ label: `Commit ${typed}`, icon: "commit", run: () => choose(typed) }, ...items] : items);
+        });
+      }
     }
     build();
     hashShown = false;

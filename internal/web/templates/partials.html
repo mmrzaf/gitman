@@ -163,6 +163,10 @@
       <a href="/{{$repo.Name}}/runs/{{.RunNumber}}">Run #{{.RunNumber}}</a> {{.RunStatus}} {{template "ref" (dict "Kind" .RefKind "Name" .RefName)}}{{if .Actor}} <span class="muted">· {{template "person" .Actor}}</span>{{end}}
       {{- else if eq .Kind "deployment"}}
       {{template "person" .Actor}} shipped {{if ownVersion .Version .Commit}}<span class="version">{{.Version}}</span>{{else}}{{template "commit" (dict "Repo" $repo.Name "Hash" .Commit)}}{{end}} to <strong>{{.Target}}</strong>
+      {{- else if gt .Count 1}}
+      {{$kind := .RefKind}}{{$count := .Count}}{{$named := len .Names}}
+      {{template "person" .Actor}} {{.Change}} {{$count}} {{if eq $kind "tag"}}tags{{else}}branches{{end}}
+      <span class="feed-reason">{{range .Names}}{{template "ref" (dict "Kind" $kind "Name" .)}} {{end}}{{if gt $count $named}}<span class="muted">and {{sub $count $named}} more</span>{{end}}</span>
       {{- else}}
       {{template "person" .Actor}} {{.Change}} {{template "ref" (dict "Kind" .RefKind "Name" .RefName)}}
       {{- if eq .Change "created"}} at {{template "commit" (dict "Repo" $repo.Name "Hash" .NewCommit)}}
@@ -183,7 +187,8 @@
 
 {{/* diff: a git.Diff — a commit's or a comparison's changes — as a list of
      the files it touches followed by each file's changes. Takes (dict
-     "Diff" *git.Diff "Repo" name "Commit" hash for file links, or ""). */}}
+     "Diff" *git.Diff "Repo" name "Commit" hash for file links, or ""). The
+     first ten files are open; the rest open from the list or by hand. */}}
 {{define "diff"}}
 {{$d := .Diff}}
 {{if $d.Files}}
@@ -206,7 +211,7 @@
 </section>
 <div class="diff-files">
   {{range $i, $f := $d.Files}}
-  <details class="diff-file" id="diff-{{$i}}" open>
+  <details class="diff-file" id="diff-{{$i}}"{{if lt $i 10}} open{{end}}>
     <summary>
       {{template "icon" "chevron-down"}}
       <span class="diff-path">{{if eq $f.Status "renamed"}}{{$f.OldPath}} → {{$f.NewPath}}{{else if $f.NewPath}}{{$f.NewPath}}{{else}}{{$f.OldPath}}{{end}}</span>

@@ -270,6 +270,7 @@ func (a *App) files(w http.ResponseWriter, r *http.Request, name, refAndPath str
 	if page.Refs, err = a.repos.ListRefs(ctx, repo.ID); err != nil {
 		return err
 	}
+	page.Refs = orderedRefs(page.Refs, repo.DefaultBranch)
 
 	switch entry.Kind {
 	case git.EntryDir:

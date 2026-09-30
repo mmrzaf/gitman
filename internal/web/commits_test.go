@@ -134,8 +134,11 @@ func TestCompareListsWhatOneSideHasThatTheOtherLacks(t *testing.T) {
 
 	// Tag to tag: what release/1.2 added to v1.0.0.
 	resp, body := b.do(http.MethodGet, "/waiotech/commits?base=v1.0.0&ref="+url.QueryEscape("release/1.2"), nil, nil)
-	expect(t, resp, body, http.StatusOK, "What release/1.2 has that v1.0.0 lacks", "On release/1.2", "which.txt",
-		"Files changed", "is 1 commit ahead of and 0 behind", "Common ancestor", `value="v1.0.0"`, `value="release/1.2"`)
+	expect(t, resp, body, http.StatusOK, "On release/1.2", "which.txt",
+		"Files changed", "is 1 commit ahead of and 0 behind", "Common ancestor", `value="v1.0.0"`, `value="release/1.2"`,
+		// The results are two tabs on one page: the commits and the files they change.
+		`data-tab="commits" aria-current="page"`, `id="panel-commits" data-tab-panel="commits">`,
+		`data-tab="files"`, `id="panel-files" data-tab-panel="files" hidden>`)
 	if strings.Contains(body, "Initial commit") {
 		t.Error("the comparison lists a commit both tags have")
 	}
@@ -157,7 +160,15 @@ func TestCompareListsWhatOneSideHasThatTheOtherLacks(t *testing.T) {
 
 	// The same thing on both sides has nothing between.
 	resp, body = b.do(http.MethodGet, "/waiotech/commits?base=main&ref=main", nil, nil)
-	expect(t, resp, body, http.StatusOK, "are at the same commit", "No commits")
+	expect(t, resp, body, http.StatusOK, "are at the same commit")
+	if strings.Contains(body, "data-tabs") || strings.Contains(body, "Files changed") {
+		t.Error("a comparison of a ref with itself shows empty results")
+	}
+
+	// The files tab is an address of its own, open on the files.
+	resp, body = b.do(http.MethodGet, "/waiotech/commits?base=v1.0.0&ref="+url.QueryEscape("release/1.2")+"&tab=files", nil, nil)
+	expect(t, resp, body, http.StatusOK, `data-tab="files" aria-current="page"`, `id="panel-commits" data-tab-panel="commits" hidden>`,
+		`id="panel-files" data-tab-panel="files">`, "which.txt")
 
 	// No base is the log again, with nothing compared.
 	resp, body = b.do(http.MethodGet, "/waiotech/commits?base=&ref=main", nil, nil)
@@ -380,4 +391,147 @@ func mustOpen(t *testing.T, store *git.Store, repo *reposvc.Repo) *git.Repo {
 func mustOpenByName(t *testing.T, database *postgres.DB, store *git.Store, name string) *git.Repo {
 	t.Helper()
 	return mustOpen(t, store, mustRepo(t, database, name))
+}
+
+// A column nothing would fill is left out, so a repository that has not
+// run a pipeline has no columns about runs.
+func TestColumnsFollowWhatThereIs(t *testing.T) {
+	database, store, b := setupWithStore(t)
+	ctx := context.Background()
+	signIn(t, database, b, "darius", false)
+	repo := seedFilesRepo(t, database, store, b)
+	person := mustPerson(t, database, "darius")
+	head := mustResolve(t, mustOpen(t, store, repo), "main")
+
+	// No runs, no deployments.
+	resp, body := b.do(http.MethodGet, "/waiotech", nil, nil)
+	expect(t, resp, body, http.StatusOK, `<th scope="col">Commit</th>`, `<th scope="col">Updated</th>`)
+	for _, absent := range []string{"Last run", "Last shipped"} {
+		if strings.Contains(body, absent) {
+			t.Errorf("the Overview has a %q column with nothing in it", absent)
+		}
+	}
+	resp, body = b.do(http.MethodGet, "/waiotech/commits", nil, nil)
+	expect(t, resp, body, http.StatusOK, `<th scope="col">Refs</th>`)
+	if strings.Contains(body, `<th scope="col">Run</th>`) {
+		t.Error("the commits have a Run column with no run in it")
+	}
+	resp, body = b.do(http.MethodGet, "/waiotech/runs", nil, nil)
+	expect(t, resp, body, http.StatusOK, "No runs yet")
+
+	// A passed run that shipped: the columns appear.
+	if _, err := database.Pool.Exec(ctx, `INSERT INTO workers (id, hostname) VALUES ('w1', 'host')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Pool.Exec(ctx, `
+		INSERT INTO runs (id, repo_id, number, commit_hash, ref_kind, ref_name, trigger, triggered_by, status, target, worker_id, started_at, finished_at)
+		VALUES ('r1', $1, 1, $2, 'branch', 'main', 'push', $3, 'passed', 'staging', 'w1', now(), now())`, repo.ID, head, person.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Pool.Exec(ctx, `
+		INSERT INTO deployments (id, repo_id, target, version, commit_hash, run_id, person_id)
+		VALUES ('d1', $1, 'staging', 'v1', $2, 'r1', $3)`, repo.ID, head, person.ID); err != nil {
+		t.Fatal(err)
+	}
+	resp, body = b.do(http.MethodGet, "/waiotech", nil, nil)
+	expect(t, resp, body, http.StatusOK, "Last run", "Last shipped")
+	resp, body = b.do(http.MethodGet, "/waiotech/commits", nil, nil)
+	expect(t, resp, body, http.StatusOK, `<th scope="col">Run</th>`)
+	resp, body = b.do(http.MethodGet, "/waiotech/runs", nil, nil)
+	expect(t, resp, body, http.StatusOK, `<th scope="col">Took</th>`, `<th scope="col">Shipped to</th>`)
+}
+
+// A long diff opens its first files and leaves the rest closed, each one a
+// click, or a link in the list of changed files, away.
+func TestLongDiffsOpenOnlyTheFirstFiles(t *testing.T) {
+	database, store, b := setupWithStore(t)
+	signIn(t, database, b, "darius", false)
+	repo := seedFilesRepo(t, database, store, b)
+	bare, err := store.Path(repo.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	work := t.TempDir()
+	runGit(t, work, "clone", "--quiet", bare, ".")
+	runGit(t, work, "checkout", "--quiet", "-b", "wide")
+	for i := 0; i < 14; i++ {
+		writeFile(t, work, fmt.Sprintf("wide/file%02d.txt", i), []byte("x\n"))
+	}
+	runGit(t, work, "add", "-A")
+	runGit(t, work, "commit", "--quiet", "-m", "Many files")
+	runGit(t, work, "push", "--quiet", "origin", "wide")
+	syncRepoRefs(t, database, store, repo.ID)
+
+	resp, body := b.do(http.MethodGet, "/waiotech/commits?base=main&ref=wide&tab=files", nil, nil)
+	expect(t, resp, body, http.StatusOK, "14 changed files", `href="#diff-13"`)
+	if n := strings.Count(body, `<details class="diff-file" id="diff-`); n != 14 {
+		t.Fatalf("%d diffs, want 14", n)
+	}
+	opened := 0
+	for i := 0; i < 14; i++ {
+		if strings.Contains(body, fmt.Sprintf(`<details class="diff-file" id="diff-%d" open>`, i)) {
+			opened++
+		}
+	}
+	if opened != 10 || !strings.Contains(body, `<details class="diff-file" id="diff-10">`) {
+		t.Errorf("%d of 14 diffs are open, want the first 10", opened)
+	}
+}
+
+func TestTagsAreNewestVersionFirst(t *testing.T) {
+	database, store, b := setupWithStore(t)
+	signIn(t, database, b, "darius", false)
+	repo := seedFilesRepo(t, database, store, b)
+	bare, err := store.Path(repo.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"v2.0.0-beta.2", "v2.0.0-beta.10", "v2.0.0-beta.9", "v2.0.0-beta.1"} {
+		runGit(t, bare, "tag", name, "main")
+	}
+	syncRepoRefs(t, database, store, repo.ID)
+
+	resp, body := b.do(http.MethodGet, "/waiotech", nil, nil)
+	expect(t, resp, body, http.StatusOK)
+	at := func(s string) int { return strings.Index(body, `aria-label="Run tag `+s+`"`) }
+	newestFirst := []string{"v2.0.0-beta.10", "v2.0.0-beta.9", "v2.0.0-beta.2", "v2.0.0-beta.1", "v1.0.0"}
+	for i := 1; i < len(newestFirst); i++ {
+		if at(newestFirst[i-1]) < 0 || at(newestFirst[i-1]) > at(newestFirst[i]) {
+			t.Errorf("Overview tag %s is not before %s", newestFirst[i-1], newestFirst[i])
+		}
+	}
+	// And so are the choices a picker offers.
+	_, body = b.do(http.MethodGet, "/waiotech/commits", nil, nil)
+	first := strings.Index(body, `<option value="v2.0.0-beta.10">tag`)
+	last := strings.Index(body, `<option value="v1.0.0">tag`)
+	if first < 0 || last < 0 || first > last || strings.Index(body, `<option value="main">branch`) > first {
+		t.Errorf("the picker's refs are not branches, then tags newest first")
+	}
+}
+
+// Pushing many tags at once is one line of activity, which names the newest
+// and counts the rest, not a feed of its own.
+func TestABulkPushIsOneLineOfActivity(t *testing.T) {
+	e := setupGitHTTP(t)
+	_, cred := e.person("darius", false, auth.ScopeWrite)
+	e.initWork(cred)
+	e.commit("README.md", "# demo\n")
+	e.mustGit(e.work, "push", "--quiet", "origin", "main")
+	refs := []string{}
+	for i := 1; i <= 8; i++ {
+		e.mustGit(e.work, "tag", fmt.Sprintf("v1.0.0-beta.%d", i))
+		refs = append(refs, fmt.Sprintf("v1.0.0-beta.%d", i))
+	}
+	e.mustGit(e.work, append([]string{"push", "--quiet", "origin"}, refs...)...)
+
+	b := signInTo(t, e, "darius")
+	resp, body := b.do(http.MethodGet, "/demo/activity", nil, nil)
+	text := stripTags(body)
+	expect(t, resp, body, http.StatusOK, "v1.0.0-beta.8", "v1.0.0-beta.7", "v1.0.0-beta.6")
+	if !strings.Contains(text, "darius created 8 tags") || !strings.Contains(text, "and 5 more") {
+		t.Errorf("the push reads:\n%s", text)
+	}
+	if strings.Contains(text, "v1.0.0-beta.1 ") || strings.Count(text, "created") > 3 {
+		t.Errorf("the push is listed tag by tag:\n%s", text)
+	}
 }

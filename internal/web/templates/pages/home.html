@@ -12,36 +12,12 @@
 
 <div class="split">
   <div class="split-main">
-    <section class="panel" aria-labelledby="progress-title">
-      <header class="panel-header"><h2 class="panel-title" id="progress-title">{{template "icon" "running"}}Running now</h2></header>
-      <div data-live-region="progress">
+    <section class="panel board" aria-labelledby="board-title">
+      <header class="panel-header"><h2 class="panel-title" id="board-title">{{template "icon" "ship"}}Repositories</h2></header>
+      <div data-live-region="board">
         {{- if .Data.NoWorker}}
         <div class="panel-body"><div class="callout is-queued" role="note">{{template "icon" "queued"}}<p class="callout-body">No worker is online, so queued runs wait until one starts.</p></div></div>
         {{- end}}
-        {{- if .Data.InProgress}}
-        <ol class="runlist">
-          {{- range .Data.InProgress}}
-          <li class="runlist-item">
-            {{template "status" .Status}}
-            <p class="runlist-main">
-              <a class="feed-repo" href="/{{.RepoName}}">{{.RepoName}}</a>
-              <a href="/{{.RepoName}}/runs/{{.Number}}">Run #{{.Number}}</a>
-              {{template "ref" (dict "Kind" .RefKind "Name" .RefName)}}
-              {{if .Actor}}<span class="muted">by {{.Actor}}</span>{{end}}
-            </p>
-            <span class="runlist-meta">{{if .StartedAt}}started {{template "time" .StartedAt}}{{else}}queued {{template "time" .QueuedAt}}{{end}}</span>
-          </li>
-          {{- end}}
-        </ol>
-        {{- else}}
-        <p class="empty empty-compact">Nothing is running.</p>
-        {{- end}}
-      </div>
-    </section>
-
-    <section class="panel board" aria-labelledby="board-title">
-      <header class="panel-header"><h2 class="panel-title" id="board-title">{{template "icon" "ship"}}Deployed</h2></header>
-      <div data-live-region="board">
         {{- if .Data.Board}}
         <div class="table-scroll">
           <table class="table">
@@ -59,6 +35,9 @@
                   <div class="board-repo">
                     <a href="/{{$repo.Name}}" class="truncate">{{$repo.Name}}</a>
                     {{with $repo.Description}}<span class="board-repo-description">{{.}}</span>{{end}}
+                    {{- with index $.Data.Running $repo.Name}}
+                    <span class="cluster board-running">{{range .}}<a class="run-ref" href="/{{$repo.Name}}/runs/{{.Number}}" title="{{.RefKind}} {{.RefName}}">{{template "status" .Status}}<span>#{{.Number}}</span></a>{{end}}</span>
+                    {{- end}}
                   </div>
                 </th>
                 {{- range $.Data.Targets}}

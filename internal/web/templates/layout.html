@@ -47,7 +47,7 @@
 <div class="repobar">
   <div class="repobar-inner">
     <div class="repobar-title">
-      <a class="repobar-name" href="/{{.Repo.Name}}">{{template "icon" "repo"}}<span class="truncate">{{.Repo.Name}}</span></a>
+      <a class="repobar-name truncate" href="/{{.Repo.Name}}">{{.Repo.Name}}</a>
       {{- with .Repo.Description}}<span class="repobar-description truncate">{{.}}</span>{{end}}
     </div>
     <nav class="repobar-nav" aria-label="Repository">

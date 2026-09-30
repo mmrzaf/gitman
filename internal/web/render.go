@@ -44,6 +44,7 @@ func loadViews(assets *assets) (*views, error) {
 		"dict":       dict,
 		"eventText":  eventText,
 		"add":        func(a, b int) int { return a + b },
+		"sub":        func(a, b int) int { return a - b },
 		"duration":   formatDuration,
 		"deref":      func(p *int) int { return *p },
 		"lineKind":   lineKind,
@@ -53,6 +54,13 @@ func loadViews(assets *assets) (*views, error) {
 		"archiveURL": archiveURL,
 		"ownVersion": ownVersion,
 		"compareURL": compareURL,
+		"anyRun":     anyRun,
+		"anyShipped": anyShipped,
+		"anyRan":     anyRan,
+		"anyRefs":    anyRefs,
+		"hasRun":     hasRun,
+		"hasShipped": hasShipped,
+		"hasCounts":  hasCounts,
 		"diffTotals": diffTotals,
 	}
 	base, err := template.New("").Funcs(funcs).ParseFS(templateFiles, "templates/layout.html", "templates/partials.html")
