@@ -107,8 +107,9 @@ type liveSource interface {
 }
 
 // repoFrame is embedded in the data of every page inside a repository:
-// the repository, and which of its sections — "overview", "files",
-// "commits", "runs" or "settings" — the page is, if any.
+// the repository, and which of its sections — "overview", "commits",
+// "runs" or "settings" — the page belongs to, if any. The file browser
+// belongs to the Overview, which it is reached from.
 type repoFrame struct {
 	Repo    *reposvc.Repo
 	Section string

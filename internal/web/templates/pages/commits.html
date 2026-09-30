@@ -1,15 +1,10 @@
 {{define "content"}}
 {{$d := .Data}}{{$repo := $d.Repo}}{{$cmp := $d.Comparison}}
-<div class="page">
+<div class="page" data-swap-region>
 <header class="page-header">
   <div class="page-header-text">
     <h1 class="page-title" id="commits-title">Commits</h1>
   </div>
-  {{- if not $cmp}}
-  <div class="page-actions">
-    <span class="live js-only" data-live-status data-state="connecting" role="status">{{template "icon" "live"}}<span data-live-label>Connecting…</span></span>
-  </div>
-  {{- end}}
 </header>
 
 <div class="stack">
@@ -28,25 +23,26 @@
 
 {{- else}}
 <section class="panel" aria-label="Choose what to show">
-  <form class="toolbar commit-picker" method="get" action="/{{$repo.Name}}/commits">
+  <form class="toolbar commit-picker" method="get" action="/{{$repo.Name}}/commits" data-swap>
     {{template "ref-field" (dict "ID" "commits-ref" "Name" "ref" "Label" "Commits of" "Value" $d.Head.Name "Required" true "Clear" "")}}
     {{template "ref-field" (dict "ID" "commits-base" "Name" "base" "Label" "Compared with" "Value" $d.Base.Name "Required" false "Clear" "No comparison")}}
     {{- with $d.Path}}<input type="hidden" name="path" value="{{.}}">{{end}}
     <button type="submit" class="btn btn-primary no-js-only">Show</button>
-    {{- if $cmp}}<a class="btn" href="{{$d.SwapURL}}">{{template "icon" "compare"}}Swap sides</a>{{end}}
+    {{- if $cmp}}<a class="btn" href="{{$d.SwapURL}}" data-swap>{{template "icon" "compare"}}Swap sides</a>{{end}}
+    {{- if $d.Head.Name}}<a class="btn" href="{{refURL $repo.Name $d.Head.Name ""}}" data-command="Browse the files of {{$d.Head.Name}}">{{template "icon" "code"}}Browse files</a>{{end}}
     <datalist id="commit-refs">
       {{- range $d.Refs}}<option value="{{.Name}}">{{.Kind}}</option>{{end}}
     </datalist>
   </form>
   {{- with $d.Path}}
   <p class="panel-footer cluster"><span class="chip">{{template "icon" "file"}}<span class="mono">{{.}}</span></span>
-    <a class="btn btn-ghost btn-sm" href="{{commitsURL $repo.Name $d.Head.Name ""}}">{{template "icon" "close"}}All paths</a></p>
+    <a class="btn btn-ghost btn-sm" href="{{commitsURL $repo.Name $d.Head.Name ""}}" data-swap>{{template "icon" "close"}}All paths</a></p>
   {{- end}}
   {{- if $cmp}}
   <p class="panel-footer compare-summary">
     {{- if or $d.Ahead $d.Behind}}
     <strong class="mono">{{$d.Head.Name}}</strong> is {{$d.Ahead}} commit{{if ne $d.Ahead 1}}s{{end}} ahead of and {{$d.Behind}} behind <strong class="mono">{{$d.Base.Name}}</strong>.
-    {{- if $d.Behind}} <a href="{{$d.SwapURL}}">See the {{$d.Behind}} commit{{if ne $d.Behind 1}}s{{end}} {{$d.Base.Name}} has</a>.{{end}}
+    {{- if $d.Behind}} <a href="{{$d.SwapURL}}" data-swap>See the {{$d.Behind}} commit{{if ne $d.Behind 1}}s{{end}} {{$d.Base.Name}} has</a>.{{end}}
     {{- else}}
     <strong class="mono">{{$d.Head.Name}}</strong> and <strong class="mono">{{$d.Base.Name}}</strong> are at the same commit.
     {{- end}}
@@ -59,7 +55,7 @@
 {{- if $d.Commits}}
 <nav class="tabs tabs-page" data-tabs aria-label="Comparison">
   <a class="tab" id="tab-commits" href="{{$d.TabURL "commits"}}" data-tab="commits"{{if eq $d.Tab "commits"}} aria-current="page"{{end}}>{{template "icon" "commit"}}Commits <span class="tab-count">{{len $d.Commits}}{{if $cmp.MoreCommits}}+{{end}}</span></a>
-  <a class="tab" id="tab-files" href="{{$d.TabURL "files"}}" data-tab="files"{{if eq $d.Tab "files"}} aria-current="page"{{end}}>{{template "icon" "code"}}Files changed <span class="tab-count">{{(diffTotals $cmp.Diff).Files}}</span></a>
+  <a class="tab" id="tab-changes" href="{{$d.TabURL "changes"}}" data-tab="changes"{{if eq $d.Tab "changes"}} aria-current="page"{{end}}>{{template "icon" "code"}}Changes <span class="tab-count">{{(diffTotals $cmp.Diff).Files}}</span><span class="diffstat tab-diffstat"><span class="diffstat-add">+{{(diffTotals $cmp.Diff).Additions}}</span><span class="diffstat-del">−{{(diffTotals $cmp.Diff).Deletions}}</span></span></a>
 </nav>
 <div id="panel-commits" data-tab-panel="commits"{{if ne $d.Tab "commits"}} hidden{{end}}>
   <section class="panel" aria-label="Commits">
@@ -67,14 +63,14 @@
     {{- if $cmp.MoreCommits}}<p class="panel-footer">There are more commits than are listed here.</p>{{end}}
   </section>
 </div>
-<div class="stack" id="panel-files" data-tab-panel="files"{{if ne $d.Tab "files"}} hidden{{end}}>
-  {{template "diff" (dict "Diff" $cmp.Diff)}}
+<div class="stack" id="panel-changes" data-tab-panel="changes"{{if ne $d.Tab "changes"}} hidden{{end}}>
+  {{template "diff" (dict "Diff" $cmp.Diff "Compact" true)}}
 </div>
 {{- end}}
 {{- else}}
 <section class="panel" aria-labelledby="list-title">
   <header class="panel-header"><h2 class="panel-title" id="list-title">{{template "icon" "commit"}}{{$d.Head.Name}}</h2></header>
-  <div data-live-region="commits">
+  <div>
   {{- if $d.Commits}}
   {{template "commit-table" (dict "Rows" $d.Commits "Repo" $repo)}}
   {{- else}}
@@ -83,8 +79,8 @@
   </div>
   {{- if or $d.Skip $d.More}}
   <nav class="panel-footer cluster" aria-label="Pages of commits">
-    {{- if $d.Skip}}<a class="btn btn-sm" href="{{$d.PageURL $d.NewerSkip}}">Newer</a>{{end}}
-    {{- if $d.More}}<a class="btn btn-sm" href="{{$d.PageURL $d.OlderSkip}}">Older</a>{{end}}
+    {{- if $d.Skip}}<a class="btn btn-sm" href="{{$d.PageURL $d.NewerSkip}}" data-swap>Newer</a>{{end}}
+    {{- if $d.More}}<a class="btn btn-sm" href="{{$d.PageURL $d.OlderSkip}}" data-swap>Older</a>{{end}}
   </nav>
   {{- end}}
 </section>
@@ -103,34 +99,5 @@
 <div class="field ref-field" data-ref-field data-ref-submit{{with .Clear}} data-ref-clear="{{.}}"{{end}}>
   <label class="field-label" for="{{.ID}}">{{.Label}}</label>
   <input class="input" id="{{.ID}}" name="{{.Name}}" value="{{.Value}}" list="commit-refs" placeholder="Branch, tag or commit" autocomplete="off" spellcheck="false"{{if .Required}} required{{end}}>
-</div>
-{{end}}
-
-{{/* commit-table: commits, each with its branches and tags, its latest run
-     and its author; a column nothing fills is left out. Takes (dict "Rows"
-     []commitRow "Repo" *repo.Repo). */}}
-{{define "commit-table"}}
-{{$repo := .Repo}}{{$refs := anyRefs .Rows}}{{$runs := anyRun .Rows}}
-<div class="table-scroll">
-  <table class="table">
-    <thead><tr>
-      <th scope="col">Commit</th>
-      {{- if $refs}}<th scope="col">Refs</th>{{end}}
-      {{- if $runs}}<th scope="col">Run</th>{{end}}
-      <th scope="col">Author</th><th scope="col">When</th><th scope="col"><span class="visually-hidden">Hash</span></th>
-    </tr></thead>
-    <tbody>
-    {{- range .Rows}}
-      <tr>
-        <td class="cell-truncate"><a href="/{{$repo.Name}}/commit/{{.Hash}}">{{.Subject}}</a>{{if .Merge}} <span class="chip">merge</span>{{end}}</td>
-        {{- if $refs}}<td class="cell-shrink"><span class="cluster">{{range .Refs}}{{template "ref" (dict "Kind" .Kind "Name" .Name "Href" (commitsURL $repo.Name .Name ""))}}{{end}}</span></td>{{end}}
-        {{- if $runs}}<td class="cell-shrink">{{with .Run}}<a class="run-ref" href="/{{$repo.Name}}/runs/{{.Number}}">{{template "status" .Status}}<span>#{{.Number}}</span></a>{{else}}<span class="muted">—</span>{{end}}</td>{{end}}
-        <td class="cell-shrink">{{template "person" .Author.Name}}</td>
-        <td class="cell-shrink cell-muted">{{template "time" .Author.When}}</td>
-        <td class="cell-shrink">{{template "commit" (dict "Repo" $repo.Name "Hash" .Hash)}}</td>
-      </tr>
-    {{- end}}
-    </tbody>
-  </table>
 </div>
 {{end}}

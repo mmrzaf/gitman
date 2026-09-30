@@ -278,6 +278,36 @@ func repoRefChanges(ctx context.Context, q postgres.Querier, repoID string, limi
 	return entries, rows.Err()
 }
 
+// refusedSince lists the pushes refused in any of repoIDs since a time,
+// newest first, each with its first reason.
+func refusedSince(ctx context.Context, q postgres.Querier, repoIDs []string, since time.Time, limit int) ([]RefusedPush, error) {
+	rows, err := q.Query(ctx, `
+		SELECT repos.name, f.created_at, COALESCE(p.username, ''), COALESCE(first.ref, ''), COALESCE(first.reason, '')
+		FROM push_refusals f
+		JOIN repos ON repos.id = f.repo_id
+		LEFT JOIN people p ON p.id = f.person_id
+		LEFT JOIN LATERAL (
+			SELECT ref, reason FROM push_refusal_refs WHERE refusal_id = f.id ORDER BY position LIMIT 1
+		) first ON true
+		WHERE f.repo_id = ANY($1) AND f.created_at >= $2
+		ORDER BY f.created_at DESC
+		LIMIT $3
+	`, repoIDs, since, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list refused pushes: %w", err)
+	}
+	defer rows.Close()
+	var pushes []RefusedPush
+	for rows.Next() {
+		var r RefusedPush
+		if err := rows.Scan(&r.RepoName, &r.At, &r.Actor, &r.Ref, &r.Reason); err != nil {
+			return nil, fmt.Errorf("scan refused push: %w", err)
+		}
+		pushes = append(pushes, r)
+	}
+	return pushes, rows.Err()
+}
+
 // repoEvents lists a repository's settings changes newest first.
 func repoEvents(ctx context.Context, q postgres.Querier, repoID string, limit int) ([]RepoEntry, error) {
 	rows, err := q.Query(ctx, `

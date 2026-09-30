@@ -23,8 +23,8 @@ func TestCommitsOfARefAndAPath(t *testing.T) {
 	// The default branch's log: newest first, with the branches and tags at
 	// each commit.
 	resp, body := b.do(http.MethodGet, "/waiotech/commits", nil, nil)
-	expect(t, resp, body, http.StatusOK, `id="commits-title"`, "Update README", "Initial commit", `data-live-region="commits"`,
-		`title="branch main"`, `title="tag v1.0.0"`, `data-live-events="/events"`)
+	expect(t, resp, body, http.StatusOK, `id="commits-title"`, "Update README", "Initial commit",
+		`title="branch main"`, `title="tag v1.0.0"`)
 	if strings.Contains(body, "On release") {
 		t.Error("the default branch's log lists a commit of another branch")
 	}
@@ -98,7 +98,7 @@ func TestCommitsShowMergesRunsAndPaging(t *testing.T) {
 
 	// The newest page is all filler, and points to the older one.
 	resp, body := b.do(http.MethodGet, "/waiotech/commits", nil, nil)
-	expect(t, resp, body, http.StatusOK, "Filler 0", `href="/waiotech/commits?ref=main&amp;skip=30">Older`)
+	expect(t, resp, body, http.StatusOK, "Filler 0", `href="/waiotech/commits?ref=main&amp;skip=30" data-swap>Older`)
 	if strings.Contains(body, "Merge release") || strings.Contains(body, ">Newer<") {
 		t.Error("the first page shows the second's commits or a Newer link")
 	}
@@ -135,10 +135,10 @@ func TestCompareListsWhatOneSideHasThatTheOtherLacks(t *testing.T) {
 	// Tag to tag: what release/1.2 added to v1.0.0.
 	resp, body := b.do(http.MethodGet, "/waiotech/commits?base=v1.0.0&ref="+url.QueryEscape("release/1.2"), nil, nil)
 	expect(t, resp, body, http.StatusOK, "On release/1.2", "which.txt",
-		"Files changed", "is 1 commit ahead of and 0 behind", "Common ancestor", `value="v1.0.0"`, `value="release/1.2"`,
+		"Changes", "is 1 commit ahead of and 0 behind", "Common ancestor", `value="v1.0.0"`, `value="release/1.2"`,
 		// The results are two tabs on one page: the commits and the files they change.
 		`data-tab="commits" aria-current="page"`, `id="panel-commits" data-tab-panel="commits">`,
-		`data-tab="files"`, `id="panel-files" data-tab-panel="files" hidden>`)
+		`data-tab="changes"`, `id="panel-changes" data-tab-panel="changes" hidden>`)
 	if strings.Contains(body, "Initial commit") {
 		t.Error("the comparison lists a commit both tags have")
 	}
@@ -161,19 +161,19 @@ func TestCompareListsWhatOneSideHasThatTheOtherLacks(t *testing.T) {
 	// The same thing on both sides has nothing between.
 	resp, body = b.do(http.MethodGet, "/waiotech/commits?base=main&ref=main", nil, nil)
 	expect(t, resp, body, http.StatusOK, "are at the same commit")
-	if strings.Contains(body, "data-tabs") || strings.Contains(body, "Files changed") {
+	if strings.Contains(body, "data-tabs") || strings.Contains(body, "changed file") {
 		t.Error("a comparison of a ref with itself shows empty results")
 	}
 
 	// The files tab is an address of its own, open on the files.
-	resp, body = b.do(http.MethodGet, "/waiotech/commits?base=v1.0.0&ref="+url.QueryEscape("release/1.2")+"&tab=files", nil, nil)
-	expect(t, resp, body, http.StatusOK, `data-tab="files" aria-current="page"`, `id="panel-commits" data-tab-panel="commits" hidden>`,
-		`id="panel-files" data-tab-panel="files">`, "which.txt")
+	resp, body = b.do(http.MethodGet, "/waiotech/commits?base=v1.0.0&ref="+url.QueryEscape("release/1.2")+"&tab=changes", nil, nil)
+	expect(t, resp, body, http.StatusOK, `data-tab="changes" aria-current="page"`, `id="panel-commits" data-tab-panel="commits" hidden>`,
+		`id="panel-changes" data-tab-panel="changes">`, "which.txt")
 
 	// No base is the log again, with nothing compared.
 	resp, body = b.do(http.MethodGet, "/waiotech/commits?base=&ref=main", nil, nil)
-	expect(t, resp, body, http.StatusOK, "Update README", `data-live-events="/events"`)
-	if strings.Contains(body, "Files changed") {
+	expect(t, resp, body, http.StatusOK, "Update README")
+	if strings.Contains(body, "changed file") {
 		t.Error("a log shows changes")
 	}
 
@@ -339,11 +339,12 @@ func TestOverviewHasNoTabsAndLinksToWhatIsNotDeployed(t *testing.T) {
 			t.Errorf("the Overview has tabs (%s)", tabs)
 		}
 	}
-	// Only what production lacks is offered, since staging has it all.
-	if n := strings.Count(body, "Commits since this"); n != 1 {
-		t.Fatalf("%d cards offer commits since, want only production's", n)
+	// Only production lacks anything, so only its card counts commits not
+	// shipped; staging, at the default branch, is up to date.
+	if n := strings.Count(body, " not shipped<"); n != 1 {
+		t.Fatalf("%d cards count commits not shipped, want only production's", n)
 	}
-	expect(t, resp, body, http.StatusOK, `href="/waiotech/commits?base=`+old+`&amp;ref=main">Commits since this`)
+	expect(t, resp, body, http.StatusOK, `href="/waiotech/commits?base=`+old+`&amp;ref=main">1 commit not shipped`, "Up to date")
 
 	// Twelve tags of thirteen? The newest ten, and a way to all of them.
 	expect(t, resp, body, http.StatusOK, `All 14 tags`, `href="/waiotech?tags=all"`)
@@ -462,19 +463,36 @@ func TestLongDiffsOpenOnlyTheFirstFiles(t *testing.T) {
 	runGit(t, work, "push", "--quiet", "origin", "wide")
 	syncRepoRefs(t, database, store, repo.ID)
 
-	resp, body := b.do(http.MethodGet, "/waiotech/commits?base=main&ref=wide&tab=files", nil, nil)
-	expect(t, resp, body, http.StatusOK, "14 changed files", `href="#diff-13"`)
+	resp, body := b.do(http.MethodGet, "/waiotech/commits?base=main&ref=wide&tab=changes", nil, nil)
+	expect(t, resp, body, http.StatusOK, `Changes <span class="tab-count">14</span>`, `data-diff-all="open"`, `data-diff-all="closed"`)
+	if strings.Contains(body, "changed files") {
+		t.Error("the Changes tab repeats its count in a title under the tab")
+	}
 	if n := strings.Count(body, `<details class="diff-file" id="diff-`); n != 14 {
 		t.Fatalf("%d diffs, want 14", n)
 	}
-	opened := 0
-	for i := 0; i < 14; i++ {
-		if strings.Contains(body, fmt.Sprintf(`<details class="diff-file" id="diff-%d" open>`, i)) {
-			opened++
-		}
+	if n := strings.Count(body, `<details class="diff-file" id="diff-`) - strings.Count(body, `" open>`); n != 14 {
+		t.Errorf("%d of 14 diffs are closed, want all of them: the list is for choosing what to open", n)
 	}
-	if opened != 10 || !strings.Contains(body, `<details class="diff-file" id="diff-10">`) {
-		t.Errorf("%d of 14 diffs are open, want the first 10", opened)
+
+	// A change of a few files opens them, and has nothing to expand all of.
+	runGit(t, work, "checkout", "--quiet", "main")
+	runGit(t, work, "checkout", "--quiet", "-b", "narrow")
+	for i := 0; i < 3; i++ {
+		writeFile(t, work, fmt.Sprintf("narrow/file%d.txt", i), []byte("y\n"))
+	}
+	runGit(t, work, "add", "-A")
+	runGit(t, work, "commit", "--quiet", "-m", "Few files")
+	runGit(t, work, "push", "--quiet", "origin", "narrow")
+	syncRepoRefs(t, database, store, repo.ID)
+	resp, body = b.do(http.MethodGet, "/waiotech/commits?base=main&ref=narrow&tab=changes", nil, nil)
+	expect(t, resp, body, http.StatusOK, `Changes <span class="tab-count">3</span>`, `id="diff-0" open>`, `id="diff-2" open>`)
+	resp, body = b.do(http.MethodGet, "/waiotech/commit/"+mustResolve(t, mustOpen(t, store, repo), "narrow"), nil, nil)
+	expect(t, resp, body, http.StatusOK, "3 changed files", `id="diff-1" open>`)
+	resp, body = b.do(http.MethodGet, "/waiotech/commits?base=main&ref=release&tab=changes", nil, nil)
+	expect(t, resp, body, http.StatusOK, `Changes <span class="tab-count">1</span>`)
+	if strings.Contains(body, "data-diff-all") || strings.Contains(body, `class="panel-header"><h2 class="panel-title" id="diff-summary-title"`) {
+		t.Error("a single file offers Expand all")
 	}
 }
 

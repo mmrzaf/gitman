@@ -729,3 +729,63 @@ func TestAnyWorkerOnline(t *testing.T) {
 		t.Fatal("online after the only worker stopped")
 	}
 }
+
+func TestLatestDefaultRunsIsTheNewestRunOfEachDefaultBranch(t *testing.T) {
+	database := pgtest.Open(t)
+	ctx := context.Background()
+	insert := func(q string, args ...any) {
+		t.Helper()
+		if _, err := database.Pool.Exec(ctx, q, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insert(`INSERT INTO repos (id, name, default_branch) VALUES ('r1', 'one', 'main'), ('r2', 'two', 'develop'), ('r3', 'three', 'main')`)
+	insert(`INSERT INTO runs (id, repo_id, number, commit_hash, ref_kind, ref_name, trigger, status, finished_at) VALUES
+	        ('a1', 'r1', 1, repeat('a',40), 'branch', 'main', 'push', 'passed', now()),
+	        ('a2', 'r1', 2, repeat('b',40), 'branch', 'main', 'push', 'failed', now()),
+	        ('a3', 'r1', 3, repeat('c',40), 'branch', 'feature', 'push', 'passed', now()),
+	        ('a4', 'r1', 4, repeat('d',40), 'tag', 'main', 'push', 'passed', now()),
+	        ('b1', 'r2', 1, repeat('e',40), 'branch', 'main', 'push', 'failed', now()),
+	        ('b2', 'r2', 2, repeat('f',40), 'branch', 'develop', 'push', 'cancelled', now())`)
+	runs, err := NewService(database).LatestDefaultRuns(ctx, []string{"r1", "r2", "r3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only a branch named as the default counts, and the newest of those; a
+	// repository with no run of its default branch has none.
+	if len(runs) != 2 || runs["r1"].Number != 2 || runs["r1"].Status != StatusFailed || runs["r2"].Number != 2 || runs["r2"].Status != StatusCancelled {
+		t.Fatalf("runs = %+v", runs)
+	}
+	if runs["r1"].RepoName != "one" || runs["r1"].Commit != strings.Repeat("b", 40) {
+		t.Errorf("the run is missing its repository or commit: %+v", runs["r1"])
+	}
+}
+
+func TestRunsOfRefAreTheNewestOfThatRefOnly(t *testing.T) {
+	database := pgtest.Open(t)
+	ctx := context.Background()
+	insert := func(q string, args ...any) {
+		t.Helper()
+		if _, err := database.Pool.Exec(ctx, q, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insert(`INSERT INTO repos (id, name) VALUES ('r1', 'one'), ('r2', 'two')`)
+	insert(`INSERT INTO runs (id, repo_id, number, commit_hash, ref_kind, ref_name, trigger, status, finished_at) VALUES
+	        ('a1', 'r1', 1, repeat('a',40), 'branch', 'main', 'push', 'passed', now()),
+	        ('a2', 'r1', 2, repeat('b',40), 'branch', 'main', 'push', 'failed', now()),
+	        ('a3', 'r1', 3, repeat('c',40), 'branch', 'main', 'push', 'passed', now()),
+	        ('a4', 'r1', 4, repeat('d',40), 'branch', 'other', 'push', 'passed', now()),
+	        ('a5', 'r1', 5, repeat('e',40), 'tag', 'main', 'push', 'passed', now()),
+	        ('b1', 'r2', 1, repeat('f',40), 'branch', 'main', 'push', 'passed', now())`)
+	runs, err := NewService(database).RunsOfRef(ctx, "r1", git.KindBranch, "main", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 2 || runs[0].Number != 3 || runs[1].Number != 2 || runs[1].Status != StatusFailed {
+		t.Fatalf("runs = %+v", runs)
+	}
+	if none, err := NewService(database).RunsOfRef(ctx, "r1", git.KindBranch, "nope", 5); err != nil || len(none) != 0 {
+		t.Fatalf("a ref with no runs = %+v, %v", none, err)
+	}
+}

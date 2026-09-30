@@ -78,10 +78,10 @@ const query = (page) => new URL(page.url()).searchParams;
   await repo.goto(`${base}/demo`);
 
   sh(process.env.STOP_WORKER);
-  const homeBefore = await home.locator("[data-live-region=board]").innerText();
+  const homeBefore = await home.locator("[data-live-region=cards]").innerText();
   sh(process.env.PUSH_SLOW);
 
-  const homeUpdated = await until(async () => /#6/.test(await home.locator("[data-live-region=board]").innerText()));
+  const homeUpdated = await until(async () => /#6/.test(await home.locator("[data-live-region=cards]").innerText()));
   check("Home shows a new run live", homeUpdated && !/#6/.test(homeBefore));
   check("Home says it is live", (await home.locator("[data-live-status]").getAttribute("data-state")) === "open");
   const repoUpdated = await until(async () => /slow\/one/.test(await repo.locator("[data-live-region=branches]").innerText()));
@@ -89,9 +89,9 @@ const query = (page) => new URL(page.url()).searchParams;
   await repo.close();
 
   // Focus on Home, inside a region that is about to be replaced.
-  const runLink = home.locator("[data-live-region=board] a[href$='/runs/6']");
+  const runLink = home.locator("[data-live-region=cards] a[href$='/runs/6']");
   await runLink.focus();
-  const regionBefore = await home.locator("[data-live-region=board]").elementHandle();
+  const regionBefore = await home.locator("[data-live-region=cards]").elementHandle();
 
   const run = watch(await context.newPage());
   await run.goto(`${base}/demo/runs/6`);
@@ -100,7 +100,7 @@ const query = (page) => new URL(page.url()).searchParams;
   sh(process.env.START_WORKER);
 
   const swapped = await until(async () => !(await regionBefore.evaluate((el) => el.isConnected))
-    && /running/i.test(await home.locator("[data-live-region=board]").innerText()));
+    && /running/i.test(await home.locator("[data-live-region=cards]").innerText()));
   const after = await focused(home);
   check("focus survives a live update", swapped && after?.href === "/demo/runs/6", JSON.stringify(after));
 
@@ -308,6 +308,7 @@ const query = (page) => new URL(page.url()).searchParams;
 
   // Commits: the two ref fields are searchable lists; choosing sends the form.
   await page.goto(`${base}/demo/commits`);
+  await page.evaluate(() => { window.__sameDocument = true; });
   check("the ref fields are buttons, not text boxes", (await page.locator("button.ref-button").count()) === 2
     && (await page.locator("#commits-ref-button").innerText()).trim() === "main");
   await page.click("#commits-base-button");
@@ -316,10 +317,12 @@ const query = (page) => new URL(page.url()).searchParams;
   await until(() => page.locator("dialog[open] [role=option]").count(), 5000);
   await Promise.all([page.waitForURL(/base=v1\.4\.0/), page.keyboard.press("Enter")]);
   check("choosing a base compares it with the ref", query(page).get("base") === "v1.4.0" && query(page).get("ref") === "main"
-    && (await page.locator(".compare-summary").count()) === 1 && (await page.locator("[data-tab=files]").count()) === 1);
-  await page.click("[data-tab=files]");
+    && (await page.locator(".compare-summary").count()) === 1 && (await page.locator("[data-tab=changes]").count()) === 1);
+  check("choosing a ref swaps the list in place: the page is not reloaded, and stays still",
+    (await page.evaluate(() => window.__sameDocument === true)) && (await page.locator(".live").count()) === 0);
+  await page.click("[data-tab=changes]");
   check("the files tab shows the changes, and the address follows",
-    query(page).get("tab") === "files" && (await page.locator("#panel-files").isVisible()) && !(await page.locator("#panel-commits").isVisible()));
+    query(page).get("tab") === "changes" && (await page.locator("#panel-changes").isVisible()) && !(await page.locator("#panel-commits").isVisible()));
   await page.click("#commits-ref-button");
   await page.locator("dialog[open] input[role=combobox]").fill(process.env.COMMIT.slice(0, 9));
   check("a typed hash is offered as a commit", (await page.locator("dialog[open] [role=option]").first().innerText()).includes(`Commit ${process.env.COMMIT.slice(0, 9)}`));
@@ -328,6 +331,21 @@ const query = (page) => new URL(page.url()).searchParams;
   await page.click("#commits-base-button");
   await Promise.all([page.waitForURL((url) => !url.searchParams.get("base")), page.locator("dialog[open] [role=option]").first().click()]);
   check("No comparison goes back to the log", (await page.locator(".compare-summary").count()) === 0);
+  await page.goBack();
+  await until(async () => query(page).get("base") === "v1.4.0" && (await page.locator(".compare-summary").count()) === 1, 5000);
+  check("Back returns to the comparison, in place", query(page).get("base") === "v1.4.0" && (await page.evaluate(() => window.__sameDocument === true)));
+
+  // The changes of a commit are a list of files, each opening to its diff.
+  await page.goto(`${base}/demo/commits?ref=v1.4.0`);
+  await page.goto(await page.locator("table a[href*='/commit/']").first().evaluate((a) => a.href));
+  const files = page.locator(".diff-file");
+  check("a commit of many files lists them closed", (await files.count()) > 3 && (await page.locator(".diff-file[open]").count()) === 0);
+  await page.click("[data-diff-all=open]");
+  check("Expand all opens every file", (await page.locator(".diff-file[open]").count()) === (await files.count()));
+  await page.click("[data-diff-all=closed]");
+  check("Collapse all closes them again", (await page.locator(".diff-file[open]").count()) === 0);
+  await files.first().locator("summary").click();
+  check("a file's row opens its own diff", (await page.locator(".diff-file[open]").count()) === 1 && (await files.first().locator(".diff-table").isVisible()));
 
   // Downloading an archive of what the page shows.
   await page.goto(`${base}/demo@main`);
@@ -381,7 +399,7 @@ const screens = [
   ["activity", "/demo/activity", "#activity-title"],
   ["commit", `/demo/commit/${commit}`, "#commit-title"],
   ["compare", `/demo/commits?base=main&ref=${encodeURIComponent(feature)}`, "#commits-title"],
-  ["compare-files", `/demo/commits?base=main&ref=${encodeURIComponent(feature)}&tab=files`, "#commits-title"],
+  ["compare-files", `/demo/commits?base=main&ref=${encodeURIComponent(feature)}&tab=changes`, "#commits-title"],
   ["compare-diverged", "/demo/commits?base=broken&ref=main", "#commits-title"],
   ["run-failed", "/demo/runs/3", "#run-title"],
   ["run-passed", "/demo/runs/4", "#run-title"],

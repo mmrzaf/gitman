@@ -22,8 +22,15 @@ function choicesOf(control) {
   return [...(list?.options || [])].map((option) => ({ value: option.value, label: option.value, kind: option.textContent }));
 }
 
+// Each field's picker, so a field that a page swap replaced takes its old
+// picker's dialog with it.
+const pickers = new Map();
+
 function upgrade(field) {
+  field.dataset.refReady = "";
   const control = field.querySelector("input, select");
+  pickers.get(control.id)?.dialog.remove();
+  pickers.delete(control.id);
   const label = field.querySelector("label");
   const isSelect = control.tagName === "SELECT";
   const choices = choicesOf(control);
@@ -79,6 +86,7 @@ function upgrade(field) {
         label: label.textContent.trim(),
         placeholder: isSelect ? "Find a branch or tag…" : "Find a branch or tag, or type a commit…",
       });
+      pickers.set(control.id, picker);
       if (!isSelect) {
         // A typed hash is offered as a choice of its own.
         picker.input.addEventListener("input", () => {
@@ -97,4 +105,9 @@ function upgrade(field) {
   });
 }
 
-for (const field of document.querySelectorAll("[data-ref-field]")) upgrade(field);
+function upgradeAll() {
+  for (const field of document.querySelectorAll("[data-ref-field]:not([data-ref-ready])")) upgrade(field);
+}
+
+upgradeAll();
+document.addEventListener("gitman:refreshed", upgradeAll);

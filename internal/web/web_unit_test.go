@@ -276,8 +276,7 @@ func TestPartialsRead(t *testing.T) {
 
 	out = render("content", pageData{Person: &auth.Person{Username: "darius"}, Data: homePage{
 		CreateForm: newForm(nil),
-		Board:      []boardRepo{{Name: "w"}},
-		Running:    map[string][]ci.Summary{"w": {{RepoName: "w", Number: 7, RefKind: git.KindBranch, RefName: "develop", Status: ci.StatusQueued, QueuedAt: time.Now()}}},
+		Cards:      []repoCard{{Name: "w", Running: []ci.Summary{{RepoName: "w", Number: 7, RefKind: git.KindBranch, RefName: "develop", Status: ci.StatusQueued, QueuedAt: time.Now()}}}},
 	}})
 	if !strings.Contains(out, `href="/w/runs/7"`) || !strings.Contains(out, "queued") {
 		t.Errorf("a run in progress reads:\n%s", out)

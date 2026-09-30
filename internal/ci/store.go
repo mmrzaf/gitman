@@ -201,6 +201,61 @@ func selectLatestRunPerRef(ctx context.Context, q postgres.Querier, repoID strin
 	return result, rows.Err()
 }
 
+// selectRunsOfRef returns the newest limit runs of one branch or tag,
+// newest first.
+func selectRunsOfRef(ctx context.Context, q postgres.Querier, repoID string, kind git.Kind, name string, limit int) ([]Summary, error) {
+	rows, err := q.Query(ctx, `
+		SELECT `+summaryColumns+`
+		FROM runs r
+		JOIN repos ON repos.id = r.repo_id
+		LEFT JOIN people p ON p.id = r.triggered_by
+		WHERE r.repo_id = $1 AND r.ref_kind = $2 AND r.ref_name = $3
+		ORDER BY r.number DESC
+		LIMIT $4
+	`, repoID, string(kind), name, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list runs of %s %s: %w", kind, name, err)
+	}
+	defer rows.Close()
+	var result []Summary
+	for rows.Next() {
+		s, err := scanSummary(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan run: %w", err)
+		}
+		result = append(result, s)
+	}
+	return result, rows.Err()
+}
+
+// selectLatestDefaultRuns returns the newest run of each repository's
+// default branch, keyed by repository ID.
+func selectLatestDefaultRuns(ctx context.Context, q postgres.Querier, repoIDs []string) (map[string]Summary, error) {
+	rows, err := q.Query(ctx, `
+		SELECT DISTINCT ON (r.repo_id) r.repo_id, `+summaryColumns+`
+		FROM runs r
+		JOIN repos ON repos.id = r.repo_id
+		LEFT JOIN people p ON p.id = r.triggered_by
+		WHERE r.repo_id = ANY($1) AND r.ref_kind = 'branch' AND r.ref_name = repos.default_branch
+		ORDER BY r.repo_id, r.number DESC
+	`, repoIDs)
+	if err != nil {
+		return nil, fmt.Errorf("list latest default branch runs: %w", err)
+	}
+	defer rows.Close()
+	result := map[string]Summary{}
+	for rows.Next() {
+		var repoID string
+		var s Summary
+		if err := rows.Scan(&repoID, &s.ID, &s.RepoName, &s.Number, &s.RefKind, &s.RefName, &s.Commit, &s.Trigger, &s.Status, &s.Reason, &s.Target,
+			&s.Actor, &s.QueuedAt, &s.StartedAt, &s.FinishedAt); err != nil {
+			return nil, fmt.Errorf("scan run: %w", err)
+		}
+		result[repoID] = s
+	}
+	return result, rows.Err()
+}
+
 // selectLatestRunPerCommit returns the newest run of each of commits,
 // keyed by commit; a commit no run was made for is left out.
 func selectLatestRunPerCommit(ctx context.Context, q postgres.Querier, repoID string, commits []string) (map[string]Summary, error) {

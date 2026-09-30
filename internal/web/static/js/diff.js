@@ -1,5 +1,6 @@
-// A long diff opens only its first files. Following a link to a file in the
-// list of changed files opens that file before going to it.
+// The changes of a commit or comparison are a list of files that each open to
+// their diff. Expand all and Collapse all open or close every one of a list,
+// and following a link to one file opens it before going to it.
 import { on } from "./dom.js";
 
 function reveal(id) {
@@ -7,6 +8,10 @@ function reveal(id) {
   if (file instanceof HTMLDetailsElement && file.matches(".diff-file")) file.open = true;
 }
 
+on("click", "[data-diff-all]", (event, button) => {
+  const open = button.dataset.diffAll === "open";
+  for (const file of button.closest("[data-diff]").querySelectorAll(".diff-file")) file.open = open;
+});
 on("click", "a[href^='#diff-']", (event, link) => reveal(link.getAttribute("href").slice(1)));
 window.addEventListener("hashchange", () => reveal(location.hash.slice(1)));
 reveal(location.hash.slice(1));

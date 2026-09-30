@@ -94,8 +94,8 @@ type commitsPage struct {
 	// far Head is from Base, and Capped reports more commits than listed.
 	Comparison    *git.Comparison
 	Ahead, Behind int
-	// Tab is what a comparison shows: its "commits", or the "files" they
-	// change.
+	// Tab is what a comparison shows: its "commits", or the "changes" they
+	// make.
 	Tab string
 }
 
@@ -110,15 +110,6 @@ func (p commitsPage) TabURL(tab string) string {
 
 // Comparing reports a page that compares two refs.
 func (p commitsPage) Comparing() bool { return p.Comparison != nil }
-
-// LiveEvents keeps a log current. A comparison carries a diff, which a
-// refresh would compute again for every change anywhere, so it does not.
-func (p commitsPage) LiveEvents() string {
-	if p.Comparing() {
-		return ""
-	}
-	return "/events"
-}
 
 // NewerSkip and OlderSkip are the ?skip= of the log pages before and after
 // this one.
@@ -214,7 +205,7 @@ func (a *App) commits(w http.ResponseWriter, r *http.Request) error {
 			return tooLargeToShow(err)
 		}
 		page.Comparison, commits = cmp, cmp.Commits
-		page.Tab = tabFrom(r, "commits", "files")
+		page.Tab = tabFrom(r, "commits", "changes")
 		counts, err := gitRepo.Divergences(ctx, base.Commit, []string{head.Commit})
 		if err != nil {
 			return tooLargeToShow(err)

@@ -456,3 +456,40 @@ func TestForRepoGroupsABulkPush(t *testing.T) {
 		t.Fatalf("second page = %d, more=%v, %v", len(rest), more, err)
 	}
 }
+
+func TestRefusedSinceListsRecentRefusalsOfTheGivenRepositories(t *testing.T) {
+	database := pgtest.Open(t)
+	repoID, otherRepoID, _ := seed(t, database)
+	ctx := context.Background()
+	now := time.Now()
+	insert := func(q string, args ...any) {
+		t.Helper()
+		if _, err := database.Pool.Exec(ctx, q, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insert(`INSERT INTO push_refusals (id, repo_id, person_id, created_at) VALUES
+	        ('new', $1, 'p1', $3), ('old', $1, 'p1', $4), ('other', $2, 'p1', $3)`, repoID, otherRepoID, now.Add(-time.Hour), now.Add(-30*24*time.Hour))
+	insert(`INSERT INTO push_refusal_refs (refusal_id, position, ref, reason) VALUES
+	        ('new', 1, 'refs/tags/v1', 'second'), ('new', 0, 'refs/heads/main', 'first'), ('old', 0, 'refs/heads/x', 'long ago'),
+	        ('other', 0, 'refs/heads/y', 'elsewhere')`)
+	svc := NewService(database)
+
+	got, err := svc.RefusedSince(ctx, []string{repoID}, now.Add(-7*24*time.Hour), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].RepoName != "waiotech" || got[0].Actor != "darius" || got[0].Ref != "refs/heads/main" || got[0].Reason != "first" {
+		t.Fatalf("refused = %+v", got)
+	}
+	both, err := svc.RefusedSince(ctx, []string{repoID, otherRepoID}, now.Add(-7*24*time.Hour), 10)
+	if err != nil || len(both) != 2 {
+		t.Fatalf("for two repositories: %+v, %v", both, err)
+	}
+	if none, err := svc.RefusedSince(ctx, nil, now.Add(-7*24*time.Hour), 10); err != nil || len(none) != 0 {
+		t.Fatalf("for no repositories: %+v, %v", none, err)
+	}
+	if capped, err := svc.RefusedSince(ctx, []string{repoID, otherRepoID}, now.Add(-7*24*time.Hour), 1); err != nil || len(capped) != 1 {
+		t.Fatalf("with a limit: %+v, %v", capped, err)
+	}
+}

@@ -39,10 +39,19 @@ func (r refRow) FullName() string { return git.FullName(r.Kind, r.Name) }
 // branch has gained since.
 type targetView struct {
 	ci.Deployment
-	// SinceURL is empty when the default branch is at what is live, or is
-	// not pushed yet.
+	// Behind is how many commits the default branch has that this target
+	// lacks, and SinceURL compares them; both are empty when the default
+	// branch is at what is live, or is not pushed yet.
+	Behind   int
 	SinceURL string
 }
+
+// latestCommits is how many of the default branch's newest commits the
+// Overview lists, and runStripLength how many of its runs the strip shows.
+const (
+	latestCommits  = 5
+	runStripLength = 12
+)
 
 // overviewTags is how many tags the Overview lists before "all tags".
 const overviewTags = 10
@@ -61,6 +70,10 @@ type repositoryPage struct {
 	// the only way it can be missing, since a push may not delete it.
 	DefaultExists bool
 	Timeline      []activity.RepoEntry
+	// Latest are the newest commits of the default branch, with their runs;
+	// Runs are its latest runs, oldest first, for the strip.
+	Latest []commitRow
+	Runs   []ci.Summary
 }
 
 // MoreTags reports tags the page leaves out.
@@ -172,12 +185,44 @@ func (a *App) repository(w http.ResponseWriter, r *http.Request) error {
 			defaultHead = row.Commit
 		}
 	}
+	// What needs Git — how far each target is behind, the latest commits —
+	// is left out, not failed on, when Git cannot give it: the page is worth
+	// showing without it.
+	var gitRepo *git.Repo
+	if defaultHead != "" {
+		if gitRepo, err = a.repos.Open(repo); err != nil {
+			a.log.Warn("could not open a repository for its overview", "repo", repo.Name, "error", err)
+			gitRepo = nil
+		}
+	}
 	for _, d := range targets {
 		view := targetView{Deployment: d}
-		if defaultHead != "" && defaultHead != d.Commit {
-			view.SinceURL = compareURL(repo.Name, d.Commit, repo.DefaultBranch)
+		if gitRepo != nil && defaultHead != d.Commit {
+			// A target whose commit Git can no longer count from is shown
+			// without a count; the comparison still says what it can.
+			if counts, err := gitRepo.Divergences(ctx, d.Commit, []string{defaultHead}); err == nil {
+				view.Behind = counts[defaultHead].Ahead
+			}
+			if view.Behind > 0 {
+				view.SinceURL = compareURL(repo.Name, d.Commit, repo.DefaultBranch)
+			}
 		}
 		page.Targets = append(page.Targets, view)
+	}
+	if gitRepo != nil {
+		if commits, _, err := gitRepo.Log(ctx, defaultHead, "", 0, latestCommits); err != nil {
+			a.log.Warn("could not list a default branch's latest commits", "repo", repo.Name, "error", err)
+		} else if page.Latest, err = a.commitRows(r, repo, commits, indexed); err != nil {
+			return err
+		}
+	}
+	if page.DefaultExists {
+		runs, err := a.ci.RunsOfRef(ctx, repo.ID, git.KindBranch, repo.DefaultBranch, runStripLength)
+		if err != nil {
+			return err
+		}
+		slices.Reverse(runs)
+		page.Runs = runs
 	}
 
 	a.countDivergence(r, repo, &page)

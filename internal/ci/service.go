@@ -50,6 +50,18 @@ func (s *Service) RunsForRepo(ctx context.Context, repoID string, before int64, 
 	return selectRunsForRepo(ctx, s.db.Q, repoID, before, limit)
 }
 
+// RunsOfRef returns the newest limit runs of one branch or tag, newest
+// first.
+func (s *Service) RunsOfRef(ctx context.Context, repoID string, kind git.Kind, name string, limit int) ([]Summary, error) {
+	return selectRunsOfRef(ctx, s.db.Q, repoID, kind, name, limit)
+}
+
+// LatestDefaultRuns returns the newest run of each of repoIDs' default
+// branch, keyed by repository ID, for the ones that have one.
+func (s *Service) LatestDefaultRuns(ctx context.Context, repoIDs []string) (map[string]Summary, error) {
+	return selectLatestDefaultRuns(ctx, s.db.Q, repoIDs)
+}
+
 // LatestRunPerCommit returns the newest run of each of commits, keyed by
 // commit, for the ones that have a run.
 func (s *Service) LatestRunPerCommit(ctx context.Context, repoID string, commits []string) (map[string]Summary, error) {

@@ -92,6 +92,27 @@ func changeOf(kind git.Kind, isCreate, isDelete, isForce bool) Change {
 	return Pushed
 }
 
+// RefusedPush is a push Gitman refused, for a summary: who, where, and the
+// first reason given.
+type RefusedPush struct {
+	RepoName string
+	Actor    string
+	At       time.Time
+	// Ref is the full ref name the reason is about, empty when the whole
+	// push was refused.
+	Ref    string
+	Reason string
+}
+
+// RefusedSince lists the pushes refused in any of repoIDs since a time,
+// newest first, up to limit.
+func (s *Service) RefusedSince(ctx context.Context, repoIDs []string, since time.Time, limit int) ([]RefusedPush, error) {
+	if repoIDs == nil {
+		repoIDs = []string{}
+	}
+	return refusedSince(ctx, s.db.Q, repoIDs, since, limit)
+}
+
 // ForRepo lists a repository's ref changes, refused pushes, finished runs,
 // shipped versions and settings changes, newest first, skipping the first skip and reporting whether more follow. Each
 // source is read to skip+limit+1 rows and merged here, so a page is

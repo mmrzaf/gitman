@@ -12,15 +12,24 @@ worker starts.
 
 ### Added
 
-- **Commits** is a section of its own, between Files and Runs: a branch's,
-  tag's or commit's commits, filterable to a path from Files, with each
-  commit's run, the branches and tags at it and a merge marker.
+- **Commits** is a section of its own: a branch's, tag's or commit's
+  commits, filterable to a path from the file browser, with each commit's
+  run, the branches and tags at it and a merge marker. Choosing a ref
+  changes the list in place.
 - Compare any two branches, tags or commits on the same page: choose what
   to look at and what to compare it with, and see how far apart they are,
-  the commits between, and the files they change. Two tags show what a
-  release added. Deployed targets link to **Commits since this**, and each
-  branch on the Overview says how far it is ahead of and behind the default
+  the commits between, and the files they change, in two tabs: the commits,
+  and one list of changed files that each open to their diff, with Expand
+  all and Collapse all. Two tags show what a release added. Each deployed
+  target on the Overview counts the commits it has not shipped and links to
+  them, and each branch says how far it is ahead of and behind the default
   branch.
+- The Overview also lists the default branch's newest commits and strips
+  its latest runs, and Home is a grid of repository cards, each with the
+  latest commit and run of its default branch and a row for every target,
+  above a **Needs attention** list that appears only when a default
+  branch's run failed, runs wait for a worker, a target is behind, or a push
+  was refused this week.
 - **Activity** for each repository: every ref change (created, pushed,
   force-pushed, deleted, tag moved), who made it and the run it started,
   with runs, what was shipped and settings changes. The Overview shows the
@@ -41,7 +50,9 @@ worker starts.
 
 ### Changed
 
-- Files no longer has Code and History tabs. **Commits** on a file or
+- Files is no longer in the repository's nav, and has no Code and History
+  tabs: the file browser is a step down from the Overview, from a ref's name,
+  **Browse files**, or a commit. **Commits** on a file or
   directory lists the commits that changed it, and old `?tab=history`
   addresses redirect there. Comparing two refs moved onto Commits, and
   `/compare/<base>...<head>` addresses redirect there. The Overview lists
@@ -54,8 +65,8 @@ worker starts.
 - Tags are listed newest version first, in the Overview and in the
   pickers. A push that creates, moves or deletes many refs at once is one
   line of Activity that names the newest and counts the rest.
-- Home no longer has a Running now panel: a run in progress shows beside
-  its repository on the board, which is now called Repositories.
+- Home no longer has a Running now panel or a table: a run in progress
+  shows on its repository's card.
 - The Run dialog chooses its branch or tag with the same searchable list as
   Commits. The activity feed and the page itself no longer both scroll.
 - A deployment shows its version only when it isn't its commit. A branch

@@ -334,6 +334,13 @@ func (s *Service) ListRefs(ctx context.Context, repoID string) ([]IndexedRef, er
 	return selectRefs(ctx, s.db.Q, repoID)
 }
 
+// DefaultHeads returns where the default branch of each of repoIDs points,
+// keyed by repository; one whose default branch has not been pushed yet is
+// left out.
+func (s *Service) DefaultHeads(ctx context.Context, repoIDs []string) (map[string]IndexedRef, error) {
+	return selectDefaultHeads(ctx, s.db.Q, repoIDs)
+}
+
 // SyncRefs rebuilds a repository's ref index from what Git has, for a
 // repository whose files were restored or changed outside Gitman, and
 // returns how many refs it has.

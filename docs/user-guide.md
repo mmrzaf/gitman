@@ -8,31 +8,39 @@ an admin with `gitman admin person add`.
 
 ## Home
 
-Lists every repository you can read, with what is live on each target and
-any run in progress beside its repository, and a feed of what has been
-happening. Anyone signed in can create a new one from here; there are no
-organizations or namespaces, just one flat list of what's readable to you.
-When runs are queued and no worker is online, Home says so.
+Every repository you can read is a card: its description, the latest commit
+on its default branch and how that ran, any run in progress, and a row for
+each target anything has shipped to, with what is live there and how many
+commits the default branch has gained since. Every card has the same rows,
+so they line up. A feed of what has been happening sits beside them. Anyone
+signed in can create a new repository from here; there are no organizations
+or namespaces, just one flat list of what's readable to you.
+
+**Needs attention** appears above the cards only when something does:
+
+- the latest run of a default branch failed;
+- runs are queued and no worker is online;
+- a target is behind its default branch;
+- a push was refused in the last week, with the reason.
 
 ## A repository
 
-Its nav has five items:
+Its nav has four items:
 
 - **Overview** — what is deployed to each target (if the pipeline
-  defines any), its branches and tags, and its activity. Each branch says
-  how far it is ahead of and behind the default branch. A deployment shows
-  its version only when that says more than its commit: a tag's name does,
-  and a branch's version is its commit, so it shows the commit once. The
-  newest tags are listed, with a link to all of them.
-- **Files** — browse the tree at any branch, tag or commit; jump to a
-  file by path with the go-to-file finder. **Commits** on a file or
-  directory lists the commits that changed it. **Download**, next to the
-  ref picker, gives the whole tree of the branch, tag or commit you are
-  looking at as a `.tar.gz`.
+  defines any) and how many commits each lacks, the newest commits of the
+  default branch, its branches and tags, the clone address, the latest runs
+  of the default branch, and the repository's activity. Each branch says how
+  far it is ahead of and behind the default branch. A deployment shows its
+  version only when that says more than its commit: a tag's name does, and
+  a branch's version is its commit, so it shows the commit once. The newest
+  tags are listed, with a link to all of them.
 - **Commits** — a branch's, tag's or commit's commits, newest first, each
   with its latest run, the branches and tags now at it, and a marker on
   merges. To see what differs between two refs, choose the second in
-  **Compared with**: see [Comparing refs](#comparing-refs).
+  **Compared with**: see [Comparing refs](#comparing-refs). Choosing a
+  ref changes the list in place, and Back still works.
+
 - **Runs** — every run of this repository's pipeline, newest first,
   paged: its branch or tag and commit, who started it, how long it took,
   and the target it shipped to.
@@ -40,11 +48,22 @@ Its nav has five items:
   secrets, who may read the repository and push to a ref no rule matches,
   and deletion.
 
+### Browsing files
+
+The files of a branch, tag or commit are a step down from where you are
+looking at changes, not a section of their own: a branch or tag's name on the
+Overview opens its files, **Browse files** is on the Overview and on
+Commits, and a commit's page has one too. Jump to a file by path with the
+go-to-file finder, and **Commits** on a file or directory lists the commits
+that changed it. **Download**, next to the ref picker, gives the whole tree
+as a `.tar.gz`.
+
 ### Downloading an archive
 
 An archive of any branch, tag or commit is at
 `/<repo>/archive/<ref>.tar.gz` or `.zip`; **Download** next to the ref
-picker on Files is the `.tar.gz`, and the `.zip` is at its address. You
+picker on Files, and on the Overview, is the `.tar.gz`, and the `.zip` is at
+its address. You
 must be signed in, as for any page: access tokens are for Git.
 
 The file is named `<repo>-<ref>`, with any `/` in the ref written as `-`,
@@ -62,14 +81,15 @@ Each is a branch, a tag or a commit: type part of a name to search, or
 type a commit's hash. The page then shows, top to bottom:
 
 - how far the first is ahead of and behind the second;
-- the commits the first has that the second lacks;
-- the files they change, with the diff.
+- two tabs: **Commits**, the commits the first has that the second lacks,
+  and **Changes**, one list of the files they change. Each file opens to
+  its diff; **Expand all** and **Collapse all** open and close every one.
 
 So two tags show what a release added, the default branch against a
 branch shows what merging it would bring, and a branch against what is
 live on a target shows what has not shipped. A branch's compare button on
-the Overview, and **Commits since this** on a deployed target, open it
-ready-made. **Swap sides** shows the other direction. Leave **Compared
+the Overview, and the **N commits not shipped** on a deployed target there
+or on Home, open it ready-made. **Swap sides** shows the other direction. Leave **Compared
 with** empty for the plain list of commits.
 
 ### Activity

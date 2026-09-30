@@ -52,7 +52,6 @@
     </div>
     <nav class="repobar-nav" aria-label="Repository">
       <a class="repobar-link" href="/{{.Repo.Name}}"{{if eq .Section "overview"}} aria-current="page"{{end}}>{{template "icon" "repo"}}Overview</a>
-      <a class="repobar-link" href="{{refURL .Repo.Name .Repo.DefaultBranch ""}}"{{if eq .Section "files"}} aria-current="page"{{end}}>{{template "icon" "code"}}Files</a>
       <a class="repobar-link" href="/{{.Repo.Name}}/commits"{{if eq .Section "commits"}} aria-current="page"{{end}}>{{template "icon" "commit"}}Commits</a>
       <a class="repobar-link" href="/{{.Repo.Name}}/runs"{{if eq .Section "runs"}} aria-current="page"{{end}}>{{template "icon" "play"}}Runs</a>
       {{- if $.Person.IsAdmin}}

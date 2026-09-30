@@ -254,7 +254,7 @@ func (a *App) files(w http.ResponseWriter, r *http.Request, name, refAndPath str
 	}
 
 	page := filesPage{
-		repoFrame: repoFrame{Repo: repo, Section: "files"},
+		repoFrame: repoFrame{Repo: repo, Section: "overview"},
 		Ref:       res.Name, Commit: res.Commit, Path: res.Path,
 		Breadcrumb:   breadcrumb(res.Path),
 		RawURL:       refURL(repo.Name, res.Name, res.Path) + "?raw",
@@ -348,7 +348,7 @@ func (a *App) filesUnpushed(w http.ResponseWriter, r *http.Request, repo *reposv
 	if err != nil {
 		return err
 	}
-	page := filesUnpushedPage{repoFrame: repoFrame{Repo: repo, Section: "files"}, CloneURL: a.cloneURL(repo)}
+	page := filesUnpushedPage{repoFrame: repoFrame{Repo: repo, Section: "overview"}, CloneURL: a.cloneURL(repo)}
 	for _, ref := range refs {
 		if ref.Kind == git.KindBranch {
 			page.Branches = append(page.Branches, ref.Name)
@@ -529,7 +529,7 @@ func (a *App) commitView(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	a.render(w, r, http.StatusOK, "commit", commit.ShortHash()+" \u00b7 "+repo.Name,
-		commitPage{repoFrame: repoFrame{Repo: repo}, Commit: commit, Diff: diff})
+		commitPage{repoFrame: repoFrame{Repo: repo, Section: "commits"}, Commit: commit, Diff: diff})
 	return nil
 }
 

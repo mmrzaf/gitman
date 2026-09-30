@@ -2,45 +2,81 @@ package web
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"sort"
+	"strings"
+	"time"
 
 	"github.com/mmrzaf/gitman/internal/activity"
 	"github.com/mmrzaf/gitman/internal/ci"
+	"github.com/mmrzaf/gitman/internal/git"
 	"github.com/mmrzaf/gitman/internal/names"
 	"github.com/mmrzaf/gitman/internal/postgres"
 )
 
 // homeTimelineLimit and homeInProgressLimit bound the feed and the runs
-// shown beside their repositories, so Home stays a quick read rather than a
-// full history.
+// shown on their repositories' cards, so Home stays a quick read rather
+// than a full history.
 const (
 	homeTimelineLimit   = 30
 	homeInProgressLimit = 50
+	// attentionLimit bounds the rows of "Needs attention"; the rest are
+	// counted. refusedWindow is how far back a refused push still does.
+	attentionLimit = 6
+	refusedWindow  = 7 * 24 * time.Hour
 )
 
-// boardRepo is one row of Home's board: a repository and what is live
-// on each target, by target name.
-type boardRepo struct {
-	Name        string
-	Description string
-	Live        map[string]*ci.Deployment
+// cardTarget is one target's place on a repository's card: what is live
+// there, and how far the default branch has gone since.
+type cardTarget struct {
+	Name string
+	Live *ci.Deployment
+	// Behind is how many commits the default branch has that the target
+	// lacks, and SinceURL compares them; both are empty when nothing is
+	// live or the target is up to date.
+	Behind   int
+	SinceURL string
+}
+
+// repoCard is a repository on Home: what landed last on its default branch
+// and how that ran, what is running now, and a place for each target, the
+// same places on every card so the cards line up.
+type repoCard struct {
+	Name          string
+	Description   string
+	DefaultBranch string
+	// Head is the latest commit of the default branch; nil until it is
+	// pushed.
+	Head *git.Commit
+	// Run is the default branch's latest run, and Running every run in
+	// progress, of any ref.
+	Run     *ci.Summary
+	Running []ci.Summary
+	Targets []cardTarget
+}
+
+// attention is one thing on Home that wants a look: what, and where to go.
+type attention struct {
+	// Icon names the icon shown with it.
+	Icon string
+	Text string
+	// URL is where to look; empty for something with no page of its own.
+	URL string
 }
 
 type homePage struct {
-	// Targets names every target anything has shipped to, in order: the
-	// board's columns.
+	// Targets names every target anything has shipped to, in order: each
+	// card's rows.
 	Targets []string
-	Board   []boardRepo
-	// Running are the runs queued or running, by repository name, shown
-	// beside their repository on the board.
-	Running map[string][]ci.Summary
-	// NoWorker reports that runs are queued with no worker online to
-	// claim them.
-	NoWorker   bool
-	Timeline   []activity.Entry
-	CreateForm *form
+	Cards   []repoCard
+	// Attention are the things that want a look; AttentionMore counts those
+	// the list leaves out.
+	Attention     []attention
+	AttentionMore int
+	Timeline      []activity.Entry
+	CreateForm    *form
 	// Dialog is the dialog the page opens with: "new-repo" when asked for
 	// by link, or when a creation failed.
 	Dialog string
@@ -67,22 +103,39 @@ func (a *App) buildHomeData(r *http.Request, createForm *form) (homePage, error)
 	if err != nil {
 		return homePage{}, err
 	}
+	latestRuns, err := a.ci.LatestDefaultRuns(ctx, readableIDs)
+	if err != nil {
+		return homePage{}, err
+	}
+	heads, err := a.repos.DefaultHeads(ctx, readableIDs)
+	if err != nil {
+		return homePage{}, err
+	}
 	feed, err := a.activity.RecentForRepos(ctx, readableIDs, homeTimelineLimit)
 	if err != nil {
 		return homePage{}, err
 	}
-
-	page := homePage{CreateForm: createForm, Running: map[string][]ci.Summary{}, Timeline: feed}
-	for _, run := range inProgress {
-		page.Running[run.RepoName] = append(page.Running[run.RepoName], run)
+	refused, err := a.activity.RefusedSince(ctx, readableIDs, a.now().Add(-refusedWindow), attentionLimit)
+	if err != nil {
+		return homePage{}, err
 	}
+
+	page := homePage{CreateForm: createForm, Timeline: feed}
+	running := map[string][]ci.Summary{}
+	for _, run := range inProgress {
+		running[run.RepoName] = append(running[run.RepoName], run)
+	}
+	var items []attention
 	if slices.ContainsFunc(inProgress, func(run ci.Summary) bool { return run.Status == ci.StatusQueued }) {
 		online, err := a.ci.AnyWorkerOnline(ctx)
 		if err != nil {
 			return homePage{}, err
 		}
-		page.NoWorker = !online
+		if !online {
+			items = append(items, attention{Icon: "queued", Text: "Runs are queued and no worker is online, so they wait until one starts."})
+		}
 	}
+
 	byRepo := map[string]map[string]*ci.Deployment{}
 	targets := map[string]bool{}
 	for i, d := range live {
@@ -96,13 +149,69 @@ func (a *App) buildHomeData(r *http.Request, createForm *form) (homePage, error)
 		}
 	}
 	sort.Strings(page.Targets)
+
+	var failed, behind []attention
 	for _, repo := range list {
-		page.Board = append(page.Board, boardRepo{Name: repo.Name, Description: repo.Description, Live: byRepo[repo.ID]})
+		card := repoCard{Name: repo.Name, Description: repo.Description, DefaultBranch: repo.DefaultBranch, Running: running[repo.Name]}
+		if run, ok := latestRuns[repo.ID]; ok {
+			card.Run = &run
+			if run.Status == ci.StatusFailed {
+				failed = append(failed, attention{Icon: "failed", URL: runPath(repo.Name, run.Number),
+					Text: fmt.Sprintf("%s: the latest run of %s failed.", repo.Name, repo.DefaultBranch)})
+			}
+		}
+		head, pushed := heads[repo.ID]
+		var gitRepo *git.Repo
+		if pushed {
+			if gitRepo, err = a.repos.Open(repo); err != nil {
+				// A repository that cannot be read is not worth losing Home for.
+				a.log.Warn("could not open a repository for its card", "repo", repo.Name, "error", err)
+			} else if card.Head, err = gitRepo.Commit(ctx, head.Commit); err != nil {
+				a.log.Warn("could not read a default branch's latest commit", "repo", repo.Name, "error", err)
+			}
+		}
+		for _, name := range page.Targets {
+			slot := cardTarget{Name: name, Live: byRepo[repo.ID][name]}
+			if slot.Live != nil && pushed && gitRepo != nil && slot.Live.Commit != head.Commit {
+				counts, err := gitRepo.Divergences(ctx, slot.Live.Commit, []string{head.Commit})
+				if err == nil {
+					slot.Behind = counts[head.Commit].Ahead
+				}
+				if slot.Behind > 0 {
+					slot.SinceURL = compareURL(repo.Name, slot.Live.Commit, repo.DefaultBranch)
+					behind = append(behind, attention{Icon: "compare", URL: slot.SinceURL,
+						Text: fmt.Sprintf("%s: %s is %d commit%s behind %s.", repo.Name, name, slot.Behind, plural(slot.Behind), repo.DefaultBranch)})
+				}
+			}
+			card.Targets = append(card.Targets, slot)
+		}
+		page.Cards = append(page.Cards, card)
+	}
+	items = append(items, failed...)
+	items = append(items, behind...)
+	for _, push := range refused {
+		who := push.Actor
+		if who == "" {
+			who = "Someone"
+		}
+		text := fmt.Sprintf("%s: %s's push was refused", push.RepoName, who)
+		if push.Reason != "" {
+			text += ": " + push.Reason
+		}
+		if !strings.HasSuffix(text, ".") {
+			text += "."
+		}
+		items = append(items, attention{Icon: "warning", URL: "/" + push.RepoName + "/activity", Text: text})
+	}
+	page.Attention = items
+	if len(items) > attentionLimit {
+		page.Attention, page.AttentionMore = items[:attentionLimit], len(items)-attentionLimit
 	}
 	return page, nil
 }
 
-// LiveEvents keeps Home's board, work in progress and timeline current.
+// LiveEvents keeps Home's cards, what needs attention and its timeline
+// current.
 func (homePage) LiveEvents() string { return "/events" }
 
 func (a *App) home(w http.ResponseWriter, r *http.Request) error {

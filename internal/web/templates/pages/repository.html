@@ -12,13 +12,13 @@
           {{- range .Data.Targets}}
           <article class="target" aria-label="{{.Target}}">
             <p class="target-name">{{.Target}}</p>
-            {{- if ownVersion .Version .Commit}}<p class="target-version" title="{{.Version}}">{{.Version}}</p>{{end}}
+            <p class="target-version"{{if ownVersion .Version .Commit}} title="{{.Version}}"{{end}}>{{if ownVersion .Version .Commit}}{{.Version}}{{else}}{{template "commit" (dict "Repo" $repo.Name "Hash" .Commit)}}{{end}}</p>
             <p class="target-meta">
-              {{template "commit" (dict "Repo" $repo.Name "Hash" .Commit)}}
+              {{- if ownVersion .Version .Commit}}{{template "commit" (dict "Repo" $repo.Name "Hash" .Commit)}}{{end}}
               <span>{{template "time" .At}}{{if .Person}} by {{.Person}}{{end}}</span>
               {{- if .RunNumber}}<a href="/{{$repo.Name}}/runs/{{.RunNumber}}">run #{{.RunNumber}}</a>{{end}}
             </p>
-            {{- if .SinceURL}}<p class="target-meta"><a href="{{.SinceURL}}">Commits since this</a></p>{{end}}
+            <p class="target-since">{{if .SinceURL}}<a href="{{.SinceURL}}">{{.Behind}} commit{{if ne .Behind 1}}s{{end}} not shipped</a>{{else}}<span class="muted">Up to date</span>{{end}}</p>
           </article>
           {{- end}}
         </div>
@@ -27,6 +27,15 @@
         {{- end}}
       </div>
     </section>
+
+    {{- if .Data.Latest}}
+    <section class="panel" aria-labelledby="latest-title">
+      <header class="panel-header"><h2 class="panel-title" id="latest-title">{{template "icon" "commit"}}Latest on {{template "ref" (dict "Kind" "branch" "Name" $repo.DefaultBranch)}}</h2>
+        <span class="panel-actions"><a class="btn btn-sm" href="{{commitsURL $repo.Name $repo.DefaultBranch ""}}">All commits</a></span>
+      </header>
+      <div data-live-region="latest">{{template "commit-table" (dict "Rows" .Data.Latest "Repo" $repo)}}</div>
+    </section>
+    {{- end}}
 
     <section class="panel" aria-labelledby="branches-title">
       <header class="panel-header"><h2 class="panel-title" id="branches-title">{{template "icon" "branch"}}Branches <span class="tab-count">{{len .Data.Branches}}</span></h2></header>
@@ -47,17 +56,37 @@
       <div class="panel-body stack">
         {{template "copy-field" (dict "ID" "clone-url" "Label" "HTTPS" "Value" .Data.CloneURL)}}
         <dl class="facts">
-          <dt>Default branch</dt><dd>{{if .Data.DefaultExists}}{{template "ref" (dict "Kind" "branch" "Name" $repo.DefaultBranch "Href" (refURL $repo.Name $repo.DefaultBranch ""))}}{{else}}<span class="cluster">{{template "ref" (dict "Kind" "branch" "Name" $repo.DefaultBranch)}}<span class="muted">not pushed yet</span></span>{{end}}</dd>
+          <dt>Default branch</dt><dd>{{if .Data.DefaultExists}}{{template "ref" (dict "Kind" "branch" "Name" $repo.DefaultBranch "Href" (commitsURL $repo.Name $repo.DefaultBranch ""))}}{{else}}<span class="cluster">{{template "ref" (dict "Kind" "branch" "Name" $repo.DefaultBranch)}}<span class="muted">not pushed yet</span></span>{{end}}</dd>
           <dt>Created</dt><dd>{{template "time" $repo.CreatedAt}}</dd>
         </dl>
+        {{- if .Data.DefaultExists}}
+        <div class="cluster">
+          <a class="btn btn-sm" href="{{refURL $repo.Name $repo.DefaultBranch ""}}">{{template "icon" "code"}}Browse files</a>
+          <a class="btn btn-sm" href="{{archiveURL $repo.Name $repo.DefaultBranch "tar.gz"}}" title="Download as .tar.gz">{{template "icon" "download"}}Download</a>
+        </div>
+        {{- end}}
       </div>
     </section>
+    {{- if .Data.Runs}}
+    <section class="panel" aria-labelledby="strip-title">
+      <header class="panel-header"><h2 class="panel-title" id="strip-title">{{template "icon" "play"}}Runs of {{template "ref" (dict "Kind" "branch" "Name" $repo.DefaultBranch)}}</h2>
+        <span class="panel-actions"><a class="btn btn-sm" href="/{{$repo.Name}}/runs">All runs</a></span>
+      </header>
+      <div class="panel-body" data-live-region="strip">
+        <ol class="run-strip" aria-label="Latest runs, oldest first">
+          {{- range .Data.Runs}}
+          <li><a class="run-pill is-{{.Status}}" href="/{{$repo.Name}}/runs/{{.Number}}" title="Run #{{.Number}} {{.Status}}">{{template "icon" .Status}}<span>#{{.Number}}</span><span class="visually-hidden"> {{.Status}}</span></a></li>
+          {{- end}}
+        </ol>
+      </div>
+    </section>
+    {{- end}}
     <section class="panel" aria-labelledby="repo-timeline-title">
       <header class="panel-header"><h2 class="panel-title" id="repo-timeline-title">{{template "icon" "history"}}Activity</h2>
         <span class="panel-actions"><span class="live js-only" data-live-status data-state="connecting" role="status">{{template "icon" "live"}}<span data-live-label>Connecting…</span></span>
           <a class="btn btn-sm" href="/{{$repo.Name}}/activity">All activity</a></span>
       </header>
-      <div class="feed-scroll" data-live-region="timeline">{{template "repo-feed" (dict "Entries" .Data.Timeline "Repo" $repo)}}</div>
+      <div class="feed-scroll" data-fit data-live-region="timeline">{{template "repo-feed" (dict "Entries" .Data.Timeline "Repo" $repo)}}</div>
     </section>
   </aside>
 </div>

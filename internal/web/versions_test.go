@@ -58,27 +58,30 @@ func TestADeploymentShowsItsVersionOnlyWhenItIsNotTheCommit(t *testing.T) {
 	expect(t, resp, body, http.StatusOK,
 		// The tag's version is shown as itself, in its card, its row and the feed.
 		`<p class="target-version" title="v1.0.0">v1.0.0</p>`,
+		// The branch's card leads with its commit, which says all there is to say.
+		`<p class="target-version"><a class="hash" href="/waiotech/commit/`+main+`"`,
 		`<span class="version">v1.0.0</span> <span class="muted">→</span> production`,
 		`shipped <span class="version">v1.0.0</span> to <strong>production</strong>`,
 		// The branch's is its commit, which is shown as a commit.
 		`<td class="cell-shrink">staging</td>`,
 		`shipped <a class="hash" href="/waiotech/commit/`+main+`" title="`+main+`">`+main[:7]+`</a> to <strong>staging</strong>`)
-	for _, unwanted := range []string{`target-version" title="` + main[:12], `version">` + main[:12], `title="` + main[:12] + `"`} {
+	for _, unwanted := range []string{`target-version" title="` + main[:12], `version">` + main[:12]} {
 		if strings.Contains(body, unwanted) {
 			t.Errorf("the Overview shows a branch deploy's commit as its version: %s", unwanted)
 		}
 	}
-	if n := strings.Count(body, `class="target-version"`); n != 1 {
-		t.Errorf("%d target cards show a version, want only the tag's", n)
+	if n := strings.Count(body, `class="version">`); n < 1 || strings.Contains(body, `class="version">`+main[:12]) {
+		t.Errorf("the Overview's version labels are wrong (%d)", n)
 	}
 
 	resp, body = b.do(http.MethodGet, "/", nil, nil)
-	expect(t, resp, body, http.StatusOK, `<span class="version truncate" title="v1.0.0">v1.0.0</span>`)
-	if n := strings.Count(body, `class="version truncate"`); n != 1 {
-		t.Errorf("Home's board shows %d versions, want only the tag's", n)
+	expect(t, resp, body, http.StatusOK, `<dt>production</dt>`, `<span class="version">v1.0.0</span>`)
+	if n := strings.Count(body, `class="version">`); n != 2 {
+		// One on production's card, one in the feed's shipped line.
+		t.Errorf("Home shows %d versions, want the tag's on its card and in the feed", n)
 	}
-	if strings.Contains(body, `version truncate" title="`+main[:12]) {
-		t.Error("Home's board shows a branch deploy's commit as its version")
+	if strings.Contains(body, `class="version">`+main[:12]) {
+		t.Error("Home shows a branch deploy's commit as its version")
 	}
 	expect(t, resp, body, http.StatusOK, `shipped <a class="hash" href="/waiotech/commit/`+main+`"`)
 }

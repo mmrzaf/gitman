@@ -272,6 +272,31 @@ func selectRefs(ctx context.Context, q postgres.Querier, repoID string) ([]Index
 	return refs, rows.Err()
 }
 
+// selectDefaultHeads returns, for each of repoIDs whose default branch has
+// been pushed, where that branch points, keyed by repository.
+func selectDefaultHeads(ctx context.Context, q postgres.Querier, repoIDs []string) (map[string]IndexedRef, error) {
+	rows, err := q.Query(ctx, `
+		SELECT r.repo_id, r.kind, r.name, r.commit_hash, r.updated_at, r.updated_by
+		FROM refs r
+		JOIN repos p ON p.id = r.repo_id
+		WHERE r.repo_id = ANY($1) AND r.kind = 'branch' AND r.name = p.default_branch
+	`, repoIDs)
+	if err != nil {
+		return nil, fmt.Errorf("list default branches: %w", err)
+	}
+	defer rows.Close()
+	heads := make(map[string]IndexedRef, len(repoIDs))
+	for rows.Next() {
+		var repoID string
+		var r IndexedRef
+		if err := rows.Scan(&repoID, &r.Kind, &r.Name, &r.Commit, &r.UpdatedAt, &r.UpdatedBy); err != nil {
+			return nil, fmt.Errorf("scan default branch: %w", err)
+		}
+		heads[repoID] = r
+	}
+	return heads, rows.Err()
+}
+
 // lockRefIndex takes a lock on one repository's ref index, held until
 // tx ends.
 func lockRefIndex(ctx context.Context, tx postgres.Tx, repoID string) error {
