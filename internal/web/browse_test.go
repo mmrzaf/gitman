@@ -405,19 +405,19 @@ func TestPathHistoryAndLastChanged(t *testing.T) {
 	seedFilesRepo(t, database, store, b)
 
 	resp, body := b.do(http.MethodGet, "/waiotech@main/README.md", nil, nil)
-	expect(t, resp, body, http.StatusOK, "Last changed in", "Update README", `href="/waiotech/history?path=README.md&amp;ref=main"`)
+	expect(t, resp, body, http.StatusOK, "Last changed in", "Update README", `href="/waiotech/commits?path=README.md&amp;ref=main"`)
 	if strings.Contains(body, "data-tab-panel") {
 		t.Error("Files still has tabs")
 	}
-	// The old History tab's address leads to History, filtered to the path.
+	// The old History tab's address leads to the commits, filtered to the path.
 	resp, body = b.do(http.MethodGet, "/waiotech@main/README.md?tab=history", nil, nil)
 	expect(t, resp, body, http.StatusMovedPermanently)
-	if got := resp.Header.Get("Location"); got != "/waiotech/history?path=README.md&ref=main" {
+	if got := resp.Header.Get("Location"); got != "/waiotech/commits?path=README.md&ref=main" {
 		t.Errorf("old history address redirects to %q", got)
 	}
 	resp, body = b.do(http.MethodGet, "/waiotech@main?tab=history&skip=20", nil, nil)
 	expect(t, resp, body, http.StatusMovedPermanently)
-	if got := resp.Header.Get("Location"); got != "/waiotech/history?ref=main&skip=20" {
+	if got := resp.Header.Get("Location"); got != "/waiotech/commits?ref=main&skip=20" {
 		t.Errorf("old history address with skip redirects to %q", got)
 	}
 }
@@ -454,19 +454,27 @@ func TestCommitView(t *testing.T) {
 	}
 }
 
-func TestCompareView(t *testing.T) {
+// TestCompareAddressesStillWork: beta 21 compared two refs at
+// /compare/{base}...{head}, and links to it outlive the release.
+func TestCompareAddressesStillWork(t *testing.T) {
 	database, store, b := setupWithStore(t)
 	signIn(t, database, b, "darius", false)
 	seedFilesRepo(t, database, store, b)
 
 	resp, body := b.do(http.MethodGet, "/waiotech/compare/release...release/1.2", nil, nil)
-	expect(t, resp, body, http.StatusOK, "which.txt", "On release/1.2")
-
-	resp, body = b.do(http.MethodGet, "/waiotech/compare/main...main", nil, nil)
-	expect(t, resp, body, http.StatusOK, "No commits")
-
-	resp, body = b.do(http.MethodGet, "/waiotech/compare/nonsense", nil, nil)
-	expect(t, resp, body, http.StatusNotFound, "needs two refs")
+	expect(t, resp, body, http.StatusMovedPermanently)
+	if got := resp.Header.Get("Location"); got != "/waiotech/commits?base=release&ref=release%2F1.2" {
+		t.Errorf("redirects to %q", got)
+	}
+	resp, body = b.do(http.MethodGet, "/waiotech/compare", nil, nil)
+	expect(t, resp, body, http.StatusMovedPermanently)
+	if got := resp.Header.Get("Location"); got != "/waiotech/commits" {
+		t.Errorf("redirects to %q", got)
+	}
+	for _, path := range []string{"/waiotech/compare/nonsense", "/waiotech/compare/...main", "/waiotech/compare/main..."} {
+		resp, body = b.do(http.MethodGet, path, nil, nil)
+		expect(t, resp, body, http.StatusNotFound, "needs")
+	}
 }
 
 func TestTreePaths(t *testing.T) {

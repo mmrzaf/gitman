@@ -216,7 +216,7 @@ func recentEvents(ctx context.Context, q postgres.Querier, f filter) ([]Entry, e
 
 // repoRefChanges lists a repository's ref updates newest first, each with
 // the run it started: one row per push_updates row, not per push.
-func repoRefChanges(ctx context.Context, q postgres.Querier, repoID string, limit int) ([]HistoryEntry, error) {
+func repoRefChanges(ctx context.Context, q postgres.Querier, repoID string, limit int) ([]RepoEntry, error) {
 	rows, err := q.Query(ctx, `
 		SELECT u.id, p.created_at, COALESCE(pe.username, ''), u.kind, u.name, u.old_commit, u.new_commit,
 		       u.is_create, u.is_delete, u.is_force, COALESCE(r.number, 0), COALESCE(r.status, '')
@@ -232,9 +232,9 @@ func repoRefChanges(ctx context.Context, q postgres.Querier, repoID string, limi
 		return nil, fmt.Errorf("list ref changes: %w", err)
 	}
 	defer rows.Close()
-	var entries []HistoryEntry
+	var entries []RepoEntry
 	for rows.Next() {
-		e := HistoryEntry{Kind: KindPush}
+		e := RepoEntry{Kind: KindPush}
 		var kind string
 		var isCreate, isDelete, isForce bool
 		if err := rows.Scan(&e.id, &e.At, &e.Actor, &kind, &e.RefName, &e.OldCommit, &e.NewCommit,
@@ -249,7 +249,7 @@ func repoRefChanges(ctx context.Context, q postgres.Querier, repoID string, limi
 }
 
 // repoEvents lists a repository's settings changes newest first.
-func repoEvents(ctx context.Context, q postgres.Querier, repoID string, limit int) ([]HistoryEntry, error) {
+func repoEvents(ctx context.Context, q postgres.Querier, repoID string, limit int) ([]RepoEntry, error) {
 	rows, err := q.Query(ctx, `
 		SELECT e.id, e.created_at, COALESCE(p.username, ''), e.action, e.detail
 		FROM events e
@@ -262,9 +262,9 @@ func repoEvents(ctx context.Context, q postgres.Querier, repoID string, limit in
 		return nil, fmt.Errorf("list repository events: %w", err)
 	}
 	defer rows.Close()
-	var entries []HistoryEntry
+	var entries []RepoEntry
 	for rows.Next() {
-		e := HistoryEntry{Kind: KindEvent}
+		e := RepoEntry{Kind: KindEvent}
 		if err := rows.Scan(&e.id, &e.At, &e.Actor, &e.Action, &e.Detail); err != nil {
 			return nil, fmt.Errorf("scan repository event: %w", err)
 		}
@@ -275,7 +275,7 @@ func repoEvents(ctx context.Context, q postgres.Querier, repoID string, limit in
 
 // repoRefusals lists a repository's refused pushes newest first, each with
 // the reasons it was refused for.
-func repoRefusals(ctx context.Context, q postgres.Querier, repoID string, limit int) ([]HistoryEntry, error) {
+func repoRefusals(ctx context.Context, q postgres.Querier, repoID string, limit int) ([]RepoEntry, error) {
 	rows, err := q.Query(ctx, `
 		SELECT f.id, f.created_at, COALESCE(p.username, '')
 		FROM push_refusals f
@@ -287,10 +287,10 @@ func repoRefusals(ctx context.Context, q postgres.Querier, repoID string, limit 
 	if err != nil {
 		return nil, fmt.Errorf("list refused pushes: %w", err)
 	}
-	var entries []HistoryEntry
+	var entries []RepoEntry
 	var ids []string
 	for rows.Next() {
-		e := HistoryEntry{Kind: KindRefusal}
+		e := RepoEntry{Kind: KindRefusal}
 		if err := rows.Scan(&e.id, &e.At, &e.Actor); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("scan refused push: %w", err)
@@ -332,4 +332,58 @@ func repoRefusals(ctx context.Context, q postgres.Querier, repoID string, limit 
 		entries[i].Refused = byID[entries[i].id]
 	}
 	return entries, nil
+}
+
+// repoRuns lists a repository's finished runs newest first.
+func repoRuns(ctx context.Context, q postgres.Querier, repoID string, limit int) ([]RepoEntry, error) {
+	rows, err := q.Query(ctx, `
+		SELECT r.id, r.finished_at, COALESCE(p.username, ''), r.number, r.status, r.ref_kind, r.ref_name
+		FROM runs r
+		LEFT JOIN people p ON p.id = r.triggered_by
+		WHERE r.repo_id = $1 AND r.finished_at IS NOT NULL
+		ORDER BY r.finished_at DESC, r.id DESC
+		LIMIT $2
+	`, repoID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list repository runs: %w", err)
+	}
+	defer rows.Close()
+	var entries []RepoEntry
+	for rows.Next() {
+		e := RepoEntry{Kind: KindRun}
+		var kind string
+		if err := rows.Scan(&e.id, &e.At, &e.Actor, &e.RunNumber, &e.RunStatus, &kind, &e.RefName); err != nil {
+			return nil, fmt.Errorf("scan repository run: %w", err)
+		}
+		e.RefKind = git.Kind(kind)
+		entries = append(entries, e)
+	}
+	return entries, rows.Err()
+}
+
+// repoDeployments lists what has been shipped from a repository, newest
+// first.
+func repoDeployments(ctx context.Context, q postgres.Querier, repoID string, limit int) ([]RepoEntry, error) {
+	rows, err := q.Query(ctx, `
+		SELECT d.id, d.created_at, COALESCE(p.username, ''), d.target, d.version, d.commit_hash, COALESCE(r.number, 0)
+		FROM deployments d
+		LEFT JOIN people p ON p.id = d.person_id
+		LEFT JOIN runs r ON r.id = d.run_id
+		WHERE d.repo_id = $1
+		ORDER BY d.created_at DESC, d.id DESC
+		LIMIT $2
+	`, repoID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list repository deployments: %w", err)
+	}
+	defer rows.Close()
+	var entries []RepoEntry
+	for rows.Next() {
+		e := RepoEntry{Kind: KindDeployment}
+		if err := rows.Scan(&e.id, &e.At, &e.Actor, &e.Target, &e.Version, &e.Commit, &e.RunNumber); err != nil {
+			return nil, fmt.Errorf("scan repository deployment: %w", err)
+		}
+		entries = append(entries, e)
+	}
+	return entries, rows.Err()
 }

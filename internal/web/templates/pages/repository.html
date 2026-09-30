@@ -18,6 +18,7 @@
               <span>{{template "time" .At}}{{if .Person}} by {{.Person}}{{end}}</span>
               {{- if .RunNumber}}<a href="/{{$repo.Name}}/runs/{{.RunNumber}}">run #{{.RunNumber}}</a>{{end}}
             </p>
+            {{- if .SinceURL}}<p class="target-meta"><a href="{{.SinceURL}}">Commits since this</a></p>{{end}}
           </article>
           {{- end}}
         </div>
@@ -27,18 +28,16 @@
       </div>
     </section>
 
-    <section class="panel" aria-labelledby="refs-title">
-      <h2 class="visually-hidden" id="refs-title">Branches and tags</h2>
-      <nav class="tabs" data-tabs aria-label="Branches and tags">
-        <a class="tab" id="tab-branches" href="/{{$repo.Name}}?tab=branches" data-tab="branches"{{if eq .Data.Tab "branches"}} aria-current="page"{{end}}>{{template "icon" "branch"}}Branches <span class="tab-count">{{len .Data.Branches}}</span></a>
-        <a class="tab" id="tab-tags" href="/{{$repo.Name}}?tab=tags" data-tab="tags"{{if eq .Data.Tab "tags"}} aria-current="page"{{end}}>{{template "icon" "tag"}}Tags <span class="tab-count">{{len .Data.Tags}}</span></a>
-      </nav>
-      <div id="panel-branches" data-tab-panel="branches"{{if ne .Data.Tab "branches"}} hidden{{end}}>
-        <div data-live-region="branches">{{template "refs" (dict "Refs" .Data.Branches "Repo" $repo "Clone" .Data.CloneURL "Kind" "branch" "DefaultExists" .Data.DefaultExists "Admin" .Person.IsAdmin)}}</div>
-      </div>
-      <div id="panel-tags" data-tab-panel="tags"{{if ne .Data.Tab "tags"}} hidden{{end}}>
-        <div data-live-region="tags">{{template "refs" (dict "Refs" .Data.Tags "Repo" $repo "Clone" .Data.CloneURL "Kind" "tag" "DefaultExists" .Data.DefaultExists "Admin" .Person.IsAdmin)}}</div>
-      </div>
+    <section class="panel" aria-labelledby="branches-title">
+      <header class="panel-header"><h2 class="panel-title" id="branches-title">{{template "icon" "branch"}}Branches <span class="tab-count">{{len .Data.Branches}}</span></h2></header>
+      <div data-live-region="branches">{{template "refs" (dict "Refs" .Data.Branches "Repo" $repo "Clone" .Data.CloneURL "Kind" "branch" "DefaultExists" .Data.DefaultExists "Admin" .Person.IsAdmin)}}</div>
+    </section>
+
+    <section class="panel" aria-labelledby="tags-title">
+      <header class="panel-header"><h2 class="panel-title" id="tags-title">{{template "icon" "tag"}}Tags <span class="tab-count">{{.Data.TagsTotal}}</span></h2>
+        {{- if .Data.MoreTags}}<span class="panel-actions"><a class="btn btn-sm" href="/{{$repo.Name}}?tags=all">All {{.Data.TagsTotal}} tags</a></span>{{end}}
+      </header>
+      <div data-live-region="tags">{{template "refs" (dict "Refs" .Data.Tags "Repo" $repo "Clone" .Data.CloneURL "Kind" "tag" "DefaultExists" .Data.DefaultExists "Admin" .Person.IsAdmin)}}</div>
     </section>
   </div>
 
@@ -55,9 +54,10 @@
     </section>
     <section class="panel" aria-labelledby="repo-timeline-title">
       <header class="panel-header"><h2 class="panel-title" id="repo-timeline-title">{{template "icon" "history"}}Activity</h2>
-        <span class="panel-actions"><span class="live js-only" data-live-status data-state="connecting" role="status">{{template "icon" "live"}}<span data-live-label>Connecting…</span></span></span>
+        <span class="panel-actions"><span class="live js-only" data-live-status data-state="connecting" role="status">{{template "icon" "live"}}<span data-live-label>Connecting…</span></span>
+          <a class="btn btn-sm" href="/{{$repo.Name}}/activity">All activity</a></span>
       </header>
-      <div class="feed-scroll" data-live-region="timeline">{{template "feed" (dict "Entries" .Data.Timeline "ShowRepo" false)}}</div>
+      <div class="feed-scroll" data-live-region="timeline">{{template "repo-feed" (dict "Entries" .Data.Timeline "Repo" $repo)}}</div>
     </section>
   </aside>
 </div>
@@ -106,7 +106,7 @@
             <button type="submit" class="btn btn-ghost btn-icon btn-sm" aria-label="Run {{.Kind}} {{.Name}}" title="Run">{{template "icon" "play"}}</button>
           </form>
           {{- end}}
-          {{- if and (eq .Kind "branch") $defaultExists (not .IsDefault)}}<a class="btn btn-ghost btn-icon btn-sm" href="{{compareURL $repo.Name $repo.DefaultBranch .Name}}" aria-label="Compare {{.Name}} with {{$repo.DefaultBranch}}" title="Compare">{{template "icon" "compare"}}</a>{{end}}
+          {{- if and (eq .Kind "branch") $defaultExists (not .IsDefault)}}<a class="btn btn-ghost btn-icon btn-sm" href="{{compareURL $repo.Name $repo.DefaultBranch .Name}}" aria-label="Commits of {{.Name}} that {{$repo.DefaultBranch}} lacks" title="Compare with {{$repo.DefaultBranch}}">{{template "icon" "compare"}}</a>{{end}}
           {{- if .CanDelete}}
           <form method="post" action="/{{$repo.Name}}/refs/delete" data-confirm="Delete {{.Kind}} {{.Name}}?" data-confirm-detail="{{.DeleteNote}}" data-confirm-action="Delete">
             <input type="hidden" name="ref" value="{{.FullName}}">

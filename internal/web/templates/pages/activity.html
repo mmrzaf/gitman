@@ -1,0 +1,22 @@
+{{define "content"}}
+{{$d := .Data}}{{$repo := $d.Repo}}
+<div class="page">
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title" id="activity-title">Activity</h1>
+  </div>
+  <div class="page-actions">
+    <span class="live js-only" data-live-status data-state="connecting" role="status">{{template "icon" "live"}}<span data-live-label>Connecting…</span></span>
+  </div>
+</header>
+<section class="panel" aria-labelledby="activity-title">
+  <div data-live-region="activity">{{template "repo-feed" (dict "Entries" $d.Entries "Repo" $repo)}}</div>
+  {{- if or $d.Skip $d.More}}
+  <nav class="panel-footer cluster" aria-label="Pages of activity">
+    {{- if $d.Skip}}<a class="btn btn-sm" href="{{$d.PageURL $d.NewerSkip}}">Newer</a>{{end}}
+    {{- if $d.More}}<a class="btn btn-sm" href="{{$d.PageURL $d.OlderSkip}}">Older</a>{{end}}
+  </nav>
+  {{- end}}
+</section>
+</div>
+{{end}}

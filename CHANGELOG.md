@@ -12,25 +12,28 @@ worker starts.
 
 ### Added
 
-- History is a section of its own, between Files and Runs. **Commits**
-  is a ref's log, filterable to a path, with each commit's run, the
-  branches and tags at it and a merge marker. **Activity** is every ref
-  change (created, pushed, force-pushed, deleted, tag moved), who made it
-  and the run it started, with the repository's settings changes. Pushes
-  from before this release show a force-push as a plain push.
-- A push Gitman refuses is recorded, and shows in History's Activity with
-  who pushed and the reason for each ref. The lines Git prints to the
-  pusher are unchanged.
+- **Commits** is a section of its own, between Files and Runs: a branch's,
+  tag's or commit's commits, filterable to a path from Files, with each
+  commit's run, the branches and tags at it and a merge marker.
+- Compare any two branches, tags or commits on the same page: choose what
+  to look at and what to compare it with, and see how far apart they are,
+  the commits between, and the files they change. Two tags show what a
+  release added. Deployed targets link to **Commits since this**, and each
+  branch on the Overview says how far it is ahead of and behind the default
+  branch.
+- **Activity** for each repository: every ref change (created, pushed,
+  force-pushed, deleted, tag moved), who made it and the run it started,
+  with runs, what was shipped and settings changes. The Overview shows the
+  newest and links to all of it. Pushes from before this release show a
+  force-push as a plain push.
+- A push Gitman refuses is recorded, and shows in Activity with who pushed
+  and the reason for each ref. The lines Git prints to the pusher are
+  unchanged.
 - Delete a branch or tag from its row on the Overview. The button shows
   only where a push deleting it would be accepted, it is checked again on
   the server, and a branch's confirmation says whether it is merged into
   the default branch. It is recorded like a pushed delete, so it shows in
-  History's Activity.
-- Compare any two refs: two pickers that take a branch, a tag or a commit,
-  so tag to tag shows what a release added. It was reachable only from a
-  branch's row, against the default branch.
-- How far each branch is ahead of and behind the default branch, on the
-  Overview.
+  Activity.
 - Download a branch, tag or commit as a `.tar.gz` or `.zip`, from
   **Download** next to the ref picker on Files. It is streamed from
   `git archive`, follows the repository's read access, and shares the limit
@@ -38,9 +41,11 @@ worker starts.
 
 ### Changed
 
-- Files no longer has Code and History tabs. **History** on a file or
-  directory opens History filtered to that path, and old `?tab=history`
-  addresses redirect there.
+- Files no longer has Code and History tabs. **Commits** on a file or
+  directory lists the commits that changed it, and old `?tab=history`
+  addresses redirect there. Comparing two refs moved onto Commits, and
+  `/compare/<base>...<head>` addresses redirect there. The Overview lists
+  branches and tags one under the other, not as tabs.
 - The Runs table shows each run's commit, who started it, how long it
   took, and the target it shipped to.
 - A deployment shows its version only when it isn't its commit. A branch

@@ -2,6 +2,7 @@ package activity
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"time"
 
@@ -30,24 +31,31 @@ type Refusal struct {
 	Reason  string
 }
 
-// HistoryEntry is one line of a repository's History → Activity: a ref
-// changing, a change to its settings, or a push that was refused. Only the
-// fields for its Kind are set: KindPush for a ref change, KindEvent for a
-// settings change, KindRefusal for a refused push.
-type HistoryEntry struct {
+// RepoEntry is one line of a repository's own feed: a ref changing
+// (KindPush), a push that was refused (KindRefusal), a run that finished
+// (KindRun), a version shipped (KindDeployment), or a change to its
+// settings (KindEvent). Only the fields for its Kind are set.
+type RepoEntry struct {
 	Kind  Kind
 	At    time.Time
 	Actor string
 
-	// ref change: one push_updates row, not the whole push
+	// ref change: one push_updates row, not the whole push; a run that
+	// finished names its ref too
 	Change    Change
 	RefKind   git.Kind
 	RefName   string
 	OldCommit string
 	NewCommit string
-	// RunNumber and RunStatus name the run this update started, if it did.
+	// RunNumber and RunStatus name the run this update started, if it did,
+	// or are the run that finished.
 	RunNumber int64
 	RunStatus string
+
+	// deployment
+	Target  string
+	Version string
+	Commit  string
 
 	// event
 	Action string
@@ -75,12 +83,12 @@ func changeOf(kind git.Kind, isCreate, isDelete, isForce bool) Change {
 	return Pushed
 }
 
-// ForRepo lists a repository's ref changes, settings changes and refused
-// pushes, newest first, skipping the first skip and reporting whether more follow. Each
+// ForRepo lists a repository's ref changes, refused pushes, finished runs,
+// shipped versions and settings changes, newest first, skipping the first skip and reporting whether more follow. Each
 // source is read to skip+limit+1 rows and merged here, so a page is
 // exactly what the merged feed holds at that place however the sources
 // interleave.
-func (s *Service) ForRepo(ctx context.Context, repoID string, skip, limit int) (entries []HistoryEntry, more bool, err error) {
+func (s *Service) ForRepo(ctx context.Context, repoID string, skip, limit int) (entries []RepoEntry, more bool, err error) {
 	want := skip + limit + 1
 	changes, err := repoRefChanges(ctx, s.db.Q, repoID, want)
 	if err != nil {
@@ -94,7 +102,15 @@ func (s *Service) ForRepo(ctx context.Context, repoID string, skip, limit int) (
 	if err != nil {
 		return nil, false, err
 	}
-	all := append(append(changes, events...), refusals...)
+	runs, err := repoRuns(ctx, s.db.Q, repoID, want)
+	if err != nil {
+		return nil, false, err
+	}
+	deployments, err := repoDeployments(ctx, s.db.Q, repoID, want)
+	if err != nil {
+		return nil, false, err
+	}
+	all := slices.Concat(changes, events, refusals, runs, deployments)
 	sort.Slice(all, func(i, j int) bool {
 		if !all[i].At.Equal(all[j].At) {
 			return all[i].At.After(all[j].At)

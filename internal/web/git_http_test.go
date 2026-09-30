@@ -550,7 +550,7 @@ func TestDefaultBranchNotPushedYet(t *testing.T) {
 
 	resp, body = admin.do(http.MethodGet, "/demo", nil, nil)
 	expect(t, resp, body, http.StatusOK, "has not been pushed yet")
-	if strings.Contains(body, "/demo/compare/") {
+	if strings.Contains(body, "/demo/commits?base=") {
 		t.Error("the overview links to a comparison with a default branch that does not exist")
 	}
 	resp, _ = admin.do(http.MethodGet, "/demo.git", nil, nil)
@@ -566,7 +566,7 @@ func TestDefaultBranchNotPushedYet(t *testing.T) {
 	}
 
 	resp, body = admin.do(http.MethodGet, "/demo", nil, nil)
-	expect(t, resp, body, http.StatusOK, "/demo/compare/develop...feature", "changed the default branch")
+	expect(t, resp, body, http.StatusOK, "/demo/commits?base=develop&amp;ref=feature", "changed the default branch")
 	if strings.Contains(body, "has not been pushed yet") {
 		t.Error("the overview still says the default branch has not been pushed")
 	}

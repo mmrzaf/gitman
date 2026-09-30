@@ -1120,9 +1120,14 @@ h1.path { font-size: var(--text-xl); letter-spacing: -0.01em; }
 .toolbar-text { color: var(--muted); font-size: var(--text-sm); }
 .toolbar-spacer { flex: 1; }
 .ref-picker { display: flex; gap: var(--sp-2); align-items: center; }
-.compare-picker { align-items: flex-end; padding: var(--sp-3); border-bottom: 0; border-radius: var(--radius-lg); }
-.compare-picker .field { flex: 1 1 200px; min-width: 0; }
-.compare-picker .input { font-family: var(--font-mono); font-size: var(--text-mono); }
+.commit-picker { align-items: flex-end; gap: var(--sp-3); padding: var(--sp-3); border-bottom: 0; border-radius: var(--radius-lg); }
+.commit-picker .field { flex: 1 1 220px; min-width: 0; grid-template-columns: minmax(0, 1fr); }
+.commit-picker .input { font-family: var(--font-mono); font-size: var(--text-mono); }
+.ref-button { display: flex; width: 100%; justify-content: flex-start; gap: var(--sp-2); font-family: var(--font-mono); font-size: var(--text-mono); }
+.ref-button .ref-button-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.ref-button .ref-button-name.muted { font-family: var(--font-sans); }
+.compare-summary { margin: 0; overflow-wrap: anywhere; }
+#summary-title { min-width: 0; overflow-wrap: anywhere; }
 .ref-picker .select { width: auto; min-width: 180px; max-width: 320px; font-family: var(--font-mono); font-size: var(--text-mono); }
 
 /* ---- Directory listing -------------------------------------------- */

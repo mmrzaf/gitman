@@ -23,7 +23,7 @@
     {{- if $d.Path}}
     <button type="button" class="btn btn-ghost js-only" data-copy="{{$d.Path}}">{{template "icon" "copy"}}Copy path</button>
     {{- end}}
-    <a class="btn" href="{{historyURL $repo.Name $d.Ref $d.Path}}" data-command="Show the history of {{if $d.Path}}{{$d.Path}}{{else}}{{$repo.Name}}{{end}}">{{template "icon" "history"}}History</a>
+    <a class="btn" href="{{commitsURL $repo.Name $d.Ref $d.Path}}" data-command="Show the commits that changed {{if $d.Path}}{{$d.Path}}{{else}}{{$repo.Name}}{{end}}">{{template "icon" "commit"}}Commits</a>
     <button type="button" class="btn js-only" data-file-finder-open data-repo="{{$repo.Name}}" data-ref="{{$d.Ref}}" data-command="Go to a file in {{$repo.Name}}">{{template "icon" "search"}}Go to file</button>
   </div>
 </header>

@@ -16,30 +16,21 @@ list of what's readable to you.
 
 Its nav has five items:
 
-- **Overview** — its branches and tags, what's currently deployed to
-  each target (if the pipeline defines any), and a timeline of recent
-  activity. A deployment shows its version only when that says more than
-  its commit: a tag's name does, and a branch's version is its commit, so
-  it shows the commit once.
+- **Overview** — what is deployed to each target (if the pipeline
+  defines any), its branches and tags, and its activity. Each branch says
+  how far it is ahead of and behind the default branch. A deployment shows
+  its version only when that says more than its commit: a tag's name does,
+  and a branch's version is its commit, so it shows the commit once. The
+  newest tags are listed, with a link to all of them.
 - **Files** — browse the tree at any branch, tag or commit; jump to a
-  file by path with the go-to-file finder. A commit's own page (its diff
-  and metadata) and a comparison between two refs are reached from links
-  here, not from the nav. **History** on a file or directory opens the
-  History section, filtered to that path. **Download**, next to the ref
-  picker, gives the whole tree of the branch, tag or commit you are
+  file by path with the go-to-file finder. **Commits** on a file or
+  directory lists the commits that changed it. **Download**, next to the
+  ref picker, gives the whole tree of the branch, tag or commit you are
   looking at as a `.tar.gz` or a `.zip`.
-- **History** — two tabs:
-  - **Commits** is a branch's, tag's or commit's log, newest first, with
-    each commit's latest run, the branches and tags now at it, and a
-    marker on merges. Pick the ref at the top; a path filter, set from
-    Files, shows only the commits that touched that path.
-  - **Activity** is every change to the repository's refs (created,
-    pushed, force-pushed, deleted, or a tag moved) with who made it, the
-    commits it moved from and to, and the run it started, together with
-    changes to its settings. A push Gitman refused shows too, with who
-    pushed and why each ref was refused: Git tells the pusher only that
-    the hook declined it, and the reasons are easy to lose among its
-    output.
+- **Commits** — a branch's, tag's or commit's commits, newest first, each
+  with its latest run, the branches and tags now at it, and a marker on
+  merges. To see what differs between two refs, choose the second in
+  **Compared with**: see [Comparing refs](#comparing-refs).
 - **Runs** — every run of this repository's pipeline, newest first,
   paged: its branch or tag and commit, who started it, how long it took,
   and the target it shipped to.
@@ -64,12 +55,30 @@ run at once; past it Gitman answers "too busy" and a retry succeeds.
 
 ### Comparing refs
 
-**Compare** on History, or a branch's compare button on the Overview,
-shows what merging one ref into another would change: the commits and the
-combined diff. Each side is a branch, a tag or a commit, so two tags show
-what a release added. Every branch on the Overview also says how many
-commits it is ahead of and behind the default branch; Git does the
-counting.
+On **Commits**, choose what to look at, then what to compare it with.
+Each is a branch, a tag or a commit: type part of a name to search, or
+type a commit's hash. The page then shows, top to bottom:
+
+- how far the first is ahead of and behind the second;
+- the commits the first has that the second lacks;
+- the files they change, with the diff.
+
+So two tags show what a release added, the default branch against a
+branch shows what merging it would bring, and a branch against what is
+live on a target shows what has not shipped. A branch's compare button on
+the Overview, and **Commits since this** on a deployed target, open it
+ready-made. **Swap sides** shows the other direction. Leave **Compared
+with** empty for the plain list of commits.
+
+### Activity
+
+The Overview lists what has happened to the repository, newest first, and
+**All activity** pages through all of it: branches and tags being created,
+pushed, force-pushed, moved and deleted, with who did it, where from and to,
+and the run it started; runs that finished; what was shipped; and changes to
+its settings. A push Gitman refused shows too, with who pushed and why each
+ref was refused: Git tells the pusher only that the hook declined it, and
+the reasons are easy to lose among its output.
 
 ### Deleting a branch or tag
 
@@ -80,8 +89,8 @@ allows deleting. Gitman checks again when you confirm, by the same rules a
 push is held to. A branch's confirmation says whether it is merged into the
 default branch.
 
-A delete from the web is recorded as a push is: it shows in History's
-Activity under your name, brings the branch and tag lists up to date, and
+A delete from the web is recorded as a push is: it shows in Activity
+under your name, brings the branch and tag lists up to date, and
 cancels the ref's queued runs. Gitman has no undo for it; a tag can be
 pushed again, and a branch's commits stay reachable only from what else
 points at them.

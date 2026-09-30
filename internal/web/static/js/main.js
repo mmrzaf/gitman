@@ -12,6 +12,7 @@ import "./confirm.js";
 import "./show-when.js";
 import "./inline-edit.js";
 import "./ref-picker.js";
+import "./ref-field.js";
 import "./finder.js";
 import "./palette.js";
 import "./log.js";

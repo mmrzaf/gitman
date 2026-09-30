@@ -53,7 +53,8 @@ func (a *App) register(mux *http.ServeMux) {
 
 	mux.Handle("POST /{repo}/refs/delete", a.page(member, a.refDelete))
 	mux.Handle("GET /{repo}/commit/{sha}", a.page(member, a.commitView))
-	mux.Handle("GET /{repo}/history", a.page(member, a.history))
+	mux.Handle("GET /{repo}/commits", a.page(member, a.commits))
+	mux.Handle("GET /{repo}/activity", a.page(member, a.activityView))
 	mux.Handle("GET /{repo}/archive/{ref...}", a.page(member, a.archive))
 	mux.Handle("GET /{repo}/runs", a.page(member, a.runs))
 	mux.Handle("POST /{repo}/runs", a.page(member, a.runRef))
@@ -61,8 +62,8 @@ func (a *App) register(mux *http.ServeMux) {
 	mux.Handle("GET /{repo}/runs/{n}/log", a.page(member, a.runLog))
 	mux.Handle("POST /{repo}/runs/{n}/cancel", a.page(member, a.runCancel))
 	mux.Handle("POST /{repo}/runs/{n}/again", a.page(member, a.runAgain))
-	mux.Handle("GET /{repo}/compare", a.page(member, a.compareView))
-	mux.Handle("GET /{repo}/compare/{crange...}", a.page(member, a.compareView))
+	mux.Handle("GET /{repo}/compare", a.page(member, a.compareRedirect))
+	mux.Handle("GET /{repo}/compare/{crange...}", a.page(member, a.compareRedirect))
 	mux.Handle("GET /{repo}/tree-paths", a.page(member, a.treePaths))
 	// Settings routes are registered at member, not admin, level: the
 	// admin requirement is checked inside each handler, after resolving

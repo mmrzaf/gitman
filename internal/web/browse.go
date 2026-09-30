@@ -125,28 +125,6 @@ func refURL(repoName, ref, path string) string {
 	return (&url.URL{Path: refPath(repoName, ref, path)}).EscapedPath()
 }
 
-// compareURL is the address of the comparison of base with head.
-func compareURL(repoName, base, head string) string {
-	return (&url.URL{Path: "/" + repoName + "/compare/" + base + "..." + head}).EscapedPath()
-}
-
-// compareFormURL is the address of the comparison's two pickers, with
-// whichever sides are known filled in.
-func compareFormURL(repoName, base, head string) string {
-	q := url.Values{}
-	if base != "" {
-		q.Set("base", base)
-	}
-	if head != "" {
-		q.Set("head", head)
-	}
-	u := (&url.URL{Path: "/" + repoName + "/compare"}).EscapedPath()
-	if len(q) > 0 {
-		u += "?" + q.Encode()
-	}
-	return u
-}
-
 // maxFileDisplayBytes bounds how much of a file Gitman will read to show
 // it, either rendered or raw. Files are shown exactly as they are, with
 // no rendering or highlighting, so there is no reason to read more of a
@@ -267,7 +245,7 @@ func (a *App) files(w http.ResponseWriter, r *http.Request, name, refAndPath str
 	// A file's history lives in History, filtered to its path; this is
 	// where the old History tab's addresses lead.
 	if r.URL.Query().Get("tab") == "history" {
-		target := historyURL(repo.Name, res.Name, res.Path)
+		target := commitsURL(repo.Name, res.Name, res.Path)
 		if skip := historySkip(r); skip > 0 {
 			target += "&skip=" + strconv.Itoa(skip)
 		}
@@ -567,126 +545,6 @@ func (a *App) commitNamed(r *http.Request, gitRepo *git.Repo, repo *reposvc.Repo
 		return "", notFound("%q is not a commit of %s.", sha, repo.Name)
 	}
 	return hash, err
-}
-
-// maxCompareCommits bounds how many commits a compare view lists; beyond
-// it, MoreCommits says so rather than the page growing without limit.
-const maxCompareCommits = 250
-
-type comparePage struct {
-	repoFrame
-	BaseRef string
-	HeadRef string
-	// Comparison is nil until two refs are chosen.
-	Comparison *git.Comparison
-	// Tab is "changes", the combined diff, or "commits".
-	Tab string
-	// Refs are what the pickers offer; a commit can be typed too.
-	Refs []reposvc.IndexedRef
-	// BaseError and HeadError say why a side is not a ref of this
-	// repository.
-	BaseError, HeadError string
-}
-
-// compareSeparator divides the two refs of a comparison's address. "..."
-// can never appear inside a real ref name — ValidateName rejects ".."
-// outright — so splitting on it is always unambiguous, even when a ref on
-// either side itself contains a slash.
-const compareSeparator = "..."
-
-// compareView serves /{repo}/compare, where two refs are chosen, and
-// /{repo}/compare/{base}...{head}, what merging head into base would
-// change. A ref on either side is a branch, a tag or a commit.
-func (a *App) compareView(w http.ResponseWriter, r *http.Request) error {
-	repo, err := a.repoByName(r)
-	if err != nil {
-		return err
-	}
-	crange := r.PathValue("crange")
-	if crange == "" {
-		return a.compareChoose(w, r, repo)
-	}
-	sep := strings.Index(crange, compareSeparator)
-	if sep < 0 {
-		return notFound("A comparison needs two refs, separated by \"...\", e.g. main...develop.")
-	}
-	baseRef, headRef := crange[:sep], crange[sep+len(compareSeparator):]
-	if baseRef == "" || headRef == "" {
-		return notFound("A comparison needs a ref on each side of \"...\".")
-	}
-
-	ctx := r.Context()
-	gitRepo, err := a.repos.Open(repo)
-	if err != nil {
-		return err
-	}
-	base, err := a.resolveRefAndPath(ctx, gitRepo, repo.ID, baseRef)
-	if err != nil {
-		return err
-	}
-	head, err := a.resolveRefAndPath(ctx, gitRepo, repo.ID, headRef)
-	if err != nil {
-		return err
-	}
-
-	cmp, err := gitRepo.Compare(ctx, base.Commit, head.Commit, maxCompareCommits, git.DefaultDiffLimits)
-	if err != nil {
-		if errors.Is(err, git.ErrNotFound) {
-			return notFound("%s and %s share no history.", baseRef, headRef)
-		}
-		return tooLargeToShow(err)
-	}
-
-	page := comparePage{repoFrame: repoFrame{Repo: repo, Section: "history"}, BaseRef: baseRef, HeadRef: headRef, Comparison: cmp,
-		Tab: tabFrom(r, "changes", "commits")}
-	if page.Refs, err = a.repos.ListRefs(ctx, repo.ID); err != nil {
-		return err
-	}
-	a.render(w, r, http.StatusOK, "compare", baseRef+"...\u200b"+headRef+" \u00b7 "+repo.Name, page)
-	return nil
-}
-
-// compareChoose is the comparison's two pickers. Given ?base= and ?head=
-// that are both refs of the repository, it goes on to their comparison;
-// otherwise it shows the pickers, with what was asked for and what is
-// wrong with it.
-func (a *App) compareChoose(w http.ResponseWriter, r *http.Request, repo *reposvc.Repo) error {
-	ctx := r.Context()
-	q := r.URL.Query()
-	page := comparePage{repoFrame: repoFrame{Repo: repo, Section: "history"},
-		BaseRef: strings.TrimSpace(q.Get("base")), HeadRef: strings.TrimSpace(q.Get("head"))}
-	var err error
-	if page.Refs, err = a.repos.ListRefs(ctx, repo.ID); err != nil {
-		return err
-	}
-	status := http.StatusOK
-	if page.BaseRef != "" || page.HeadRef != "" {
-		gitRepo, err := a.repos.Open(repo)
-		if err != nil {
-			return err
-		}
-		check := func(ref string) string {
-			if ref == "" {
-				return "Choose a branch, tag or commit."
-			}
-			res, err := a.resolveRefAndPath(ctx, gitRepo, repo.ID, ref)
-			if err == nil && res.Path == "" && !strings.Contains(ref, compareSeparator) {
-				return ""
-			}
-			if err != nil && apperr.KindOf(err) != apperr.KindNotFound {
-				return "Gitman could not look this up."
-			}
-			return "That is not a branch, tag or commit of this repository."
-		}
-		page.BaseError, page.HeadError = check(page.BaseRef), check(page.HeadRef)
-		if page.BaseError == "" && page.HeadError == "" {
-			http.Redirect(w, r, compareURL(repo.Name, page.BaseRef, page.HeadRef), http.StatusSeeOther)
-			return nil
-		}
-		status = http.StatusUnprocessableEntity
-	}
-	a.render(w, r, status, "compare", "Compare \u00b7 "+repo.Name, page)
-	return nil
 }
 
 // rawImageTypes are the file types a raw view serves as themselves:

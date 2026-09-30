@@ -33,19 +33,36 @@ type refRow struct {
 // FullName is the row's full ref name, what the "Run" form posts.
 func (r refRow) FullName() string { return git.FullName(r.Kind, r.Name) }
 
+// targetView is what is live on a target, and where to see what the default
+// branch has gained since.
+type targetView struct {
+	ci.Deployment
+	// SinceURL is empty when the default branch is at what is live, or is
+	// not pushed yet.
+	SinceURL string
+}
+
+// overviewTags is how many tags the Overview lists before "all tags".
+const overviewTags = 10
+
 type repositoryPage struct {
 	repoFrame
 	CloneURL string
-	Targets  []ci.Deployment
+	Targets  []targetView
 	Branches []refRow
-	Tags     []refRow
+	// Tags are the most recently moved, unless all are asked for;
+	// TagsTotal counts every one.
+	Tags      []refRow
+	TagsTotal int
+	AllTags   bool
 	// DefaultExists is false until the default branch is first pushed:
 	// the only way it can be missing, since a push may not delete it.
 	DefaultExists bool
-	Timeline      []activity.Entry
-	// Tab is the refs list shown: "branches" or "tags".
-	Tab string
+	Timeline      []activity.RepoEntry
 }
+
+// MoreTags reports tags the page leaves out.
+func (p repositoryPage) MoreTags() bool { return p.TagsTotal > len(p.Tags) }
 
 // LiveEvents keeps a Repository page's targets, refs and timeline
 // current.
@@ -55,9 +72,6 @@ func (repositoryPage) LiveEvents() string { return "/events" }
 func (a *App) cloneURL(repo *reposvc.Repo) string {
 	return a.cfg.PublicURL + "/" + repo.Name + ".git"
 }
-
-// repositoryPageLimit bounds the timeline shown on the Repository page.
-const repositoryPageLimit = 20
 
 func (a *App) repository(w http.ResponseWriter, r *http.Request) error {
 	// The clone URL opened in a browser lands on the repository. A name
@@ -115,8 +129,9 @@ func (a *App) repository(w http.ResponseWriter, r *http.Request) error {
 
 	page := repositoryPage{
 		repoFrame: repoFrame{Repo: repo, Section: "overview"},
-		CloneURL:  a.cloneURL(repo), Targets: targets,
-		Tab: tabFrom(r, "branches", "tags"),
+		CloneURL:  a.cloneURL(repo),
+		// ?tab=tags is where the tags were when they were a tab.
+		AllTags: r.URL.Query().Get("tags") == "all" || r.URL.Query().Get("tab") == "tags",
 	}
 	for _, ref := range indexed {
 		row := refRow{IndexedRef: ref, IsDefault: ref.Kind == git.KindBranch && ref.Name == repo.DefaultBranch}
@@ -141,9 +156,27 @@ func (a *App) repository(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 
+	page.TagsTotal = len(page.Tags)
+	if !page.AllTags && len(page.Tags) > overviewTags {
+		page.Tags = page.Tags[:overviewTags]
+	}
+	var defaultHead string
+	for _, row := range page.Branches {
+		if row.IsDefault {
+			defaultHead = row.Commit
+		}
+	}
+	for _, d := range targets {
+		view := targetView{Deployment: d}
+		if defaultHead != "" && defaultHead != d.Commit {
+			view.SinceURL = compareURL(repo.Name, d.Commit, repo.DefaultBranch)
+		}
+		page.Targets = append(page.Targets, view)
+	}
+
 	a.countDivergence(r, repo, &page)
 	noteDeletes(repo, &page)
-	if page.Timeline, err = a.activity.Recent(ctx, &repo.ID, repositoryPageLimit); err != nil {
+	if page.Timeline, _, err = a.activity.ForRepo(ctx, repo.ID, 0, overviewActivity); err != nil {
 		return err
 	}
 	a.render(w, r, http.StatusOK, "repository", repo.Name, page)

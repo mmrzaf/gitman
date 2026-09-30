@@ -30,10 +30,3 @@ export function filesURL(repo, ref, path = "") {
   const encoded = (s) => s.split("/").map(encodeURIComponent).join("/");
   return `/${encodeURIComponent(repo)}@${encoded(ref)}${path ? `/${encoded(path)}` : ""}`;
 }
-
-// historyURL is the address of History at ref in repo, filtered to path.
-export function historyURL(repo, ref, path = "") {
-  const query = new URLSearchParams({ ref });
-  if (path) query.set("path", path);
-  return `/${encodeURIComponent(repo)}/history?${query}`;
-}

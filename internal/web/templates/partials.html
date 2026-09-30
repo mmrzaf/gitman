@@ -136,6 +136,51 @@
 {{end}}
 {{end}}
 
+{{/* repo-feed: one repository's activity, newest first: ref changes, refused
+     pushes, finished runs, versions shipped and settings changes. Takes
+     (dict "Entries" []activity.RepoEntry "Repo" *repo.Repo). */}}
+{{define "repo-feed"}}
+{{$repo := .Repo}}
+{{if .Entries}}
+<ol class="feed">
+  {{range .Entries}}
+  <li class="feed-item">
+    {{- if eq .Kind "event"}}{{template "icon" "settings"}}
+    {{- else if eq .Kind "refusal"}}{{template "icon" "warning"}}
+    {{- else if eq .Kind "run"}}{{template "status-icon" .RunStatus}}
+    {{- else if eq .Kind "deployment"}}{{template "icon" "ship"}}
+    {{- else if eq .Change "deleted"}}{{template "icon" "trash"}}
+    {{- else}}{{template "icon" "push"}}{{end}}
+    <p class="feed-text">
+      {{- if eq .Kind "event"}}
+      {{template "person" .Actor}} {{eventText .Action .Detail}}
+      {{- else if eq .Kind "refusal"}}
+      {{template "person" .Actor}}'s push was refused
+      {{- range .Refused}}
+      <span class="feed-reason">{{if .RefName}}{{template "ref" (dict "Kind" .RefKind "Name" .RefName)}} {{else if .Ref}}<span class="mono">{{.Ref}}</span> {{end}}{{.Reason}}</span>
+      {{- end}}
+      {{- else if eq .Kind "run"}}
+      <a href="/{{$repo.Name}}/runs/{{.RunNumber}}">Run #{{.RunNumber}}</a> {{.RunStatus}} {{template "ref" (dict "Kind" .RefKind "Name" .RefName)}}{{if .Actor}} <span class="muted">· {{template "person" .Actor}}</span>{{end}}
+      {{- else if eq .Kind "deployment"}}
+      {{template "person" .Actor}} shipped {{if ownVersion .Version .Commit}}<span class="version">{{.Version}}</span>{{else}}{{template "commit" (dict "Repo" $repo.Name "Hash" .Commit)}}{{end}} to <strong>{{.Target}}</strong>
+      {{- else}}
+      {{template "person" .Actor}} {{.Change}} {{template "ref" (dict "Kind" .RefKind "Name" .RefName)}}
+      {{- if eq .Change "created"}} at {{template "commit" (dict "Repo" $repo.Name "Hash" .NewCommit)}}
+      {{- else if eq .Change "deleted"}} <span class="muted">(was {{template "commit" (dict "Repo" $repo.Name "Hash" .OldCommit)}})</span>
+      {{- else}} {{template "commit" (dict "Repo" $repo.Name "Hash" .OldCommit)}} <span class="muted" aria-hidden="true">→</span><span class="visually-hidden">to</span> {{template "commit" (dict "Repo" $repo.Name "Hash" .NewCommit)}}
+      {{- end}}
+      {{- if .RunNumber}} <span class="muted">·</span> <a class="run-ref" href="/{{$repo.Name}}/runs/{{.RunNumber}}">{{template "status-icon" .RunStatus}}<span>#{{.RunNumber}}</span></a>{{end}}
+      {{- end}}
+    </p>
+    <span class="feed-time">{{template "time" .At}}</span>
+  </li>
+  {{end}}
+</ol>
+{{else}}
+{{template "empty" (dict "Icon" "history" "Title" "No activity yet")}}
+{{end}}
+{{end}}
+
 {{/* diff: a git.Diff — a commit's or a comparison's changes — as a list of
      the files it touches followed by each file's changes. Takes (dict
      "Diff" *git.Diff "Repo" name "Commit" hash for file links, or ""). */}}

@@ -35,26 +35,25 @@ type views struct {
 
 func loadViews(assets *assets) (*views, error) {
 	funcs := template.FuncMap{
-		"asset":          assets.url,
-		"ago":            ago,
-		"iso":            func(t time.Time) string { return t.UTC().Format(time.RFC3339) },
-		"datetime":       func(t time.Time) string { return t.UTC().Format("2006-01-02 15:04 UTC") },
-		"short":          shortHash,
-		"field":          newField,
-		"dict":           dict,
-		"eventText":      eventText,
-		"add":            func(a, b int) int { return a + b },
-		"duration":       formatDuration,
-		"deref":          func(p *int) int { return *p },
-		"lineKind":       lineKind,
-		"dirOf":          dirOf,
-		"refURL":         refURL,
-		"historyURL":     historyURL,
-		"archiveURL":     archiveURL,
-		"ownVersion":     ownVersion,
-		"compareURL":     compareURL,
-		"compareFormURL": compareFormURL,
-		"diffTotals":     diffTotals,
+		"asset":      assets.url,
+		"ago":        ago,
+		"iso":        func(t time.Time) string { return t.UTC().Format(time.RFC3339) },
+		"datetime":   func(t time.Time) string { return t.UTC().Format("2006-01-02 15:04 UTC") },
+		"short":      shortHash,
+		"field":      newField,
+		"dict":       dict,
+		"eventText":  eventText,
+		"add":        func(a, b int) int { return a + b },
+		"duration":   formatDuration,
+		"deref":      func(p *int) int { return *p },
+		"lineKind":   lineKind,
+		"dirOf":      dirOf,
+		"refURL":     refURL,
+		"commitsURL": commitsURL,
+		"archiveURL": archiveURL,
+		"ownVersion": ownVersion,
+		"compareURL": compareURL,
+		"diffTotals": diffTotals,
 	}
 	base, err := template.New("").Funcs(funcs).ParseFS(templateFiles, "templates/layout.html", "templates/partials.html")
 	if err != nil {
@@ -101,7 +100,7 @@ type liveSource interface {
 
 // repoFrame is embedded in the data of every page inside a repository:
 // the repository, and which of its sections — "overview", "files",
-// "history", "runs" or "settings" — the page is, if any.
+// "commits", "runs" or "settings" — the page is, if any.
 type repoFrame struct {
 	Repo    *reposvc.Repo
 	Section string

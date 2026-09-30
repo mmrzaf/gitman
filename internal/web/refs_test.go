@@ -166,7 +166,7 @@ func TestWebDeleteIsRecordedLikeAPush(t *testing.T) {
 	b := signInTo(t, e, "alice")
 	resp, body := b.do(http.MethodPost, "/demo/refs/delete", url.Values{"ref": {"refs/heads/feature-web"}}, nil)
 	expect(t, resp, body, http.StatusSeeOther)
-	if got := resp.Header.Get("Location"); got != "/demo?tab=branches" {
+	if got := resp.Header.Get("Location"); got != "/demo" {
 		t.Errorf("redirects to %q", got)
 	}
 	e.mustGit(e.work, "push", "--quiet", "origin", "--delete", "feature-push")
@@ -208,8 +208,8 @@ func TestWebDeleteIsRecordedLikeAPush(t *testing.T) {
 		t.Errorf("%d runs of deleted branches are still queued", n)
 	}
 
-	// It shows in History's Activity as a push's delete does.
-	resp, body = b.do(http.MethodGet, "/demo/history?tab=activity", nil, nil)
+	// It shows in Activity as a push's delete does.
+	resp, body = b.do(http.MethodGet, "/demo/activity", nil, nil)
 	expect(t, resp, body, http.StatusOK)
 	text := stripTags(body)
 	if strings.Count(text, "alice deleted") != 2 {

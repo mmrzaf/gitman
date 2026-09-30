@@ -10,14 +10,6 @@ import (
 	"github.com/mmrzaf/gitman/internal/push"
 )
 
-// refTab is the Overview tab that lists refs of a kind.
-func refTab(kind git.Kind) string {
-	if kind == git.KindTag {
-		return "tags"
-	}
-	return "branches"
-}
-
 // refDelete deletes a branch or tag. It checks what a push deleting it
 // would be checked against, whatever the page offered: a button is only a
 // link to this.
@@ -38,7 +30,7 @@ func (a *App) refDelete(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	err = a.refs.Delete(r.Context(), gitRepo, repo.ID, personFrom(r).ID, clientIP(r), kind, name)
-	back := "/" + repo.Name + "?tab=" + refTab(kind)
+	back := "/" + repo.Name
 	switch {
 	case errors.Is(err, git.ErrNotFound):
 		return notFound("%s has no %s named “%s”.", repo.Name, kind, name)

@@ -254,18 +254,24 @@ func TestForRepoListsRefChangesAndEventsNewestFirst(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// seed's one push update and one event, plus the four above; the other
-	// repository's push, the runs and the deployment are not part of it.
-	if more || len(entries) != 6 {
-		t.Fatalf("got %d entries (more=%v), want 6: %+v", len(entries), more, entries)
+	// What seed gave this repository (a push update, a finished run, a
+	// deployment and an event), the four updates above and the run they
+	// started; the other repository's push is not part of it, and neither is
+	// the run still running.
+	if more || len(entries) != 9 {
+		t.Fatalf("got %d entries (more=%v), want 9: %+v", len(entries), more, entries)
 	}
 	for i := 1; i < len(entries); i++ {
 		if entries[i-1].At.Before(entries[i].At) {
 			t.Fatalf("entries are not newest first at index %d", i)
 		}
 	}
-	changes := map[string]HistoryEntry{}
-	for _, e := range entries[:4] {
+	// The run that just finished is the newest thing, then the four updates.
+	if e := entries[0]; e.Kind != KindRun || e.RunNumber != 3 || e.RunStatus != "failed" || e.RefName != "new" {
+		t.Errorf("the finished run is out of place: %+v", e)
+	}
+	changes := map[string]RepoEntry{}
+	for _, e := range entries[1:5] {
 		if e.Kind != KindPush || e.Actor != "darius" {
 			t.Fatalf("entry = %+v", e)
 		}
@@ -282,8 +288,12 @@ func TestForRepoListsRefChangesAndEventsNewestFirst(t *testing.T) {
 	if e := changes["main"]; e.RunNumber != 0 {
 		t.Errorf("a ref that started no run has one: %+v", e)
 	}
-	if entries[4].Kind != KindEvent || entries[4].Action != RuleSaved || entries[5].Kind != KindPush || entries[5].Change != Pushed {
-		t.Errorf("the settings change and the older push are out of place: %+v", entries[4:])
+	rest := entries[5:]
+	if rest[0].Kind != KindEvent || rest[0].Action != RuleSaved ||
+		rest[1].Kind != KindDeployment || rest[1].Target != "staging" || rest[1].Version != "v1" || rest[1].RunNumber != 1 ||
+		rest[2].Kind != KindRun || rest[2].RunStatus != "passed" || rest[2].RefName != "main" ||
+		rest[3].Kind != KindPush || rest[3].Change != Pushed {
+		t.Errorf("the settings change, deployment, run and older push are out of place: %+v", rest)
 	}
 }
 
@@ -327,8 +337,8 @@ func TestForRepoPages(t *testing.T) {
 		}
 		skip += 2
 	}
-	if len(seen) != 7 {
-		t.Fatalf("paging listed %d entries, want 7: %v", len(seen), seen)
+	if len(seen) != 9 {
+		t.Fatalf("paging listed %d entries, want 9: %v", len(seen), seen)
 	}
 	if entries, more, err := svc.ForRepo(ctx, repoID, 100, 2); err != nil || more || len(entries) != 0 {
 		t.Fatalf("past the end = %v, %v, %v", entries, more, err)
@@ -358,7 +368,9 @@ func TestForRepoListsRefusedPushesWithTheirReasons(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 3 || entries[0].Kind != KindRefusal || entries[0].Actor != "darius" {
+	// The refusal, then what seed gave the repository: an event, a
+	// deployment, a run and a push.
+	if len(entries) != 5 || entries[0].Kind != KindRefusal || entries[0].Actor != "darius" {
 		t.Fatalf("entries = %+v", entries)
 	}
 	got := entries[0].Refused

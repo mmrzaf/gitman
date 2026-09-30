@@ -298,10 +298,10 @@ func TestLivePagesRender(t *testing.T) {
 	}{
 		{"home", homePage{InProgress: []ci.Summary{run}, Timeline: feed, CreateForm: newForm(nil)},
 			[]string{`data-live-events="/events"`, `href="/waiotech/runs/42"`, `href="/waiotech/runs/41"`, `data-live-region="progress"`}},
-		{"repository", repositoryPage{repoFrame: repoFrame{Repo: repo, Section: "overview"}, CloneURL: "waiotech.git", Timeline: feed, Tab: "branches", DefaultExists: true,
+		{"repository", repositoryPage{repoFrame: repoFrame{Repo: repo, Section: "overview"}, CloneURL: "waiotech.git", DefaultExists: true,
 			Branches: []refRow{{IndexedRef: reposvc.IndexedRef{Kind: git.KindBranch, Name: "develop", Commit: strings.Repeat("b", 40), UpdatedAt: now}, LatestRun: &run}}},
 			[]string{`data-live-events="/events"`, `href="/waiotech/runs/42"`, `data-live-region="branches"`, `data-live-region="tags"`,
-				`href="/waiotech/compare/main...develop"`, `aria-current="page">`}},
+				`href="/waiotech/commits?base=main&amp;ref=develop"`, `aria-current="page">`}},
 		{"commit", commitPage{repoFrame: repoFrame{Repo: repo}, Commit: &git.Commit{Hash: strings.Repeat("c", 40), Subject: "Fix it"}, Diff: &git.Diff{}},
 			[]string{"Fix it", "Browse files"}},
 	}
