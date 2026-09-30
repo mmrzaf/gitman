@@ -26,7 +26,7 @@ an external `proxy` network, and PostgreSQL, as `postgres` on an external
 directory holding `compose.yaml` and a `.env` made from `.env.example`:
 
 ```sh
-docker build --build-arg VERSION=v1.0.0-beta.21 -t gitman:1.0.0-beta.21 .
+docker build --build-arg VERSION=v1.0.0-beta.22 -t gitman:1.0.0-beta.22 .
 sudo install -d -o 1000 -g 1000 /srv/apps/gitman/data
 docker compose up -d
 ```

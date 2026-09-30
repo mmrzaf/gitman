@@ -31,7 +31,7 @@ setting above goes there. Three more are for Compose itself:
 
 | Variable | Purpose |
 |---|---|
-| `GITMAN_IMAGE` | The image to run, such as `gitman:1.0.0-beta.21`. Required. |
+| `GITMAN_IMAGE` | The image to run, such as `gitman:1.0.0-beta.22`. Required. |
 | `GITMAN_DOMAIN` | The host name Traefik routes to Gitman. `GITMAN_PUBLIC_URL` is set from it to `https://<GITMAN_DOMAIN>`. Required. |
 | `GITMAN_DATA_DIR` | Also the host path mounted into both services, at the identical path. Required. |
 

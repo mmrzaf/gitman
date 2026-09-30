@@ -3,7 +3,12 @@
 What changed in each release, for the people who run Gitman. Newest first.
 Each release's section is also its GitHub release notes.
 
-## [Unreleased]
+## [1.0.0-beta.22] - 2026-09-30
+
+Refs and history: managing branches, tags and revisions from the web.
+
+**Upgrading:** nothing to do by hand. One migration runs when web or a
+worker starts.
 
 ### Added
 

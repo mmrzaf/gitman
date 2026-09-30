@@ -44,7 +44,7 @@ The image comes from one of three places:
   build arguments `.gitman.yml` does:
 
   ```sh
-  docker build --build-arg VERSION=v1.0.0-beta.21 -t gitman:1.0.0-beta.21 .
+  docker build --build-arg VERSION=v1.0.0-beta.22 -t gitman:1.0.0-beta.22 .
   ```
 
 Then, in the deployment directory (for example `/srv/apps/gitman`), with

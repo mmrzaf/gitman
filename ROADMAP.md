@@ -3,41 +3,6 @@
 What's planned for Gitman, and why. Tick an item off when it ships, and
 move it into [CHANGELOG.md](CHANGELOG.md) with its release.
 
-## Next: beta 22
-
-Refs and history: managing branches, tags and revisions from the web.
-
-- [x] **Delete a branch or tag from the web.** A Delete button on each
-  row of Overview's Branches and Tags, shown only when a push deleting
-  it would be accepted: never the default branch, and only where the
-  ref's rule allows deleting. It's recorded like a push, so it shows in
-  History's Activity. The confirm for a branch says whether it's merged
-  into the default branch.
-- [x] **Compare any two refs.** Two ref pickers (branch, tag or commit)
-  on the compare page, so tag to tag shows what a release added. Today
-  it's reachable only from a branch row, against the default branch.
-  - [x] Ahead and behind the default branch on each branch row.
-- [x] **History as its own section.** Overview · Files · History · Runs ·
-  Settings. Files loses its Code and History tabs; a file's history is a
-  link into History, filtered to that path.
-  - [x] Commits: a ref's log, with each commit's run status, the
-    branches and tags at it, and a merge marker.
-  - [x] Activity: every ref change from `push_updates` (created, pushed,
-    force-pushed, deleted, tag moved), with who, old → new, and the run
-    it started.
-- [x] **Record refused pushes.** A push Gitman refuses shows in Activity
-  with its reasons. Git reports only "pre-receive hook declined" per
-  ref, and the `remote:` lines saying why are easy to lose: an agent
-  pushing v0.1.1–v0.1.3 to waiotech reported no reason at all.
-- [x] **More in the Runs table.** The commit, how long the run took, who
-  started it, and the target it shipped to.
-- [x] **Download a ref as an archive.** A `.tar.gz` or `.zip` of any
-  branch, tag or commit, streamed with `git archive`, following the
-  repository's read access, from a Download button next to the ref picker
-  on Files. Beta 1–20 had this; the rewrite doesn't yet.
-- [x] **Show a deployment's version only when it isn't the commit.** A
-  branch deploy shows the same commit twice on the Overview and Home.
-
 ## Later
 
 - [ ] **Limits for pipeline steps.** Memory and CPU limits in `.env`,

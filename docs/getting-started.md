@@ -14,7 +14,7 @@ full picture; this is the quickest path to a running instance.
 ## Steps
 
 ```sh
-docker build --build-arg VERSION=v1.0.0-beta.21 -t gitman:1.0.0-beta.21 .
+docker build --build-arg VERSION=v1.0.0-beta.22 -t gitman:1.0.0-beta.22 .
 cp .env.example .env            # then fill it in — see operator/configuration.md
 sudo install -d -o 1000 -g 1000 /srv/apps/gitman/data
 docker compose up -d
