@@ -103,6 +103,12 @@
           </form>
           {{- end}}
           {{- if and (eq .Kind "branch") $defaultExists (not .IsDefault)}}<a class="btn btn-ghost btn-icon btn-sm" href="{{compareURL $repo.Name $repo.DefaultBranch .Name}}" aria-label="Compare {{.Name}} with {{$repo.DefaultBranch}}" title="Compare">{{template "icon" "compare"}}</a>{{end}}
+          {{- if .CanDelete}}
+          <form method="post" action="/{{$repo.Name}}/refs/delete" data-confirm="Delete {{.Kind}} {{.Name}}?" data-confirm-detail="{{.DeleteNote}}" data-confirm-action="Delete">
+            <input type="hidden" name="ref" value="{{.FullName}}">
+            <button type="submit" class="btn btn-ghost btn-icon btn-sm" aria-label="Delete {{.Kind}} {{.Name}}" title="Delete">{{template "icon" "trash"}}</button>
+          </form>
+          {{- end}}
         </span></td>
       </tr>
     {{end}}

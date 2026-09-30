@@ -42,6 +42,21 @@ Its nav has five items:
   secrets, who may read the repository and push to a ref no rule matches,
   and deletion.
 
+### Deleting a branch or tag
+
+**Delete** on a row of the Overview's Branches and Tags removes that ref.
+It is there only where a push deleting it would be accepted: never on the
+default branch, and only where the ref's rule lets you push to it and
+allows deleting. Gitman checks again when you confirm, by the same rules a
+push is held to. A branch's confirmation says whether it is merged into the
+default branch.
+
+A delete from the web is recorded as a push is: it shows in History's
+Activity under your name, brings the branch and tag lists up to date, and
+cancels the ref's queued runs. Gitman has no undo for it; a tag can be
+pushed again, and a branch's commits stay reachable only from what else
+points at them.
+
 ### Default branch
 
 Every repository has one default branch, named when it is created

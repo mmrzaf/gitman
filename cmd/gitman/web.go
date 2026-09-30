@@ -67,11 +67,13 @@ func runWeb(args []string) error {
 	}
 
 	people := auth.NewService(database)
+	repos := reposvc.NewService(database, store, cfg.SecretKey)
 	runs := ci.NewService(database)
 	app, err := web.New(cfg, web.Services{
 		People:   people,
-		Repos:    reposvc.NewService(database, store, cfg.SecretKey),
+		Repos:    repos,
 		CI:       runs,
+		Refs:     push.NewRefs(database, people, repos, runs),
 		Activity: activity.NewService(database),
 		Ping:     database.Ping,
 		Listen:   database.Listen,

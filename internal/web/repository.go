@@ -17,7 +17,11 @@ type refRow struct {
 	UpdatedByUsername string
 	IsDefault         bool
 	// CanRun is whether the signed-in person may start a run of it.
-	CanRun           bool
+	CanRun bool
+	// CanDelete is whether a push by the signed-in person deleting it would
+	// be accepted, and DeleteNote what the confirmation says about it.
+	CanDelete        bool
+	DeleteNote       string
 	LatestRun        *ci.Summary
 	LatestDeployment *ci.Deployment
 }
@@ -98,6 +102,13 @@ func (a *App) repository(w http.ResponseWriter, r *http.Request) error {
 		canRun[ref.FullName] = true
 	}
 
+	rules, err := a.repos.ListRules(ctx, repo.ID)
+	if err != nil {
+		return err
+	}
+	person := personFrom(r)
+	who := reposvc.Who{ID: person.ID, Username: person.Username, IsAdmin: person.IsAdmin}
+
 	page := repositoryPage{
 		repoFrame: repoFrame{Repo: repo, Section: "overview"},
 		CloneURL:  a.cloneURL(repo), Targets: targets,
@@ -107,6 +118,8 @@ func (a *App) repository(w http.ResponseWriter, r *http.Request) error {
 		row := refRow{IndexedRef: ref, IsDefault: ref.Kind == git.KindBranch && ref.Name == repo.DefaultBranch}
 		page.DefaultExists = page.DefaultExists || row.IsDefault
 		row.CanRun = canRun[row.FullName()]
+		_, refused := reposvc.CheckDelete(repo, rules, ref.Kind, ref.Name, who)
+		row.CanDelete = refused == ""
 		if ref.UpdatedBy != nil {
 			row.UpdatedByUsername = usernames[*ref.UpdatedBy]
 		}
@@ -124,9 +137,57 @@ func (a *App) repository(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 
+	if err := a.noteDeletes(r, repo, &page); err != nil {
+		return err
+	}
 	if page.Timeline, err = a.activity.Recent(ctx, &repo.ID, repositoryPageLimit); err != nil {
 		return err
 	}
 	a.render(w, r, http.StatusOK, "repository", repo.Name, page)
+	return nil
+}
+
+// noteDeletes words what each Delete button's confirmation says. A branch
+// says whether it is merged into the default branch, which needs the
+// default branch to be there.
+func (a *App) noteDeletes(r *http.Request, repo *reposvc.Repo, page *repositoryPage) error {
+	const cannotRestore = "Gitman can\u2019t restore it."
+	for i := range page.Tags {
+		if page.Tags[i].CanDelete {
+			page.Tags[i].DeleteNote = "The commit stays, and the tag can be pushed again. " + cannotRestore
+		}
+	}
+	var defaultCommit string
+	for _, row := range page.Branches {
+		if row.IsDefault {
+			defaultCommit = row.Commit
+		}
+	}
+	var gitRepo *git.Repo
+	for i := range page.Branches {
+		row := &page.Branches[i]
+		if !row.CanDelete {
+			continue
+		}
+		row.DeleteNote = cannotRestore
+		if defaultCommit == "" {
+			continue
+		}
+		if gitRepo == nil {
+			var err error
+			if gitRepo, err = a.repos.Open(repo); err != nil {
+				return err
+			}
+		}
+		merged, err := gitRepo.IsAncestor(r.Context(), row.Commit, defaultCommit)
+		if err != nil {
+			continue
+		}
+		if merged {
+			row.DeleteNote = "It is merged into " + repo.DefaultBranch + ", so nothing is lost. " + cannotRestore
+		} else {
+			row.DeleteNote = "It is not merged into " + repo.DefaultBranch + ". Commits only it has are left without a branch. " + cannotRestore
+		}
+	}
 	return nil
 }

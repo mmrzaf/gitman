@@ -16,6 +16,11 @@ Each release's section is also its GitHub release notes.
 - A push Gitman refuses is recorded, and shows in History's Activity with
   who pushed and the reason for each ref. The lines Git prints to the
   pusher are unchanged.
+- Delete a branch or tag from its row on the Overview. The button shows
+  only where a push deleting it would be accepted, it is checked again on
+  the server, and a branch's confirmation says whether it is merged into
+  the default branch. It is recorded like a pushed delete, so it shows in
+  History's Activity.
 
 ### Changed
 

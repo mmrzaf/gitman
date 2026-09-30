@@ -18,6 +18,7 @@ import (
 	"github.com/mmrzaf/gitman/internal/ci"
 	"github.com/mmrzaf/gitman/internal/config"
 	"github.com/mmrzaf/gitman/internal/postgres"
+	"github.com/mmrzaf/gitman/internal/push"
 	reposvc "github.com/mmrzaf/gitman/internal/repo"
 )
 
@@ -29,6 +30,7 @@ type App struct {
 	people   *auth.Service
 	repos    *reposvc.Service
 	ci       *ci.Service
+	refs     *push.Refs
 	activity *activity.Service
 	ping     func(context.Context) error
 	listen   ListenFunc
@@ -64,6 +66,7 @@ type Services struct {
 	People   *auth.Service
 	Repos    *reposvc.Service
 	CI       *ci.Service
+	Refs     *push.Refs
 	Activity *activity.Service
 	// Ping reports whether the database is reachable, for /readyz.
 	Ping func(context.Context) error
@@ -89,6 +92,7 @@ func New(cfg *config.Config, services Services, log *slog.Logger) (*App, error) 
 		people:   services.People,
 		repos:    services.Repos,
 		ci:       services.CI,
+		refs:     services.Refs,
 		activity: services.Activity,
 		ping:     services.Ping,
 		listen:   services.Listen,

@@ -7,7 +7,7 @@ move it into [CHANGELOG.md](CHANGELOG.md) with its release.
 
 Refs and history: managing branches, tags and revisions from the web.
 
-- [ ] **Delete a branch or tag from the web.** A Delete button on each
+- [x] **Delete a branch or tag from the web.** A Delete button on each
   row of Overview's Branches and Tags, shown only when a push deleting
   it would be accepted: never the default branch, and only where the
   ref's rule allows deleting. It's recorded like a push, so it shows in

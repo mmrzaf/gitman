@@ -18,6 +18,7 @@ import (
 	"github.com/mmrzaf/gitman/internal/git"
 	"github.com/mmrzaf/gitman/internal/postgres"
 	"github.com/mmrzaf/gitman/internal/postgres/pgtest"
+	"github.com/mmrzaf/gitman/internal/push"
 	reposvc "github.com/mmrzaf/gitman/internal/repo"
 )
 
@@ -325,10 +326,12 @@ func setupWithStore(t *testing.T) (*postgres.DB, *git.Store, *browser) {
 // testServices builds the services an App works with from a database and
 // a repository store, the same way the gitman binary does.
 func testServices(database *postgres.DB, store *git.Store, secretKey string) Services {
+	people, repos, runs := auth.NewService(database), reposvc.NewService(database, store, secretKey), ci.NewService(database)
 	return Services{
-		People:   auth.NewService(database),
-		Repos:    reposvc.NewService(database, store, secretKey),
-		CI:       ci.NewService(database),
+		People:   people,
+		Repos:    repos,
+		CI:       runs,
+		Refs:     push.NewRefs(database, people, repos, runs),
 		Activity: activity.NewService(database),
 		Ping:     database.Ping,
 		Listen:   database.Listen,

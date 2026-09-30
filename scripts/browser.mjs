@@ -369,6 +369,7 @@ const states = [
     await p.click("summary[aria-label='Actions for mina']");
     await p.locator("details[open] .menu-list").getByRole("menuitem", { name: "Disable" }).click();
   }],
+  ["delete-confirm", "/demo", async (p) => { await p.click("button[aria-label^='Delete branch feature']"); }],
   ["new-repo", "/", async (p) => { await p.click("[data-dialog-open=new-repo]"); }],
   ["account-menu", "/", async (p) => { await p.click("summary[aria-label^='Account menu']"); }],
 ];

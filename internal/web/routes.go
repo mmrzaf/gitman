@@ -51,6 +51,7 @@ func (a *App) register(mux *http.ServeMux) {
 	mux.Handle("GET /{repo}", a.page(member, a.repository))
 	mux.Handle("GET /events", a.page(member, a.events))
 
+	mux.Handle("POST /{repo}/refs/delete", a.page(member, a.refDelete))
 	mux.Handle("GET /{repo}/commit/{sha}", a.page(member, a.commitView))
 	mux.Handle("GET /{repo}/history", a.page(member, a.history))
 	mux.Handle("GET /{repo}/runs", a.page(member, a.runs))
