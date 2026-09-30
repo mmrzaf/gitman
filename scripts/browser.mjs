@@ -308,6 +308,13 @@ const query = (page) => new URL(page.url()).searchParams;
   await Promise.all([page.waitForURL(/@broken/), page.selectOption("[data-ref-picker]", "broken")]);
   check("choosing a branch goes to the same file there", page.url() === `${base}/demo@broken/internal/pay/charge.go`);
 
+  // The comparison's two pickers go on when both sides are chosen.
+  await page.goto(`${base}/demo/compare`);
+  await page.fill("#compare-base", "main");
+  await page.fill("#compare-head", "v1.4.0");
+  await Promise.all([page.waitForURL(/compare\/main\.\.\.v1\.4\.0/), page.locator("#compare-head").dispatchEvent("change")]);
+  check("choosing both refs goes to their comparison", page.url() === `${base}/demo/compare/main...v1.4.0`);
+
   // Copying, inline editing, times.
   await page.goto(`${base}/demo`);
   await page.click("button[aria-label='Copy HTTPS']");
@@ -344,6 +351,7 @@ const screens = [
   ["commit", `/demo/commit/${commit}`, "#commit-title"],
   ["compare", `/demo/compare/main...${feature}`, "#compare-title"],
   ["compare-commits", `/demo/compare/main...${feature}?tab=commits`, "#compare-title"],
+  ["compare-pickers", "/demo/compare", "#compare-title"],
   ["run-failed", "/demo/runs/3", "#run-title"],
   ["run-passed", "/demo/runs/4", "#run-title"],
   ["run-cancelled", "/demo/runs/6", "#run-title"],
@@ -369,6 +377,7 @@ const states = [
     await p.click("summary[aria-label='Actions for mina']");
     await p.locator("details[open] .menu-list").getByRole("menuitem", { name: "Disable" }).click();
   }],
+  ["compare-pickers-error", "/demo/compare?base=main&head=nope", async () => {}],
   ["delete-confirm", "/demo", async (p) => { await p.click("button[aria-label^='Delete branch feature']"); }],
   ["new-repo", "/", async (p) => { await p.click("[data-dialog-open=new-repo]"); }],
   ["account-menu", "/", async (p) => { await p.click("summary[aria-label^='Account menu']"); }],
@@ -443,6 +452,11 @@ for (const scheme of ["light", "dark"]) {
   await Promise.all([page.waitForURL(/ref=broken/), page.click("button:has-text('Switch')")]);
   check("switching branches in History works without JavaScript",
     query(page).get("ref") === "broken" && query(page).get("path") === "internal/pay/charge.go");
+  await page.goto(`${base}/demo/compare`);
+  await page.fill("#compare-base", "main");
+  await page.fill("#compare-head", "v1.4.0");
+  await Promise.all([page.waitForURL(/compare\/main\.\.\.v1\.4\.0/), page.click("form[data-compare] button[type=submit]")]);
+  check("comparing two refs works without JavaScript", page.url() === `${base}/demo/compare/main...v1.4.0`);
   await page.goto(`${base}/demo/settings?tab=secrets`);
   check("a tab's address works without JavaScript", (await page.locator("#panel-secrets").isVisible()) && !(await page.locator("#panel-general").isVisible()));
   await page.click("a:has-text('New secret')");

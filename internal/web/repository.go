@@ -20,8 +20,12 @@ type refRow struct {
 	CanRun bool
 	// CanDelete is whether a push by the signed-in person deleting it would
 	// be accepted, and DeleteNote what the confirmation says about it.
-	CanDelete        bool
-	DeleteNote       string
+	CanDelete  bool
+	DeleteNote string
+	// Divergence is how far a branch is from the default branch; it is
+	// nil for the default branch itself, for a tag, and when it could not
+	// be counted.
+	Divergence       *git.Divergence
 	LatestRun        *ci.Summary
 	LatestDeployment *ci.Deployment
 }
@@ -137,9 +141,8 @@ func (a *App) repository(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 
-	if err := a.noteDeletes(r, repo, &page); err != nil {
-		return err
-	}
+	a.countDivergence(r, repo, &page)
+	noteDeletes(repo, &page)
 	if page.Timeline, err = a.activity.Recent(ctx, &repo.ID, repositoryPageLimit); err != nil {
 		return err
 	}
@@ -147,47 +150,63 @@ func (a *App) repository(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+// countDivergence sets how far each branch is from the default branch,
+// counted by Git. A failure to count leaves the counts out, since the page
+// is worth showing without them.
+func (a *App) countDivergence(r *http.Request, repo *reposvc.Repo, page *repositoryPage) {
+	var base string
+	for _, row := range page.Branches {
+		if row.IsDefault {
+			base = row.Commit
+		}
+	}
+	if base == "" || len(page.Branches) < 2 {
+		return
+	}
+	gitRepo, err := a.repos.Open(repo)
+	if err != nil {
+		a.log.Warn("could not open a repository to count its branches", "repo", repo.Name, "error", err)
+		return
+	}
+	heads := make([]string, 0, len(page.Branches))
+	for _, row := range page.Branches {
+		if !row.IsDefault {
+			heads = append(heads, row.Commit)
+		}
+	}
+	counts, err := gitRepo.Divergences(r.Context(), base, heads)
+	if err != nil {
+		a.log.Warn("could not count how far branches are from the default", "repo", repo.Name, "error", err)
+		return
+	}
+	for i := range page.Branches {
+		if row := &page.Branches[i]; !row.IsDefault {
+			d := counts[row.Commit]
+			row.Divergence = &d
+		}
+	}
+}
+
 // noteDeletes words what each Delete button's confirmation says. A branch
-// says whether it is merged into the default branch, which needs the
-// default branch to be there.
-func (a *App) noteDeletes(r *http.Request, repo *reposvc.Repo, page *repositoryPage) error {
+// says whether it is merged into the default branch, which is when it is
+// no commits ahead of it.
+func noteDeletes(repo *reposvc.Repo, page *repositoryPage) {
 	const cannotRestore = "Gitman can\u2019t restore it."
 	for i := range page.Tags {
 		if page.Tags[i].CanDelete {
 			page.Tags[i].DeleteNote = "The commit stays, and the tag can be pushed again. " + cannotRestore
 		}
 	}
-	var defaultCommit string
-	for _, row := range page.Branches {
-		if row.IsDefault {
-			defaultCommit = row.Commit
-		}
-	}
-	var gitRepo *git.Repo
 	for i := range page.Branches {
 		row := &page.Branches[i]
-		if !row.CanDelete {
-			continue
-		}
-		row.DeleteNote = cannotRestore
-		if defaultCommit == "" {
-			continue
-		}
-		if gitRepo == nil {
-			var err error
-			if gitRepo, err = a.repos.Open(repo); err != nil {
-				return err
-			}
-		}
-		merged, err := gitRepo.IsAncestor(r.Context(), row.Commit, defaultCommit)
-		if err != nil {
-			continue
-		}
-		if merged {
+		switch {
+		case !row.CanDelete:
+		case row.Divergence == nil:
+			row.DeleteNote = cannotRestore
+		case row.Divergence.Ahead == 0:
 			row.DeleteNote = "It is merged into " + repo.DefaultBranch + ", so nothing is lost. " + cannotRestore
-		} else {
+		default:
 			row.DeleteNote = "It is not merged into " + repo.DefaultBranch + ". Commits only it has are left without a branch. " + cannotRestore
 		}
 	}
-	return nil
 }

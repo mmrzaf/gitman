@@ -6,6 +6,9 @@
     <h1 class="page-title" id="history-title">History</h1>
   </div>
   <div class="page-actions">
+    {{- if and (eq $d.Tab "commits") (not $d.Unpushed)}}
+    <a class="btn" href="{{if eq $d.Ref $repo.DefaultBranch}}{{compareFormURL $repo.Name $d.Ref ""}}{{else}}{{compareFormURL $repo.Name $repo.DefaultBranch $d.Ref}}{{end}}" data-command="Compare two refs of {{$repo.Name}}">{{template "icon" "compare"}}Compare</a>
+    {{- end}}
     <span class="live js-only" data-live-status data-state="connecting" role="status">{{template "icon" "live"}}<span data-live-label>Connecting…</span></span>
   </div>
 </header>

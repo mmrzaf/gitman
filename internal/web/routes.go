@@ -60,6 +60,7 @@ func (a *App) register(mux *http.ServeMux) {
 	mux.Handle("GET /{repo}/runs/{n}/log", a.page(member, a.runLog))
 	mux.Handle("POST /{repo}/runs/{n}/cancel", a.page(member, a.runCancel))
 	mux.Handle("POST /{repo}/runs/{n}/again", a.page(member, a.runAgain))
+	mux.Handle("GET /{repo}/compare", a.page(member, a.compareView))
 	mux.Handle("GET /{repo}/compare/{crange...}", a.page(member, a.compareView))
 	mux.Handle("GET /{repo}/tree-paths", a.page(member, a.treePaths))
 	// Settings routes are registered at member, not admin, level: the

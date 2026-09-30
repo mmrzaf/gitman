@@ -241,3 +241,62 @@ func TestReaderRecoversAfterCancellation(t *testing.T) {
 		t.Fatalf("ResolveCommit after a cancelled request: %v", err)
 	}
 }
+
+func TestDivergences(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	f.write(t, "a.txt", "a\n")
+	root := f.commit(t, "root")
+	f.push(t, "main")
+
+	// merged sits at main; ahead has two commits main lacks; diverged has
+	// one of its own and is one behind.
+	gitCmd(t, f.work, "checkout", "--quiet", "-b", "ahead")
+	f.write(t, "b.txt", "b\n")
+	f.commit(t, "b1")
+	f.write(t, "c.txt", "c\n")
+	aheadTip := f.commit(t, "b2")
+	gitCmd(t, f.work, "checkout", "--quiet", "main")
+	f.write(t, "m.txt", "m\n")
+	mainTip := f.commit(t, "main moves")
+	gitCmd(t, f.work, "checkout", "--quiet", "-b", "diverged", root)
+	f.write(t, "d.txt", "d\n")
+	divergedTip := f.commit(t, "d1")
+	f.push(t, "main", "ahead", "diverged")
+
+	got, err := f.repo.Divergences(ctx, mainTip, []string{mainTip, root, aheadTip, divergedTip, aheadTip})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]Divergence{
+		mainTip:     {0, 0},
+		root:        {0, 1},
+		aheadTip:    {2, 1},
+		divergedTip: {1, 1},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d counts, want %d: %+v", len(got), len(want), got)
+	}
+	for head, w := range want {
+		if got[head] != w {
+			t.Errorf("Divergences[%s] = %+v, want %+v", head[:7], got[head], w)
+		}
+	}
+
+	// A second ask is answered from the cache: even with the repository
+	// gone from under it.
+	if err := f.store.Delete("repo-1"); err != nil {
+		t.Fatal(err)
+	}
+	again, err := f.repo.Divergences(ctx, mainTip, []string{aheadTip, divergedTip})
+	if err != nil || again[aheadTip] != (Divergence{2, 1}) || again[divergedTip] != (Divergence{1, 1}) {
+		t.Fatalf("a repeated count = %+v, %v", again, err)
+	}
+
+	if _, err := f.repo.Divergences(ctx, "main", nil); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a base that is not a hash = %v, want ErrNotFound", err)
+	}
+	if _, err := f.repo.Divergences(ctx, mainTip, []string{"--all"}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a head that is not a hash = %v, want ErrNotFound", err)
+	}
+}

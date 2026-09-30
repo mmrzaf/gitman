@@ -21,6 +21,11 @@ Each release's section is also its GitHub release notes.
   the server, and a branch's confirmation says whether it is merged into
   the default branch. It is recorded like a pushed delete, so it shows in
   History's Activity.
+- Compare any two refs: two pickers that take a branch, a tag or a commit,
+  so tag to tag shows what a release added. It was reachable only from a
+  branch's row, against the default branch.
+- How far each branch is ahead of and behind the default branch, on the
+  Overview.
 
 ### Changed
 

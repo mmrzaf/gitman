@@ -6,17 +6,45 @@
   <div class="page-header-text">
     <h1 class="page-title cluster" id="compare-title">
       <span>Compare</span>
+      {{- if $cmp}}
       <span class="ref"><span class="ref-name">{{$d.BaseRef}}</span></span>
       <span class="muted"><span aria-hidden="true">…</span><span class="visually-hidden">with</span></span>
       <span class="ref"><span class="ref-name">{{$d.HeadRef}}</span></span>
+      {{- end}}
     </h1>
+    {{- if $cmp}}
     <p class="page-subtitle">What merging <strong class="mono">{{$d.HeadRef}}</strong> into <strong class="mono">{{$d.BaseRef}}</strong> would change. Common ancestor {{template "commit" (dict "Repo" $repo.Name "Hash" $cmp.MergeBase)}}.</p>
+    {{- end}}
   </div>
+  {{- if $cmp}}
   <div class="page-actions">
     <a class="btn" href="{{compareURL $repo.Name $d.HeadRef $d.BaseRef}}">{{template "icon" "compare"}}Swap sides</a>
   </div>
+  {{- end}}
 </header>
 
+<section class="panel" aria-label="Choose what to compare">
+  <form class="toolbar compare-picker" method="get" action="/{{$repo.Name}}/compare" data-compare>
+    <div class="field">
+      <label class="field-label" for="compare-base">Base</label>
+      <input class="input" id="compare-base" name="base" value="{{$d.BaseRef}}" list="compare-refs" data-ref-picker autocomplete="off" spellcheck="false" required
+        {{- if $d.BaseError}} aria-invalid="true" aria-describedby="compare-base-error"{{end}}>
+      {{- if $d.BaseError}}<p class="field-error" id="compare-base-error">{{template "icon" "warning"}}<span>{{$d.BaseError}}</span></p>{{end}}
+    </div>
+    <div class="field">
+      <label class="field-label" for="compare-head">Compare</label>
+      <input class="input" id="compare-head" name="head" value="{{$d.HeadRef}}" list="compare-refs" data-ref-picker autocomplete="off" spellcheck="false" required
+        {{- if $d.HeadError}} aria-invalid="true" aria-describedby="compare-head-error"{{end}}>
+      {{- if $d.HeadError}}<p class="field-error" id="compare-head-error">{{template "icon" "warning"}}<span>{{$d.HeadError}}</span></p>{{end}}
+    </div>
+    <datalist id="compare-refs">
+      {{- range $d.Refs}}<option value="{{.Name}}">{{.Kind}}</option>{{end}}
+    </datalist>
+    <button type="submit" class="btn btn-primary">{{template "icon" "compare"}}Compare</button>
+  </form>
+</section>
+
+{{- if $cmp}}
 <nav class="tabs tabs-page" data-tabs aria-label="Comparison">
   <a class="tab" id="tab-changes" href="{{$path}}" data-tab="changes"{{if eq $d.Tab "changes"}} aria-current="page"{{end}}>{{template "icon" "code"}}Changes <span class="tab-count">{{(diffTotals $cmp.Diff).Files}}</span></a>
   <a class="tab" id="tab-commits" href="{{$path}}?tab=commits" data-tab="commits"{{if eq $d.Tab "commits"}} aria-current="page"{{end}}>{{template "icon" "commit"}}Commits <span class="tab-count">{{len $cmp.Commits}}{{if $cmp.MoreCommits}}+{{end}}</span></a>
@@ -49,5 +77,10 @@
   {{- end}}
   </section>
 </div>
+{{- else}}
+<section class="panel">
+  {{template "empty" (dict "Icon" "compare" "Title" "Choose two refs" "Text" "A branch, a tag or a commit on each side. Two tags show what a release added.")}}
+</section>
+{{- end}}
 </div>
 {{end}}

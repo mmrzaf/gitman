@@ -13,10 +13,10 @@ Refs and history: managing branches, tags and revisions from the web.
   ref's rule allows deleting. It's recorded like a push, so it shows in
   History's Activity. The confirm for a branch says whether it's merged
   into the default branch.
-- [ ] **Compare any two refs.** Two ref pickers (branch, tag or commit)
+- [x] **Compare any two refs.** Two ref pickers (branch, tag or commit)
   on the compare page, so tag to tag shows what a release added. Today
   it's reachable only from a branch row, against the default branch.
-  - [ ] Ahead and behind the default branch on each branch row.
+  - [x] Ahead and behind the default branch on each branch row.
 - [x] **History as its own section.** Overview · Files · History · Runs ·
   Settings. Files loses its Code and History tabs; a file's history is a
   link into History, filtered to that path.

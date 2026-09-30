@@ -68,7 +68,7 @@
      what it last shipped. Takes (dict "Refs" "Repo" "Clone" "Kind"
      "DefaultExists" "Admin"). */}}
 {{define "refs"}}
-{{$repo := .Repo}}{{$defaultExists := .DefaultExists}}
+{{$repo := .Repo}}{{$defaultExists := .DefaultExists}}{{$kind := .Kind}}
 {{if .Refs}}
 {{- if and (eq .Kind "branch") (not $defaultExists)}}
 <div class="panel-body"><div class="callout is-queued" role="note">{{template "icon" "warning"}}<p class="callout-body"><span>The default branch, {{template "ref" (dict "Kind" "branch" "Name" $repo.DefaultBranch)}}, has not been pushed yet. Push it{{if .Admin}}, or <a href="/{{$repo.Name}}/settings">choose another default branch</a>{{end}}.</span></p></div></div>
@@ -78,6 +78,7 @@
     <thead>
       <tr>
         <th scope="col">{{if eq .Kind "tag"}}Tag{{else}}Branch{{end}}</th>
+        {{- if eq $kind "branch"}}<th scope="col">vs {{$repo.DefaultBranch}}</th>{{end}}
         <th scope="col">Last run</th>
         <th scope="col">Last shipped</th>
         <th scope="col">Commit</th>
@@ -86,11 +87,14 @@
       </tr>
     </thead>
     <tbody>
-    {{range .Refs}}
+    {{range .Refs}}{{$name := .Name}}
       <tr>
         <th scope="row" class="table-rowheader">
           <span class="cluster">{{template "ref" (dict "Kind" .Kind "Name" .Name "Href" (refURL $repo.Name .Name ""))}}{{if .IsDefault}}<span class="chip">default</span>{{end}}</span>
         </th>
+        {{- if eq $kind "branch"}}
+        <td class="cell-shrink">{{with .Divergence}}<a href="{{compareURL $repo.Name $repo.DefaultBranch $name}}">{{if or .Ahead .Behind}}{{if .Ahead}}{{.Ahead}} ahead{{end}}{{if and .Ahead .Behind}}, {{end}}{{if .Behind}}{{.Behind}} behind{{end}}{{else}}even{{end}}</a>{{else}}<span class="muted">—</span>{{end}}</td>
+        {{- end}}
         <td class="cell-shrink">{{with .LatestRun}}<a class="run-ref" href="/{{$repo.Name}}/runs/{{.Number}}">{{template "status" .Status}}<span>#{{.Number}}</span></a>{{else}}<span class="muted">—</span>{{end}}</td>
         <td class="cell-shrink">{{with .LatestDeployment}}<span class="version">{{.Version}}</span> <span class="muted">→</span> {{.Target}}{{else}}<span class="muted">—</span>{{end}}</td>
         <td class="cell-shrink">{{template "commit" (dict "Repo" $repo.Name "Hash" .Commit)}}</td>

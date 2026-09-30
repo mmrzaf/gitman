@@ -42,6 +42,15 @@ Its nav has five items:
   secrets, who may read the repository and push to a ref no rule matches,
   and deletion.
 
+### Comparing refs
+
+**Compare** on History, or a branch's compare button on the Overview,
+shows what merging one ref into another would change: the commits and the
+combined diff. Each side is a branch, a tag or a commit, so two tags show
+what a release added. Every branch on the Overview also says how many
+commits it is ahead of and behind the default branch; Git does the
+counting.
+
 ### Deleting a branch or tag
 
 **Delete** on a row of the Overview's Branches and Tags removes that ref.
