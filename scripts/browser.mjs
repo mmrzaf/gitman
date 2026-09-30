@@ -328,17 +328,17 @@ const query = (page) => new URL(page.url()).searchParams;
   check("a copy button copies", (await page.evaluate(() => navigator.clipboard.readText())) === `${base}/demo.git`);
   check("hovering a time shows it in the reader's time zone", !/UTC$/.test(await page.locator("time").first().getAttribute("title")));
   await page.goto(`${base}/demo/settings`);
-  await page.click("[data-inline-start]");
+  await page.click("[data-inline-start][aria-label='Edit the description']");
   check("Edit turns the description into its form, focused", (await focused(page))?.id === "f-description");
   await page.keyboard.press("Escape");
-  check("Escape turns it back", (await page.locator("[data-inline-start]").evaluate((el) => el === document.activeElement)));
-  await page.click("[data-inline-start]");
+  check("Escape turns it back", (await page.locator("[data-inline-start][aria-label='Edit the description']").evaluate((el) => el === document.activeElement)));
+  await page.click("[data-inline-start][aria-label='Edit the description']");
   const original = await page.inputValue("#f-description");
   await page.fill("#f-description", "Edited in place");
   await Promise.all([page.waitForURL(`${base}/demo/settings`), page.click("[data-inline-form] button[type=submit]")]);
-  check("an inline edit saves", (await page.locator(".inline-edit-value").innerText()) === "Edited in place"
+  check("an inline edit saves", (await page.locator(".inline-edit-value").first().innerText()) === "Edited in place"
     && /Saved/.test(await page.locator("[data-toast]").innerText()));
-  await page.click("[data-inline-start]");
+  await page.click("[data-inline-start][aria-label='Edit the description']");
   await page.fill("#f-description", original);
   await Promise.all([page.waitForURL(`${base}/demo/settings`), page.click("[data-inline-form] button[type=submit]")]);
   await context.close();
