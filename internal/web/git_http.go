@@ -53,20 +53,31 @@ func (a *App) registerGitRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /{repo}/git-receive-pack", a.limitGitConcurrency(a.gitRPC(git.ReceivePack)))
 }
 
+// acquireGitSlot takes one of the slots that bound Git work, without
+// waiting, and reports false when every slot is taken. The caller releases
+// the slot when its work is done.
+func (a *App) acquireGitSlot() (release func(), ok bool) {
+	select {
+	case a.gitSlots <- struct{}{}:
+		return func() { <-a.gitSlots }, true
+	default:
+		return nil, false
+	}
+}
+
 // limitGitConcurrency wraps a Git HTTP handler with the shared limit on
 // how many may run at once, answering 503 with Retry-After the instant
 // it is full rather than queuing behind whichever ones already hold a
 // slot — those can each run for as long as a large clone or push takes.
 func (a *App) limitGitConcurrency(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		select {
-		case a.gitSlots <- struct{}{}:
-		default:
+		release, ok := a.acquireGitSlot()
+		if !ok {
 			w.Header().Set("Retry-After", "5")
 			http.Error(w, "Gitman is handling too many Git requests right now. Try again shortly.", http.StatusServiceUnavailable)
 			return
 		}
-		defer func() { <-a.gitSlots }()
+		defer release()
 		next(w, r)
 	}
 }
