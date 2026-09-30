@@ -285,10 +285,13 @@ func (r *Repo) Log(ctx context.Context, hash, path string, offset, limit int) ([
 		"--skip=" + strconv.Itoa(offset),
 		"--max-count=" + strconv.Itoa(limit+1),
 		hash}
+	opts := r.opts()
 	if path = strings.Trim(path, "/"); path != "" {
 		args = append(args, "--", path)
+		// A path is a file's name, never a pathspec such as ":(exclude)x".
+		opts.env = append(opts.env, "GIT_LITERAL_PATHSPECS=1")
 	}
-	out, err := run(ctx, r.opts(), args...)
+	out, err := run(ctx, opts, args...)
 	if err != nil {
 		return nil, false, errNotFoundIfMissing(err)
 	}

@@ -17,12 +17,12 @@ Refs and history: managing branches, tags and revisions from the web.
   on the compare page, so tag to tag shows what a release added. Today
   it's reachable only from a branch row, against the default branch.
   - [ ] Ahead and behind the default branch on each branch row.
-- [ ] **History as its own section.** Overview · Files · History · Runs ·
+- [x] **History as its own section.** Overview · Files · History · Runs ·
   Settings. Files loses its Code and History tabs; a file's history is a
   link into History, filtered to that path.
-  - [ ] Commits: a ref's log, with each commit's run status, the
+  - [x] Commits: a ref's log, with each commit's run status, the
     branches and tags at it, and a merge marker.
-  - [ ] Activity: every ref change from `push_updates` (created, pushed,
+  - [x] Activity: every ref change from `push_updates` (created, pushed,
     force-pushed, deleted, tag moved), with who, old → new, and the run
     it started.
 - [ ] **Record refused pushes.** A push Gitman refuses shows in Activity

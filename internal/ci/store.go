@@ -201,6 +201,34 @@ func selectLatestRunPerRef(ctx context.Context, q postgres.Querier, repoID strin
 	return result, rows.Err()
 }
 
+// selectLatestRunPerCommit returns the newest run of each of commits,
+// keyed by commit; a commit no run was made for is left out.
+func selectLatestRunPerCommit(ctx context.Context, q postgres.Querier, repoID string, commits []string) (map[string]Summary, error) {
+	rows, err := q.Query(ctx, `
+		SELECT DISTINCT ON (r.commit_hash) r.commit_hash, `+summaryColumns+`
+		FROM runs r
+		JOIN repos ON repos.id = r.repo_id
+		LEFT JOIN people p ON p.id = r.triggered_by
+		WHERE r.repo_id = $1 AND r.commit_hash = ANY($2)
+		ORDER BY r.commit_hash, r.number DESC
+	`, repoID, commits)
+	if err != nil {
+		return nil, fmt.Errorf("list latest runs per commit: %w", err)
+	}
+	defer rows.Close()
+	result := map[string]Summary{}
+	for rows.Next() {
+		var commit string
+		var s Summary
+		if err := rows.Scan(&commit, &s.ID, &s.RepoName, &s.Number, &s.RefKind, &s.RefName, &s.Trigger, &s.Status, &s.Reason,
+			&s.Actor, &s.QueuedAt, &s.StartedAt, &s.FinishedAt); err != nil {
+			return nil, fmt.Errorf("scan run: %w", err)
+		}
+		result[commit] = s
+	}
+	return result, rows.Err()
+}
+
 // selectLiveDeployments returns the latest deployment for every
 // repository and target, or, with repoID, for one repository's targets.
 func selectLiveDeployments(ctx context.Context, q postgres.Querier, repoID *string) ([]Deployment, error) {

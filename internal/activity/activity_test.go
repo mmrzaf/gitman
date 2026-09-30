@@ -228,3 +228,109 @@ func TestFeedQueriesCanUseAnIndex(t *testing.T) {
 		}
 	}
 }
+
+func TestForRepoListsRefChangesAndEventsNewestFirst(t *testing.T) {
+	database := pgtest.Open(t)
+	repoID, _, _ := seed(t, database)
+	ctx := context.Background()
+	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := database.Pool.Exec(ctx, q, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// One push moving three refs at the same moment: each is its own entry.
+	exec(`INSERT INTO pushes (id, repo_id, person_id, created_at) VALUES ('push3', $1, 'p1', $2)`, repoID, base.Add(10*time.Minute))
+	exec(`INSERT INTO push_updates (id, push_id, kind, name, old_commit, new_commit, is_create, is_delete, is_force) VALUES
+	      ('pu3a', 'push3', 'branch', 'new', repeat('0',40), repeat('d',40), true, false, false),
+	      ('pu3b', 'push3', 'branch', 'main', repeat('a',40), repeat('e',40), false, false, true),
+	      ('pu3c', 'push3', 'tag', 'v1', repeat('a',40), repeat('f',40), false, false, false),
+	      ('pu3d', 'push3', 'branch', 'old', repeat('9',40), repeat('0',40), false, true, false)`)
+	exec(`INSERT INTO runs (id, repo_id, number, commit_hash, ref_kind, ref_name, trigger, push_id, status, finished_at)
+	      VALUES ('run3', $1, 3, repeat('d',40), 'branch', 'new', 'push', 'push3', 'failed', now())`, repoID)
+
+	entries, more, err := NewService(database).ForRepo(ctx, repoID, 0, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// seed's one push update and one event, plus the four above; the other
+	// repository's push, the runs and the deployment are not part of it.
+	if more || len(entries) != 6 {
+		t.Fatalf("got %d entries (more=%v), want 6: %+v", len(entries), more, entries)
+	}
+	for i := 1; i < len(entries); i++ {
+		if entries[i-1].At.Before(entries[i].At) {
+			t.Fatalf("entries are not newest first at index %d", i)
+		}
+	}
+	changes := map[string]HistoryEntry{}
+	for _, e := range entries[:4] {
+		if e.Kind != KindPush || e.Actor != "darius" {
+			t.Fatalf("entry = %+v", e)
+		}
+		changes[e.RefName] = e
+	}
+	for name, want := range map[string]Change{"new": Created, "main": ForcePushed, "v1": Moved, "old": Deleted} {
+		if got := changes[name].Change; got != want {
+			t.Errorf("%s: change = %q, want %q", name, got, want)
+		}
+	}
+	if e := changes["new"]; e.RunNumber != 3 || e.RunStatus != "failed" {
+		t.Errorf("the run a push started is missing: %+v", e)
+	}
+	if e := changes["main"]; e.RunNumber != 0 {
+		t.Errorf("a ref that started no run has one: %+v", e)
+	}
+	if entries[4].Kind != KindEvent || entries[4].Action != RuleSaved || entries[5].Kind != KindPush || entries[5].Change != Pushed {
+		t.Errorf("the settings change and the older push are out of place: %+v", entries[4:])
+	}
+}
+
+func TestForRepoPages(t *testing.T) {
+	database := pgtest.Open(t)
+	repoID, _, _ := seed(t, database)
+	ctx := context.Background()
+	// Every update of one push shares its moment, so paging must stay exact
+	// inside it.
+	if _, err := database.Pool.Exec(ctx, `INSERT INTO pushes (id, repo_id, person_id) VALUES ('big', $1, 'p1')`, repoID); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		if _, err := database.Pool.Exec(ctx, `
+			INSERT INTO push_updates (id, push_id, kind, name, old_commit, new_commit, is_create)
+			VALUES ($1, 'big', 'branch', $2, repeat('0',40), repeat('a',40), true)
+		`, "big-"+string(rune('a'+i)), "b"+string(rune('a'+i))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	svc := NewService(database)
+	seen := map[string]bool{}
+	skip := 0
+	for pages := 0; ; pages++ {
+		if pages > 10 {
+			t.Fatal("paging does not end")
+		}
+		entries, more, err := svc.ForRepo(ctx, repoID, skip, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range entries {
+			key := string(e.Kind) + e.RefName + e.Action
+			if seen[key] {
+				t.Fatalf("%s appears on two pages", key)
+			}
+			seen[key] = true
+		}
+		if !more {
+			break
+		}
+		skip += 2
+	}
+	if len(seen) != 7 {
+		t.Fatalf("paging listed %d entries, want 7: %v", len(seen), seen)
+	}
+	if entries, more, err := svc.ForRepo(ctx, repoID, 100, 2); err != nil || more || len(entries) != 0 {
+		t.Fatalf("past the end = %v, %v, %v", entries, more, err)
+	}
+}

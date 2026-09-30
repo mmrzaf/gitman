@@ -23,6 +23,7 @@
     {{- if $d.Path}}
     <button type="button" class="btn btn-ghost js-only" data-copy="{{$d.Path}}">{{template "icon" "copy"}}Copy path</button>
     {{- end}}
+    <a class="btn" href="{{historyURL $repo.Name $d.Ref $d.Path}}" data-command="Show the history of {{if $d.Path}}{{$d.Path}}{{else}}{{$repo.Name}}{{end}}">{{template "icon" "history"}}History</a>
     <button type="button" class="btn js-only" data-file-finder-open data-repo="{{$repo.Name}}" data-ref="{{$d.Ref}}" data-command="Go to a file in {{$repo.Name}}">{{template "icon" "search"}}Go to file</button>
   </div>
 </header>
@@ -54,84 +55,50 @@
     <a class="btn btn-ghost btn-sm no-js-only" href="{{$d.PermalinkURL}}">{{template "icon" "link"}}Permalink</a>
     {{- end}}
   </div>
-
-  <nav class="tabs" data-tabs aria-label="{{if $d.IsDir}}Directory{{else}}File{{end}}">
-    <a class="tab" id="tab-code" href="{{refURL $repo.Name $d.Ref $d.Path}}" data-tab="code"{{if eq $d.Tab "code"}} aria-current="page"{{end}}>{{template "icon" "code"}}Code</a>
-    <a class="tab" id="tab-history" href="{{refURL $repo.Name $d.Ref $d.Path}}?tab=history" data-tab="history"{{if eq $d.Tab "history"}} aria-current="page"{{end}}>{{template "icon" "history"}}History</a>
-  </nav>
-  <div id="panel-code" data-tab-panel="code"{{if ne $d.Tab "code"}} hidden{{end}}>
-    {{- with $d.LastChanged}}
-    <p class="panel-footer last-change">{{template "icon" "commit"}} Last changed in {{template "commit" (dict "Repo" $repo.Name "Hash" .Hash)}} by {{template "person" .Author.Name}} {{template "time" .Committer.When}} — <span class="truncate">{{.Subject}}</span></p>
-    {{- end}}
-    {{- if $d.IsDir}}
-    {{- if $d.Entries}}
-    <div class="table-scroll">
-      <table class="table tree">
-        <caption class="visually-hidden">Files in {{if $d.Path}}{{$d.Path}}{{else}}{{$repo.Name}}{{end}}</caption>
-        <tbody>
-        {{- if $d.Path}}
-          <tr><td><a class="tree-name" href="{{refURL $repo.Name $d.Ref (dirOf $d.Path)}}">{{template "icon" "folder"}}<span>..</span><span class="visually-hidden">(parent directory)</span></a></td></tr>
-        {{- end}}
-        {{- range $d.Entries}}
-          <tr>
-            <td>
-              {{- if eq .Kind "submodule"}}
-              <span class="tree-name">{{template "icon" "module"}}<span>{{.Name}}</span><span class="chip">submodule</span></span>
-              {{- else}}
-              <a class="tree-name" href="{{refURL $repo.Name $d.Ref .Path}}">{{template "icon" .Icon}}<span>{{.Name}}</span>{{if .Executable}}<span class="chip">executable</span>{{end}}</a>
-              {{- end}}
-            </td>
-          </tr>
-        {{- end}}
-        </tbody>
-      </table>
-    </div>
-    {{- else}}
-    {{template "empty" (dict "Icon" "folder" "Title" "This directory is empty")}}
-    {{- end}}
-    {{- else}}
-    {{- if $d.TooLarge}}
-    {{template "empty" (dict "Icon" "file" "Title" "This file is too large to show here" "Text" "Open it raw to download it.")}}
-    {{- else if $d.IsBinary}}
-    {{template "empty" (dict "Icon" "file" "Title" "This is a binary file" "Text" "Open it raw to download it.")}}
-    {{- else if $d.Lines}}
-    <div class="lines source" tabindex="0" role="region" aria-label="Contents of {{$d.Path}}">
-      {{- range $i, $line := $d.Lines}}
-      <div class="line" id="L{{add $i 1}}"><a href="#L{{add $i 1}}" tabindex="-1" aria-hidden="true">{{add $i 1}}</a>{{$line}}</div>
+  {{- with $d.LastChanged}}
+  <p class="panel-footer last-change">{{template "icon" "commit"}} Last changed in {{template "commit" (dict "Repo" $repo.Name "Hash" .Hash)}} by {{template "person" .Author.Name}} {{template "time" .Committer.When}} — <span class="truncate">{{.Subject}}</span></p>
+  {{- end}}
+  {{- if $d.IsDir}}
+  {{- if $d.Entries}}
+  <div class="table-scroll">
+    <table class="table tree">
+      <caption class="visually-hidden">Files in {{if $d.Path}}{{$d.Path}}{{else}}{{$repo.Name}}{{end}}</caption>
+      <tbody>
+      {{- if $d.Path}}
+        <tr><td><a class="tree-name" href="{{refURL $repo.Name $d.Ref (dirOf $d.Path)}}">{{template "icon" "folder"}}<span>..</span><span class="visually-hidden">(parent directory)</span></a></td></tr>
       {{- end}}
-    </div>
-    {{- else}}
-    {{template "empty" (dict "Icon" "file" "Title" "This file is empty")}}
-    {{- end}}
+      {{- range $d.Entries}}
+        <tr>
+          <td>
+            {{- if eq .Kind "submodule"}}
+            <span class="tree-name">{{template "icon" "module"}}<span>{{.Name}}</span><span class="chip">submodule</span></span>
+            {{- else}}
+            <a class="tree-name" href="{{refURL $repo.Name $d.Ref .Path}}">{{template "icon" .Icon}}<span>{{.Name}}</span>{{if .Executable}}<span class="chip">executable</span>{{end}}</a>
+            {{- end}}
+          </td>
+        </tr>
+      {{- end}}
+      </tbody>
+    </table>
+  </div>
+  {{- else}}
+  {{template "empty" (dict "Icon" "folder" "Title" "This directory is empty")}}
+  {{- end}}
+  {{- else}}
+  {{- if $d.TooLarge}}
+  {{template "empty" (dict "Icon" "file" "Title" "This file is too large to show here" "Text" "Open it raw to download it.")}}
+  {{- else if $d.IsBinary}}
+  {{template "empty" (dict "Icon" "file" "Title" "This is a binary file" "Text" "Open it raw to download it.")}}
+  {{- else if $d.Lines}}
+  <div class="lines source" tabindex="0" role="region" aria-label="Contents of {{$d.Path}}">
+    {{- range $i, $line := $d.Lines}}
+    <div class="line" id="L{{add $i 1}}"><a href="#L{{add $i 1}}" tabindex="-1" aria-hidden="true">{{add $i 1}}</a>{{$line}}</div>
     {{- end}}
   </div>
-  <div id="panel-history" data-tab-panel="history"{{if ne $d.Tab "history"}} hidden{{end}}>
-    {{- if $d.History}}
-    <div class="table-scroll">
-      <table class="table">
-        <thead><tr><th scope="col">Commit</th><th scope="col">Author</th><th scope="col">When</th><th scope="col"><span class="visually-hidden">Hash</span></th></tr></thead>
-        <tbody>
-        {{- range $d.History}}
-          <tr>
-            <td class="cell-truncate"><a href="/{{$repo.Name}}/commit/{{.Hash}}">{{.Subject}}</a></td>
-            <td class="cell-shrink">{{template "person" .Author.Name}}</td>
-            <td class="cell-shrink cell-muted">{{template "time" .Author.When}}</td>
-            <td class="cell-shrink">{{template "commit" (dict "Repo" $repo.Name "Hash" .Hash)}}</td>
-          </tr>
-        {{- end}}
-        </tbody>
-      </table>
-    </div>
-    {{- if or $d.HistorySkip $d.HistoryMore}}
-    <nav class="panel-footer cluster" aria-label="History pages">
-      {{- if $d.HistorySkip}}<a class="btn btn-sm" href="{{refURL $repo.Name $d.Ref $d.Path}}?tab=history&amp;skip={{$d.NewerSkip}}">Newer</a>{{end}}
-      {{- if $d.HistoryMore}}<a class="btn btn-sm" href="{{refURL $repo.Name $d.Ref $d.Path}}?tab=history&amp;skip={{$d.OlderSkip}}">Older</a>{{end}}
-    </nav>
-    {{- end}}
-    {{- else}}
-    {{template "empty" (dict "Icon" "history" "Title" "No history to show")}}
-    {{- end}}
-  </div>
+  {{- else}}
+  {{template "empty" (dict "Icon" "file" "Title" "This file is empty")}}
+  {{- end}}
+  {{- end}}
 </section>
 </div>
 {{end}}

@@ -299,8 +299,12 @@ const query = (page) => new URL(page.url()).searchParams;
   await until(() => page.locator("dialog[open] [role=option]").count(), 5000);
   await Promise.all([page.waitForURL(/charge\.go$/), page.keyboard.press("Enter")]);
   check("the file finder finds a file by a fuzzy name", page.url().endsWith("/demo@main/internal/pay/charge.go"));
-  await page.click("[data-tab=history]");
-  check("a file's history is a tab with its own address", query(page).get("tab") === "history" && (await page.locator("#panel-history").isVisible()));
+  await Promise.all([page.waitForURL(/\/demo\/history\?/), page.click(".page-actions a:has-text('History')")]);
+  check("a file's History button leads to History, filtered to its path",
+    query(page).get("path") === "internal/pay/charge.go" && query(page).get("ref") === "main");
+  await Promise.all([page.waitForURL(/ref=broken/), page.selectOption("[data-ref-picker]", "broken")]);
+  check("choosing a branch in History keeps the path", query(page).get("path") === "internal/pay/charge.go");
+  await page.goto(`${base}/demo@main/internal/pay/charge.go`);
   await Promise.all([page.waitForURL(/@broken/), page.selectOption("[data-ref-picker]", "broken")]);
   check("choosing a branch goes to the same file there", page.url() === `${base}/demo@broken/internal/pay/charge.go`);
 
@@ -334,7 +338,9 @@ const screens = [
   ["files", "/demo@main", "#files-title"],
   ["directory", "/demo@main/internal/pay", "#files-title"],
   ["file", "/demo@main/internal/pay/charge.go", "#files-title"],
-  ["file-history", "/demo@main/internal/pay/charge.go?tab=history", "#files-title"],
+  ["history", "/demo/history", "#history-title"],
+  ["history-path", "/demo/history?ref=main&path=internal/pay/charge.go", "#history-title"],
+  ["history-activity", "/demo/history?tab=activity", "#history-title"],
   ["commit", `/demo/commit/${commit}`, "#commit-title"],
   ["compare", `/demo/compare/main...${feature}`, "#compare-title"],
   ["compare-commits", `/demo/compare/main...${feature}?tab=commits`, "#compare-title"],
@@ -431,6 +437,11 @@ for (const scheme of ["light", "dark"]) {
   await page.selectOption("[data-ref-picker]", "broken");
   await Promise.all([page.waitForURL(`${base}/demo@broken`), page.click("button:has-text('Switch')")]);
   check("switching branches works without JavaScript", page.url() === `${base}/demo@broken`);
+  await page.goto(`${base}/demo/history?path=internal/pay/charge.go`);
+  await page.selectOption("[data-ref-picker]", "broken");
+  await Promise.all([page.waitForURL(/ref=broken/), page.click("button:has-text('Switch')")]);
+  check("switching branches in History works without JavaScript",
+    query(page).get("ref") === "broken" && query(page).get("path") === "internal/pay/charge.go");
   await page.goto(`${base}/demo/settings?tab=secrets`);
   check("a tab's address works without JavaScript", (await page.locator("#panel-secrets").isVisible()) && !(await page.locator("#panel-general").isVisible()));
   await page.click("a:has-text('New secret')");

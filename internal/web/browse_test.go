@@ -405,31 +405,20 @@ func TestPathHistoryAndLastChanged(t *testing.T) {
 	seedFilesRepo(t, database, store, b)
 
 	resp, body := b.do(http.MethodGet, "/waiotech@main/README.md", nil, nil)
-	expect(t, resp, body, http.StatusOK, "Last changed in", "Update README", `data-tab="history"`)
-	// The history is a tab with its own address, shown by the server
-	// without scripting.
+	expect(t, resp, body, http.StatusOK, "Last changed in", "Update README", `href="/waiotech/history?path=README.md&amp;ref=main"`)
+	if strings.Contains(body, "data-tab-panel") {
+		t.Error("Files still has tabs")
+	}
+	// The old History tab's address leads to History, filtered to the path.
 	resp, body = b.do(http.MethodGet, "/waiotech@main/README.md?tab=history", nil, nil)
-	expect(t, resp, body, http.StatusOK, `data-tab="history" aria-current="page"`, `id="panel-history" data-tab-panel="history">`,
-		`id="panel-code" data-tab-panel="code" hidden>`)
-}
-
-// TestDirectoryHistory is the commit list of a branch: the History tab at
-// its root. A directory's History lists only the commits that touched it.
-func TestDirectoryHistory(t *testing.T) {
-	database, store, b := setupWithStore(t)
-	signIn(t, database, b, "darius", false)
-	seedFilesRepo(t, database, store, b)
-
-	resp, body := b.do(http.MethodGet, "/waiotech@main", nil, nil)
-	expect(t, resp, body, http.StatusOK, "Last changed in", "Update README", `data-tab="history"`)
-
-	resp, body = b.do(http.MethodGet, "/waiotech@main?tab=history", nil, nil)
-	expect(t, resp, body, http.StatusOK, `id="panel-history" data-tab-panel="history">`, "Update README", "Initial commit")
-
-	resp, body = b.do(http.MethodGet, "/waiotech@main/server?tab=history", nil, nil)
-	expect(t, resp, body, http.StatusOK, `id="panel-history" data-tab-panel="history">`, "Initial commit")
-	if strings.Contains(body, "Update README") {
-		t.Error("a directory's history lists a commit that did not touch it")
+	expect(t, resp, body, http.StatusMovedPermanently)
+	if got := resp.Header.Get("Location"); got != "/waiotech/history?path=README.md&ref=main" {
+		t.Errorf("old history address redirects to %q", got)
+	}
+	resp, body = b.do(http.MethodGet, "/waiotech@main?tab=history&skip=20", nil, nil)
+	expect(t, resp, body, http.StatusMovedPermanently)
+	if got := resp.Header.Get("Location"); got != "/waiotech/history?ref=main&skip=20" {
+		t.Errorf("old history address with skip redirects to %q", got)
 	}
 }
 

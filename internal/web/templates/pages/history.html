@@ -1,0 +1,131 @@
+{{define "content"}}
+{{$d := .Data}}{{$repo := $d.Repo}}
+<div class="page">
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title" id="history-title">History</h1>
+  </div>
+  <div class="page-actions">
+    <span class="live js-only" data-live-status data-state="connecting" role="status">{{template "icon" "live"}}<span data-live-label>Connecting…</span></span>
+  </div>
+</header>
+
+<nav class="tabs tabs-page" aria-label="History">
+  <a class="tab" href="{{historyURL $repo.Name "" ""}}"{{if eq $d.Tab "commits"}} aria-current="page"{{end}}>{{template "icon" "commit"}}Commits</a>
+  <a class="tab" href="/{{$repo.Name}}/history?tab=activity"{{if eq $d.Tab "activity"}} aria-current="page"{{end}}>{{template "icon" "history"}}Activity</a>
+</nav>
+
+{{- if eq $d.Tab "activity"}}
+<section class="panel" aria-label="Activity">
+  <div data-live-region="history-activity">
+  {{- if $d.Entries}}
+  <ol class="feed">
+    {{- range $d.Entries}}
+    <li class="feed-item">
+      {{- if eq .Kind "event"}}{{template "icon" "settings"}}
+      {{- else if eq .Change "deleted"}}{{template "icon" "trash"}}
+      {{- else}}{{template "icon" "push"}}{{end}}
+      <p class="feed-text">
+        {{- if eq .Kind "event"}}
+        {{template "person" .Actor}} {{eventText .Action .Detail}}
+        {{- else}}
+        {{template "person" .Actor}} {{.Change}} {{template "ref" (dict "Kind" .RefKind "Name" .RefName)}}
+        {{- if eq .Change "created"}} at {{template "commit" (dict "Repo" $repo.Name "Hash" .NewCommit)}}
+        {{- else if eq .Change "deleted"}} <span class="muted">(was {{template "commit" (dict "Repo" $repo.Name "Hash" .OldCommit)}})</span>
+        {{- else}} {{template "commit" (dict "Repo" $repo.Name "Hash" .OldCommit)}} <span class="muted" aria-hidden="true">→</span><span class="visually-hidden">to</span> {{template "commit" (dict "Repo" $repo.Name "Hash" .NewCommit)}}
+        {{- end}}
+        {{- if .RunNumber}} <span class="muted">·</span> <a class="run-ref" href="/{{$repo.Name}}/runs/{{.RunNumber}}">{{template "status-icon" .RunStatus}}<span>#{{.RunNumber}}</span></a>{{end}}
+        {{- end}}
+      </p>
+      <span class="feed-time">{{template "time" .At}}</span>
+    </li>
+    {{- end}}
+  </ol>
+  {{- else}}
+  {{template "empty" (dict "Icon" "history" "Title" "No activity yet")}}
+  {{- end}}
+  </div>
+  {{template "history-paging" $d}}
+</section>
+
+{{- else if $d.Unpushed}}
+<section class="panel" aria-label="Commits">
+  <div class="empty">
+    {{template "icon" "commit"}}
+    <p class="empty-title">Nothing pushed yet</p>
+    <p>The default branch, {{template "ref" (dict "Kind" "branch" "Name" $repo.DefaultBranch)}}, has not been pushed.</p>
+    {{- if $d.Branches}}
+    <p class="cluster">See the history of
+      {{- range $d.Branches}} {{template "ref" (dict "Kind" "branch" "Name" . "Href" (historyURL $repo.Name . ""))}}{{end}}</p>
+    {{- end}}
+  </div>
+</section>
+
+{{- else}}
+<section class="panel" aria-label="Commits">
+  <div class="toolbar">
+    <form class="ref-picker" method="get" action="/{{$repo.Name}}/history">
+      <label class="visually-hidden" for="ref-picker">Branch or tag</label>
+      <span class="select-wrap">
+        <select class="select" id="ref-picker" name="ref" data-ref-picker data-target="history" data-repo="{{$repo.Name}}" data-path="{{$d.Path}}">
+          {{- if not (or $d.RefIsBranch $d.RefIsTag)}}
+          <option value="{{$d.Ref}}" selected>commit {{short $d.Ref}}</option>
+          {{- end}}
+          <optgroup label="Branches">
+            {{- range $d.Refs}}{{if eq .Kind "branch"}}<option value="{{.Name}}"{{if eq .Name $d.Ref}} selected{{end}}>{{.Name}}</option>{{end}}{{end}}
+          </optgroup>
+          <optgroup label="Tags">
+            {{- range $d.Refs}}{{if eq .Kind "tag"}}<option value="{{.Name}}"{{if eq .Name $d.Ref}} selected{{end}}>{{.Name}}</option>{{end}}{{end}}
+          </optgroup>
+        </select>
+      </span>
+      {{- with $d.Path}}<input type="hidden" name="path" value="{{.}}">{{end}}
+      <button type="submit" class="btn btn-sm no-js-only">Switch</button>
+    </form>
+    {{- with $d.Path}}
+    <span class="cluster"><span class="chip">{{template "icon" "file"}}<span class="mono">{{.}}</span></span>
+      <a class="btn btn-ghost btn-sm" href="{{historyURL $repo.Name $d.Ref ""}}">{{template "icon" "close"}}All paths</a></span>
+    {{- end}}
+  </div>
+  <div data-live-region="history-commits">
+  {{- if $d.Commits}}
+  <div class="table-scroll">
+    <table class="table">
+      <caption class="visually-hidden">Commits of {{$d.Ref}}{{with $d.Path}} that changed {{.}}{{end}}</caption>
+      <thead><tr><th scope="col">Commit</th><th scope="col">At</th><th scope="col">Run</th><th scope="col">Author</th><th scope="col">When</th><th scope="col"><span class="visually-hidden">Hash</span></th></tr></thead>
+      <tbody>
+      {{- range $d.Commits}}
+        <tr>
+          <td class="cell-truncate"><a href="/{{$repo.Name}}/commit/{{.Hash}}">{{.Subject}}</a></td>
+          <td class="cell-shrink"><span class="cluster">
+            {{- if .Merge}}<span class="chip">merge</span>{{end}}
+            {{- range .Refs}}{{template "ref" (dict "Kind" .Kind "Name" .Name "Href" (historyURL $repo.Name .Name ""))}}{{end}}
+          </span></td>
+          <td class="cell-shrink">{{with .Run}}<a class="run-ref" href="/{{$repo.Name}}/runs/{{.Number}}">{{template "status" .Status}}<span>#{{.Number}}</span></a>{{else}}<span class="muted">—</span>{{end}}</td>
+          <td class="cell-shrink">{{template "person" .Author.Name}}</td>
+          <td class="cell-shrink cell-muted">{{template "time" .Author.When}}</td>
+          <td class="cell-shrink">{{template "commit" (dict "Repo" $repo.Name "Hash" .Hash)}}</td>
+        </tr>
+      {{- end}}
+      </tbody>
+    </table>
+  </div>
+  {{- else}}
+  {{template "empty" (dict "Icon" "history" "Title" "No commits" "Text" "None changed this path.")}}
+  {{- end}}
+  </div>
+  {{template "history-paging" $d}}
+</section>
+{{- end}}
+</div>
+{{end}}
+
+{{/* history-paging: Newer and Older links for a page of History. */}}
+{{define "history-paging"}}
+{{- if or .Skip .More}}
+<nav class="panel-footer cluster" aria-label="History pages">
+  {{- if .Skip}}<a class="btn btn-sm" href="{{.PageURL .NewerSkip}}">Newer</a>{{end}}
+  {{- if .More}}<a class="btn btn-sm" href="{{.PageURL .OlderSkip}}">Older</a>{{end}}
+</nav>
+{{- end}}
+{{end}}

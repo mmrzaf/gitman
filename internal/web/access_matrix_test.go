@@ -113,6 +113,10 @@ func (f *matrixFixture) routes() []struct {
 	}{
 		{"repository page", http.MethodGet, func(r string) string { return "/" + r }},
 		{"files", http.MethodGet, func(r string) string { return "/" + r + "@main/README.md" }},
+		{"history", http.MethodGet, func(r string) string { return "/" + r + "/history" }},
+		{"history at a path", http.MethodGet, func(r string) string { return "/" + r + "/history?ref=main&path=README.md" }},
+		{"history activity", http.MethodGet, func(r string) string { return "/" + r + "/history?tab=activity" }},
+		{"old history tab address", http.MethodGet, func(r string) string { return "/" + r + "@main/README.md?tab=history" }},
 		{"commit view", http.MethodGet, func(r string) string { return "/" + r + "/commit/" + f.commit[:10] }},
 		{"compare", http.MethodGet, func(r string) string {
 			return "/" + r + "/compare/" + f.commit[:10] + "..." + f.commit[:10]

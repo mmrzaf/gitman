@@ -136,9 +136,6 @@ func compareURL(repoName, base, head string) string {
 // file than a person could reasonably look at.
 const maxFileDisplayBytes = 1 << 20
 
-// historyPageSize is how many commits the path history shows per page.
-const historyPageSize = 20
-
 // breadcrumbPart is one segment of the path breadcrumb.
 type breadcrumbPart struct {
 	Name string
@@ -178,22 +175,11 @@ type filesPage struct {
 	IsBinary    bool
 	TooLarge    bool
 	// Lines is a text file's content, a line at a time.
-	Lines           []string
-	LastChanged     *git.Commit
-	History         []*git.Commit
-	HistoryMore     bool
-	HistorySkip     int
-	HistoryPageSize int
-	RawURL          string
-	PermalinkURL    string
-	// Tab is what a file's page shows: "code", or its "history".
-	Tab string
+	Lines        []string
+	LastChanged  *git.Commit
+	RawURL       string
+	PermalinkURL string
 }
-
-// NewerSkip and OlderSkip are the ?skip= of the history pages before and
-// after this one.
-func (p filesPage) NewerSkip() int { return max(p.HistorySkip-p.HistoryPageSize, 0) }
-func (p filesPage) OlderSkip() int { return p.HistorySkip + p.HistoryPageSize }
 
 // breadcrumb splits a path into its parts, each carrying the path up to
 // and including itself.
@@ -258,10 +244,20 @@ func (a *App) files(w http.ResponseWriter, r *http.Request, name, refAndPath str
 		return nil
 	}
 
+	// A file's history lives in History, filtered to its path; this is
+	// where the old History tab's addresses lead.
+	if r.URL.Query().Get("tab") == "history" {
+		target := historyURL(repo.Name, res.Name, res.Path)
+		if skip := historySkip(r); skip > 0 {
+			target += "&skip=" + strconv.Itoa(skip)
+		}
+		http.Redirect(w, r, target, http.StatusMovedPermanently)
+		return nil
+	}
+
 	page := filesPage{
 		repoFrame: repoFrame{Repo: repo, Section: "files"},
 		Ref:       res.Name, Commit: res.Commit, Path: res.Path,
-		Tab:          tabFrom(r, "code", "history"),
 		Breadcrumb:   breadcrumb(res.Path),
 		RawURL:       refURL(repo.Name, res.Name, res.Path) + "?raw",
 		PermalinkURL: refURL(repo.Name, res.Commit, res.Path),
@@ -318,25 +314,13 @@ func (a *App) files(w http.ResponseWriter, r *http.Request, name, refAndPath str
 		}
 	}
 
-	// Every entry has a history: a file's commits, a directory's, and at
-	// the root the whole ref's.
-	skip := historySkip(r)
-	history, more, err := gitRepo.Log(ctx, res.Commit, res.Path, skip, historyPageSize)
+	// The commit that last changed this file or directory.
+	last, _, err := gitRepo.Log(ctx, res.Commit, res.Path, 0, 1)
 	if err != nil {
 		return tooLargeToShow(err)
 	}
-	page.History, page.HistoryMore, page.HistorySkip, page.HistoryPageSize = history, more, skip, historyPageSize
-	switch {
-	case skip == 0 && len(history) > 0:
-		page.LastChanged = history[0]
-	case skip > 0:
-		last, _, err := gitRepo.Log(ctx, res.Commit, res.Path, 0, 1)
-		if err != nil {
-			return tooLargeToShow(err)
-		}
-		if len(last) > 0 {
-			page.LastChanged = last[0]
-		}
+	if len(last) > 0 {
+		page.LastChanged = last[0]
 	}
 
 	title := repo.Name + "@" + res.Name
@@ -379,8 +363,8 @@ func pathOrRoot(p string) string {
 	return "\u201c" + p + "\u201d"
 }
 
-// historySkip is how many of a file's newest commits the history page
-// skips: ?skip=, for "Older commits".
+// historySkip is how many of the newest entries a History page skips:
+// ?skip=, for "Older".
 func historySkip(r *http.Request) int {
 	n, err := strconv.Atoi(r.URL.Query().Get("skip"))
 	if err != nil || n < 0 {

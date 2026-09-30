@@ -213,3 +213,62 @@ func recentEvents(ctx context.Context, q postgres.Querier, f filter) ([]Entry, e
 	}
 	return entries, rows.Err()
 }
+
+// repoRefChanges lists a repository's ref updates newest first, each with
+// the run it started: one row per push_updates row, not per push.
+func repoRefChanges(ctx context.Context, q postgres.Querier, repoID string, limit int) ([]HistoryEntry, error) {
+	rows, err := q.Query(ctx, `
+		SELECT u.id, p.created_at, COALESCE(pe.username, ''), u.kind, u.name, u.old_commit, u.new_commit,
+		       u.is_create, u.is_delete, u.is_force, COALESCE(r.number, 0), COALESCE(r.status, '')
+		FROM push_updates u
+		JOIN pushes p ON p.id = u.push_id
+		LEFT JOIN people pe ON pe.id = p.person_id
+		LEFT JOIN runs r ON r.push_id = p.id AND r.ref_kind = u.kind AND r.ref_name = u.name
+		WHERE p.repo_id = $1
+		ORDER BY p.created_at DESC, u.id DESC
+		LIMIT $2
+	`, repoID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list ref changes: %w", err)
+	}
+	defer rows.Close()
+	var entries []HistoryEntry
+	for rows.Next() {
+		e := HistoryEntry{Kind: KindPush}
+		var kind string
+		var isCreate, isDelete, isForce bool
+		if err := rows.Scan(&e.id, &e.At, &e.Actor, &kind, &e.RefName, &e.OldCommit, &e.NewCommit,
+			&isCreate, &isDelete, &isForce, &e.RunNumber, &e.RunStatus); err != nil {
+			return nil, fmt.Errorf("scan ref change: %w", err)
+		}
+		e.RefKind = git.Kind(kind)
+		e.Change = changeOf(e.RefKind, isCreate, isDelete, isForce)
+		entries = append(entries, e)
+	}
+	return entries, rows.Err()
+}
+
+// repoEvents lists a repository's settings changes newest first.
+func repoEvents(ctx context.Context, q postgres.Querier, repoID string, limit int) ([]HistoryEntry, error) {
+	rows, err := q.Query(ctx, `
+		SELECT e.id, e.created_at, COALESCE(p.username, ''), e.action, e.detail
+		FROM events e
+		LEFT JOIN people p ON p.id = e.person_id
+		WHERE e.repo_id = $1
+		ORDER BY e.created_at DESC, e.id DESC
+		LIMIT $2
+	`, repoID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list repository events: %w", err)
+	}
+	defer rows.Close()
+	var entries []HistoryEntry
+	for rows.Next() {
+		e := HistoryEntry{Kind: KindEvent}
+		if err := rows.Scan(&e.id, &e.At, &e.Actor, &e.Action, &e.Detail); err != nil {
+			return nil, fmt.Errorf("scan repository event: %w", err)
+		}
+		entries = append(entries, e)
+	}
+	return entries, rows.Err()
+}

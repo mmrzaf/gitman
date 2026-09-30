@@ -50,6 +50,12 @@ func (s *Service) RunsForRepo(ctx context.Context, repoID string, before int64, 
 	return selectRunsForRepo(ctx, s.db.Q, repoID, before, limit)
 }
 
+// LatestRunPerCommit returns the newest run of each of commits, keyed by
+// commit, for the ones that have a run.
+func (s *Service) LatestRunPerCommit(ctx context.Context, repoID string, commits []string) (map[string]Summary, error) {
+	return selectLatestRunPerCommit(ctx, s.db.Q, repoID, commits)
+}
+
 // Live returns, for every repository and target, the latest deployment:
 // what is live there now, ordered by repository, then target.
 func (s *Service) Live(ctx context.Context) ([]Deployment, error) {

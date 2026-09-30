@@ -276,6 +276,9 @@ type updateRecord struct {
 	commit   string // the commit the ref now resolves to
 	pipeline []byte
 	problem  string
+	// force reports a branch moved to a commit that does not descend from
+	// the old one: a rewrite of its history.
+	force bool
 }
 
 // PostReceive records the push, brings the ref index up to date, and
@@ -310,6 +313,13 @@ func (h *Hook) PostReceive(ctx context.Context, updates []Update) error {
 			if rec.commit, err = h.Git.ResolveCommit(ctx, u.New); err != nil {
 				return fmt.Errorf("resolve %s: %w", u.Ref, err)
 			}
+			if u.Kind == git.KindBranch && !u.IsCreate() {
+				ff, err := h.Git.IsAncestor(ctx, u.Old, u.New)
+				if err != nil {
+					return fmt.Errorf("check fast-forward for %s: %w", u.Ref, err)
+				}
+				rec.force = !ff
+			}
 			if rec.decision.RunOnPush {
 				rec.pipeline, rec.problem, err = ci.LoadPipeline(ctx, h.Git, rec.commit)
 				if err != nil {
@@ -335,7 +345,7 @@ func (h *Hook) PostReceive(ctx context.Context, updates []Update) error {
 		}
 		for _, rec := range records {
 			if err := insertPushUpdate(ctx, tx, pushID, rec.Kind, rec.Name, rec.Old, rec.New,
-				rec.IsCreate(), rec.IsDelete(), rec.commits, rec.capped); err != nil {
+				rec.IsCreate(), rec.IsDelete(), rec.force, rec.commits, rec.capped); err != nil {
 				return err
 			}
 		}

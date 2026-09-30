@@ -14,17 +14,25 @@ list of what's readable to you.
 
 ## A repository
 
-Its nav has three items:
+Its nav has five items:
 
 - **Overview** — its branches and tags, what's currently deployed to
   each target (if the pipeline defines any), and a timeline of recent
   activity.
 - **Files** — browse the tree at any branch, tag or commit; jump to a
-  file by path with the go-to-file finder. Each file and directory has a
-  **History** tab of the commits that touched it; at the root, that is
-  every commit of the branch or tag. A commit's own page (its diff
+  file by path with the go-to-file finder. A commit's own page (its diff
   and metadata) and a comparison between two refs are reached from links
-  here, not from the nav.
+  here, not from the nav. **History** on a file or directory opens the
+  History section, filtered to that path.
+- **History** — two tabs:
+  - **Commits** is a branch's, tag's or commit's log, newest first, with
+    each commit's latest run, the branches and tags now at it, and a
+    marker on merges. Pick the ref at the top; a path filter, set from
+    Files, shows only the commits that touched that path.
+  - **Activity** is every change to the repository's refs (created,
+    pushed, force-pushed, deleted, or a tag moved) with who made it, the
+    commits it moved from and to, and the run it started, together with
+    changes to its settings.
 - **Runs** — every run of this repository's pipeline, newest first,
   paged.
 - **Settings** — admins only: description, default branch, ref rules,

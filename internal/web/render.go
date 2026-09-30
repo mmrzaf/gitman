@@ -49,6 +49,7 @@ func loadViews(assets *assets) (*views, error) {
 		"lineKind":   lineKind,
 		"dirOf":      dirOf,
 		"refURL":     refURL,
+		"historyURL": historyURL,
 		"compareURL": compareURL,
 		"diffTotals": diffTotals,
 	}
@@ -96,8 +97,8 @@ type liveSource interface {
 }
 
 // repoFrame is embedded in the data of every page inside a repository:
-// the repository, and which of its sections — "overview", "files" or
-// "settings" — the page is, if any.
+// the repository, and which of its sections — "overview", "files",
+// "history", "runs" or "settings" — the page is, if any.
 type repoFrame struct {
 	Repo    *reposvc.Repo
 	Section string

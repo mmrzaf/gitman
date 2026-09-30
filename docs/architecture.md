@@ -18,7 +18,8 @@ processes, selected by its first argument:
 ## State
 
 - **PostgreSQL** holds everything except the repositories themselves:
-  people, sessions, tokens, repositories, ref rules, pipeline runs,
+  people, sessions, tokens, repositories, ref rules, pushes and each ref
+  they moved (whether it rewrote history included), pipeline runs,
   deployments, and encrypted secrets. `web` and workers share nothing
   else — no cache, no message queue — so any number of workers can run,
   and PostgreSQL's `LISTEN`/`NOTIFY` plus row locking is what lets them

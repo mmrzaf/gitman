@@ -3,6 +3,28 @@
 What changed in each release, for the people who run Gitman. Newest first.
 Each release's section is also its GitHub release notes.
 
+## [Unreleased]
+
+### Added
+
+- History is a section of its own, between Files and Runs. **Commits**
+  is a ref's log, filterable to a path, with each commit's run, the
+  branches and tags at it and a merge marker. **Activity** is every ref
+  change (created, pushed, force-pushed, deleted, tag moved), who made it
+  and the run it started, with the repository's settings changes. Pushes
+  from before this release show a force-push as a plain push.
+
+### Changed
+
+- Files no longer has Code and History tabs. **History** on a file or
+  directory opens History filtered to that path, and old `?tab=history`
+  addresses redirect there.
+
+### Fixed
+
+- A repository's clone address (`/<repo>.git`), opened in a browser, goes
+  to the repository instead of a 404.
+
 ## [1.0.0-beta.21] - 2026-09-28
 
 A rewrite. Gitman is rebuilt around PostgreSQL, Git over HTTPS and
