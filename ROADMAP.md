@@ -35,7 +35,7 @@ Refs and history: managing branches, tags and revisions from the web.
   branch, tag or commit, streamed with `git archive`, following the
   repository's read access, from a Download button next to the ref picker
   on Files. Beta 1–20 had this; the rewrite doesn't yet.
-- [ ] **Show a deployment's version only when it isn't the commit.** A
+- [x] **Show a deployment's version only when it isn't the commit.** A
   branch deploy shows the same commit twice on the Overview and Home.
 
 ## Later

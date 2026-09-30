@@ -18,7 +18,9 @@ Its nav has five items:
 
 - **Overview** — its branches and tags, what's currently deployed to
   each target (if the pipeline defines any), and a timeline of recent
-  activity.
+  activity. A deployment shows its version only when that says more than
+  its commit: a tag's name does, and a branch's version is its commit, so
+  it shows the commit once.
 - **Files** — browse the tree at any branch, tag or commit; jump to a
   file by path with the go-to-file finder. A commit's own page (its diff
   and metadata) and a comparison between two refs are reached from links

@@ -33,11 +33,13 @@ Each release's section is also its GitHub release notes.
 
 ### Changed
 
-- The Runs table shows each run's commit, who started it, how long it
-  took, and the target it shipped to.
 - Files no longer has Code and History tabs. **History** on a file or
   directory opens History filtered to that path, and old `?tab=history`
   addresses redirect there.
+- The Runs table shows each run's commit, who started it, how long it
+  took, and the target it shipped to.
+- A deployment shows its version only when it isn't its commit. A branch
+  deploy no longer shows the same commit twice on the Overview and Home.
 
 ### Fixed
 

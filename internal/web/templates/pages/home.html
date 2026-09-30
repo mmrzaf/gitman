@@ -65,7 +65,7 @@
                 <td>
                   {{- with index $repo.Live .}}
                   <div class="board-cell">
-                    <span class="version truncate" title="{{.Version}}">{{.Version}}</span>
+                    {{- if ownVersion .Version .Commit}}<span class="version truncate" title="{{.Version}}">{{.Version}}</span>{{end}}
                     <span class="board-cell-meta">{{template "commit" (dict "Repo" $repo.Name "Hash" .Commit)}}{{template "time" .At}}{{if .RunNumber}}<a href="/{{$repo.Name}}/runs/{{.RunNumber}}">#{{.RunNumber}}</a>{{end}}</span>
                   </div>
                   {{- else}}<span class="board-none">—<span class="visually-hidden">nothing shipped</span></span>{{end}}

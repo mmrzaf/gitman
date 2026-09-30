@@ -122,7 +122,7 @@
       {{- else if eq .Kind "run"}}
         <a href="/{{.RepoName}}/runs/{{.RunNumber}}">Run #{{.RunNumber}}</a> {{.Status}}{{if .Actor}} <span class="muted">· {{template "person" .Actor}}</span>{{end}}
       {{- else if eq .Kind "deployment"}}
-        {{template "person" .Actor}} shipped <span class="version">{{.Version}}</span> to <strong>{{.Target}}</strong>
+        {{template "person" .Actor}} shipped {{if ownVersion .Version .Commit}}<span class="version">{{.Version}}</span>{{else}}{{template "commit" (dict "Repo" .RepoName "Hash" .Commit)}}{{end}} to <strong>{{.Target}}</strong>
       {{- else if eq .Kind "event"}}
         {{template "person" .Actor}} {{eventText .Action .Detail}}
       {{- end}}

@@ -12,7 +12,7 @@
           {{- range .Data.Targets}}
           <article class="target" aria-label="{{.Target}}">
             <p class="target-name">{{.Target}}</p>
-            <p class="target-version" title="{{.Version}}">{{.Version}}</p>
+            {{- if ownVersion .Version .Commit}}<p class="target-version" title="{{.Version}}">{{.Version}}</p>{{end}}
             <p class="target-meta">
               {{template "commit" (dict "Repo" $repo.Name "Hash" .Commit)}}
               <span>{{template "time" .At}}{{if .Person}} by {{.Person}}{{end}}</span>
@@ -96,7 +96,7 @@
         <td class="cell-shrink">{{with .Divergence}}<a href="{{compareURL $repo.Name $repo.DefaultBranch $name}}">{{if or .Ahead .Behind}}{{if .Ahead}}{{.Ahead}} ahead{{end}}{{if and .Ahead .Behind}}, {{end}}{{if .Behind}}{{.Behind}} behind{{end}}{{else}}even{{end}}</a>{{else}}<span class="muted">—</span>{{end}}</td>
         {{- end}}
         <td class="cell-shrink">{{with .LatestRun}}<a class="run-ref" href="/{{$repo.Name}}/runs/{{.Number}}">{{template "status" .Status}}<span>#{{.Number}}</span></a>{{else}}<span class="muted">—</span>{{end}}</td>
-        <td class="cell-shrink">{{with .LatestDeployment}}<span class="version">{{.Version}}</span> <span class="muted">→</span> {{.Target}}{{else}}<span class="muted">—</span>{{end}}</td>
+        <td class="cell-shrink">{{with .LatestDeployment}}{{if ownVersion .Version .Commit}}<span class="version">{{.Version}}</span> <span class="muted">→</span> {{end}}{{.Target}}{{else}}<span class="muted">—</span>{{end}}</td>
         <td class="cell-shrink">{{template "commit" (dict "Repo" $repo.Name "Hash" .Commit)}}</td>
         <td class="cell-shrink cell-muted">{{template "time" .UpdatedAt}}{{if .UpdatedByUsername}} by {{.UpdatedByUsername}}{{end}}</td>
         <td class="cell-shrink cell-end"><span class="cell-actions">

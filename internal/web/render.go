@@ -51,6 +51,7 @@ func loadViews(assets *assets) (*views, error) {
 		"refURL":         refURL,
 		"historyURL":     historyURL,
 		"archiveURL":     archiveURL,
+		"ownVersion":     ownVersion,
 		"compareURL":     compareURL,
 		"compareFormURL": compareFormURL,
 		"diffTotals":     diffTotals,
@@ -312,6 +313,14 @@ func ago(t time.Time) string {
 		return "in " + amount
 	}
 	return amount + " ago"
+}
+
+// ownVersion reports whether a deployment's version says something its
+// commit does not. A branch deploy's version is the first characters of its
+// commit, so showing both shows the same commit twice; a tag's version is
+// the tag, and a tag's name can never look like a commit's hash.
+func ownVersion(version, commit string) bool {
+	return version != "" && !strings.HasPrefix(commit, version)
 }
 
 func shortHash(h string) string {
