@@ -131,12 +131,8 @@ func (pc *pushContext) decide(u Update) repo.Decision {
 	return repo.Evaluate(pc.rules, u.Kind, u.Name, pc.person.ID, pc.person.IsAdmin, pc.repo.DefaultPushPolicy, pc.repo.DefaultPushPeople)
 }
 
-// ruleLabel names the rule behind a decision in a rejection message.
-func ruleLabel(d repo.Decision) string {
-	if d.MatchedRule == nil {
-		return "no rule"
-	}
-	return fmt.Sprintf("the rule for %s %q", d.MatchedRule.Kind, d.MatchedRule.Pattern)
+func (pc *pushContext) who() repo.Who {
+	return repo.Who{ID: pc.person.ID, Username: pc.person.Username, IsAdmin: pc.person.IsAdmin}
 }
 
 // PreReceive checks every update against Gitman's ref naming rules and
@@ -210,24 +206,21 @@ func (h *Hook) PreReceive(ctx context.Context, updates []Update) error {
 			}
 		}
 
-		d := pc.decide(u)
-		if !d.CanPush {
-			reject(u, "%s does not allow %s to push here", ruleLabel(d), pc.person.Username)
+		if u.IsDelete() {
+			if _, reason := repo.CheckDelete(pc.repo, pc.rules, u.Kind, u.Name, pc.who()); reason != "" {
+				reject(u, "%s", reason)
+			}
 			continue
 		}
 
-		switch {
-		case u.IsDelete():
-			if u.Kind == git.KindBranch && u.Name == pc.repo.DefaultBranch {
-				reject(u, "the default branch cannot be deleted")
-				continue
-			}
-			if !d.AllowDelete {
-				reject(u, "%s does not allow deleting it", ruleLabel(d))
-				continue
-			}
+		d := pc.decide(u)
+		if !d.CanPush {
+			reject(u, "%s does not allow %s to push here", d.RuleLabel(), pc.person.Username)
+			continue
+		}
 
-		case u.Kind == git.KindBranch:
+		switch u.Kind {
+		case git.KindBranch:
 			typ, err := h.Git.ObjectType(ctx, u.New)
 			if err != nil {
 				return fmt.Errorf("inspect %s: %w", u.New, err)
@@ -242,12 +235,12 @@ func (h *Hook) PreReceive(ctx context.Context, updates []Update) error {
 					return fmt.Errorf("check fast-forward for %s: %w", u.Ref, err)
 				}
 				if !ff && !d.AllowForce {
-					reject(u, "this rewrites history (a force-push), which %s does not allow", ruleLabel(d))
+					reject(u, "this rewrites history (a force-push), which %s does not allow", d.RuleLabel())
 					continue
 				}
 			}
 
-		case u.Kind == git.KindTag:
+		case git.KindTag:
 			if _, err := h.Git.ResolveCommit(ctx, u.New); err != nil {
 				if errors.Is(err, git.ErrNotFound) {
 					reject(u, "a tag must point at a commit")
@@ -256,7 +249,7 @@ func (h *Hook) PreReceive(ctx context.Context, updates []Update) error {
 				return fmt.Errorf("inspect %s: %w", u.New, err)
 			}
 			if !u.IsCreate() && !d.AllowForce {
-				reject(u, "moving an existing tag is a force-push, which %s does not allow", ruleLabel(d))
+				reject(u, "moving an existing tag is a force-push, which %s does not allow", d.RuleLabel())
 				continue
 			}
 		}
@@ -443,7 +436,7 @@ func (h *Hook) PostReceive(ctx context.Context, updates []Update) error {
 		if rec.decision.MatchedRule == nil {
 			h.say("Gitman: no run for %s %s: no ref rule matches it, and only a rule with \"run\" on starts one.", rec.Kind, rec.Name)
 		} else {
-			h.say("Gitman: no run for %s %s: %s does not have \"run\" on.", rec.Kind, rec.Name, ruleLabel(rec.decision))
+			h.say("Gitman: no run for %s %s: %s does not have \"run\" on.", rec.Kind, rec.Name, rec.decision.RuleLabel())
 		}
 	}
 	return nil
