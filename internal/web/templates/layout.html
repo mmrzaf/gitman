@@ -22,7 +22,7 @@
 {{- if .Person}}
 <header class="topbar">
   <nav class="topbar-inner" aria-label="Main">
-    <a class="brand" href="/" aria-label="Gitman home"><picture class="brand-lockup"><source media="(prefers-color-scheme: dark)" srcset="{{asset "brand/gitman-header-dark.png"}}"><img src="{{asset "brand/gitman-header-light.png"}}" alt="" width="126" height="42"></picture><img class="brand-symbol" src="{{asset "brand/gitman-mark-64.png"}}" alt="" width="28" height="28"></a>
+    <a class="brand" href="/" aria-label="Gitman home"><span class="brand-lockup"><img class="for-light" src="{{asset "brand/gitman-header-light.png"}}" alt="" width="126" height="42"><img class="for-dark" src="{{asset "brand/gitman-header-dark.png"}}" alt="" width="126" height="42"></span><img class="brand-symbol" src="{{asset "brand/gitman-mark-64.png"}}" alt="" width="28" height="28"></a>
     <span class="topbar-spacer"></span>
     <a class="palette-button" href="/jump" data-palette-open aria-keyshortcuts="Control+K Meta+K"{{if eq .Name "jump"}} aria-current="page"{{end}}>
       {{template "icon" "search"}}<span class="palette-button-label">Jump to…</span><kbd class="kbd js-only" data-shortcut-label>Ctrl K</kbd>
@@ -37,6 +37,15 @@
         {{- end}}
         <a class="menu-item" href="/me">{{template "icon" "key"}}Access tokens</a>
         <a class="menu-item" href="/me?tab=password">{{template "icon" "lock"}}Change password</a>
+        <div class="menu-separator" role="separator"></div>
+        <div class="menu-theme js-only" role="group" aria-label="Theme">
+          <span>Theme</span>
+          <span class="theme-switch">
+            <button type="button" class="theme-choice" data-theme-choice="system" aria-label="System" title="System">{{template "icon" "monitor"}}</button>
+            <button type="button" class="theme-choice" data-theme-choice="light" aria-label="Light" title="Light">{{template "icon" "sun"}}</button>
+            <button type="button" class="theme-choice" data-theme-choice="dark" aria-label="Dark" title="Dark">{{template "icon" "moon"}}</button>
+          </span>
+        </div>
         <div class="menu-separator" role="separator"></div>
         <form method="post" action="/logout"><button type="submit" class="menu-item">{{template "icon" "signout"}}Sign out</button></form>
       </div>

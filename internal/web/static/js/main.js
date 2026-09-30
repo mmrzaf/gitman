@@ -8,6 +8,7 @@ import "./toast.js";
 import "./tabs.js";
 import "./swap.js";
 import "./menu.js";
+import "./theme.js";
 import "./dialog.js";
 import "./confirm.js";
 import "./diff.js";

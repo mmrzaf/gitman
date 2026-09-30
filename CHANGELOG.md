@@ -50,6 +50,8 @@ worker starts.
 
 ### Changed
 
+- A theme switch in the account menu: the system's theme, light or dark,
+  kept in the browser.
 - Files is no longer in the repository's nav, and has no Code and History
   tabs: the file browser is a step down from the Overview, from a ref's name,
   **Browse files**, or a commit. **Commits** on a file or

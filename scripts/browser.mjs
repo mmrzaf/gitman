@@ -210,6 +210,27 @@ const query = (page) => new URL(page.url()).searchParams;
   check("Escape closes a menu and returns focus to its button", !(await page.locator("details[data-menu][open]").count())
     && (await summary.evaluate((el) => el === document.activeElement)));
 
+  // The theme switch in the account menu.
+  await page.goto(`${base}/`);
+  const themeOf = () => page.evaluate(() => ({ attr: document.documentElement.dataset.theme ?? "", bg: getComputedStyle(document.body).backgroundColor }));
+  const choose = async (name) => {
+    if (!(await page.locator("details[data-menu][open]").count())) await page.click("summary[aria-label^='Account menu']");
+    await page.click(`[data-theme-choice=${name}]`);
+  };
+  await choose("dark");
+  const dark = await themeOf();
+  await page.reload();
+  const kept = await themeOf();
+  check("the theme switch sets dark, and it survives a reload", dark.attr === "dark" && kept.attr === "dark" && kept.bg === dark.bg, JSON.stringify([dark, kept]));
+  await choose("light");
+  const light = await themeOf();
+  check("the theme switch sets light, which differs from dark", light.attr === "light" && light.bg !== dark.bg, JSON.stringify(light));
+  check("the chosen theme is marked in the menu", (await page.locator("[data-theme-choice=light]").getAttribute("aria-checked")) === "true"
+    && (await page.locator("[data-theme-choice=dark]").getAttribute("aria-checked")) === "false");
+  await choose("system");
+  check("System goes back to the system's theme", (await themeOf()).attr === "");
+  await page.keyboard.press("Escape");
+
   // Dialogs keep the address too.
   await page.goto(`${base}/`);
   const opener = page.locator("[data-dialog-open=new-repo]");

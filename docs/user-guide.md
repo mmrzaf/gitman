@@ -175,6 +175,8 @@ Under your username, top-right of every page:
   password. A read token can clone and fetch; a write token can also
   push.
 - Change your password.
+- **Theme** — follow the system, or always light or dark. It is kept in
+  this browser only.
 
 ## Admins
 
