@@ -10,6 +10,7 @@ import (
 
 	"github.com/mmrzaf/gitman/internal/auth"
 	"github.com/mmrzaf/gitman/internal/git"
+	"github.com/mmrzaf/gitman/internal/postgres"
 	reposvc "github.com/mmrzaf/gitman/internal/repo"
 )
 
@@ -231,4 +232,9 @@ func mustOpen(t *testing.T, store *git.Store, repo *reposvc.Repo) *git.Repo {
 		t.Fatal(err)
 	}
 	return gitRepo
+}
+
+func mustOpenByName(t *testing.T, database *postgres.DB, store *git.Store, name string) *git.Repo {
+	t.Helper()
+	return mustOpen(t, store, mustRepo(t, database, name))
 }

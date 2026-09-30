@@ -196,6 +196,9 @@ type filesPage struct {
 	LastChanged  *git.Commit
 	RawURL       string
 	PermalinkURL string
+	// ArchiveRef is what an archive of this page's ref is asked for by: its
+	// name, or for a commit its full hash.
+	ArchiveRef string
 }
 
 // breadcrumb splits a path into its parts, each carrying the path up to
@@ -280,6 +283,10 @@ func (a *App) files(w http.ResponseWriter, r *http.Request, name, refAndPath str
 		PermalinkURL: refURL(repo.Name, res.Commit, res.Path),
 		RefIsBranch:  res.Kind == git.KindBranch,
 		RefIsTag:     res.Kind == git.KindTag,
+		ArchiveRef:   res.Name,
+	}
+	if res.Kind == "" {
+		page.ArchiveRef = res.Commit
 	}
 
 	if page.Refs, err = a.repos.ListRefs(ctx, repo.ID); err != nil {

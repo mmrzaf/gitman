@@ -315,6 +315,13 @@ const query = (page) => new URL(page.url()).searchParams;
   await Promise.all([page.waitForURL(/compare\/main\.\.\.v1\.4\.0/), page.locator("#compare-head").dispatchEvent("change")]);
   check("choosing both refs goes to their comparison", page.url() === `${base}/demo/compare/main...v1.4.0`);
 
+  // Downloading an archive of what the page shows.
+  await page.goto(`${base}/demo@main`);
+  await page.click("summary[aria-label^='Download']");
+  const download = page.waitForEvent("download");
+  await page.click("a.menu-item:has-text('.zip')");
+  check("Download saves an archive named for the repository and ref", (await download).suggestedFilename() === "demo-main.zip");
+
   // Copying, inline editing, times.
   await page.goto(`${base}/demo`);
   await page.click("button[aria-label='Copy HTTPS']");
@@ -378,6 +385,7 @@ const states = [
     await p.locator("details[open] .menu-list").getByRole("menuitem", { name: "Disable" }).click();
   }],
   ["compare-pickers-error", "/demo/compare?base=main&head=nope", async () => {}],
+  ["download-menu", "/demo@main", async (p) => { await p.click("summary[aria-label^='Download']"); }],
   ["delete-confirm", "/demo", async (p) => { await p.click("button[aria-label^='Delete branch feature']"); }],
   ["new-repo", "/", async (p) => { await p.click("[data-dialog-open=new-repo]"); }],
   ["account-menu", "/", async (p) => { await p.click("summary[aria-label^='Account menu']"); }],

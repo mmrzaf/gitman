@@ -47,6 +47,13 @@
       </span>
       <button type="submit" class="btn btn-sm no-js-only">Switch</button>
     </form>
+    <details class="menu menu-start" data-menu>
+      <summary class="btn btn-sm" aria-label="Download {{if or $d.RefIsBranch $d.RefIsTag}}{{$d.Ref}}{{else}}commit {{short $d.Ref}}{{end}}">{{template "icon" "download"}}Download{{template "icon" "chevron-down"}}</summary>
+      <div class="menu-list">
+        <a class="menu-item" href="{{archiveURL $repo.Name $d.ArchiveRef "tar.gz"}}" data-command="Download {{$d.Ref}} as .tar.gz">{{template "icon" "download"}}.tar.gz</a>
+        <a class="menu-item" href="{{archiveURL $repo.Name $d.ArchiveRef "zip"}}" data-command="Download {{$d.Ref}} as .zip">{{template "icon" "download"}}.zip</a>
+      </div>
+    </details>
     <span class="toolbar-spacer"></span>
     {{- if not $d.IsDir}}
     {{- if $d.Lines}}<span class="toolbar-text">{{len $d.Lines}} line{{if ne (len $d.Lines) 1}}s{{end}}</span>{{end}}

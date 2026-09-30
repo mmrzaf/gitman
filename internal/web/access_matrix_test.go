@@ -121,6 +121,8 @@ func (f *matrixFixture) routes() []struct {
 		{"compare", http.MethodGet, func(r string) string {
 			return "/" + r + "/compare/" + f.commit[:10] + "..." + f.commit[:10]
 		}},
+		{"archive", http.MethodGet, func(r string) string { return "/" + r + "/archive/main.tar.gz" }},
+		{"archive of a commit", http.MethodGet, func(r string) string { return "/" + r + "/archive/" + f.commit + ".zip" }},
 		{"compare pickers", http.MethodGet, func(r string) string { return "/" + r + "/compare" }},
 		{"compare pickers with refs", http.MethodGet, func(r string) string { return "/" + r + "/compare?base=main&head=main" }},
 		{"tree-paths", http.MethodGet, func(r string) string { return "/" + r + "/tree-paths?ref=main" }},

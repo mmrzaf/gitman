@@ -26,6 +26,10 @@ Each release's section is also its GitHub release notes.
   branch's row, against the default branch.
 - How far each branch is ahead of and behind the default branch, on the
   Overview.
+- Download a branch, tag or commit as a `.tar.gz` or `.zip`, from
+  **Download** next to the ref picker on Files. It is streamed from
+  `git archive`, follows the repository's read access, and shares the limit
+  on concurrent Git requests.
 
 ### Changed
 

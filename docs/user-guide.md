@@ -23,7 +23,9 @@ Its nav has five items:
   file by path with the go-to-file finder. A commit's own page (its diff
   and metadata) and a comparison between two refs are reached from links
   here, not from the nav. **History** on a file or directory opens the
-  History section, filtered to that path.
+  History section, filtered to that path. **Download**, next to the ref
+  picker, gives the whole tree of the branch, tag or commit you are
+  looking at as a `.tar.gz` or a `.zip`.
 - **History** — two tabs:
   - **Commits** is a branch's, tag's or commit's log, newest first, with
     each commit's latest run, the branches and tags now at it, and a
@@ -42,6 +44,21 @@ Its nav has five items:
 - **Settings** — admins only: description, default branch, ref rules,
   secrets, who may read the repository and push to a ref no rule matches,
   and deletion.
+
+### Downloading an archive
+
+An archive of any branch, tag or commit is at
+`/<repo>/archive/<ref>.tar.gz` or `.zip`; **Download** next to the ref
+picker on Files links to it. You must be signed in, as for any page:
+access tokens are for Git.
+
+The file is named `<repo>-<ref>`, with any `/` in the ref written as `-`,
+and everything in it is under a folder of that name. A commit is named by
+its first seven characters. Gitman streams the archive from Git as it is
+made, so a large repository needs no memory for it. Anyone who can read
+the repository can download it, and to anyone else it does not exist.
+Downloads share the limit on how many clones, fetches, pushes and downloads
+run at once; past it Gitman answers "too busy" and a retry succeeds.
 
 ### Comparing refs
 

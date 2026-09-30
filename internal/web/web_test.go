@@ -307,6 +307,14 @@ func TestHomeBoard(t *testing.T) {
 // already covers end to end).
 func setupWithStore(t *testing.T) (*postgres.DB, *git.Store, *browser) {
 	t.Helper()
+	_, database, store, b := setupApp(t)
+	return database, store, b
+}
+
+// setupApp is setupWithStore that also returns the App, for tests that
+// reach into it.
+func setupApp(t *testing.T) (*App, *postgres.DB, *git.Store, *browser) {
+	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git binary not available")
 	}
@@ -320,7 +328,7 @@ func setupWithStore(t *testing.T) (*postgres.DB, *git.Store, *browser) {
 	}
 	server := httptest.NewServer(app.handler)
 	t.Cleanup(server.Close)
-	return database, store, newBrowser(t, server)
+	return app, database, store, newBrowser(t, server)
 }
 
 // testServices builds the services an App works with from a database and

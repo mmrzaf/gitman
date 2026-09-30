@@ -31,7 +31,7 @@ Refs and history: managing branches, tags and revisions from the web.
   pushing v0.1.1–v0.1.3 to waiotech reported no reason at all.
 - [x] **More in the Runs table.** The commit, how long the run took, who
   started it, and the target it shipped to.
-- [ ] **Download a ref as an archive.** A `.tar.gz` or `.zip` of any
+- [x] **Download a ref as an archive.** A `.tar.gz` or `.zip` of any
   branch, tag or commit, streamed with `git archive`, following the
   repository's read access, from a Download button next to the ref picker
   on Files. Beta 1–20 had this; the rewrite doesn't yet.

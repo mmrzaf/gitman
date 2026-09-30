@@ -50,6 +50,7 @@ func loadViews(assets *assets) (*views, error) {
 		"dirOf":          dirOf,
 		"refURL":         refURL,
 		"historyURL":     historyURL,
+		"archiveURL":     archiveURL,
 		"compareURL":     compareURL,
 		"compareFormURL": compareFormURL,
 		"diffTotals":     diffTotals,
