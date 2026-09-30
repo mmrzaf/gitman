@@ -8,15 +8,15 @@ an admin with `gitman admin person add`.
 
 ## Home
 
-Every repository you can read is a card: its description, the latest commit
-on its default branch and how that ran, any run in progress, and a row for
-each target anything has shipped to, with what is live there and how many
-commits the default branch has gained since. Every card has the same rows,
-so they line up. A feed of what has been happening sits beside them. Anyone
-signed in can create a new repository from here; there are no organizations
-or namespaces, just one flat list of what's readable to you.
+Two lists on the left: every repository you can read, with its description,
+the latest commit on its default branch and how that ran (or the run in
+progress); and **Deployed**, one row for every target something is live on,
+with how many commits the default branch has gained since. On the right, a
+feed of what has been happening, under **Needs attention** when something
+does. Anyone signed in can create a new repository from here; there are no
+organizations or namespaces, just one flat list of what's readable to you.
 
-**Needs attention** appears above the cards only when something does:
+**Needs attention** appears only when something does:
 
 - the latest run of a default branch failed;
 - runs are queued and no worker is online;
@@ -28,9 +28,9 @@ or namespaces, just one flat list of what's readable to you.
 Its nav has four items:
 
 - **Overview** — what is deployed to each target (if the pipeline
-  defines any) and how many commits each lacks, the newest commits of the
-  default branch, its branches and tags, the clone address, the latest runs
-  of the default branch, and the repository's activity. Each branch says how
+  defines any) and how many commits each lacks, its branches and tags, the
+  clone address, the latest runs of the default branch, and the
+  repository's activity. Each branch says how
   far it is ahead of and behind the default branch. A deployment shows its
   version only when that says more than its commit: a tag's name does, and
   a branch's version is its commit, so it shows the commit once. The newest

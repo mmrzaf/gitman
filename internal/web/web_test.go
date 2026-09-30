@@ -281,23 +281,22 @@ func TestHomeBoard(t *testing.T) {
 	resp, body := b.do(http.MethodGet, "/", nil, nil)
 	// One column per target anything has shipped to; a repository that
 	// has shipped nothing there says so.
-	expect(t, resp, body, http.StatusOK, "waiotech", "3f2a91cb1de0", "<span>#7</span>", "2 h ago", "cerv", `<dt>staging</dt>`,
-		`<span class="visually-hidden"> nothing shipped</span>`)
+	expect(t, resp, body, http.StatusOK, "waiotech", "3f2a91cb1de0", "<span>#7</span>", "2 h ago", "cerv", `<td>staging</td>`)
 	if !strings.Contains(body, `class="brand" href="/" aria-label="Gitman home"`) ||
 		!strings.Contains(body, `class="menu-item" href="/people"`) || strings.Contains(body, `class="topbar-link"`) {
 		t.Error("the logo must link home and People must be in the admin account menu")
 	}
 
-	// The cards (what's live now) must not show a superseded deployment,
-	// even though the timeline beside them legitimately does — that older
+	// The list of what is live must not show a superseded deployment, even
+	// though the timeline beside it legitimately does — that older
 	// deployment really happened.
-	cardsStart := strings.Index(body, `class="cards"`)
-	cardsEnd := strings.Index(body, `id="timeline-title"`)
-	if cardsStart < 0 || cardsEnd < 0 || cardsEnd < cardsStart {
-		t.Fatal("could not locate the cards in the page")
+	listStart := strings.Index(body, `id="deployments-title"`)
+	listEnd := strings.Index(body, `id="timeline-title"`)
+	if listStart < 0 || listEnd < 0 || listEnd < listStart {
+		t.Fatal("could not locate the list of deployments in the page")
 	}
-	if strings.Contains(body[cardsStart:cardsEnd], ">old<") {
-		t.Error("the cards show a superseded deployment")
+	if strings.Contains(body[listStart:listEnd], ">old<") {
+		t.Error("the list of deployments shows a superseded deployment")
 	}
 }
 

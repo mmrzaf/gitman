@@ -9,11 +9,10 @@ import (
 	"time"
 )
 
-// TestHomeCardsHaveTheSameShapeWhateverARepositoryHas: a repository with a
-// pushed default branch, a run and two targets, one with nothing pushed and
-// nothing shipped, and one that has shipped to only one target all show the
-// same places.
-func TestHomeCardsHaveTheSameShapeWhateverARepositoryHas(t *testing.T) {
+// TestHomeListsRepositoriesAndWhatIsDeployed: every repository is a row, with
+// what landed last on its default branch and how it ran, and every target
+// something is live on is a row of the list of deployments.
+func TestHomeListsRepositoriesAndWhatIsDeployed(t *testing.T) {
 	database, store, b := setupWithStore(t)
 	ctx := context.Background()
 	signIn(t, database, b, "darius", false)
@@ -23,6 +22,14 @@ func TestHomeCardsHaveTheSameShapeWhateverARepositoryHas(t *testing.T) {
 	old := mustResolve(t, mustOpen(t, store, repo), "v1.0.0")
 	if resp, body := b.do(http.MethodPost, "/repos", url.Values{"name": {"fresh"}, "description": {"Nothing in it"}}, nil); resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("create repo: %d\n%s", resp.StatusCode, body)
+	}
+
+	// Before anything has run or shipped, there are no columns or lists for
+	// either.
+	resp, body := b.do(http.MethodGet, "/", nil, nil)
+	expect(t, resp, body, http.StatusOK, `id="repos-title"`, "Nothing in it", "Nothing pushed yet", "Update README", `<div class="region" data-live-region="deployments"></div>`)
+	if strings.Contains(body, `<th scope="col">Run</th>`) || strings.Contains(body, `id="deployments-title"`) {
+		t.Error("Home has a column or a list with nothing in it")
 	}
 
 	insert := func(q string, args ...any) {
@@ -38,40 +45,31 @@ func TestHomeCardsHaveTheSameShapeWhateverARepositoryHas(t *testing.T) {
 	insert(`INSERT INTO deployments (id, repo_id, target, version, commit_hash, run_id, person_id) VALUES
 	        ('d1', $1, 'staging', $2, $3, 'r1', $5), ('d2', $1, 'production', 'v1.0.0', $4, 'r2', $5)`, repo.ID, head[:12], head, old, person.ID)
 
-	resp, body := b.do(http.MethodGet, "/", nil, nil)
-	expect(t, resp, body, http.StatusOK, `class="cards"`, `id="card-waiotech"`, `id="card-fresh"`, "Nothing in it")
-	card := func(name string) string {
-		t.Helper()
-		start := strings.Index(body, `<article class="card" aria-labelledby="card-`+name+`"`)
-		if start < 0 {
-			t.Fatalf("no card for %s", name)
-		}
-		end := strings.Index(body[start:], "</article>")
-		return body[start : start+end]
-	}
-	waiotech, fresh := card("waiotech"), card("fresh")
-
-	// What landed last on the default branch, and how it ran.
-	for _, want := range []string{"Update README", "passed", "<span>#1</span>", `href="/waiotech/commits?ref=main"`} {
-		if !strings.Contains(waiotech, want) {
-			t.Errorf("waiotech's card lacks %q", want)
+	resp, body = b.do(http.MethodGet, "/", nil, nil)
+	expect(t, resp, body, http.StatusOK, `<th scope="col">Run</th>`, "passed", "<span>#1</span>", `id="deployments-title"`,
+		`<th scope="col">Not shipped</th>`)
+	// The repository's row: its latest commit, which leads to it, and its run.
+	row := body[strings.Index(body, `href="/waiotech">waiotech</a>`):]
+	row = row[:strings.Index(row, "</tr>")]
+	for _, want := range []string{"Update README", `href="/waiotech/commit/` + head + `"`, `class="person">Test<`, "<span>#1</span>"} {
+		if !strings.Contains(row, want) {
+			t.Errorf("waiotech's row lacks %q:\n%s", want, row)
 		}
 	}
-	// Every target is a row on every card, in the same order, filled or not.
-	for name, c := range map[string]string{"waiotech": waiotech, "fresh": fresh} {
-		production, staging := strings.Index(c, "<dt>production</dt>"), strings.Index(c, "<dt>staging</dt>")
-		if production < 0 || staging < 0 || production > staging {
-			t.Errorf("%s's card does not have a row for each target, in order", name)
-		}
+	// The deployments: production is one commit behind the default branch,
+	// staging is at it.
+	list := body[strings.Index(body, `id="deployments-title"`):]
+	list = list[:strings.Index(list, "</section>")]
+	production, staging := strings.Index(list, "<td>production</td>"), strings.Index(list, "<td>staging</td>")
+	if production < 0 || staging < 0 || production > staging {
+		t.Errorf("the deployments are not one row per target, in order:\n%s", list)
 	}
-	for _, want := range []string{"Nothing pushed yet", "nothing shipped"} {
-		if !strings.Contains(fresh, want) {
-			t.Errorf("fresh's card lacks %q", want)
-		}
+	if !strings.Contains(list, `>1 commit</a>`) || strings.Count(list, "Up to date") != 1 {
+		t.Errorf("the deployments do not say how far behind each target is:\n%s", list)
 	}
-	// Production is one commit behind the default branch; staging is at it.
-	if !strings.Contains(waiotech, `1 behind</a>`) || !strings.Contains(waiotech, "up to date") {
-		t.Errorf("waiotech's targets do not say how far behind each is:\n%s", waiotech)
+	// Two columns, then the list of small cards: attention, then activity.
+	if strings.Index(body, `id="timeline-title"`) < strings.Index(body, `id="deployments-title"`) {
+		t.Error("Activity comes before the lists")
 	}
 }
 
@@ -126,7 +124,7 @@ func TestHomeNeedsAttention(t *testing.T) {
 	expect(t, resp, body, http.StatusOK, "Runs are queued and no worker is online")
 }
 
-func TestOverviewShowsLatestCommitsAndTheRunStrip(t *testing.T) {
+func TestOverviewHasBranchesTagsAndTheRunStrip(t *testing.T) {
 	database, store, b := setupWithStore(t)
 	ctx := context.Background()
 	signIn(t, database, b, "darius", false)
@@ -134,13 +132,15 @@ func TestOverviewShowsLatestCommitsAndTheRunStrip(t *testing.T) {
 	person := mustPerson(t, database, "darius")
 	head := mustResolve(t, mustOpen(t, store, repo), "main")
 
-	// No runs yet: no strip, and the latest commits say what landed.
+	// No runs yet: no strip. The Overview is branches and tags, with what
+	// leads to the files and the download beside them.
 	resp, body := b.do(http.MethodGet, "/waiotech", nil, nil)
-	expect(t, resp, body, http.StatusOK, `id="latest-title"`, "Update README", "Initial commit", `href="/waiotech/commits?ref=main">All commits`,
-		// Clone leads to the files and the download, which are not in the bar.
+	expect(t, resp, body, http.StatusOK, `id="branches-title"`, `id="tags-title"`,
 		`href="/waiotech@main">`, `href="/waiotech/archive/main.tar.gz"`)
-	if strings.Contains(body, `id="strip-title"`) {
-		t.Error("the Overview has a run strip with no runs")
+	for _, absent := range []string{`id="strip-title"`, `id="latest-title"`, "Latest on"} {
+		if strings.Contains(body, absent) {
+			t.Errorf("the Overview has %s", absent)
+		}
 	}
 	for _, link := range []string{`class="repobar-link" href="/waiotech@main"`, `>Files</a>`} {
 		if strings.Contains(body, link) {
@@ -165,8 +165,6 @@ func TestOverviewShowsLatestCommitsAndTheRunStrip(t *testing.T) {
 	if strings.Index(body, `title="Run #1 passed"`) > strings.Index(body, `title="Run #4 cancelled"`) {
 		t.Error("the run strip is not oldest first")
 	}
-	// The latest commit carries the run that ran it.
-	expect(t, resp, body, http.StatusOK, `<th scope="col">Run</th>`)
 }
 
 func TestCommitsSwapInPlaceAndLinkToTheFiles(t *testing.T) {

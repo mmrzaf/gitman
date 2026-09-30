@@ -78,10 +78,10 @@ const query = (page) => new URL(page.url()).searchParams;
   await repo.goto(`${base}/demo`);
 
   sh(process.env.STOP_WORKER);
-  const homeBefore = await home.locator("[data-live-region=cards]").innerText();
+  const homeBefore = await home.locator("[data-live-region=repos]").innerText();
   sh(process.env.PUSH_SLOW);
 
-  const homeUpdated = await until(async () => /#6/.test(await home.locator("[data-live-region=cards]").innerText()));
+  const homeUpdated = await until(async () => /#6/.test(await home.locator("[data-live-region=repos]").innerText()));
   check("Home shows a new run live", homeUpdated && !/#6/.test(homeBefore));
   check("Home says it is live", (await home.locator("[data-live-status]").getAttribute("data-state")) === "open");
   const repoUpdated = await until(async () => /slow\/one/.test(await repo.locator("[data-live-region=branches]").innerText()));
@@ -89,9 +89,9 @@ const query = (page) => new URL(page.url()).searchParams;
   await repo.close();
 
   // Focus on Home, inside a region that is about to be replaced.
-  const runLink = home.locator("[data-live-region=cards] a[href$='/runs/6']");
+  const runLink = home.locator("[data-live-region=repos] a[href$='/runs/6']");
   await runLink.focus();
-  const regionBefore = await home.locator("[data-live-region=cards]").elementHandle();
+  const regionBefore = await home.locator("[data-live-region=repos]").elementHandle();
 
   const run = watch(await context.newPage());
   await run.goto(`${base}/demo/runs/6`);
@@ -100,7 +100,7 @@ const query = (page) => new URL(page.url()).searchParams;
   sh(process.env.START_WORKER);
 
   const swapped = await until(async () => !(await regionBefore.evaluate((el) => el.isConnected))
-    && /running/i.test(await home.locator("[data-live-region=cards]").innerText()));
+    && /running/i.test(await home.locator("[data-live-region=repos]").innerText()));
   const after = await focused(home);
   check("focus survives a live update", swapped && after?.href === "/demo/runs/6", JSON.stringify(after));
 

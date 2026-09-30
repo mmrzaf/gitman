@@ -339,12 +339,12 @@ func TestOverviewHasNoTabsAndLinksToWhatIsNotDeployed(t *testing.T) {
 			t.Errorf("the Overview has tabs (%s)", tabs)
 		}
 	}
-	// Only production lacks anything, so only its card counts commits not
+	// Only production lacks anything, so only its row counts commits not
 	// shipped; staging, at the default branch, is up to date.
-	if n := strings.Count(body, " not shipped<"); n != 1 {
-		t.Fatalf("%d cards count commits not shipped, want only production's", n)
+	expect(t, resp, body, http.StatusOK, `<th scope="col">Not shipped</th>`, `href="/waiotech/commits?base=`+old+`&amp;ref=main">1 commit</a>`, "Up to date")
+	if n := strings.Count(body, "Up to date"); n != 1 {
+		t.Fatalf("%d targets are up to date, want only staging", n)
 	}
-	expect(t, resp, body, http.StatusOK, `href="/waiotech/commits?base=`+old+`&amp;ref=main">1 commit not shipped`, "Up to date")
 
 	// Twelve tags of thirteen? The newest ten, and a way to all of them.
 	expect(t, resp, body, http.StatusOK, `All 14 tags`, `href="/waiotech?tags=all"`)

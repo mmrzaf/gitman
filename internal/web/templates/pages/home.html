@@ -12,8 +12,88 @@
 
 <div class="split">
   <div class="split-main">
-    <div class="stack" data-live-region="cards">
-      {{- if .Data.Attention}}
+    <section class="panel" aria-labelledby="repos-title">
+      <header class="panel-header"><h2 class="panel-title" id="repos-title">{{template "icon" "repo"}}Repositories <span class="tab-count">{{len .Data.Repos}}</span></h2></header>
+      <div data-live-region="repos">
+        {{- if .Data.Repos}}
+        {{$run := .Data.HasRun}}
+        <div class="table-scroll">
+          <table class="table">
+            <thead><tr>
+              <th scope="col">Repository</th>
+              <th scope="col">Latest on the default branch</th>
+              {{- if $run}}<th scope="col">Run</th>{{end}}
+            </tr></thead>
+            <tbody>
+            {{- range .Data.Repos}}
+              <tr>
+                <th scope="row" class="table-rowheader">
+                  <span class="cell-stack repo-cell">
+                    <a href="/{{.Name}}">{{.Name}}</a>
+                    <span class="muted">{{with .Description}}{{.}}{{else}}No description.{{end}}</span>
+                  </span>
+                </th>
+                <td class="cell-truncate">
+                  {{- if .Head}}
+                  {{$name := .Name}}
+                  <span class="cell-stack">
+                    <a href="/{{$name}}/commit/{{.Head.Hash}}">{{.Head.Subject}}</a>
+                    <span class="muted">{{template "ref" (dict "Kind" "branch" "Name" .DefaultBranch "Href" (commitsURL $name .DefaultBranch ""))}} {{template "person" .Head.Author.Name}} · {{template "time" .Head.Author.When}}</span>
+                  </span>
+                  {{- else}}<span class="muted">Nothing pushed yet</span>{{end}}
+                </td>
+                {{- if $run}}
+                <td class="cell-shrink">
+                  {{- $name := .Name}}
+                  {{- with .Running}}<span class="cluster">{{with index . 0}}<a class="run-ref" href="/{{$name}}/runs/{{.Number}}" title="{{.RefKind}} {{.RefName}}">{{template "status" .Status}}<span>#{{.Number}}</span></a>{{end}}{{if gt (len .) 1}}<span class="muted">+{{sub (len .) 1}}</span>{{end}}</span>
+                  {{- else}}{{with .Run}}<a class="run-ref" href="/{{$name}}/runs/{{.Number}}">{{template "status" .Status}}<span>#{{.Number}}</span></a>{{else}}<span class="muted">—</span>{{end}}{{end}}
+                </td>
+                {{- end}}
+              </tr>
+            {{- end}}
+            </tbody>
+          </table>
+        </div>
+        {{- else}}
+        {{template "empty" (dict "Icon" "repo" "Title" "No repositories yet")}}
+        {{- end}}
+      </div>
+    </section>
+
+    <div class="region" data-live-region="deployments">
+      {{- if .Data.Deployments -}}
+      <section class="panel" aria-labelledby="deployments-title">
+        <header class="panel-header"><h2 class="panel-title" id="deployments-title">{{template "icon" "ship"}}Deployed <span class="tab-count">{{len .Data.Deployments}}</span></h2></header>
+        <div class="table-scroll">
+          <table class="table">
+            <thead><tr>
+              <th scope="col">Repository</th>
+              <th scope="col">Target</th>
+              <th scope="col">Live</th>
+              <th scope="col">Shipped</th>
+              <th scope="col">Not shipped</th>
+            </tr></thead>
+            <tbody>
+            {{- range .Data.Deployments}}
+              <tr>
+                <th scope="row" class="table-rowheader"><a href="/{{.Repo}}">{{.Repo}}</a></th>
+                <td>{{.Target}}</td>
+                <td class="cell-shrink">{{if ownVersion .Live.Version .Live.Commit}}<span class="version">{{.Live.Version}}</span> {{end}}{{template "commit" (dict "Repo" .Repo "Hash" .Live.Commit)}}</td>
+                <td class="cell-shrink cell-muted">{{template "time" .Live.At}}{{if .Live.Person}} by {{.Live.Person}}{{end}}{{if .Live.RunNumber}} <a href="/{{.Repo}}/runs/{{.Live.RunNumber}}">#{{.Live.RunNumber}}</a>{{end}}</td>
+                <td class="cell-shrink">{{if .SinceURL}}<a href="{{.SinceURL}}">{{.Behind}} commit{{if ne .Behind 1}}s{{end}}</a>{{else}}<span class="muted">Up to date</span>{{end}}</td>
+              </tr>
+            {{- end}}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      {{- end -}}
+    </div>
+  </div>
+
+  <aside class="split-side">
+    <div class="region" data-live-region="attention">
+      {{- if .Data.Attention -}}
       <section class="panel attention" aria-labelledby="attention-title">
         <header class="panel-header"><h2 class="panel-title" id="attention-title">{{template "icon" "warning"}}Needs attention</h2></header>
         <ul class="attention-list">
@@ -23,51 +103,8 @@
         </ul>
         {{- if .Data.AttentionMore}}<p class="panel-footer">And {{.Data.AttentionMore}} more.</p>{{end}}
       </section>
-      {{- end}}
-
-      {{- if .Data.Cards}}
-      <div class="cards">
-        {{- range $card := .Data.Cards}}
-        <article class="card" aria-labelledby="card-{{$card.Name}}">
-          <header class="card-head">
-            <h2 class="card-title" id="card-{{$card.Name}}"><a href="/{{$card.Name}}" class="truncate">{{$card.Name}}</a></h2>
-            {{- with $card.Running}}
-            <span class="cluster">{{with index . 0}}<a class="run-ref" href="/{{$card.Name}}/runs/{{.Number}}" title="{{.RefKind}} {{.RefName}}">{{template "status" .Status}}<span>#{{.Number}}</span></a>{{end}}{{if gt (len .) 1}}<span class="muted">+{{sub (len .) 1}}</span>{{end}}</span>
-            {{- else}}{{with $card.Run}}<a class="run-ref" href="/{{$card.Name}}/runs/{{.Number}}">{{template "status" .Status}}<span>#{{.Number}}</span></a>{{end}}{{end}}
-          </header>
-          <p class="card-description">{{with $card.Description}}{{.}}{{else}}<span class="muted">No description.</span>{{end}}</p>
-          <div class="card-latest">
-            {{- if $card.Head}}
-            <span class="cluster">{{template "ref" (dict "Kind" "branch" "Name" $card.DefaultBranch "Href" (commitsURL $card.Name $card.DefaultBranch ""))}}{{template "commit" (dict "Repo" $card.Name "Hash" $card.Head.Hash)}}</span>
-            <span class="card-subject truncate">{{$card.Head.Subject}}</span>
-            <span class="muted">{{template "person" $card.Head.Author.Name}} · {{template "time" $card.Head.Author.When}}</span>
-            {{- else}}
-            <span class="muted">Nothing pushed yet</span>
-            {{- end}}
-          </div>
-          {{- if $.Data.Targets}}
-          <dl class="card-targets">
-            {{- range $card.Targets}}
-            <div class="card-target">
-              <dt>{{.Name}}</dt>
-              <dd>
-                {{- with .Live}}{{if ownVersion .Version .Commit}}<span class="version">{{.Version}}</span>{{else}}{{template "commit" (dict "Repo" $card.Name "Hash" .Commit)}}{{end}}{{else}}<span class="muted">—<span class="visually-hidden"> nothing shipped</span></span>{{end}}
-                {{- if .SinceURL}} <a href="{{.SinceURL}}">{{.Behind}} behind</a>{{else if .Live}} <span class="muted">up to date</span>{{end}}
-              </dd>
-            </div>
-            {{- end}}
-          </dl>
-          {{- end}}
-        </article>
-        {{- end}}
-      </div>
-      {{- else}}
-      <div class="panel">{{template "empty" (dict "Icon" "repo" "Title" "No repositories yet")}}</div>
-      {{- end}}
+      {{- end -}}
     </div>
-  </div>
-
-  <aside class="split-side">
     <section class="panel" aria-labelledby="timeline-title">
       <header class="panel-header"><h2 class="panel-title" id="timeline-title">{{template "icon" "history"}}Activity</h2></header>
       <div class="feed-scroll" data-fit data-live-region="timeline">{{template "feed" (dict "Entries" .Data.Timeline "ShowRepo" true)}}</div>

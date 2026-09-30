@@ -24,12 +24,12 @@ worker starts.
   target on the Overview counts the commits it has not shipped and links to
   them, and each branch says how far it is ahead of and behind the default
   branch.
-- The Overview also lists the default branch's newest commits and strips
-  its latest runs, and Home is a grid of repository cards, each with the
-  latest commit and run of its default branch and a row for every target,
-  above a **Needs attention** list that appears only when a default
-  branch's run failed, runs wait for a worker, a target is behind, or a push
-  was refused this week.
+- The Overview lists what is deployed and how many commits each target has
+  not shipped, and strips the default branch's latest runs. Home lists every
+  repository with the latest commit and run of its default branch, and what
+  is deployed where, beside a small **Needs attention** card that appears only
+  when a default branch's run failed, runs wait for a worker, a target is
+  behind, or a push was refused this week.
 - **Activity** for each repository: every ref change (created, pushed,
   force-pushed, deleted, tag moved), who made it and the run it started,
   with runs, what was shipped and settings changes. The Overview shows the
@@ -65,8 +65,8 @@ worker starts.
 - Tags are listed newest version first, in the Overview and in the
   pickers. A push that creates, moves or deletes many refs at once is one
   line of Activity that names the newest and counts the rest.
-- Home no longer has a Running now panel or a table: a run in progress
-  shows on its repository's card.
+- Home no longer has a Running now panel: a run in progress shows on its
+  repository's row.
 - The Run dialog chooses its branch or tag with the same searchable list as
   Commits. The activity feed and the page itself no longer both scroll.
 - A deployment shows its version only when it isn't its commit. A branch

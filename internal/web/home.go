@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -28,22 +27,9 @@ const (
 	refusedWindow  = 7 * 24 * time.Hour
 )
 
-// cardTarget is one target's place on a repository's card: what is live
-// there, and how far the default branch has gone since.
-type cardTarget struct {
-	Name string
-	Live *ci.Deployment
-	// Behind is how many commits the default branch has that the target
-	// lacks, and SinceURL compares them; both are empty when nothing is
-	// live or the target is up to date.
-	Behind   int
-	SinceURL string
-}
-
-// repoCard is a repository on Home: what landed last on its default branch
-// and how that ran, what is running now, and a place for each target, the
-// same places on every card so the cards line up.
-type repoCard struct {
+// homeRepo is a repository in Home's list: what landed last on its default
+// branch and how that ran.
+type homeRepo struct {
 	Name          string
 	Description   string
 	DefaultBranch string
@@ -54,7 +40,19 @@ type repoCard struct {
 	// progress, of any ref.
 	Run     *ci.Summary
 	Running []ci.Summary
-	Targets []cardTarget
+}
+
+// homeDeployment is what is live on one target of one repository, and how
+// far the default branch has gone since.
+type homeDeployment struct {
+	Repo   string
+	Target string
+	Live   ci.Deployment
+	// Behind is how many commits the default branch has that the target
+	// lacks, and SinceURL compares them; both are empty when it is up to
+	// date.
+	Behind   int
+	SinceURL string
 }
 
 // attention is one thing on Home that wants a look: what, and where to go.
@@ -67,10 +65,8 @@ type attention struct {
 }
 
 type homePage struct {
-	// Targets names every target anything has shipped to, in order: each
-	// card's rows.
-	Targets []string
-	Cards   []repoCard
+	Repos       []homeRepo
+	Deployments []homeDeployment
 	// Attention are the things that want a look; AttentionMore counts those
 	// the list leaves out.
 	Attention     []attention
@@ -80,6 +76,12 @@ type homePage struct {
 	// Dialog is the dialog the page opens with: "new-repo" when asked for
 	// by link, or when a creation failed.
 	Dialog string
+}
+
+// HasRun reports whether any listed repository has run its pipeline: a
+// column nothing would fill is left out.
+func (p homePage) HasRun() bool {
+	return slices.ContainsFunc(p.Repos, func(r homeRepo) bool { return r.Run != nil || len(r.Running) > 0 })
 }
 
 // buildHomeData loads everything Home shows. createForm carries a failed
@@ -136,25 +138,16 @@ func (a *App) buildHomeData(r *http.Request, createForm *form) (homePage, error)
 		}
 	}
 
-	byRepo := map[string]map[string]*ci.Deployment{}
-	targets := map[string]bool{}
-	for i, d := range live {
-		if byRepo[d.RepoID] == nil {
-			byRepo[d.RepoID] = map[string]*ci.Deployment{}
-		}
-		byRepo[d.RepoID][d.Target] = &live[i]
-		if !targets[d.Target] {
-			targets[d.Target] = true
-			page.Targets = append(page.Targets, d.Target)
-		}
+	byRepo := map[string][]ci.Deployment{}
+	for _, d := range live {
+		byRepo[d.RepoID] = append(byRepo[d.RepoID], d)
 	}
-	sort.Strings(page.Targets)
 
 	var failed, behind []attention
 	for _, repo := range list {
-		card := repoCard{Name: repo.Name, Description: repo.Description, DefaultBranch: repo.DefaultBranch, Running: running[repo.Name]}
+		row := homeRepo{Name: repo.Name, Description: repo.Description, DefaultBranch: repo.DefaultBranch, Running: running[repo.Name]}
 		if run, ok := latestRuns[repo.ID]; ok {
-			card.Run = &run
+			row.Run = &run
 			if run.Status == ci.StatusFailed {
 				failed = append(failed, attention{Icon: "failed", URL: runPath(repo.Name, run.Number),
 					Text: fmt.Sprintf("%s: the latest run of %s failed.", repo.Name, repo.DefaultBranch)})
@@ -165,27 +158,28 @@ func (a *App) buildHomeData(r *http.Request, createForm *form) (homePage, error)
 		if pushed {
 			if gitRepo, err = a.repos.Open(repo); err != nil {
 				// A repository that cannot be read is not worth losing Home for.
-				a.log.Warn("could not open a repository for its card", "repo", repo.Name, "error", err)
-			} else if card.Head, err = gitRepo.Commit(ctx, head.Commit); err != nil {
+				a.log.Warn("could not open a repository for Home", "repo", repo.Name, "error", err)
+				gitRepo = nil
+			} else if row.Head, err = gitRepo.Commit(ctx, head.Commit); err != nil {
 				a.log.Warn("could not read a default branch's latest commit", "repo", repo.Name, "error", err)
 			}
 		}
-		for _, name := range page.Targets {
-			slot := cardTarget{Name: name, Live: byRepo[repo.ID][name]}
-			if slot.Live != nil && pushed && gitRepo != nil && slot.Live.Commit != head.Commit {
-				counts, err := gitRepo.Divergences(ctx, slot.Live.Commit, []string{head.Commit})
-				if err == nil {
-					slot.Behind = counts[head.Commit].Ahead
+		page.Repos = append(page.Repos, row)
+
+		for _, d := range byRepo[repo.ID] {
+			dep := homeDeployment{Repo: repo.Name, Target: d.Target, Live: d}
+			if pushed && gitRepo != nil && d.Commit != head.Commit {
+				if counts, err := gitRepo.Divergences(ctx, d.Commit, []string{head.Commit}); err == nil {
+					dep.Behind = counts[head.Commit].Ahead
 				}
-				if slot.Behind > 0 {
-					slot.SinceURL = compareURL(repo.Name, slot.Live.Commit, repo.DefaultBranch)
-					behind = append(behind, attention{Icon: "compare", URL: slot.SinceURL,
-						Text: fmt.Sprintf("%s: %s is %d commit%s behind %s.", repo.Name, name, slot.Behind, plural(slot.Behind), repo.DefaultBranch)})
+				if dep.Behind > 0 {
+					dep.SinceURL = compareURL(repo.Name, d.Commit, repo.DefaultBranch)
+					behind = append(behind, attention{Icon: "compare", URL: dep.SinceURL,
+						Text: fmt.Sprintf("%s: %s is %d commit%s behind %s.", repo.Name, d.Target, dep.Behind, plural(dep.Behind), repo.DefaultBranch)})
 				}
 			}
-			card.Targets = append(card.Targets, slot)
+			page.Deployments = append(page.Deployments, dep)
 		}
-		page.Cards = append(page.Cards, card)
 	}
 	items = append(items, failed...)
 	items = append(items, behind...)

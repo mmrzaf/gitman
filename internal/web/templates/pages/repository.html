@@ -4,38 +4,33 @@
 <h1 class="visually-hidden" id="repo-title">{{$repo.Name}}</h1>
 <div class="split">
   <div class="split-main">
-    <section aria-labelledby="targets-title">
-      <h2 class="section-title" id="targets-title">{{template "icon" "ship"}}Deployed</h2>
-      <div data-live-region="targets">
-        {{- if .Data.Targets}}
-        <div class="targets">
-          {{- range .Data.Targets}}
-          <article class="target" aria-label="{{.Target}}">
-            <p class="target-name">{{.Target}}</p>
-            <p class="target-version"{{if ownVersion .Version .Commit}} title="{{.Version}}"{{end}}>{{if ownVersion .Version .Commit}}{{.Version}}{{else}}{{template "commit" (dict "Repo" $repo.Name "Hash" .Commit)}}{{end}}</p>
-            <p class="target-meta">
-              {{- if ownVersion .Version .Commit}}{{template "commit" (dict "Repo" $repo.Name "Hash" .Commit)}}{{end}}
-              <span>{{template "time" .At}}{{if .Person}} by {{.Person}}{{end}}</span>
-              {{- if .RunNumber}}<a href="/{{$repo.Name}}/runs/{{.RunNumber}}">run #{{.RunNumber}}</a>{{end}}
-            </p>
-            <p class="target-since">{{if .SinceURL}}<a href="{{.SinceURL}}">{{.Behind}} commit{{if ne .Behind 1}}s{{end}} not shipped</a>{{else}}<span class="muted">Up to date</span>{{end}}</p>
-          </article>
-          {{- end}}
+    <div class="region" data-live-region="targets">
+      {{- if .Data.Targets -}}
+      <section class="panel" aria-labelledby="targets-title">
+        <header class="panel-header"><h2 class="panel-title" id="targets-title">{{template "icon" "ship"}}Deployed <span class="tab-count">{{len .Data.Targets}}</span></h2></header>
+        <div class="table-scroll">
+          <table class="table">
+            <thead><tr>
+              <th scope="col">Target</th>
+              <th scope="col">Live</th>
+              <th scope="col">Shipped</th>
+              <th scope="col">Not shipped</th>
+            </tr></thead>
+            <tbody>
+            {{- range .Data.Targets}}
+              <tr>
+                <th scope="row" class="table-rowheader">{{.Target}}</th>
+                <td class="cell-shrink">{{if ownVersion .Version .Commit}}<span class="version">{{.Version}}</span> {{end}}{{template "commit" (dict "Repo" $repo.Name "Hash" .Commit)}}</td>
+                <td class="cell-shrink cell-muted">{{template "time" .At}}{{if .Person}} by {{.Person}}{{end}}{{if .RunNumber}} <a href="/{{$repo.Name}}/runs/{{.RunNumber}}">#{{.RunNumber}}</a>{{end}}</td>
+                <td class="cell-shrink">{{if .SinceURL}}<a href="{{.SinceURL}}">{{.Behind}} commit{{if ne .Behind 1}}s{{end}}</a>{{else}}<span class="muted">Up to date</span>{{end}}</td>
+              </tr>
+            {{- end}}
+            </tbody>
+          </table>
         </div>
-        {{- else}}
-        <div class="panel">{{template "empty" (dict "Icon" "ship" "Title" "Nothing shipped yet" "Text" "A passing run shows here when its ref's rule allows shipping and the pipeline names a target for it.")}}</div>
-        {{- end}}
-      </div>
-    </section>
-
-    {{- if .Data.Latest}}
-    <section class="panel" aria-labelledby="latest-title">
-      <header class="panel-header"><h2 class="panel-title" id="latest-title">{{template "icon" "commit"}}Latest on {{template "ref" (dict "Kind" "branch" "Name" $repo.DefaultBranch)}}</h2>
-        <span class="panel-actions"><a class="btn btn-sm" href="{{commitsURL $repo.Name $repo.DefaultBranch ""}}">All commits</a></span>
-      </header>
-      <div data-live-region="latest">{{template "commit-table" (dict "Rows" .Data.Latest "Repo" $repo)}}</div>
-    </section>
-    {{- end}}
+      </section>
+      {{- end -}}
+    </div>
 
     <section class="panel" aria-labelledby="branches-title">
       <header class="panel-header"><h2 class="panel-title" id="branches-title">{{template "icon" "branch"}}Branches <span class="tab-count">{{len .Data.Branches}}</span></h2></header>

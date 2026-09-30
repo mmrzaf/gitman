@@ -296,8 +296,8 @@ func TestLivePagesRender(t *testing.T) {
 		data any
 		want []string
 	}{
-		{"home", homePage{Cards: []repoCard{{Name: "waiotech", Running: []ci.Summary{run}}}, Timeline: feed, CreateForm: newForm(nil)},
-			[]string{`data-live-events="/events"`, `href="/waiotech/runs/42"`, `data-live-region="cards"`}},
+		{"home", homePage{Repos: []homeRepo{{Name: "waiotech", Running: []ci.Summary{run}}}, Timeline: feed, CreateForm: newForm(nil)},
+			[]string{`data-live-events="/events"`, `href="/waiotech/runs/42"`, `data-live-region="repos"`}},
 		{"repository", repositoryPage{repoFrame: repoFrame{Repo: repo, Section: "overview"}, CloneURL: "waiotech.git", DefaultExists: true,
 			Branches: []refRow{{IndexedRef: reposvc.IndexedRef{Kind: git.KindBranch, Name: "develop", Commit: strings.Repeat("b", 40), UpdatedAt: now}, LatestRun: &run}}},
 			[]string{`data-live-events="/events"`, `href="/waiotech/runs/42"`, `data-live-region="branches"`, `data-live-region="tags"`,
