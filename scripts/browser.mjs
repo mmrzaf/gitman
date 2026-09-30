@@ -472,10 +472,13 @@ for (const scheme of ["light", "dark"]) {
       scroll: document.documentElement.scrollHeight, height: innerHeight,
       panels: [...document.querySelectorAll(".fit")].map((el) => Math.round(el.getBoundingClientRect().height)),
       shared: [...document.querySelectorAll(".fit:not(.fit-auto)")].map((el) => Math.round(el.getBoundingClientRect().height)),
+      scrolling: [...document.querySelectorAll(".fit > .panel-scroll:has(> .empty)")].filter((el) => el.scrollHeight > el.clientHeight + 1)
+        .map((el) => el.parentElement.getAttribute("aria-labelledby")),
       overflowing: [...document.querySelectorAll(".fit > .panel-scroll")].filter((el) => el.scrollWidth > el.clientWidth + 1)
         .map((el) => `${el.parentElement.getAttribute("aria-labelledby")} +${el.scrollWidth - el.clientWidth}px`),
     }));
     check(`the page does not scroll, only its panels: ${path}`, fit.scroll <= fit.height, JSON.stringify(fit));
+    check(`an empty panel has no scroll bar: ${path}`, fit.scrolling.length === 0, JSON.stringify(fit.scrolling));
     check(`every panel keeps a usable share of the window, empty or not: ${path}`, fit.panels.length >= 4 && fit.shared.every((h) => h >= 100), JSON.stringify(fit));
     check(`nothing inside a panel spills sideways: ${path}`, fit.overflowing.length === 0, JSON.stringify(fit));
   }

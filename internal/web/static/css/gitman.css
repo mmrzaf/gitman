@@ -1284,7 +1284,8 @@ h1.path { font-size: var(--text-xl); letter-spacing: -0.01em; }
   .fit-auto { flex: 0 1 auto; min-height: 0; max-height: 45%; }
   .fit-4 { flex: 4 1 0; }
   .fit > .panel-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; }
-  .fit > .panel-scroll > .empty { min-height: 100%; align-content: center; }
+  .fit > .panel-scroll > .empty { min-height: 100%; align-content: center; padding: var(--sp-3) var(--sp-4); gap: var(--sp-1); }
+  .fit > .panel-scroll > .empty .icon { display: none; }
   .fit .feed-scroll { max-height: none; }
   .fit .panel-scroll .table-scroll { overflow: visible; }
   .fit .panel-scroll .table thead th { position: sticky; top: 0; z-index: 2; }

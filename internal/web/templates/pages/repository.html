@@ -4,7 +4,7 @@
 <h1 class="visually-hidden" id="repo-title">{{$repo.Name}}</h1>
 <div class="split">
   <div class="split-main">
-    <section class="panel fit fit-2" aria-labelledby="targets-title" data-live-region="targets">
+    <section class="panel fit fit-3" aria-labelledby="targets-title" data-live-region="targets">
       <header class="panel-header"><h2 class="panel-title" id="targets-title">{{template "icon" "ship"}}Deployed <span class="count">{{len .Data.Targets}}</span></h2></header>
       <div class="panel-scroll">
         {{- if .Data.Targets}}
@@ -34,12 +34,12 @@
       </div>
     </section>
 
-    <section class="panel fit fit-4" aria-labelledby="branches-title" data-live-region="branches">
+    <section class="panel fit fit-3" aria-labelledby="branches-title" data-live-region="branches">
       <header class="panel-header"><h2 class="panel-title" id="branches-title">{{template "icon" "branch"}}Branches <span class="count">{{len .Data.Branches}}</span></h2></header>
       <div class="panel-scroll">{{template "refs" (dict "Refs" .Data.Branches "Repo" $repo "Clone" .Data.CloneURL "Kind" "branch" "DefaultExists" .Data.DefaultExists "Admin" .Person.IsAdmin)}}</div>
     </section>
 
-    <section class="panel fit fit-2" aria-labelledby="tags-title" data-live-region="tags">
+    <section class="panel fit fit-4" aria-labelledby="tags-title" data-live-region="tags">
       <header class="panel-header"><h2 class="panel-title" id="tags-title">{{template "icon" "tag"}}Tags <span class="count">{{len .Data.Tags}}</span></h2></header>
       <div class="panel-scroll">{{template "refs" (dict "Refs" .Data.Tags "Repo" $repo "Clone" .Data.CloneURL "Kind" "tag" "DefaultExists" .Data.DefaultExists "Admin" .Person.IsAdmin)}}</div>
     </section>
