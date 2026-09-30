@@ -19,11 +19,12 @@ processes, selected by its first argument:
 
 - **PostgreSQL** holds everything except the repositories themselves:
   people, sessions, tokens, repositories, ref rules, pushes and each ref
-  they moved (whether it rewrote history included), pipeline runs,
-  deployments, and encrypted secrets. `web` and workers share nothing
-  else — no cache, no message queue — so any number of workers can run,
-  and PostgreSQL's `LISTEN`/`NOTIFY` plus row locking is what lets them
-  coordinate without talking to each other directly.
+  they moved (whether it rewrote history included), pushes Gitman
+  refused and why, pipeline runs, deployments, and encrypted secrets.
+  `web` and workers share nothing else — no cache, no message queue — so
+  any number of workers can run, and PostgreSQL's `LISTEN`/`NOTIFY` plus
+  row locking is what lets them coordinate without talking to each other
+  directly.
 - **Bare Git repositories** live on disk under `GITMAN_DATA_DIR/repos`.
 - **Run workspaces** are ephemeral checkouts under
   `GITMAN_DATA_DIR/workspaces`, used only while a run is in progress.

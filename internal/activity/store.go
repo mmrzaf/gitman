@@ -272,3 +272,64 @@ func repoEvents(ctx context.Context, q postgres.Querier, repoID string, limit in
 	}
 	return entries, rows.Err()
 }
+
+// repoRefusals lists a repository's refused pushes newest first, each with
+// the reasons it was refused for.
+func repoRefusals(ctx context.Context, q postgres.Querier, repoID string, limit int) ([]HistoryEntry, error) {
+	rows, err := q.Query(ctx, `
+		SELECT f.id, f.created_at, COALESCE(p.username, '')
+		FROM push_refusals f
+		LEFT JOIN people p ON p.id = f.person_id
+		WHERE f.repo_id = $1
+		ORDER BY f.created_at DESC, f.id DESC
+		LIMIT $2
+	`, repoID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list refused pushes: %w", err)
+	}
+	var entries []HistoryEntry
+	var ids []string
+	for rows.Next() {
+		e := HistoryEntry{Kind: KindRefusal}
+		if err := rows.Scan(&e.id, &e.At, &e.Actor); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("scan refused push: %w", err)
+		}
+		entries = append(entries, e)
+		ids = append(ids, e.id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list refused pushes: %w", err)
+	}
+	if len(entries) == 0 {
+		return nil, nil
+	}
+
+	// The reasons of every listed refusal, in one query.
+	reasons, err := q.Query(ctx, `
+		SELECT refusal_id, ref, reason FROM push_refusal_refs
+		WHERE refusal_id = ANY($1) ORDER BY refusal_id, position
+	`, ids)
+	if err != nil {
+		return nil, fmt.Errorf("list why pushes were refused: %w", err)
+	}
+	defer reasons.Close()
+	byID := map[string][]Refusal{}
+	for reasons.Next() {
+		var refusalID string
+		var r Refusal
+		if err := reasons.Scan(&refusalID, &r.Ref, &r.Reason); err != nil {
+			return nil, fmt.Errorf("scan why a push was refused: %w", err)
+		}
+		r.RefKind, r.RefName, _ = git.SplitFullName(r.Ref)
+		byID[refusalID] = append(byID[refusalID], r)
+	}
+	if err := reasons.Err(); err != nil {
+		return nil, fmt.Errorf("list why pushes were refused: %w", err)
+	}
+	for i := range entries {
+		entries[i].Refused = byID[entries[i].id]
+	}
+	return entries, nil
+}

@@ -171,6 +171,39 @@ func TestHistoryActivityFromRealPushes(t *testing.T) {
 	}
 }
 
+func TestHistoryActivityShowsRefusedPushes(t *testing.T) {
+	e := setupGitHTTP(t)
+	_, cred := e.person("darius", false, auth.ScopeWrite)
+	e.saveRule(reposvc.Rule{Kind: git.KindBranch, Pattern: "main", PushPolicy: reposvc.PushEveryone})
+	e.initWork(cred)
+	e.commit("README.md", "# demo\n")
+	e.mustGit(e.work, "push", "--quiet", "origin", "main")
+	e.commit("a.txt", "a\n")
+	e.mustGit(e.work, "push", "--quiet", "origin", "main")
+
+	// Two refs refused at once, one of them a rewrite of main.
+	e.mustGit(e.work, "reset", "--quiet", "--hard", "HEAD~1")
+	e.commit("b.txt", "b\n")
+	out, ok := e.git(e.work, "push", "--force", "origin", "main", "main:refs/heads/keep")
+	expectRejected(t, out, ok, "this rewrites history")
+	out, ok = e.git(e.work, "push", "origin", "--delete", "main")
+	expectRejected(t, out, ok, "the default branch cannot be deleted")
+
+	b := newBrowser(t, e.server)
+	if resp, body := login(b, "darius", "correct-horse-battery", "/"); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("sign in: %d\n%s", resp.StatusCode, body)
+	}
+	resp, body := b.do(http.MethodGet, "/demo/history?tab=activity", nil, nil)
+	expect(t, resp, body, http.StatusOK, "push was refused", "this rewrites history (a force-push)", "the default branch cannot be deleted")
+	if strings.Count(stripTags(body), "push was refused") != 2 {
+		t.Errorf("want the two refused pushes listed:\n%s", stripTags(body))
+	}
+	// Nothing was accepted from either.
+	if strings.Contains(stripTags(body), "darius force-pushed") || strings.Contains(stripTags(body), "darius deleted") {
+		t.Errorf("a refused push shows as a change:\n%s", stripTags(body))
+	}
+}
+
 // stripTags is a page's text, its markup removed and its whitespace made
 // single spaces.
 func stripTags(html string) string {

@@ -13,6 +13,9 @@ Each release's section is also its GitHub release notes.
   change (created, pushed, force-pushed, deleted, tag moved), who made it
   and the run it started, with the repository's settings changes. Pushes
   from before this release show a force-push as a plain push.
+- A push Gitman refuses is recorded, and shows in History's Activity with
+  who pushed and the reason for each ref. The lines Git prints to the
+  pusher are unchanged.
 
 ### Changed
 

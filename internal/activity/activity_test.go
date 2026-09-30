@@ -334,3 +334,38 @@ func TestForRepoPages(t *testing.T) {
 		t.Fatalf("past the end = %v, %v, %v", entries, more, err)
 	}
 }
+
+func TestForRepoListsRefusedPushesWithTheirReasons(t *testing.T) {
+	database := pgtest.Open(t)
+	repoID, otherRepoID, _ := seed(t, database)
+	ctx := context.Background()
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := database.Pool.Exec(ctx, q, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	exec(`INSERT INTO push_refusals (id, repo_id, person_id, created_at) VALUES ('f1', $1, 'p1', $2), ('f2', $3, 'p1', $2)`,
+		repoID, base.Add(30*time.Minute), otherRepoID)
+	exec(`INSERT INTO push_refusal_refs (refusal_id, position, ref, reason) VALUES
+	      ('f1', 1, 'refs/tags/v1', 'moving an existing tag is a force-push'),
+	      ('f1', 0, 'refs/heads/main', 'the default branch cannot be deleted'),
+	      ('f1', 2, 'refs/notes/x', 'only branches and tags can be pushed'),
+	      ('f2', 0, 'refs/heads/other', 'not this repository''s')`)
+
+	entries, _, err := NewService(database).ForRepo(ctx, repoID, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 3 || entries[0].Kind != KindRefusal || entries[0].Actor != "darius" {
+		t.Fatalf("entries = %+v", entries)
+	}
+	got := entries[0].Refused
+	if len(got) != 3 || got[0].Ref != "refs/heads/main" || got[1].Ref != "refs/tags/v1" || got[2].Ref != "refs/notes/x" {
+		t.Fatalf("reasons are missing or out of the order they were reported: %+v", got)
+	}
+	if got[0].RefKind != git.KindBranch || got[0].RefName != "main" || got[1].RefKind != git.KindTag || got[2].RefName != "" {
+		t.Errorf("refs are not told apart: %+v", got)
+	}
+}

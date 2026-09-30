@@ -29,6 +29,12 @@ const commitCountCap = 1000
 // refused; the reasons have already been written to the hook's output.
 var ErrRejected = errors.New("push rejected")
 
+// refusal is why one ref of a push was refused; ref is empty when the
+// whole push was.
+type refusal struct {
+	ref, reason string
+}
+
 // Update is one line of a hook's input: a ref moving from Old to New.
 type Update struct {
 	Old, New string
@@ -145,7 +151,7 @@ func (h *Hook) PreReceive(ctx context.Context, updates []Update) error {
 	}
 	if pc.person.Disabled() {
 		h.say("Gitman: %s is disabled and cannot push.", pc.person.Username)
-		return ErrRejected
+		return h.refused(ctx, pc, refusal{reason: pc.person.Username + " is disabled and cannot push"})
 	}
 	readable, err := h.Repos.CanRead(ctx, pc.repo, pc.person.ID, pc.person.IsAdmin)
 	if err != nil {
@@ -153,7 +159,7 @@ func (h *Hook) PreReceive(ctx context.Context, updates []Update) error {
 	}
 	if !readable {
 		h.say("Gitman: %s cannot push to a repository they cannot read.", pc.person.Username)
-		return ErrRejected
+		return h.refused(ctx, pc, refusal{reason: pc.person.Username + " cannot push to a repository they cannot read"})
 	}
 
 	existing, err := h.Git.Refs(ctx)
@@ -179,9 +185,9 @@ func (h *Hook) PreReceive(ctx context.Context, updates []Update) error {
 		}
 	}
 
-	var rejections []string
+	var rejections []refusal
 	reject := func(u Update, format string, args ...any) {
-		rejections = append(rejections, fmt.Sprintf("%s: %s", u.Ref, fmt.Sprintf(format, args...)))
+		rejections = append(rejections, refusal{ref: u.Ref, reason: fmt.Sprintf(format, args...)})
 	}
 
 	for _, u := range updates {
@@ -261,7 +267,23 @@ func (h *Hook) PreReceive(ctx context.Context, updates []Update) error {
 	}
 	h.say("Gitman refused this push:")
 	for _, r := range rejections {
-		h.say("  %s", r)
+		h.say("  %s: %s", r.ref, r.reason)
+	}
+	return h.refused(ctx, pc, rejections...)
+}
+
+// refused records a refused push, for History's Activity, and returns
+// ErrRejected. The pusher already has the reasons; a failure to keep them
+// is said, and never changes the refusal.
+func (h *Hook) refused(ctx context.Context, pc *pushContext, refusals ...refusal) error {
+	err := h.DB.Tx(ctx, func(tx postgres.Tx) error {
+		if err := insertRefusal(ctx, tx, pc.repo.ID, pc.person.ID, h.Ctx.RemoteAddr, refusals); err != nil {
+			return err
+		}
+		return activity.Changed(ctx, tx, pc.repo.ID)
+	})
+	if err != nil {
+		h.say("Gitman could not record this refusal: %v", err)
 	}
 	return ErrRejected
 }

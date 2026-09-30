@@ -32,7 +32,10 @@ Its nav has five items:
   - **Activity** is every change to the repository's refs (created,
     pushed, force-pushed, deleted, or a tag moved) with who made it, the
     commits it moved from and to, and the run it started, together with
-    changes to its settings.
+    changes to its settings. A push Gitman refused shows too, with who
+    pushed and why each ref was refused: Git tells the pusher only that
+    the hook declined it, and the reasons are easy to lose among its
+    output.
 - **Runs** — every run of this repository's pipeline, newest first,
   paged.
 - **Settings** — admins only: description, default branch, ref rules,

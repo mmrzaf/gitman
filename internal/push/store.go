@@ -29,3 +29,20 @@ func insertPushUpdate(ctx context.Context, tx postgres.Tx, pushID string, kind g
 	}
 	return nil
 }
+
+func insertRefusal(ctx context.Context, tx postgres.Tx, repoID, personID, sourceIP string, refusals []refusal) error {
+	refusalID := id.New()
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO push_refusals (id, repo_id, person_id, source_ip) VALUES ($1, $2, $3, $4)
+	`, refusalID, repoID, personID, sourceIP); err != nil {
+		return fmt.Errorf("record refused push: %w", err)
+	}
+	for i, r := range refusals {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO push_refusal_refs (refusal_id, position, ref, reason) VALUES ($1, $2, $3, $4)
+		`, refusalID, i, r.ref, r.reason); err != nil {
+			return fmt.Errorf("record why %s was refused: %w", r.ref, err)
+		}
+	}
+	return nil
+}

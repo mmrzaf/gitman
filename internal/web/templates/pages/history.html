@@ -23,11 +23,17 @@
     {{- range $d.Entries}}
     <li class="feed-item">
       {{- if eq .Kind "event"}}{{template "icon" "settings"}}
+      {{- else if eq .Kind "refusal"}}{{template "icon" "warning"}}
       {{- else if eq .Change "deleted"}}{{template "icon" "trash"}}
       {{- else}}{{template "icon" "push"}}{{end}}
       <p class="feed-text">
         {{- if eq .Kind "event"}}
         {{template "person" .Actor}} {{eventText .Action .Detail}}
+        {{- else if eq .Kind "refusal"}}
+        {{template "person" .Actor}}'s push was refused
+        {{- range .Refused}}
+        <span class="feed-reason">{{if .RefName}}{{template "ref" (dict "Kind" .RefKind "Name" .RefName)}} {{else if .Ref}}<span class="mono">{{.Ref}}</span> {{end}}{{.Reason}}</span>
+        {{- end}}
         {{- else}}
         {{template "person" .Actor}} {{.Change}} {{template "ref" (dict "Kind" .RefKind "Name" .RefName)}}
         {{- if eq .Change "created"}} at {{template "commit" (dict "Repo" $repo.Name "Hash" .NewCommit)}}

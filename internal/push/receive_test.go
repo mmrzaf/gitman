@@ -532,3 +532,105 @@ func TestPostReceiveSaysWhyARefStartedNoRun(t *testing.T) {
 		t.Errorf("a ref that ran was reported as not running:\n%s", out)
 	}
 }
+
+// refusalRows reads back what PreReceive recorded about refused pushes:
+// each refused ref and its reason, in the order reported.
+func (f *prFixture) refusalRows(t *testing.T) (pushes int, refs []refusal) {
+	t.Helper()
+	ctx := context.Background()
+	if err := f.hook.DB.Pool.QueryRow(ctx, `SELECT count(*) FROM push_refusals`).Scan(&pushes); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := f.hook.DB.Pool.Query(ctx, `SELECT ref, reason FROM push_refusal_refs ORDER BY refusal_id, position`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var r refusal
+		if err := rows.Scan(&r.ref, &r.reason); err != nil {
+			t.Fatal(err)
+		}
+		refs = append(refs, r)
+	}
+	return pushes, refs
+}
+
+func TestPreReceiveRecordsWhyAPushWasRefused(t *testing.T) {
+	f := newPRFixture(t)
+	ctx := context.Background()
+	if err := f.repos.SaveRule(ctx, f.repo.ID, repo.Rule{Kind: git.KindBranch, Pattern: "main", PushPolicy: repo.PushAdmins}, ""); err != nil {
+		t.Fatal(err)
+	}
+	f.asPerson(t, "alice")
+	f.hook.Ctx.RemoteAddr = "203.0.113.9"
+	commit := f.commitFile(t, "one", "refs/heads/tmp")
+
+	err := f.preReceive(t, []Update{
+		{Old: zeroHash, New: commit, Ref: "refs/heads/main", Kind: git.KindBranch, Name: "main"},
+		{Old: zeroHash, New: commit, Ref: "refs/heads/fine", Kind: git.KindBranch, Name: "fine"},
+		{Old: zeroHash, New: commit, Ref: "refs/heads/a..b", Kind: git.KindBranch, Name: "a..b"},
+		{Old: zeroHash, New: commit, Ref: "refs/notes/x"},
+	})
+	if err != ErrRejected {
+		t.Fatalf("PreReceive = %v, want ErrRejected", err)
+	}
+
+	// What the pusher is told is unchanged: every reason, ref by ref.
+	want := "Gitman refused this push:\n" +
+		"  refs/heads/main: the rule for branch \"main\" does not allow alice to push here\n" +
+		"  refs/heads/a..b: ref name must not contain '..'\n" +
+		"  refs/notes/x: only branches (refs/heads/) and tags (refs/tags/) can be pushed\n"
+	if f.out.String() != want {
+		t.Fatalf("output =\n%s\nwant\n%s", f.out.String(), want)
+	}
+
+	// And it is kept: one refused push, with the same reasons in the same
+	// order. The ref that was fine has none.
+	pushes, refs := f.refusalRows(t)
+	if pushes != 1 || len(refs) != 3 {
+		t.Fatalf("recorded %d pushes and %d refs, want 1 and 3: %+v", pushes, len(refs), refs)
+	}
+	for i, r := range refs {
+		if line := "  " + r.ref + ": " + r.reason + "\n"; !strings.Contains(f.out.String(), line) {
+			t.Errorf("ref %d recorded as %q, which the pusher was not told", i, line)
+		}
+	}
+	if refs[0].ref != "refs/heads/main" || refs[2].ref != "refs/notes/x" {
+		t.Errorf("refs are out of order: %+v", refs)
+	}
+	var person, ip string
+	if err := f.hook.DB.Pool.QueryRow(ctx, `SELECT p.username, f.source_ip FROM push_refusals f JOIN people p ON p.id = f.person_id`).Scan(&person, &ip); err != nil {
+		t.Fatal(err)
+	}
+	if person != "alice" || ip != "203.0.113.9" {
+		t.Errorf("recorded for %q from %q", person, ip)
+	}
+}
+
+func TestPreReceiveRecordsAPushRefusedAsAWhole(t *testing.T) {
+	f := newPRFixture(t)
+	f.asPerson(t, "alice")
+	if err := f.people.Disable(context.Background(), f.hook.Ctx.PersonID, ""); err != nil {
+		t.Fatal(err)
+	}
+	commit := f.commitFile(t, "one", "refs/heads/tmp")
+	if err := f.preReceive(t, []Update{{Old: zeroHash, New: commit, Ref: "refs/heads/feature", Kind: git.KindBranch, Name: "feature"}}); err != ErrRejected {
+		t.Fatalf("PreReceive = %v, want ErrRejected", err)
+	}
+	pushes, refs := f.refusalRows(t)
+	if pushes != 1 || len(refs) != 1 || refs[0].ref != "" || refs[0].reason != "alice is disabled and cannot push" {
+		t.Fatalf("recorded %d pushes: %+v", pushes, refs)
+	}
+}
+
+func TestPreReceiveRecordsNothingForAnAcceptedPush(t *testing.T) {
+	f := newPRFixture(t)
+	commit := f.commitFile(t, "one", "refs/heads/tmp")
+	if err := f.preReceive(t, []Update{{Old: zeroHash, New: commit, Ref: "refs/heads/feature", Kind: git.KindBranch, Name: "feature"}}); err != nil {
+		t.Fatalf("PreReceive = %v", err)
+	}
+	if pushes, refs := f.refusalRows(t); pushes != 0 || len(refs) != 0 {
+		t.Fatalf("an accepted push left %d refusals: %+v", pushes, refs)
+	}
+}

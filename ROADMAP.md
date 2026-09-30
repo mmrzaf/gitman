@@ -25,7 +25,7 @@ Refs and history: managing branches, tags and revisions from the web.
   - [x] Activity: every ref change from `push_updates` (created, pushed,
     force-pushed, deleted, tag moved), with who, old → new, and the run
     it started.
-- [ ] **Record refused pushes.** A push Gitman refuses shows in Activity
+- [x] **Record refused pushes.** A push Gitman refuses shows in Activity
   with its reasons. Git reports only "pre-receive hook declined" per
   ref, and the `remote:` lines saying why are easy to lose: an agent
   pushing v0.1.1–v0.1.3 to waiotech reported no reason at all.

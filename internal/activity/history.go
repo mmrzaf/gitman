@@ -20,9 +20,20 @@ const (
 	Moved Change = "moved"
 )
 
+// Refusal is why one ref of a push was refused.
+type Refusal struct {
+	// Ref is the full ref name, empty when the whole push was refused.
+	Ref string
+	// RefKind and RefName are set when Ref is a branch or a tag.
+	RefKind git.Kind
+	RefName string
+	Reason  string
+}
+
 // HistoryEntry is one line of a repository's History → Activity: a ref
-// changing, or a change to its settings. Only the fields for its Kind are
-// set: KindPush for a ref change, KindEvent for a settings change.
+// changing, a change to its settings, or a push that was refused. Only the
+// fields for its Kind are set: KindPush for a ref change, KindEvent for a
+// settings change, KindRefusal for a refused push.
 type HistoryEntry struct {
 	Kind  Kind
 	At    time.Time
@@ -41,6 +52,9 @@ type HistoryEntry struct {
 	// event
 	Action string
 	Detail string
+
+	// refusal
+	Refused []Refusal
 
 	// id orders entries of the same moment.
 	id string
@@ -61,8 +75,8 @@ func changeOf(kind git.Kind, isCreate, isDelete, isForce bool) Change {
 	return Pushed
 }
 
-// ForRepo lists a repository's ref changes and settings changes, newest
-// first, skipping the first skip and reporting whether more follow. Each
+// ForRepo lists a repository's ref changes, settings changes and refused
+// pushes, newest first, skipping the first skip and reporting whether more follow. Each
 // source is read to skip+limit+1 rows and merged here, so a page is
 // exactly what the merged feed holds at that place however the sources
 // interleave.
@@ -76,7 +90,11 @@ func (s *Service) ForRepo(ctx context.Context, repoID string, skip, limit int) (
 	if err != nil {
 		return nil, false, err
 	}
-	all := append(changes, events...)
+	refusals, err := repoRefusals(ctx, s.db.Q, repoID, want)
+	if err != nil {
+		return nil, false, err
+	}
+	all := append(append(changes, events...), refusals...)
 	sort.Slice(all, func(i, j int) bool {
 		if !all[i].At.Equal(all[j].At) {
 			return all[i].At.After(all[j].At)

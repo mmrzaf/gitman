@@ -1030,6 +1030,7 @@ time { white-space: nowrap; }
 .feed-item > .status-icon { color: var(--status); }
 .feed-text { min-width: 0; overflow-wrap: anywhere; }
 .feed-text .ref { font-size: var(--text-xs); }
+.feed-reason { display: block; color: var(--muted); }
 .feed-time { color: var(--muted); font-size: var(--text-xs); }
 .feed-repo { font-weight: var(--weight-bold); color: var(--text); }
 

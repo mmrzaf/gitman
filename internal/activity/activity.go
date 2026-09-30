@@ -73,6 +73,9 @@ const (
 	KindRun        Kind = "run"
 	KindDeployment Kind = "deployment"
 	KindEvent      Kind = "event"
+	// KindRefusal is a push Gitman refused; only a repository's History
+	// lists it.
+	KindRefusal Kind = "refusal"
 )
 
 // Entry is one line of the feed. Only the fields for its Kind are set;
