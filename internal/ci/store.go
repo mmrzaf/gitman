@@ -87,13 +87,13 @@ func supersedeQueued(ctx context.Context, tx postgres.Querier, repoID string, re
 }
 
 const summaryColumns = `
-	r.id, repos.name, r.number, r.ref_kind, r.ref_name, r.trigger, r.status, r.reason,
+	r.id, repos.name, r.number, r.ref_kind, r.ref_name, r.commit_hash, r.trigger, r.status, r.reason, r.target,
 	COALESCE(p.username, ''), r.queued_at, r.started_at, r.finished_at
 `
 
 func scanSummary(row interface{ Scan(...any) error }) (Summary, error) {
 	var s Summary
-	err := row.Scan(&s.ID, &s.RepoName, &s.Number, &s.RefKind, &s.RefName, &s.Trigger, &s.Status, &s.Reason,
+	err := row.Scan(&s.ID, &s.RepoName, &s.Number, &s.RefKind, &s.RefName, &s.Commit, &s.Trigger, &s.Status, &s.Reason, &s.Target,
 		&s.Actor, &s.QueuedAt, &s.StartedAt, &s.FinishedAt)
 	return s, err
 }
@@ -205,7 +205,7 @@ func selectLatestRunPerRef(ctx context.Context, q postgres.Querier, repoID strin
 // keyed by commit; a commit no run was made for is left out.
 func selectLatestRunPerCommit(ctx context.Context, q postgres.Querier, repoID string, commits []string) (map[string]Summary, error) {
 	rows, err := q.Query(ctx, `
-		SELECT DISTINCT ON (r.commit_hash) r.commit_hash, `+summaryColumns+`
+		SELECT DISTINCT ON (r.commit_hash) `+summaryColumns+`
 		FROM runs r
 		JOIN repos ON repos.id = r.repo_id
 		LEFT JOIN people p ON p.id = r.triggered_by
@@ -218,13 +218,11 @@ func selectLatestRunPerCommit(ctx context.Context, q postgres.Querier, repoID st
 	defer rows.Close()
 	result := map[string]Summary{}
 	for rows.Next() {
-		var commit string
-		var s Summary
-		if err := rows.Scan(&commit, &s.ID, &s.RepoName, &s.Number, &s.RefKind, &s.RefName, &s.Trigger, &s.Status, &s.Reason,
-			&s.Actor, &s.QueuedAt, &s.StartedAt, &s.FinishedAt); err != nil {
+		s, err := scanSummary(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan run: %w", err)
 		}
-		result[commit] = s
+		result[s.Commit] = s
 	}
 	return result, rows.Err()
 }
@@ -631,14 +629,14 @@ func selectRunningRunIDs(ctx context.Context, q postgres.Querier) (map[string]bo
 func selectRunDetail(ctx context.Context, q postgres.Querier, repoID string, number int64) (*RunDetail, error) {
 	d := &RunDetail{}
 	err := q.QueryRow(ctx, `
-		SELECT `+summaryColumns+`, r.repo_id, r.commit_hash, r.target, r.version, r.allow_secrets, r.cancel_requested
+		SELECT `+summaryColumns+`, r.repo_id, r.version, r.allow_secrets, r.cancel_requested
 		FROM runs r
 		JOIN repos ON repos.id = r.repo_id
 		LEFT JOIN people p ON p.id = r.triggered_by
 		WHERE r.repo_id = $1 AND r.number = $2
-	`, repoID, number).Scan(&d.ID, &d.RepoName, &d.Number, &d.RefKind, &d.RefName, &d.Trigger, &d.Status, &d.Reason,
+	`, repoID, number).Scan(&d.ID, &d.RepoName, &d.Number, &d.RefKind, &d.RefName, &d.Commit, &d.Trigger, &d.Status, &d.Reason, &d.Target,
 		&d.Actor, &d.QueuedAt, &d.StartedAt, &d.FinishedAt,
-		&d.RepoID, &d.Commit, &d.Target, &d.Version, &d.AllowSecrets, &d.CancelRequested)
+		&d.RepoID, &d.Version, &d.AllowSecrets, &d.CancelRequested)
 	if err != nil {
 		return nil, postgres.NormalizeNotFound(err)
 	}

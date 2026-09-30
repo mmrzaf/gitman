@@ -29,7 +29,7 @@ Refs and history: managing branches, tags and revisions from the web.
   with its reasons. Git reports only "pre-receive hook declined" per
   ref, and the `remote:` lines saying why are easy to lose: an agent
   pushing v0.1.1–v0.1.3 to waiotech reported no reason at all.
-- [ ] **More in the Runs table.** The commit, how long the run took, who
+- [x] **More in the Runs table.** The commit, how long the run took, who
   started it, and the target it shipped to.
 - [ ] **Download a ref as an archive.** A `.tar.gz` or `.zip` of any
   branch, tag or commit, streamed with `git archive`, following the

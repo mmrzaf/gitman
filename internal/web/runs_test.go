@@ -222,3 +222,67 @@ func TestEventStreamStripsTerminalEscapes(t *testing.T) {
 	}
 	t.Fatal("no log event")
 }
+
+func TestRunsTableShowsCommitDurationWhoAndTarget(t *testing.T) {
+	database, store, b := setupWithStore(t)
+	ctx := context.Background()
+	signIn(t, database, b, "darius", false)
+	repo := seedFilesRepo(t, database, store, b)
+	mina := mustPerson(t, database, "darius")
+
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := database.Pool.Exec(ctx, q, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	commit := func(c byte) string { return strings.Repeat(string(c), 40) }
+	exec(`INSERT INTO workers (id, hostname) VALUES ('w1', 'host')`)
+	// Run 1 ran for 3m05s and shipped to staging; run 2 passed without a
+	// target; run 3 failed after 12s with a target it did not ship to; run 4
+	// waits; run 5 failed before it started.
+	exec(`INSERT INTO runs (id, repo_id, number, commit_hash, ref_kind, ref_name, trigger, triggered_by, status, target, worker_id, started_at, finished_at)
+	      VALUES ('r1', $1, 1, $2, 'branch', 'main', 'push', $3, 'passed', 'staging', 'w1', now() - interval '10 minutes', now() - interval '10 minutes' + interval '185 seconds'),
+	             ('r2', $1, 2, $4, 'tag', 'v1.0.0', 'manual', $3, 'passed', '', 'w1', now() - interval '9 minutes', now() - interval '9 minutes' + interval '1 second'),
+	             ('r3', $1, 3, $5, 'branch', 'release', 'push', $3, 'failed', 'staging', 'w1', now() - interval '8 minutes', now() - interval '8 minutes' + interval '12 seconds')`,
+		repo.ID, commit('a'), mina.ID, commit('b'), commit('c'))
+	exec(`INSERT INTO runs (id, repo_id, number, commit_hash, ref_kind, ref_name, trigger, triggered_by, status)
+	      VALUES ('r4', $1, 4, $2, 'branch', 'main', 'manual', $3, 'queued')`, repo.ID, commit('d'), mina.ID)
+	exec(`INSERT INTO runs (id, repo_id, number, commit_hash, ref_kind, ref_name, trigger, triggered_by, status, reason, finished_at)
+	      VALUES ('r5', $1, 5, $2, 'branch', 'main', 'push', NULL, 'failed', 'There is no .gitman.yml.', now())`, repo.ID, commit('e'))
+
+	resp, body := b.do(http.MethodGet, "/waiotech/runs", nil, nil)
+	expect(t, resp, body, http.StatusOK,
+		`<th scope="col">Commit</th>`, `<th scope="col">Started by</th>`, `<th scope="col">Took</th>`, `<th scope="col">Shipped to</th>`)
+
+	// One row per run, by number, each read as the cells of its own row.
+	row := func(n int) string {
+		start := strings.Index(body, `href="/waiotech/runs/`+strconv.Itoa(n)+`"`)
+		if start < 0 {
+			t.Fatalf("no row for run #%d", n)
+		}
+		end := strings.Index(body[start:], "</tr>")
+		return stripTags(body[start : start+end])
+	}
+	for n, wants := range map[int][]string{
+		1: {"#1", "aaaaaaa", "Pushed by darius", "3m 05s", "staging"},
+		2: {"#2", "bbbbbbb", "Started by darius", "1s", "—"},
+		3: {"#3", "ccccccc", "12s", "—"},
+		4: {"#4", "ddddddd", "Started by darius", "—"},
+		5: {"#5", "eeeeeee", "Pushed by someone", "—"},
+	} {
+		got := row(n)
+		for _, want := range wants {
+			if !strings.Contains(got, want) {
+				t.Errorf("run #%d's row lacks %q: %s", n, want, got)
+			}
+		}
+	}
+	// Only a run that passed shipped anywhere.
+	if strings.Contains(row(3), "staging") || strings.Contains(row(4), "staging") {
+		t.Error("a run that did not pass shows a target it shipped to")
+	}
+	if !strings.Contains(body, `href="/waiotech/commit/`+commit('a')+`"`) {
+		t.Error("a run's commit does not link to it")
+	}
+}

@@ -37,7 +37,8 @@ Its nav has five items:
     the hook declined it, and the reasons are easy to lose among its
     output.
 - **Runs** — every run of this repository's pipeline, newest first,
-  paged.
+  paged: its branch or tag and commit, who started it, how long it took,
+  and the target it shipped to.
 - **Settings** — admins only: description, default branch, ref rules,
   secrets, who may read the repository and push to a ref no rule matches,
   and deletion.

@@ -85,15 +85,32 @@ type Summary struct {
 	Number   int64
 	RefKind  git.Kind
 	RefName  string
-	Trigger  Trigger
-	Status   Status
-	Reason   string
+	// Commit is the commit the run is of.
+	Commit  string
+	Trigger Trigger
+	Status  Status
+	Reason  string
+	// Target is the target the run resolved for its ref, which it ships to
+	// when it passes.
+	Target string
 	// Actor is who triggered the run: who pushed, or who started it by
 	// hand.
 	Actor      string
 	QueuedAt   time.Time
 	StartedAt  *time.Time
 	FinishedAt *time.Time
+}
+
+// Ran reports whether the run started and has finished, so Took is how
+// long it ran.
+func (s Summary) Ran() bool { return s.StartedAt != nil && s.FinishedAt != nil }
+
+// Took is how long a run that Ran ran.
+func (s Summary) Took() time.Duration {
+	if !s.Ran() {
+		return 0
+	}
+	return s.FinishedAt.Sub(*s.StartedAt)
 }
 
 // FetchUsername is the HTTP Basic auth username a worker fetches a run's
@@ -146,8 +163,6 @@ type Outcome struct {
 type RunDetail struct {
 	Summary
 	RepoID       string
-	Commit       string
-	Target       string
 	Version      string
 	AllowSecrets bool
 	// CancelRequested is set while a running run is being stopped.

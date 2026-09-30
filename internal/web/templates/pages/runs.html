@@ -20,7 +20,10 @@
         <tr>
           <th scope="col">Run</th>
           <th scope="col">Branch or tag</th>
-          <th scope="col">Triggered</th>
+          <th scope="col">Commit</th>
+          <th scope="col">Started by</th>
+          <th scope="col">Took</th>
+          <th scope="col">Shipped to</th>
           <th scope="col">Queued</th>
         </tr>
       </thead>
@@ -29,7 +32,10 @@
         <tr>
           <th scope="row" class="table-rowheader"><a class="run-ref" href="/{{$repo.Name}}/runs/{{.Number}}">{{template "status" .Status}}<span>#{{.Number}}</span></a></th>
           <td>{{template "ref" (dict "Kind" .RefKind "Name" .RefName "Href" (refURL $repo.Name .RefName ""))}}</td>
-          <td>{{if eq .Trigger "push"}}{{template "icon" "push"}}Pushed{{else}}{{template "icon" "play"}}Started{{end}} by {{template "person" .Actor}}</td>
+          <td class="cell-shrink">{{template "commit" (dict "Repo" $repo.Name "Hash" .Commit)}}</td>
+          <td>{{if eq .Trigger "push"}}{{template "icon" "push"}}<span class="visually-hidden">Pushed by </span>{{else}}{{template "icon" "play"}}<span class="visually-hidden">Started by </span>{{end}}{{template "person" .Actor}}</td>
+          <td class="cell-shrink">{{if .Ran}}{{duration .Took}}{{else}}<span class="muted">—</span>{{end}}</td>
+          <td class="cell-shrink">{{if and (eq .Status "passed") .Target}}{{.Target}}{{else}}<span class="muted">—</span>{{end}}</td>
           <td class="cell-shrink cell-muted">{{template "time" .QueuedAt}}</td>
         </tr>
       {{- end}}

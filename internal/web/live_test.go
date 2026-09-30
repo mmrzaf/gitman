@@ -46,8 +46,9 @@ func sampleRun(status ci.Status) *ci.RunDetail {
 	code, fail := 0, 2
 	run := &ci.RunDetail{
 		Summary: ci.Summary{ID: "run-1", RepoName: "waiotech", Number: 42, RefKind: git.KindBranch, RefName: "develop",
-			Trigger: ci.TriggerPush, Status: status, Actor: "darius", QueuedAt: started, StartedAt: &started},
-		Commit: strings.Repeat("a", 40), Target: "staging", Version: "3f2a91c",
+			Commit: strings.Repeat("a", 40), Trigger: ci.TriggerPush, Status: status, Target: "staging", Actor: "darius",
+			QueuedAt: started, StartedAt: &started},
+		Version: "3f2a91c",
 		Steps: []ci.StepDetail{
 			{ID: "s0", Index: 0, Name: "test", Status: ci.StepPassed, ExitCode: &code, StartedAt: &started, FinishedAt: &finished},
 			{ID: "s1", Index: 1, Name: "deploy", Status: ci.StepFailed, ExitCode: &fail, StartedAt: &started, FinishedAt: &finished},
