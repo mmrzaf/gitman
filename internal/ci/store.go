@@ -429,10 +429,10 @@ func selectRunningRepoByFetchToken(ctx context.Context, q postgres.Querier, toke
 	return repoID, postgres.NormalizeNotFound(err)
 }
 
-// setStepRunning and setStepFinished change a step only while its run is
-// running: a run that has ended — failed as lost while its worker was
-// cut off, say — keeps the step statuses it ended with. setStepRunning
-// returns ErrRunEnded for such a run, so its worker starts nothing more.
+// setStepRunning changes a step only while its run is running: a run that
+// has ended — failed as lost while its worker was cut off, say — keeps the
+// step statuses it ended with. It returns ErrRunEnded for such a run, so
+// its worker starts nothing more.
 func setStepRunning(ctx context.Context, q postgres.Querier, stepID string) error {
 	tag, err := q.Exec(ctx, `
 		UPDATE steps SET status = 'running', started_at = now()
@@ -445,17 +445,6 @@ func setStepRunning(ctx context.Context, q postgres.Querier, stepID string) erro
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrRunEnded
-	}
-	return nil
-}
-
-func setStepFinished(ctx context.Context, q postgres.Querier, stepID string, status StepStatus, exitCode *int) error {
-	if _, err := q.Exec(ctx, `
-		UPDATE steps SET status = $2, exit_code = $3, finished_at = now()
-		WHERE id = $1 AND status IN ('pending', 'running')
-		  AND EXISTS (SELECT 1 FROM runs WHERE runs.id = steps.run_id AND runs.status = 'running')
-	`, stepID, status, exitCode); err != nil {
-		return fmt.Errorf("finish step: %w", err)
 	}
 	return nil
 }
@@ -479,8 +468,7 @@ func settleOpenSteps(ctx context.Context, q postgres.Querier, runID string, runn
 // error: a worker that timed out waiting for the answer retries it
 // without knowing whether the first attempt was stored. It silently does
 // nothing once its run has ended — failed as lost while its worker kept
-// writing, say — the same way setStepFinished leaves an ended run's
-// steps alone.
+// writing, say, so an ended run's steps keep the statuses they ended with.
 func insertLogChunk(ctx context.Context, q postgres.Querier, stepID string, sequence int, content string) error {
 	if _, err := q.Exec(ctx, `
 		WITH inserted AS (INSERT INTO step_logs (step_id, sequence, content, byte_len, line_count)
