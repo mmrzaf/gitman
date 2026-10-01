@@ -66,7 +66,7 @@ func (s *Service) LatestRunPerCommit(ctx context.Context, repoID string, commits
 
 // LiveForRepo is Live, scoped to one repository.
 func (s *Service) LiveForRepo(ctx context.Context, repoID string) ([]Deployment, error) {
-	return selectLiveDeployments(ctx, s.db.Q, &repoID)
+	return selectLiveDeployments(ctx, s.db.Q, repoID)
 }
 
 // LiveForRepos is Live, restricted to repoIDs.

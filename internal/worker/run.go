@@ -183,6 +183,47 @@ func (e *execution) runStep(runCtx, workerCtx, record context.Context, step ci.C
 		}
 	}()
 
+	name := "gitman-" + c.RunID + "-" + strconv.Itoa(step.Index)
+	if err := e.journal.PlanContainer(runCtx, c.RunID, step.ID, name); err != nil {
+		if errors.Is(err, ci.ErrRunEnded) {
+			o := ci.Outcome{Status: ci.StatusCancelled}
+			return &o, ci.StepCancelled, nil
+		}
+		o := e.internalFailure("Could not record container recovery state", err)
+		return &o, ci.StepFailed, nil
+	}
+
+	if step.Type == ci.StepDeploy {
+		waiting := false
+		for {
+			err := e.journal.BeginDeployment(runCtx, c.RunID, step.ID)
+			if err == nil {
+				break
+			}
+			if errors.Is(err, ci.ErrDeploymentSuperseded) {
+				o := ci.Outcome{Status: ci.StatusCancelled, Reason: "A newer run already deployed this target."}
+				return &o, ci.StepSkipped, nil
+			}
+			if errors.Is(err, ci.ErrRunEnded) {
+				o := ci.Outcome{Status: ci.StatusCancelled}
+				return &o, ci.StepCancelled, nil
+			}
+			if !errors.Is(err, ci.ErrDeploymentBusy) {
+				o := e.internalFailure("Could not acquire deployment ownership", err)
+				return &o, ci.StepFailed, nil
+			}
+			if !waiting {
+				logs.note("waiting for exclusive deployment ownership of " + c.Target)
+				waiting = true
+			}
+			select {
+			case <-runCtx.Done():
+				o, _ := interrupted(runCtx, workerCtx, timeout, "while waiting for deployment ownership")
+				return &o, ci.StepFailed, nil
+			case <-time.After(time.Second):
+			}
+		}
+	}
 	code, err := e.docker.Run(runCtx, containerSpec{
 		Name:         "gitman-" + c.RunID + "-" + strconv.Itoa(step.Index),
 		RunID:        c.RunID,

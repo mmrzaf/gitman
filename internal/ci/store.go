@@ -267,7 +267,7 @@ func selectLatestRunPerCommit(ctx context.Context, q postgres.Querier, repoID st
 
 // selectLiveDeployments returns the latest deployment for every
 // repository and target, or, with repoID, for one repository's targets.
-func selectLiveDeployments(ctx context.Context, q postgres.Querier, repoID *string) ([]Deployment, error) {
+func selectLiveDeployments(ctx context.Context, q postgres.Querier, repoID string) ([]Deployment, error) {
 	rows, err := q.Query(ctx, `
 		SELECT DISTINCT ON (d.repo_id, d.target)
 		       d.repo_id, d.target, d.version, d.commit_hash,
@@ -275,8 +275,8 @@ func selectLiveDeployments(ctx context.Context, q postgres.Querier, repoID *stri
 		FROM deployments d
 		LEFT JOIN runs r ON r.id = d.run_id
 		LEFT JOIN people p ON p.id = d.person_id
-		WHERE $1::text IS NULL OR d.repo_id = $1
-		ORDER BY d.repo_id, d.target, d.created_at DESC
+		WHERE d.repo_id = $1
+		ORDER BY d.repo_id, d.target, d.created_at DESC, d.id DESC
 	`, repoID)
 	if err != nil {
 		return nil, fmt.Errorf("list live deployments: %w", err)
@@ -305,7 +305,7 @@ func selectLiveDeploymentsForRepos(ctx context.Context, q postgres.Querier, repo
 		LEFT JOIN runs r ON r.id = d.run_id
 		LEFT JOIN people p ON p.id = d.person_id
 		WHERE d.repo_id = ANY($1)
-		ORDER BY d.repo_id, d.target, d.created_at DESC
+		ORDER BY d.repo_id, d.target, d.created_at DESC, d.id DESC
 	`, repoIDs)
 	if err != nil {
 		return nil, fmt.Errorf("list live deployments: %w", err)
@@ -331,7 +331,7 @@ func selectLatestDeploymentPerRef(ctx context.Context, q postgres.Querier, repoI
 		JOIN runs r ON r.id = d.run_id
 		LEFT JOIN people p ON p.id = d.person_id
 		WHERE d.repo_id = $1 AND r.repo_id = $1 AND r.ref_kind <> ''
-		ORDER BY r.ref_kind, r.ref_name, d.created_at DESC
+		ORDER BY r.ref_kind, r.ref_name, d.created_at DESC, d.id DESC
 	`, repoID)
 	if err != nil {
 		return nil, fmt.Errorf("list latest deployments per ref: %w", err)
@@ -533,11 +533,11 @@ func insertSummary(ctx context.Context, tx postgres.Tx, runID, key, value string
 	return nil
 }
 
-func insertDeployment(ctx context.Context, tx postgres.Tx, runID string, f *finishedRun) error {
+func insertDeployment(ctx context.Context, tx postgres.Tx, runID, stepID string, f *finishedRun) error {
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO deployments (id, repo_id, target, version, commit_hash, run_id, person_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-	`, id.New(), f.repoID, f.target, f.version, f.commit, runID, f.triggeredBy); err != nil {
+		INSERT INTO deployments (id, repo_id, target, version, commit_hash, run_id, person_id, step_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (step_id) DO NOTHING
+	`, id.New(), f.repoID, f.target, f.version, f.commit, runID, f.triggeredBy, stepID); err != nil {
 		return fmt.Errorf("record deployment: %w", err)
 	}
 	return nil
