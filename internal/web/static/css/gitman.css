@@ -19,14 +19,14 @@
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, "Liberation Mono", monospace;
 
-  /* Type scale: 12 / 13 / 14 / 16 / 20 / 24. Body copy is 14. */
-  --text-xs: 0.75rem;
-  --text-sm: 0.8125rem;
-  --text-md: 0.875rem;
-  --text-lg: 1rem;
+  /* Type scale: readable metadata and 16px body copy. */
+  --text-xs: 0.8125rem;
+  --text-sm: 0.875rem;
+  --text-md: 1rem;
+  --text-lg: 1.125rem;
   --text-xl: 1.25rem;
   --text-2xl: 1.5rem;
-  --text-mono: 0.8125rem;
+  --text-mono: 0.875rem;
   --leading: 1.5;
   --leading-tight: 1.25;
   --weight-medium: 500;
@@ -653,6 +653,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .choices-inline { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
 .choices-inline .choice { padding: var(--sp-1) var(--sp-2); }
 
+.token-repositories { display: grid; gap: var(--sp-1); margin-left: var(--sp-5); }
+.choices:has(input[name="repositories_scope"][value="all"]:checked) .token-repositories { display: none; }
+
 /* ---- Status: an icon shape, a word, and a colour. ----------------- */
 
 .status {
@@ -1201,7 +1204,6 @@ h1.path { font-size: var(--text-xl); letter-spacing: -0.01em; }
 /* ---- Directory listing -------------------------------------------- */
 
 .tree { font-size: var(--text-md); }
-.tree td { padding-top: 6px; padding-bottom: 6px; }
 .tree-name { display: inline-flex; align-items: center; gap: var(--sp-2); min-width: 0; max-width: 100%; }
 .tree-name .icon { color: var(--muted); }
 .tree-name .icon-folder { color: var(--accent); }
@@ -1324,7 +1326,7 @@ h1.path { font-size: var(--text-xl); letter-spacing: -0.01em; }
 }
 .step:hover { background: var(--surface-hover); text-decoration: none; color: var(--text); }
 .step[aria-current="step"] { background: var(--accent-bg); box-shadow: inset 2px 0 0 var(--accent); }
-.step-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.step-name { min-width: 0; overflow-wrap: anywhere; }
 .step-time { color: var(--muted); font-size: var(--text-xs); }
 .step.is-skipped .step-name, .step.is-pending .step-name { color: var(--muted); }
 
@@ -1380,7 +1382,7 @@ h1.path { font-size: var(--text-xl); letter-spacing: -0.01em; }
   .run-layout { grid-template-columns: minmax(0, 1fr); }
   .run-side, .run-output { position: static; }
   .run-output { height: 70vh; }
-  .steps { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  .steps { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* ---- Diffs -------------------------------------------------------- */
@@ -1445,7 +1447,8 @@ h1.path { font-size: var(--text-xl); letter-spacing: -0.01em; }
   overflow-wrap: anywhere;
 }
 .commit-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1) var(--sp-4); color: var(--muted); font-size: var(--text-sm); }
-.commit-meta > * { display: inline-flex; align-items: center; gap: var(--sp-1); }
+.commit-meta > * { display: inline-flex; align-items: center; gap: var(--sp-1); min-width: 0; max-width: 100%; }
+.commit-meta .hash { min-width: 0; overflow-wrap: anywhere; }
 
 /* ---- Sign in and error pages -------------------------------------- */
 
@@ -1494,6 +1497,7 @@ h1.path { font-size: var(--text-xl); letter-spacing: -0.01em; }
 .jump-list > li > a { display: inline-flex; align-items: center; gap: var(--sp-2); font-weight: var(--weight-medium); }
 .jump-more { display: flex; gap: var(--sp-3); margin-left: auto; font-size: var(--text-sm); }
 .form-actions-start { justify-content: flex-start; }
+.credential-revoke { margin-top: var(--sp-4); }
 
 /* Inline editing: a value with an Edit button that becomes its form.
    Without scripting the form is simply shown. */

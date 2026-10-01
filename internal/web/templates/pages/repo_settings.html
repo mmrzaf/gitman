@@ -33,7 +33,7 @@
         <div class="inline-edit" data-inline-edit{{if not $d.BranchForm.Valid}} data-inline-editing{{end}}>
           <div class="inline-edit-view" data-inline-view>
             <p class="field-label">Default branch</p>
-            <p class="inline-edit-value cluster">{{template "ref" (dict "Kind" "branch" "Name" $repo.DefaultBranch)}}{{if not $d.DefaultExists}}<span class="muted">not pushed yet</span>{{end}}</p>
+            <p class="inline-edit-value cluster">{{template "ref" (refModel "branch" $repo.DefaultBranch "")}}{{if not $d.DefaultExists}}<span class="muted">not pushed yet</span>{{end}}</p>
             {{- if $d.Branches}}
             <button type="button" class="btn btn-sm" data-inline-start aria-label="Change the default branch">{{template "icon" "edit"}}Change</button>
             {{- end}}
@@ -61,7 +61,7 @@
           </form>
           {{- end}}
         </div>
-        {{template "copy-field" (dict "ID" "clone-url" "Label" "Clone URL" "Value" $d.CloneURL)}}
+        {{template "copy-field" (copyFieldModel "clone-url" "Clone URL" $d.CloneURL)}}
         <dl class="facts">
           <dt>Created</dt><dd>{{template "time" $repo.CreatedAt}}</dd>
         </dl>
@@ -73,10 +73,10 @@
         <h2 class="panel-title" id="rules-title">{{template "icon" "shield"}}Ref rules</h2>
         <span class="panel-actions"><a class="btn btn-sm btn-primary" href="{{$base}}?tab=rules&amp;dialog=rule-new" data-dialog-open="rule-new" data-command="Add a ref rule to {{$repo.Name}}">{{template "icon" "plus"}}New rule</a></span>
       </header>
-      <p class="panel-intro">A branch or tag no rule matches is unprotected: anyone may push, force-push or delete it, and pushing to it never starts a run.</p>
+      <p class="panel-intro">Branches and tags without a matching rule use the repository’s default push policy. Their pushes never start pipelines.</p>
       {{- if $d.Rules}}
       <div class="table-scroll">
-        <table class="table">
+        <table class="table table-cards">
           <thead><tr><th scope="col">Branch or tag</th><th scope="col">Who may push</th><th scope="col">Allows</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
           <tbody>
           {{- range $d.Rules}}
@@ -85,7 +85,7 @@
               <td>{{if eq .PushPolicy "everyone"}}Everyone{{else if eq .PushPolicy "admins"}}Admins{{else}}{{len .PushPeople}} named {{if eq (len .PushPeople) 1}}person{{else}}people{{end}}{{end}}</td>
               <td><span class="cluster">
                 {{- if .RunOnPush}}<span class="chip">{{template "icon" "play"}}run</span>{{end}}
-                {{- if .AllowShip}}<span class="chip">{{template "icon" "ship"}}ship</span>{{end}}
+                {{- if .AllowDeploy}}<span class="chip">{{template "icon" "ship"}}deploy</span>{{end}}
                 {{- if .AllowSecrets}}<span class="chip">{{template "icon" "key"}}secrets</span>{{end}}
                 {{- if .AllowDocker}}<span class="chip chip-warning">{{template "icon" "warning"}}docker</span>{{end}}
                 {{- if .AllowForce}}<span class="chip">force-push</span>{{end}}
@@ -97,21 +97,21 @@
                   <summary class="btn btn-ghost btn-icon btn-sm" aria-label="Actions for the {{.Kind}} rule {{.Pattern}}">{{template "icon" "more"}}</summary>
                   <div class="menu-list">
                     <a class="menu-item" href="{{$base}}?tab=rules&amp;dialog=rule-edit&amp;kind={{.Kind}}&amp;pattern={{.Pattern}}">{{template "icon" "edit"}}Edit rule</a>
-                    <form method="post" action="{{$base}}/rules/delete" data-confirm="Remove the rule for {{.Kind}} {{.Pattern}}?" data-confirm-detail="Matching refs become unprotected: anyone may push, force-push or delete them, and pushes stop starting runs." data-confirm-action="Remove rule">
+                    <form method="post" action="{{$base}}/rules/delete" data-confirm="Remove the rule for {{.Kind}} {{.Pattern}}?" data-confirm-detail="Matching refs fall back to the repository’s default push policy, and their pushes stop starting runs." data-confirm-action="Remove rule">
                       <input type="hidden" name="kind" value="{{.Kind}}">
                       <input type="hidden" name="pattern" value="{{.Pattern}}">
                       <button type="submit" class="menu-item menu-item-danger">{{template "icon" "trash"}}Remove rule</button>
                     </form>
                   </div>
                 </details>
-              </td>
+              </div></td>
             </tr>
           {{- end}}
           </tbody>
         </table>
       </div>
       {{- else}}
-      {{template "empty" (dict "Icon" "shield" "Title" "No rules yet")}}
+      {{template "empty" (emptyModel "shield" "No rules yet" "" false)}}
       {{- end}}
     </section>
 
@@ -127,7 +127,7 @@
       <div class="panel-body"><div class="callout is-queued" role="note">{{template "icon" "warning"}}<p class="callout-body">GITMAN_SECRET_KEY is not configured on this instance, so secrets can't be stored.</p></div></div>
       {{- else if $d.Secrets}}
       <div class="table-scroll">
-        <table class="table">
+        <table class="table table-cards">
           <thead><tr><th scope="col">Key</th><th scope="col">Set</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
           <tbody>
           {{- range $d.Secrets}}
@@ -145,14 +145,14 @@
                     </form>
                   </div>
                 </details>
-              </td>
+              </div></td>
             </tr>
           {{- end}}
           </tbody>
         </table>
       </div>
       {{- else}}
-      {{template "empty" (dict "Icon" "key" "Title" "No secrets yet")}}
+      {{template "empty" (emptyModel "key" "No secrets yet" "" false)}}
       {{- end}}
     </section>
 
@@ -206,11 +206,11 @@
 </div>
 
 <dialog class="dialog dialog-wide" id="rule-new" aria-labelledby="rule-new-title" data-dialog{{if eq $d.Dialog "rule-new"}} open{{end}}>
-  {{template "rule-form" (dict "ID" "rule-new" "Title" "New rule" "Form" $d.RuleForm "People" $d.People "Action" (printf "%s/rules" $base) "Close" (printf "%s?tab=rules" $base) "Edit" false)}}
+  {{template "rule-form" (ruleFormModel "rule-new" "New rule" $d.RuleForm $d.People (printf "%s/rules" $base) (printf "%s?tab=rules" $base) false)}}
 </dialog>
 {{- with $d.EditForm}}
 <dialog class="dialog dialog-wide" id="rule-edit" aria-labelledby="rule-edit-title" data-dialog data-dialog-params="kind pattern"{{if eq $d.Dialog "rule-edit"}} open{{end}}>
-  {{template "rule-form" (dict "ID" "rule-edit" "Title" "Edit rule" "Form" . "People" $d.People "Action" (printf "%s/rules" $base) "Close" (printf "%s?tab=rules" $base) "Edit" true)}}
+  {{template "rule-form" (ruleFormModel "rule-edit" "Edit rule" . $d.People (printf "%s/rules" $base) (printf "%s?tab=rules" $base) true)}}
 </dialog>
 {{- end}}
 {{- if $d.SecretsReady}}
@@ -243,7 +243,7 @@
 </div>
 {{end}}
 
-{{/* rule-form: the form that adds or edits a ref rule. Takes (dict "ID"
+{{/* rule-form: the form that adds or edits a ref rule. Takes (typed view: "ID"
      "Title" "Form" "People" "Action" "Close" "Edit"). An edited rule keeps
      its branch or tag pattern: a rule is known by it. */}}
 {{define "rule-form"}}
@@ -256,7 +256,7 @@
     <input type="hidden" name="mode" value="edit">
     <input type="hidden" name="kind" value="{{$f.Get "kind"}}">
     <input type="hidden" name="pattern" value="{{$f.Get "pattern"}}">
-    <p>For {{$f.Get "kind"}} {{template "ref" (dict "Kind" ($f.Get "kind") "Name" ($f.Get "pattern"))}}</p>
+    <p>For {{$f.Get "kind"}} {{template "ref" (refModel (refKind ($f.Get "kind")) ($f.Get "pattern") "")}}</p>
     {{- else}}
     <fieldset class="choices choices-inline">
       <legend>Applies to</legend>
@@ -289,7 +289,7 @@
     <fieldset class="choices">
       <legend>Allow</legend>
       <label class="choice"><input type="checkbox" name="run_on_push"{{if $f.Has "run_on_push"}} checked{{end}}><span class="choice-label">Run on push</span><span class="choice-hint">Every push starts a run of the pipeline.</span></label>
-      <label class="choice"><input type="checkbox" name="allow_ship"{{if $f.Has "allow_ship"}} checked{{end}}><span class="choice-label">Ship</span><span class="choice-hint">A passing run deploys to the pipeline's matching target.</span></label>
+      <label class="choice"><input type="checkbox" name="allow_deploy"{{if $f.Has "allow_deploy"}} checked{{end}}><span class="choice-label">Managed deployment</span><span class="choice-hint">Allows a managed deploy step, with target serialization and deployment history. Other steps may still change external systems.</span></label>
       <label class="choice"><input type="checkbox" name="allow_secrets"{{if $f.Has "allow_secrets"}} checked{{end}}><span class="choice-label">Secrets</span><span class="choice-hint">Runs get this repository's secrets in their environment.</span></label>
       <label class="choice choice-danger"><input type="checkbox" name="allow_docker"{{if $f.Has "allow_docker"}} checked{{end}}><span class="choice-label">{{template "icon" "warning"}} Docker</span><span class="choice-hint">Steps may use the worker's Docker daemon, which is root on the worker's host.</span></label>
       <label class="choice"><input type="checkbox" name="allow_force"{{if $f.Has "allow_force"}} checked{{end}}><span class="choice-label">Force-push</span><span class="choice-hint">Pushes may rewrite history.</span></label>

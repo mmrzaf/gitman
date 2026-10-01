@@ -9,10 +9,10 @@
   <div class="empty">
     {{template "icon" "commit"}}
     <p class="empty-title">Nothing pushed yet</p>
-    <p>The default branch, {{template "ref" (dict "Kind" "branch" "Name" $repo.DefaultBranch)}}, has not been pushed.</p>
+    <p>The default branch, {{template "ref" (refModel "branch" $repo.DefaultBranch "")}}, has not been pushed.</p>
     {{- if $d.Branches}}
     <p class="cluster">Commits of
-      {{- range $d.Branches}} {{template "ref" (dict "Kind" "branch" "Name" . "Href" (commitsURL $repo.Name . ""))}}{{end}}</p>
+      {{- range $d.Branches}} {{template "ref" (refModel "branch" . (commitsURL $repo.Name . ""))}}{{end}}</p>
     {{- end}}
   </div>
 </section>
@@ -20,8 +20,8 @@
 {{- else}}
 <section class="panel" aria-label="Choose what to show">
   <form class="toolbar commit-picker" method="get" action="/{{$repo.Name}}/commits" data-swap>
-    {{template "ref-field" (dict "ID" "commits-ref" "Name" "ref" "Label" "Commits of" "Value" $d.Head.Name "Required" true "Clear" "")}}
-    {{template "ref-field" (dict "ID" "commits-base" "Name" "base" "Label" "Compared with" "Value" $d.Base.Name "Required" false "Clear" "No comparison")}}
+    {{template "ref-field" (refFieldModel "commits-ref" "ref" "Commits of" $d.Head.Name true "")}}
+    {{template "ref-field" (refFieldModel "commits-base" "base" "Compared with" $d.Base.Name false "No comparison")}}
     {{- with $d.Path}}<input type="hidden" name="path" value="{{.}}">{{end}}
     <button type="submit" class="btn btn-primary no-js-only">Show</button>
     {{- if $cmp}}<a class="btn" href="{{$d.SwapURL}}" data-swap>{{template "icon" "compare"}}Swap sides</a>{{end}}
@@ -42,7 +42,7 @@
     {{- else}}
     <strong class="mono">{{$d.Head.Name}}</strong> and <strong class="mono">{{$d.Base.Name}}</strong> are at the same commit.
     {{- end}}
-    <span class="muted">Common ancestor {{template "commit" (dict "Repo" $repo.Name "Hash" $cmp.MergeBase)}}.</span>
+    <span class="muted">Common ancestor {{template "commit" (commitModel $repo.Name $cmp.MergeBase)}}.</span>
   </p>
   {{- end}}
 </section>
@@ -55,12 +55,12 @@
 </nav>
 <div id="panel-commits" data-tab-panel="commits"{{if ne $d.Tab "commits"}} hidden{{end}}>
   <section class="panel" aria-label="Commits">
-    {{template "commit-table" (dict "Rows" $d.Commits "Repo" $repo)}}
+    {{template "commit-table" (commitTableModel $d.Commits $repo)}}
     {{- if $cmp.MoreCommits}}<p class="panel-footer">There are more commits than are listed here.</p>{{end}}
   </section>
 </div>
 <div class="stack" id="panel-changes" data-tab-panel="changes"{{if ne $d.Tab "changes"}} hidden{{end}}>
-  {{template "diff" (dict "Diff" $cmp.Diff "Compact" true)}}
+  {{template "diff" (diffModel $cmp.Diff true)}}
 </div>
 {{- end}}
 {{- else}}
@@ -68,9 +68,9 @@
   <header class="panel-header"><h2 class="panel-title" id="list-title">{{template "icon" "commit"}}{{$d.Head.Name}}</h2></header>
   <div>
   {{- if $d.Commits}}
-  {{template "commit-table" (dict "Rows" $d.Commits "Repo" $repo)}}
+  {{template "commit-table" (commitTableModel $d.Commits $repo)}}
   {{- else}}
-  {{template "empty" (dict "Icon" "commit" "Title" "No commits" "Text" "None changed this path.")}}
+  {{template "empty" (emptyModel "commit" "No commits" "None changed this path." false)}}
   {{- end}}
   </div>
   {{- if or $d.Skip $d.More}}
@@ -88,7 +88,7 @@
 
 {{/* ref-field: choose a branch, tag or commit. Without scripting it is a
      text box with the repository's refs to pick from; ref-field.js makes
-     it a button that opens a searchable list. Takes (dict "ID" "Name"
+     it a button that opens a searchable list. Takes (typed view: "ID" "Name"
      "Label" "Value" "Required" and, if it can be left empty, "Clear": what
      leaving it empty is called). */}}
 {{define "ref-field"}}

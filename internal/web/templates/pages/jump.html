@@ -34,7 +34,7 @@
       {{- end}}
     </ul>
     {{- else}}
-    {{template "empty" (dict "Icon" "repo" "Title" "No repositories yet")}}
+    {{template "empty" (emptyModel "repo" "No repositories yet" "" false)}}
     {{- end}}
   </section>
 </div>

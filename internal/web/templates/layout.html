@@ -24,7 +24,7 @@
   <nav class="topbar-inner" aria-label="Main">
     <a class="brand" href="/" aria-label="Gitman home"><span class="brand-lockup"><img class="for-light" src="{{asset "brand/gitman-header-light.png"}}" alt="" width="126" height="42"><img class="for-dark" src="{{asset "brand/gitman-header-dark.png"}}" alt="" width="126" height="42"></span><img class="brand-symbol" src="{{asset "brand/gitman-mark-64.png"}}" alt="" width="28" height="28"></a>
     <span class="topbar-spacer"></span>
-    <a class="palette-button" href="/jump" data-palette-open aria-keyshortcuts="Control+K Meta+K"{{if eq .Name "jump"}} aria-current="page"{{end}}>
+    <a class="palette-button" href="/jump" aria-label="Jump to…" data-palette-open aria-keyshortcuts="Control+K Meta+K"{{if eq .Name "jump"}} aria-current="page"{{end}}>
       {{template "icon" "search"}}<span class="palette-button-label">Jump to…</span><kbd class="kbd js-only" data-shortcut-label>Ctrl K</kbd>
     </a>
     <details class="menu" data-menu>

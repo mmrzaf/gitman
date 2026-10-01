@@ -11,10 +11,10 @@
   </div>
 </header>
 <div class="stack">
-  {{- with $d.Password}}{{template "reveal" (dict "Label" (printf "Password for %s" $d.Username) "Value" . "Note" "Copy it now and give it to them: it won't be shown again.")}}{{end}}
+  {{- with $d.Password}}{{template "reveal" (revealModel (printf "Password for %s" $d.Username) . "Copy it now and give it to them. It expires in 24 hours and must be changed after signing in.")}}{{end}}
   <section class="panel" aria-labelledby="people-title">
     <div class="table-scroll">
-      <table class="table">
+      <table class="table table-cards">
         <thead><tr><th scope="col">Username</th><th scope="col">Role</th><th scope="col">State</th><th scope="col">Since</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
         <tbody>
         {{- range $d.People}}
@@ -53,7 +53,7 @@
                   {{- end}}
                 </div>
               </details>
-            </td>
+            </div></td>
           </tr>
         {{- end}}
         </tbody>

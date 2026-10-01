@@ -13,7 +13,7 @@
       <span>{{template "icon" "commit"}}<span class="hash">{{$c.Hash}}</span>
         <button type="button" class="btn btn-ghost btn-icon btn-sm js-only" data-copy="{{$c.Hash}}" aria-label="Copy the full commit hash">{{template "icon" "copy"}}</button></span>
       {{- range $c.Parents}}
-      <span>parent {{template "commit" (dict "Repo" $repo.Name "Hash" .)}}</span>
+      <span>parent {{template "commit" (commitModel $repo.Name .)}}</span>
       {{- end}}
     </p>
   </div>
@@ -22,7 +22,7 @@
   </div>
 </header>
 <div class="stack">
-{{template "diff" (dict "Diff" $d.Diff)}}
+{{template "diff" (diffModel $d.Diff false)}}
 </div>
 </div>
 {{end}}

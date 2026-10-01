@@ -7,7 +7,7 @@
 import { el, icon } from "./dom.js";
 import { Picker } from "./picker.js";
 
-const hashLike = /^[0-9a-f]{7,40}$/i;
+const hashLike = /^[0-9a-f]{7,64}$/i;
 
 // choicesOf is what a field offers: from the options of a select, grouped
 // as its optgroups are, or from the datalist beside a text box.
