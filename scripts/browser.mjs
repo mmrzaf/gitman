@@ -387,7 +387,7 @@ const query = (page) => new URL(page.url()).searchParams;
 
   // Copying, inline editing, times.
   await page.goto(`${base}/demo`);
-  await page.click("button[aria-label='Copy HTTPS']");
+  await page.click("button[aria-label='Copy Git URL']");
   check("a copy button copies", (await page.evaluate(() => navigator.clipboard.readText())) === `${base}/demo.git`);
   check("hovering a time shows it in the reader's time zone", !/UTC$/.test(await page.locator("time").first().getAttribute("title")));
   await page.goto(`${base}/demo/settings`);
@@ -484,13 +484,15 @@ for (const scheme of ["light", "dark"]) {
   await out.close();
 }
 
-// ---- The dashboards fit the window ---------------------------------------
+// ---- Dashboard panels fit the desktop window ----------
 {
   const { context, page } = await signedIn({ viewport: { width: 1440, height: 900 } });
   for (const path of ["/", "/demo", "/sms-gateway"]) {
     await page.goto(base + path);
     const fit = await page.evaluate(() => ({
       scroll: document.documentElement.scrollHeight, height: innerHeight,
+      lastPanelBottom: Math.max(...[...document.querySelectorAll(".fit")].map((el) => el.getBoundingClientRect().bottom + scrollY)),
+      pageOverflow: getComputedStyle(document.body).overflowY,
       panels: [...document.querySelectorAll(".fit")].map((el) => Math.round(el.getBoundingClientRect().height)),
       shared: [...document.querySelectorAll(".fit:not(.fit-auto)")].map((el) => Math.round(el.getBoundingClientRect().height)),
       scrolling: [...document.querySelectorAll(".fit > .panel-scroll:has(> .empty)")].filter((el) => el.scrollHeight > el.clientHeight + 1)
@@ -498,7 +500,7 @@ for (const scheme of ["light", "dark"]) {
       overflowing: [...document.querySelectorAll(".fit > .panel-scroll")].filter((el) => el.scrollWidth > el.clientWidth + 1)
         .map((el) => `${el.parentElement.getAttribute("aria-labelledby")} +${el.scrollWidth - el.clientWidth}px`),
     }));
-    check(`the page does not scroll, only its panels: ${path}`, fit.scroll <= fit.height, JSON.stringify(fit));
+    check(`dashboard fits the window: ${path}`, fit.scroll <= fit.height + 1 && fit.lastPanelBottom <= fit.height + 1, JSON.stringify(fit));
     check(`an empty panel has no scroll bar: ${path}`, fit.scrolling.length === 0, JSON.stringify(fit.scrolling));
     check(`every panel keeps a usable share of the window, empty or not: ${path}`, fit.panels.length >= 4 && fit.shared.every((h) => h >= 100), JSON.stringify(fit));
     check(`nothing inside a panel spills sideways: ${path}`, fit.overflowing.length === 0, JSON.stringify(fit));

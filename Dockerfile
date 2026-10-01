@@ -21,8 +21,10 @@ ARG RUNTIME_IMAGE=debian:bookworm-slim
 # whose client is a static binary: Debian's docker.io is too old for the
 # API versions current Docker engines accept.
 ARG DOCKER_CLI_IMAGE=docker:29-cli
+ARG POSTGRES_IMAGE=postgres:16-bookworm
 
 FROM ${DOCKER_CLI_IMAGE} AS docker-cli
+FROM ${POSTGRES_IMAGE} AS postgres-client
 
 FROM ${GO_IMAGE} AS build
 ARG GOPROXY=https://proxy.golang.org,direct
@@ -46,13 +48,17 @@ RUN set -eu; \
     printf 'deb %s bookworm main\ndeb %s bookworm-updates main\ndeb %s bookworm-security main\n' \
       "$DEBIAN_MIRROR" "$DEBIAN_MIRROR" "$DEBIAN_SECURITY_MIRROR" > /etc/apt/sources.list; \
     apt-get update; \
-    apt-get install -y --no-install-recommends git ca-certificates curl tzdata; \
+    apt-get install -y --no-install-recommends git ca-certificates curl tzdata libpq5 liblz4-1 libzstd1; \
     rm -rf /var/lib/apt/lists/*; \
     useradd --uid 1000 --user-group --create-home --home-dir /home/gitman --shell /usr/sbin/nologin gitman
+COPY --from=postgres-client /usr/local/bin/pg_dump /usr/local/bin/pg_restore /usr/local/bin/
+COPY --from=postgres-client /usr/local/lib/libpq.so.5 /usr/local/lib/
+RUN ldconfig
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=build /out/gitman /usr/local/bin/gitman
+COPY LICENSE THIRD_PARTY_NOTICES.md /usr/share/doc/gitman/
 USER gitman
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
-  CMD curl -fsS -o /dev/null "http://127.0.0.1:${GITMAN_PORT:-8080}/healthz" || exit 1
+  CMD curl -fsS -o /dev/null "http://127.0.0.1:${GITMAN_PORT:-8080}/readyz" || exit 1
 CMD ["gitman", "web"]
