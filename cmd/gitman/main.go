@@ -22,6 +22,7 @@ type command struct {
 }
 
 var commands = map[string]command{
+	"restore": {summary: "restore and verify a backup into an empty installation", run: runRestore},
 	"version": {
 		summary: "print the Gitman version",
 		run:     runVersion,

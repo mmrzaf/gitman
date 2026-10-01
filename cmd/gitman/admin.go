@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"github.com/mmrzaf/gitman/internal/config"
 	"github.com/mmrzaf/gitman/internal/git"
 	"github.com/mmrzaf/gitman/internal/postgres"
+	"github.com/mmrzaf/gitman/internal/push"
 	reposvc "github.com/mmrzaf/gitman/internal/repo"
 	"github.com/mmrzaf/gitman/internal/worker"
 )
@@ -25,6 +27,7 @@ import (
 // adminEnv is what every admin action works with.
 type adminEnv struct {
 	cfg    *config.Config
+	db     *postgres.DB
 	people *auth.Service
 	repos  *reposvc.Service
 	ci     *ci.Service
@@ -38,12 +41,22 @@ type adminAction struct {
 	run   func(ctx context.Context, env *adminEnv, args []string) error
 }
 
-const ruleSetUsage = "[--push everyone|admins|people] [--people a,b] [--force] [--delete] [--run] [--docker] [--secrets] [--ship] <repo> branch|tag <pattern>"
+const ruleSetUsage = "[--push everyone|admins|people] [--people a,b] [--force] [--delete] [--run] [--docker] [--secrets] [--deploy] <repo> branch|tag <pattern>"
 
 const defaultPushUsage = "[--push everyone|admins|people] [--people a,b] <name>"
 
 // adminGroups maps "admin <group> <action>" to its implementation.
 var adminGroups = map[string]map[string]adminAction{
+	"maintenance": {
+		"enable":  {"", adminMaintenanceEnable},
+		"disable": {"", adminMaintenanceDisable},
+		"status":  {"", adminMaintenanceStatus},
+		"backup":  {"<destination-directory>", adminBackup},
+	},
+	"operation": {
+		"list":    {"", adminOperationList},
+		"recover": {"", adminOperationRecover},
+	},
 	"person": {
 		"add":            {"[--admin] <username>", adminPersonAdd},
 		"list":           {"", adminPersonList},
@@ -51,9 +64,10 @@ var adminGroups = map[string]map[string]adminAction{
 		"enable":         {"<username>", adminPersonEnable},
 		"role":           {"<username> admin|member", adminPersonRole},
 		"reset-password": {"<username>", adminPersonResetPassword},
+		"revoke-all":     {"<username>", adminPersonRevokeAll},
 	},
 	"token": {
-		"create": {"[--write] [--days N] <username> <name>", adminTokenCreate},
+		"create": {"[--write] [--days N] [--repos name[,name]] <username> <name>", adminTokenCreate},
 	},
 	"run": {
 		"cancel": {"<repo> <number>", adminRunCancel},
@@ -137,7 +151,7 @@ func runAdmin(args []string) error {
 	ctx, stop := signalContext()
 	defer stop()
 
-	database, err := postgres.Connect(ctx, cfg.DatabaseURL, postgres.Options{MaxConns: 2})
+	database, err := postgres.Connect(ctx, cfg.DatabaseURL, postgres.Options{MaxConns: 4})
 	if err != nil {
 		return err
 	}
@@ -145,11 +159,28 @@ func runAdmin(args []string) error {
 	if err := database.Migrate(ctx); err != nil {
 		return err
 	}
+	root, err := filepath.Abs(cfg.ReposPath())
+	if err != nil {
+		return err
+	}
+	if err := database.BindRepositoryStorage(ctx, root); err != nil {
+		return err
+	}
 	store := git.NewStore(cfg.ReposPath())
+	store.SetDiskReserve(uint64(cfg.Resources.DiskReserveGiB) << 30)
 	defer store.Close()
 
+	if args[0] != "maintenance" && args[0] != "operation" && args[0] != "migrate" && (args[0] != "worker" || args[1] != "cleanup") {
+		var release func()
+		ctx, release, err = database.AdmitMutation(ctx)
+		if err != nil {
+			return err
+		}
+		defer release()
+	}
 	return action.run(ctx, &adminEnv{
 		cfg:    cfg,
+		db:     database,
 		people: auth.NewService(database),
 		repos:  reposvc.NewService(database, store, cfg.SecretKey),
 		ci:     ci.NewService(database),
@@ -198,7 +229,7 @@ func adminPersonAdd(ctx context.Context, env *adminEnv, args []string) error {
 	if err != nil {
 		return err
 	}
-	p, err := env.people.Create(ctx, pos[0], password, *admin, "")
+	p, err := env.people.CreateBootstrap(ctx, pos[0], password, *admin, "")
 	if err != nil {
 		if errors.Is(err, postgres.ErrAlreadyExists) {
 			return fmt.Errorf("a person named %q already exists", pos[0])
@@ -261,10 +292,11 @@ func adminPersonEnable(ctx context.Context, env *adminEnv, args []string) error 
 	if err != nil {
 		return err
 	}
-	if err := env.people.Enable(ctx, p.ID, ""); err != nil {
+	password, err := env.people.Enable(ctx, p.ID, "")
+	if err != nil {
 		return err
 	}
-	fmt.Fprintf(env.out, "Enabled %s.\n", p.Username)
+	fmt.Fprintf(env.out, "Enabled %s. Temporary password (expires in 24 hours): %s\n", p.Username, password)
 	return nil
 }
 
@@ -315,8 +347,9 @@ func adminPersonResetPassword(ctx context.Context, env *adminEnv, args []string)
 func adminTokenCreate(ctx context.Context, env *adminEnv, args []string) error {
 	fs := flag.NewFlagSet("token create", flag.ContinueOnError)
 	write := fs.Bool("write", false, "")
-	days := fs.Int("days", 0, "")
-	pos, err := parseArgs(fs, args, 2, "gitman admin token create [--write] [--days N] <username> <name>")
+	days := fs.Int("days", 30, "")
+	repoNames := fs.String("repos", "", "comma-separated repository names")
+	pos, err := parseArgs(fs, args, 2, "gitman admin token create [--write] [--days N] [--repos name[,name]] <username> <name>")
 	if err != nil {
 		return err
 	}
@@ -336,7 +369,22 @@ func adminTokenCreate(ctx context.Context, env *adminEnv, args []string) error {
 		d := time.Duration(*days) * 24 * time.Hour
 		ttl = &d
 	}
-	plain, token, err := env.people.CreateToken(ctx, p.ID, pos[1], scope, ttl)
+	if *days < 1 || *days > 365 {
+		return fmt.Errorf("--days must be between 1 and 365")
+	}
+
+	var repositories []string
+	for _, name := range strings.Split(*repoNames, ",") {
+		if strings.TrimSpace(name) == "" {
+			continue
+		}
+		r, err := env.repos.GetByName(ctx, strings.TrimSpace(name))
+		if err != nil {
+			return err
+		}
+		repositories = append(repositories, r.ID)
+	}
+	plain, token, err := env.people.CreateToken(ctx, p.ID, pos[1], scope, ttl, repositories)
 	if err != nil {
 		return err
 	}
@@ -571,7 +619,7 @@ func adminWorkerCleanup(ctx context.Context, env *adminEnv, args []string) error
 	if err != nil {
 		return err
 	}
-	containers, workspaces, err := worker.RemoveLeftovers(ctx, docker, env.cfg.WorkspacesPath(), env.ci.RunningRunIDs)
+	containers, workspaces, err := worker.RemoveLeftovers(ctx, docker, env.cfg.WorkspacesPath(), env.ci.RunningRunIDs, env.ci.RecoverStepExit, env.ci.ConfirmContainersRemoved)
 	if err != nil {
 		return err
 	}
@@ -619,7 +667,7 @@ func adminRuleList(ctx context.Context, env *adminEnv, args []string) error {
 		for _, flag := range []struct {
 			on   bool
 			name string
-		}{{r.AllowForce, "force"}, {r.AllowDelete, "delete"}, {r.RunOnPush, "run"}, {r.AllowDocker, "docker"}, {r.AllowSecrets, "secrets"}, {r.AllowShip, "ship"}} {
+		}{{r.AllowForce, "force"}, {r.AllowDelete, "delete"}, {r.RunOnPush, "run"}, {r.AllowDocker, "docker"}, {r.AllowSecrets, "secrets"}, {r.AllowDeploy, "deploy"}} {
 			if flag.on {
 				allows = append(allows, flag.name)
 			}
@@ -646,7 +694,7 @@ func adminRuleSet(ctx context.Context, env *adminEnv, args []string) error {
 	runOnPush := fs.Bool("run", false, "")
 	docker := fs.Bool("docker", false, "")
 	secrets := fs.Bool("secrets", false, "")
-	ship := fs.Bool("ship", false, "")
+	deploy := fs.Bool("deploy", false, "")
 	pos, err := parseArgs(fs, args, 3, "gitman admin rule set "+ruleSetUsage)
 	if err != nil {
 		return err
@@ -662,7 +710,7 @@ func adminRuleSet(ctx context.Context, env *adminEnv, args []string) error {
 	rule := reposvc.Rule{
 		Kind: kind, Pattern: pos[2], PushPolicy: reposvc.PushPolicy(*push),
 		AllowForce: *force, AllowDelete: *del, RunOnPush: *runOnPush,
-		AllowDocker: *docker, AllowSecrets: *secrets, AllowShip: *ship,
+		AllowDocker: *docker, AllowSecrets: *secrets, AllowDeploy: *deploy,
 	}
 	if *pushPeople != "" {
 		for _, username := range strings.Split(*pushPeople, ",") {
@@ -726,4 +774,63 @@ func adminRunCancel(ctx context.Context, env *adminEnv, args []string) error {
 	}
 	fmt.Fprintf(env.out, "Cancelled run #%d of %s. A running run stops at its worker's next check, within seconds.\n", number, repo.Name)
 	return nil
+}
+
+func adminPersonRevokeAll(ctx context.Context, env *adminEnv, args []string) error {
+	pos, err := parseArgs(flag.NewFlagSet("person revoke-all", flag.ContinueOnError), args, 1, "gitman admin person revoke-all <username>")
+	if err != nil {
+		return err
+	}
+	p, err := personByName(ctx, env, pos[0])
+	if err != nil {
+		return err
+	}
+	if err := env.people.RevokeAll(ctx, p.ID, ""); err != nil {
+		return err
+	}
+	fmt.Fprintf(env.out, "Revoked all sessions and access tokens for %s.\n", p.Username)
+	return nil
+}
+
+func adminOperationList(ctx context.Context, env *adminEnv, args []string) error {
+	if len(args) != 0 {
+		return fmt.Errorf("usage: gitman admin operation list")
+	}
+	ops, err := env.repos.PendingOperations(ctx)
+	if err != nil {
+		return err
+	}
+	for _, op := range ops {
+		fmt.Fprintf(env.out, "%s\t%s\t%s\t%s\n", op.ID, op.Kind, op.RepoID, op.Error)
+	}
+	return nil
+}
+func adminOperationRecover(ctx context.Context, env *adminEnv, args []string) error {
+	if len(args) != 0 {
+		return fmt.Errorf("usage: gitman admin operation recover")
+	}
+	return push.NewRefs(env.db, env.people, env.repos, env.ci).Recover(ctx)
+}
+func adminMaintenanceEnable(ctx context.Context, env *adminEnv, args []string) error {
+	if len(args) != 0 {
+		return fmt.Errorf("usage: gitman admin maintenance enable")
+	}
+	return env.db.SetMaintenance(ctx, true)
+}
+func adminMaintenanceDisable(ctx context.Context, env *adminEnv, args []string) error {
+	if len(args) != 0 {
+		return fmt.Errorf("usage: gitman admin maintenance disable")
+	}
+	return env.db.SetMaintenance(ctx, false)
+}
+func adminMaintenanceStatus(ctx context.Context, env *adminEnv, args []string) error {
+	if len(args) != 0 {
+		return fmt.Errorf("usage: gitman admin maintenance status")
+	}
+	paused, err := env.db.Maintenance(ctx)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(env.out, "maintenance=%t\n", paused)
+	return env.db.BackupReady(ctx)
 }
