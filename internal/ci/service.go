@@ -403,6 +403,8 @@ func (s *Service) AnyWorkerOnline(ctx context.Context) (bool, error) {
 // failed. Runs are never retried automatically: a run that shipped
 // half-way must be looked at by a person.
 func (s *Service) FailLostRuns(ctx context.Context, staleAfter time.Duration) (int, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	var lost []string
 	err := s.db.Tx(ctx, func(tx postgres.Tx) error {
 		var err error

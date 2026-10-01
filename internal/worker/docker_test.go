@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"github.com/mmrzaf/gitman/internal/config"
 	"os"
 	"path/filepath"
 	"slices"
@@ -42,7 +43,7 @@ func TestRunPassesEnvironmentAndKeepsSecretsOffTheCommandLine(t *testing.T) {
 	if strings.Contains(joined, "hunter2-secret") || strings.Contains(joined, "from secret") {
 		t.Fatalf("a secret value is on the command line: %s", joined)
 	}
-	for _, want := range []string{"--rm", "--label gitman.run=run-1", "--env STAGE=test", "--env DEPLOY_TOKEN", "--env SHARED", "--entrypoint /bin/sh"} {
+	for _, want := range []string{"--memory 2048m", "--cpus 2", "--pids-limit 256", "--pull never", "--memory-swap 2048m", "--label gitman.run=run-1", "--env STAGE=test", "--env DEPLOY_TOKEN", "--env SHARED", "--entrypoint /bin/sh"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("command line lacks %q: %s", want, joined)
 		}
@@ -112,7 +113,7 @@ func TestRunEndsPromptlyAgainstAWedgedDaemon(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected Run to report that it was stopped")
 	}
-	if elapsed := time.Since(start); elapsed > clientWaitDelay+5*time.Second {
+	if elapsed := time.Since(start); elapsed > removeTimeout+clientWaitDelay+5*time.Second {
 		t.Fatalf("Run took %s against an unresponsive daemon", elapsed)
 	}
 }
@@ -128,7 +129,7 @@ func TestImageExistsEndsWithItsContext(t *testing.T) {
 	if _, err := fake.docker.ImageExists(ctx, "alpine:3.20"); err == nil {
 		t.Fatal("expected an error once the context ended")
 	}
-	if elapsed := time.Since(start); elapsed > clientWaitDelay+5*time.Second {
+	if elapsed := time.Since(start); elapsed > removeTimeout+clientWaitDelay+5*time.Second {
 		t.Fatalf("ImageExists took %s against an unresponsive daemon", elapsed)
 	}
 }
@@ -199,7 +200,7 @@ func TestRemoveLeftovers(t *testing.T) {
 		}
 		return map[string]bool{"run-live": true}, nil
 	}
-	containers, workspaces, err := RemoveLeftovers(context.Background(), fake.docker, root, runningRuns)
+	containers, workspaces, err := RemoveLeftovers(context.Background(), fake.docker, root, runningRuns, func(context.Context, string, string, int) error { return nil }, cleanupConfirmed)
 	if err != nil || containers != 1 || workspaces != 1 {
 		t.Fatalf("removeLeftovers = %d containers, %d workspaces, %v", containers, workspaces, err)
 	}
@@ -217,7 +218,7 @@ func TestRemoveLeftovers(t *testing.T) {
 			t.Errorf("workspace %s exists = %v, want %v", runID, err == nil, want)
 		}
 	}
-	if c, w, err := RemoveLeftovers(context.Background(), fake.docker, filepath.Join(root, "missing"), runningRuns); err != nil || w != 0 {
+	if c, w, err := RemoveLeftovers(context.Background(), fake.docker, filepath.Join(root, "missing"), runningRuns, func(context.Context, string, string, int) error { return nil }, cleanupConfirmed); err != nil || w != 0 {
 		t.Fatalf("a missing workspace root = %d, %d, %v", c, w, err)
 	}
 }
@@ -231,5 +232,80 @@ func TestRunArgsEndOptionsBeforeTheImage(t *testing.T) {
 	i := slices.Index(args, "--")
 	if i < 0 || i+1 >= len(args) || args[i+1] != spec.Image || slices.Index(args[i+1:], "--") >= 0 {
 		t.Fatalf("args = %q; want every option, then --, then the image", args)
+	}
+}
+
+func TestExitReceiptIsRetainedUntilRecorded(t *testing.T) {
+	fake := newFakeDocker(t)
+	spec := testSpec(t, "exit 7")
+	persisted := false
+	spec.Created = func(ctx context.Context, id string) error {
+		if len(fake.CallsTo(t, "start")) != 0 {
+			t.Fatal("container started before persistence")
+		}
+		persisted = id != ""
+		return nil
+	}
+	code, err := fake.docker.Run(t.Context(), spec, &strings.Builder{})
+	if err != nil || code != 7 || !persisted {
+		t.Fatalf("Run = %d, %v, persisted %v", code, err, persisted)
+	}
+	if len(fake.CallsTo(t, "rm")) != 0 {
+		t.Fatal("execution receipt was auto-removed")
+	}
+	state, err := fake.docker.state(t.Context(), spec.Name)
+	if err != nil || state.Running || state.ExitCode != 7 {
+		t.Fatalf("receipt = %+v, %v", state, err)
+	}
+}
+
+func TestLeftoverCleanupRetainsWorkspaceWhenRemovalFails(t *testing.T) {
+	fake := newFakeDocker(t)
+	root := t.TempDir()
+	if _, err := createWorkspace(root, "ended-run"); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAKE_DOCKER_PS", "container ended-run\n")
+	t.Setenv("FAKE_DOCKER_RM_FAIL", "1")
+	_, n, err := RemoveLeftovers(t.Context(), fake.docker, root, func(context.Context) (map[string]bool, error) { return map[string]bool{}, nil }, func(context.Context, string, string, int) error { return nil }, cleanupConfirmed)
+	if err == nil || n != 0 {
+		t.Fatalf("cleanup = %d, %v", n, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "ended-run")); err != nil {
+		t.Fatal("mounted workspace was removed")
+	}
+}
+
+func TestLeftoverCleanupRespectsLiveExecutionOwnership(t *testing.T) {
+	fake := newFakeDocker(t)
+	root := t.TempDir()
+	if _, err := createWorkspace(root, "ended-run"); err != nil {
+		t.Fatal(err)
+	}
+	unlock, locked, err := executionLock(root, "ended-run")
+	if err != nil || !locked {
+		t.Fatalf("lock = %v, %v", locked, err)
+	}
+	defer unlock()
+	t.Setenv("FAKE_DOCKER_PS", "container ended-run\n")
+	c, n, err := RemoveLeftovers(t.Context(), fake.docker, root, func(context.Context) (map[string]bool, error) { return map[string]bool{}, nil }, func(context.Context, string, string, int) error { return nil }, cleanupConfirmed)
+	if err != nil || c != 0 || n != 0 {
+		t.Fatalf("cleanup touched live execution: %d, %d, %v", c, n, err)
+	}
+}
+
+func cleanupConfirmed(context.Context, string) error { return nil }
+
+func TestStepUsesOperatorResourceProfile(t *testing.T) {
+	fake := newFakeDocker(t)
+	fake.docker.Resources = config.Resources{MemoryMiB: 8192, CPUs: 8, PIDs: 1024, WorkspaceGiB: 100, DiskReserveGiB: 20}
+	if _, err := fake.docker.Run(t.Context(), testSpec(t, "true"), &strings.Builder{}); err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Join(fake.runCalls(t)[0], " ")
+	for _, want := range []string{"--memory 8192m", "--memory-swap 8192m", "--cpus 8", "--pids-limit 1024"} {
+		if !strings.Contains(args, want) {
+			t.Errorf("args lack %s: %s", want, args)
+		}
 	}
 }

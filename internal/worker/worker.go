@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/mmrzaf/gitman/internal/ci"
+	"github.com/mmrzaf/gitman/internal/config"
 	"github.com/mmrzaf/gitman/internal/id"
 	"github.com/mmrzaf/gitman/internal/postgres"
 	"github.com/mmrzaf/gitman/internal/repo"
@@ -49,6 +50,7 @@ const (
 
 // Config is how a worker is set up.
 type Config struct {
+	Resources config.Resources
 	// WorkspaceRoot is the directory run workspaces are created under.
 	// It must be the same path on the Docker host, because step
 	// containers mount workspaces by host path.
@@ -78,11 +80,16 @@ type Worker struct {
 	// healthySince is when this worker's heartbeats last started
 	// succeeding without a failure in between, zero while they fail. It
 	// is used only by the heartbeat goroutine.
-	healthySince time.Time
+	healthySince atomic.Int64
+	engineID     string
 }
 
 // New returns a Worker with a fresh ID.
 func New(cfg Config, db *postgres.DB, ciService *ci.Service, repos *repo.Service, docker *Docker, log *slog.Logger) *Worker {
+	cfg.Resources = cfg.Resources.WithDefaults()
+	if docker != nil {
+		docker.Resources = cfg.Resources
+	}
 	return &Worker{id: id.New(), cfg: cfg, db: db, ci: ciService, repos: repos, docker: docker, log: log,
 		heartbeatEvery: heartbeatInterval, cleanupEvery: cleanupInterval, pollEvery: pollInterval}
 }
@@ -108,7 +115,7 @@ func (w *Worker) Run(ctx context.Context) error {
 	if err := w.ci.RegisterWorker(ctx, w.id, w.cfg.Hostname); err != nil {
 		return err
 	}
-	w.healthySince = time.Now()
+	w.healthySince.Store(time.Now().UnixNano())
 	defer w.stop(ctx)
 	w.log.Info("worker started", "worker", w.id, "host", w.cfg.Hostname)
 
@@ -148,12 +155,46 @@ func (w *Worker) drain(ctx context.Context) {
 		err := w.docker.Available(check)
 		cancel()
 		if err != nil {
+			_ = w.ci.SetWorkerReadiness(ctx, w.id, false, "Docker is unavailable", nil)
 			if ctx.Err() == nil {
 				w.log.Warn("Docker is not answering; claiming no runs until it does", "error", err)
 			}
 			return
 		}
-		claim, err := w.ci.ClaimNext(ctx, w.id)
+
+		engine, err := w.docker.EngineID(ctx)
+		if err == nil {
+			err = w.ci.BindWorkerEngine(ctx, w.id, engine, w.cfg.WorkspaceRoot)
+		}
+		if err != nil {
+			_ = w.ci.SetWorkerReadiness(ctx, w.id, false, "Docker host identity or workspace configuration is unavailable", nil)
+			w.log.Error("worker identity unavailable", "error", err)
+			return
+		}
+		w.engineID = engine
+		if !w.recoverExecutions(ctx) {
+			_ = w.ci.SetWorkerReadiness(ctx, w.id, false, "Execution recovery is pending", nil)
+			return
+		}
+		paused, err := w.ci.Maintenance(ctx)
+		if err != nil || paused {
+			_ = w.ci.SetWorkerReadiness(ctx, w.id, false, "Instance maintenance is enabled", nil)
+			return
+		}
+		if err := reserveAvailable(w.cfg.WorkspaceRoot, uint64(w.cfg.Resources.WithDefaults().DiskReserveGiB)<<30); err != nil {
+			_ = w.ci.SetWorkerReadiness(ctx, w.id, false, "Available disk is below the configured reserve", nil)
+			w.log.Warn("disk reserve unavailable", "error", err)
+			return
+		}
+		images, err := w.docker.Images(ctx)
+		if err != nil {
+			_ = w.ci.SetWorkerReadiness(ctx, w.id, false, "Image inventory is unavailable", nil)
+			return
+		}
+		if err := w.ci.SetWorkerReadiness(ctx, w.id, true, "Ready", images); err != nil {
+			return
+		}
+		claim, err := w.ci.ClaimNext(ctx, w.id, w.cfg.DefaultTimeout, images)
 		if err != nil {
 			if ctx.Err() == nil {
 				w.log.Error("could not claim a run", "error", err)
@@ -175,7 +216,14 @@ func (w *Worker) handle(ctx context.Context, claim *ci.Claim) {
 	log.Info("run started")
 
 	outcome := w.execute(ctx, claim, log)
+	if outcome.RecoveryRequired {
+		return
+	}
 	if w.finish(ctx, claim.RunID, outcome, log) {
+		// Preserve the workspace until the complete execution outcome is durable.
+		if err := os.RemoveAll(filepath.Join(w.cfg.WorkspaceRoot, claim.RunID)); err != nil {
+			log.Warn("could not remove the finished run's workspace", "error", err)
+		}
 		log.Info("run finished", "status", outcome.Status, "duration", time.Since(start).Round(time.Second))
 	}
 }
@@ -217,12 +265,11 @@ func retryBriefly(ctx context.Context, attempts int, delay time.Duration, op fun
 	return err
 }
 
-// finish records how a run ended, trying again while the database cannot
-// take it: a run whose end is never recorded would stay running for as
-// long as this worker is alive. It gives up only when the worker stops,
-// which marks the worker stopped so that the run is failed as lost.
+// finish retries recording within a fixed budget. A failed recording retains
+// the workspace for reconciliation; recovery never reruns the scripts.
 func (w *Worker) finish(ctx context.Context, runID string, outcome ci.Outcome, log *slog.Logger) bool {
-	record := context.WithoutCancel(ctx)
+	record, stopRecord := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer stopRecord()
 	delay := finishRetryDelay
 	for attempt := 1; ; attempt++ {
 		err := w.ci.Finish(record, runID, outcome)
@@ -237,7 +284,7 @@ func (w *Worker) finish(ctx context.Context, runID string, outcome ci.Outcome, l
 			}
 		}
 		select {
-		case <-ctx.Done():
+		case <-record.Done():
 			return false
 		case <-time.After(delay):
 		}
@@ -246,6 +293,8 @@ func (w *Worker) finish(ctx context.Context, runID string, outcome ci.Outcome, l
 }
 
 func (w *Worker) execute(ctx context.Context, claim *ci.Claim, log *slog.Logger) ci.Outcome {
+	ctx, stop := context.WithDeadlineCause(ctx, claim.Deadline, errTimedOut)
+	defer stop()
 	e := &execution{
 		claim:          claim,
 		journal:        w.ci,
@@ -255,8 +304,18 @@ func (w *Worker) execute(ctx context.Context, claim *ci.Claim, log *slog.Logger)
 		cancelPoll:     cancelPoll,
 		log:            log,
 	}
+
+	unlock, locked, err := executionLock(w.cfg.WorkspaceRoot, claim.RunID)
+	if err != nil || !locked {
+		o := e.internalFailure("Could not reserve exclusive execution ownership", errors.Join(err, errors.New("execution lock unavailable")))
+		o.RecoveryRequired = true
+		return o
+	}
+	defer unlock()
 	if claim.AllowSecrets {
-		secrets, err := w.repos.RunSecrets(ctx, claim.RepoID)
+		read, stopRead := context.WithTimeout(ctx, 10*time.Second)
+		secrets, err := w.repos.RunSecrets(read, claim.RepoID)
+		stopRead()
 		if err != nil {
 			return e.internalFailure("Could not read the repository's secrets", err)
 		}
@@ -266,13 +325,15 @@ func (w *Worker) execute(ctx context.Context, claim *ci.Claim, log *slog.Logger)
 	if err != nil {
 		return e.internalFailure("Could not prepare the run's workspace", err)
 	}
-	defer func() {
-		if err := ws.remove(); err != nil {
-			log.Warn("could not remove the run's workspace", "path", ws.root, "error", err)
-		}
-	}()
 	e.ws = ws
-	return e.run(ctx)
+	diskCtx, stopDisk := context.WithCancelCause(ctx)
+	diskDone := make(chan struct{})
+	go func() {
+		defer close(diskDone)
+		monitorDisk(diskCtx, ws.root, w.cfg.WorkspaceRoot, w.cfg.Resources, stopDisk)
+	}()
+	defer func() { stopDisk(nil); <-diskDone }()
+	return e.run(diskCtx)
 }
 
 // heartbeat reports the worker alive, and fails runs of workers that are
@@ -305,13 +366,25 @@ func (w *Worker) beat(ctx context.Context) {
 		if ctx.Err() == nil {
 			w.log.Warn("heartbeat failed", "error", err)
 		}
-		w.healthySince = time.Time{}
+		w.healthySince.Store(0)
 		return
 	}
-	if w.healthySince.IsZero() {
-		w.healthySince = now
+
+	if w.docker != nil && w.active.Load() > 0 {
+		reason := "Ready"
+		images, err := w.docker.Images(tick)
+		if err != nil {
+			reason = "Image inventory is unavailable"
+		} else if err := reserveAvailable(w.cfg.WorkspaceRoot, uint64(w.cfg.Resources.WithDefaults().DiskReserveGiB)<<30); err != nil {
+			reason = "Available disk is below the configured reserve"
+		}
+		if paused, err := w.ci.Maintenance(tick); err != nil || paused {
+			reason = "Instance maintenance is enabled"
+		}
+		_ = w.ci.SetWorkerReadiness(tick, w.id, reason == "Ready", reason, images)
 	}
-	if now.Sub(w.healthySince) < ci.WorkerLostAfter {
+	w.healthySince.CompareAndSwap(0, now.UnixNano())
+	if now.Sub(time.Unix(0, w.healthySince.Load())) < ci.WorkerLostAfter {
 		return
 	}
 	n, err := w.ci.FailLostRuns(tick, ci.WorkerLostAfter)
@@ -343,7 +416,7 @@ func (w *Worker) cleanup(ctx context.Context) {
 // removeLeftovers removes step containers and workspaces of runs that
 // are no longer running: left behind by a worker that was killed, or by
 // one whose run was failed as lost while it was cut off. A killed
-// worker's run is still running until it is failed as lost, a minute
+// worker's run is still running until it is failed as lost, five minutes
 // later, so this runs periodically, not only when a worker starts.
 func (w *Worker) removeLeftovers(ctx context.Context) {
 	tick, cancel := context.WithTimeout(ctx, dutyTimeout)
@@ -370,7 +443,7 @@ func (w *Worker) removeLeftovers(ctx context.Context) {
 // yet, so nothing belonging to a live run is ever removed — which
 // asking first and listing second could not promise.
 func RemoveLeftovers(ctx context.Context, docker *Docker, workspaceRoot string,
-	runningRuns func(context.Context) (map[string]bool, error)) (containers, workspaces int, err error) {
+	runningRuns func(context.Context) (map[string]bool, error), recordExit func(context.Context, string, string, int) error, confirmedStopped func(context.Context, string) error) (containers, workspaces int, err error) {
 	listed, err := docker.runContainers(ctx)
 	if err != nil {
 		return 0, 0, err
@@ -384,18 +457,64 @@ func RemoveLeftovers(ctx context.Context, docker *Docker, workspaceRoot string,
 		return 0, 0, fmt.Errorf("list running runs: %w", err)
 	}
 	var errs []error
-	for containerID, runID := range listed {
+	blocked := map[string]bool{}
+	// Reserve each listed run before touching its containers or workspace. A
+	// worker still using the filesystem cannot be declared safe by a stale DB row.
+	listedRuns := map[string]bool{}
+	for _, runID := range listed {
+		listedRuns[runID] = true
+	}
+	for _, runID := range dirs {
+		listedRuns[runID] = true
+	}
+	for runID := range listedRuns {
 		if running[runID] {
+			blocked[runID] = true
+			continue
+		}
+		unlock, locked, err := executionLock(workspaceRoot, runID)
+		if err != nil {
+			errs = append(errs, err)
+			blocked[runID] = true
+			continue
+		}
+		if !locked {
+			blocked[runID] = true
+			continue
+		}
+		defer unlock()
+	}
+	for containerID, runID := range listed {
+		if blocked[runID] {
+			continue
+		}
+		state, err := docker.stopRetained(ctx, containerID)
+		if err == nil && state != nil && state.Status == "exited" {
+			err = recordExit(ctx, runID, containerID, state.ExitCode)
+		}
+		if err != nil {
+			errs = append(errs, err)
+			blocked[runID] = true
 			continue
 		}
 		if err := docker.removeContainer(ctx, containerID); err != nil {
 			errs = append(errs, err)
+			blocked[runID] = true
 			continue
 		}
 		containers++
 	}
+	for runID := range listedRuns {
+		if blocked[runID] {
+			continue
+		}
+		if err := confirmedStopped(ctx, runID); err != nil {
+			errs = append(errs, err)
+			blocked[runID] = true
+		}
+	}
 	for _, runID := range dirs {
-		if running[runID] {
+		if running[runID] || blocked[runID] {
 			continue
 		}
 		if err := os.RemoveAll(filepath.Join(workspaceRoot, runID)); err != nil {

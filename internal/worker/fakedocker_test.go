@@ -20,4 +20,4 @@ func newFakeDocker(t *testing.T, images ...string) *fakeDocker {
 }
 
 func (f *fakeDocker) calls(t *testing.T) [][]string    { return f.Calls(t) }
-func (f *fakeDocker) runCalls(t *testing.T) [][]string { return f.CallsTo(t, "run") }
+func (f *fakeDocker) runCalls(t *testing.T) [][]string { return f.CallsTo(t, "create") }

@@ -76,7 +76,7 @@ func TestFinishDoesNotLeaveARunRunning(t *testing.T) {
 	if err := svc.RegisterWorker(ctx, w.id, "host"); err != nil {
 		t.Fatal(err)
 	}
-	claim, err := svc.ClaimNext(ctx, w.id)
+	claim, err := svc.ClaimNext(ctx, w.id, 30*time.Minute, []string{"alpine:3.20"})
 	if err != nil || claim == nil {
 		t.Fatalf("ClaimNext = %v, %v", claim, err)
 	}
@@ -154,7 +154,7 @@ func TestBeatWaitsBeforeJudgingOtherWorkers(t *testing.T) {
 	if err := svc.RegisterWorker(ctx, "other", "host"); err != nil {
 		t.Fatal(err)
 	}
-	if claim, err := svc.ClaimNext(ctx, "other"); err != nil || claim == nil {
+	if claim, err := svc.ClaimNext(ctx, "other", 30*time.Minute, []string{"alpine:3.20"}); err != nil || claim == nil {
 		t.Fatalf("ClaimNext = %v, %v", claim, err)
 	}
 	if _, err := database.Pool.Exec(ctx, `UPDATE workers SET heartbeat_at = now() - interval '5 minutes'`); err != nil {
@@ -172,7 +172,7 @@ func TestBeatWaitsBeforeJudgingOtherWorkers(t *testing.T) {
 	}
 	// Once it has been heartbeating for ci.WorkerLostAfter, a worker still silent
 	// is lost.
-	w.healthySince = time.Now().Add(-ci.WorkerLostAfter - time.Second)
+	w.healthySince.Store(time.Now().Add(-ci.WorkerLostAfter - time.Second).UnixNano())
 	w.beat(ctx)
 	if status := runStatus(t, database); status != "failed" {
 		t.Fatalf("run status = %s; want failed once the other worker stayed silent", status)

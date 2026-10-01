@@ -2,8 +2,11 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/mmrzaf/gitman/internal/ci"
+	"github.com/mmrzaf/gitman/internal/config"
 	"io"
 	"os"
 	"os/exec"
@@ -70,6 +73,8 @@ type containerSpec struct {
 	Env          map[string]string
 	Secrets      map[string]string
 	DockerSocket bool
+	// Created persists the daemon ID before the container can start.
+	Created func(context.Context, string) error
 }
 
 // args is the "docker run" command line for spec. MKNOD is dropped: the
@@ -112,6 +117,8 @@ func sortedKeys(m map[string]string) []string {
 // this before claiming a run, so a host whose daemon is down leaves runs
 // queued for other workers instead of claiming and failing every one.
 func (d *Docker) Available(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	out, err := d.command(ctx, "version", "--format", "{{.Server.Version}}").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("docker version: %s", strings.TrimSpace(lastLines(string(out), 3)))
@@ -148,47 +155,76 @@ func (d *Docker) Run(ctx context.Context, spec containerSpec, out io.Writer) (in
 	for _, key := range sortedKeys(spec.Secrets) {
 		cmd.Env = append(cmd.Env, key+"="+spec.Secrets[key])
 	}
-	cmd.Stdout = out
-	cmd.Stderr = out
-	if err := cmd.Start(); err != nil {
-		return -1, fmt.Errorf("start docker: %w", err)
-	}
-
-	stopped := make(chan struct{})
-	go func() {
-		select {
-		case <-ctx.Done():
-			d.remove(spec.Name)
-		case <-stopped:
+	receipt, err := cmd.CombinedOutput()
+	stopCreate()
+	cleanup := func(cause error) (int, error) {
+		// The create reply can be lost after creation. The persisted deterministic
+		// name lets recovery find it even when no container ID reached this client.
+		if err := d.stopContainer(spec.Name); err != nil {
+			return -1, &TerminationUnknown{Name: spec.Name, Err: errors.Join(cause, err)}
 		}
-	}()
-	err := cmd.Wait()
-	close(stopped)
-
-	if ctx.Err() != nil {
-		return -1, ctx.Err()
-	}
-	var exit *exec.ExitError
-	if errors.As(err, &exit) {
-		return exit.ExitCode(), nil
+		return -1, cause
 	}
 	if err != nil {
-		return -1, fmt.Errorf("run docker: %w", err)
+		return cleanup(fmt.Errorf("create docker container: %w", err))
 	}
-	return 0, nil
+	containerID := strings.TrimSpace(string(receipt))
+	if containerID == "" {
+		return cleanup(errors.New("Docker returned an empty container ID"))
+	}
+	if spec.Created != nil {
+		persist, stop := context.WithTimeout(ctx, 10*time.Second)
+		err := spec.Created(persist, containerID)
+		stop()
+		if err != nil {
+			return cleanup(fmt.Errorf("persist container ID: %w", err))
+		}
+	}
+	cmd = d.command(ctx, "start", "--attach", containerID)
+	cmd.Stdout, cmd.Stderr = out, out
+
+	if err := cmd.Start(); err != nil {
+		return cleanup(fmt.Errorf("start container: %w", err))
+	}
+	waited := make(chan error, 1)
+	go func() { waited <- cmd.Wait() }()
+	select {
+	case err = <-waited:
+	case <-ctx.Done():
+		code, cleanupErr := cleanup(ctx.Err())
+		<-waited
+		return code, cleanupErr
+	}
+	if ctx.Err() != nil {
+		return cleanup(ctx.Err())
+	}
+
+	state, stateErr := d.state(ctx, containerID)
+	if stateErr != nil {
+		return cleanup(stateErr)
+	}
+	if state.Running || state.Status != "exited" {
+		return cleanup(fmt.Errorf("container did not exit: %w", errors.Join(err, errors.New(state.Status))))
+	}
+	// Docker's State.Error represents failure to execute the image, not a
+	// pipeline exit. Report it as infrastructure failure without retrying.
+	if state.Error != "" {
+		return cleanup(errors.New("Docker could not execute the container"))
+	}
+	return state.ExitCode, nil
 }
 
-// remove force-removes a container, with its own deadline: it runs when
-// the step's context has already ended.
-func (d *Docker) remove(name string) {
+func (d *Docker) stopContainer(name string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), removeTimeout)
 	defer cancel()
-	_ = d.command(ctx, "rm", "--force", name).Run()
+	return d.removeContainer(ctx, name)
 }
 
 // runContainers lists this instance's step containers on the Docker
 // host, running or not, by container ID, with the run each belongs to.
 func (d *Docker) runContainers(ctx context.Context) (map[string]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	out, err := d.command(ctx, "ps", "--all",
 		"--filter", "label="+runLabel,
 		"--filter", "label="+instanceLabel+"="+d.Instance,
@@ -207,8 +243,76 @@ func (d *Docker) runContainers(ctx context.Context) (map[string]string, error) {
 
 // removeContainer force-removes one container.
 func (d *Docker) removeContainer(ctx context.Context, containerID string) error {
-	if err := d.command(ctx, "rm", "--force", containerID).Run(); err != nil {
+	ctx, cancel := context.WithTimeout(ctx, removeTimeout)
+	defer cancel()
+	out, err := d.command(ctx, "rm", "--force", containerID).CombinedOutput()
+	if err != nil {
+		// Not found is a confirmed absence. A daemon connection failure or lost
+		// reply is not, and must never authorize deleting a mounted workspace.
+		if ctx.Err() == nil && strings.Contains(strings.ToLower(string(out)), "no such container") {
+			return nil
+		}
 		return fmt.Errorf("remove container %s: %w", containerID, err)
 	}
 	return nil
+}
+
+// Images returns the tags, digests and IDs currently available on this daemon.
+func (d *Docker) Images(ctx context.Context) ([]string, error) {
+	ctx, stop := context.WithTimeout(ctx, 10*time.Second)
+	defer stop()
+	out, err := d.command(ctx, "image", "ls", "--no-trunc", "--digests", "--format", "{{.Repository}}:{{.Tag}} {{.Repository}}@{{.Digest}} {{.ID}}").Output()
+	if err != nil {
+		return nil, fmt.Errorf("list Docker images: %w", err)
+	}
+	seen := map[string]string{}
+	for _, image := range strings.Fields(string(out)) {
+		if !strings.Contains(image, "<none>") {
+			image = ci.NormalizeImageReference(image)
+			seen[image] = image
+		}
+	}
+	return sortedKeys(seen), nil
+}
+
+// stopRetained confirms termination but preserves the daemon's exit receipt.
+func (d *Docker) stopRetained(ctx context.Context, name string) (*containerState, error) {
+	state, err := d.state(ctx, name)
+	if errors.Is(err, errContainerAbsent) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if state.Running {
+		stop, cancel := context.WithTimeout(ctx, removeTimeout)
+		err := d.command(stop, "kill", name).Run()
+		cancel()
+		if err != nil {
+			return nil, fmt.Errorf("kill retained container: %w", err)
+		}
+		state, err = d.state(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+		if state.Running {
+			return nil, errors.New("container is still running")
+		}
+	}
+	return state, nil
+}
+
+// EngineID identifies a Docker host across worker process and container restarts.
+func (d *Docker) EngineID(ctx context.Context) (string, error) {
+	ctx, stop := context.WithTimeout(ctx, 10*time.Second)
+	defer stop()
+	out, err := d.command(ctx, "info", "--format", "{{.ID}}").Output()
+	if err != nil {
+		return "", err
+	}
+	engine := strings.TrimSpace(string(out))
+	if engine == "" {
+		return "", errors.New("Docker engine has no identity")
+	}
+	return engine, nil
 }
