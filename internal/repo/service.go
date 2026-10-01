@@ -229,18 +229,25 @@ func (s *Service) SetDefaultBranch(ctx context.Context, r *Repo, branch, actorID
 		if err := activity.Record(ctx, tx, r.ID, actorID, activity.RepoDefaultBranchChanged, branch); err != nil {
 			return err
 		}
-		if err := gitRepo.SetHead(ctx, branch); err != nil {
+		if err := validatePeople(ctx, tx, append(append([]string{}, readers...), pushers...)); err != nil {
 			return err
 		}
-		headMoved = true
-		return nil
-	})
-	if err != nil && headMoved {
-		if restoreErr := gitRepo.SetHead(context.WithoutCancel(ctx), previous); restoreErr != nil {
-			return fmt.Errorf("%w (and HEAD could not be moved back to %s either: %v)", err, previous, restoreErr)
+		if err := updateVisibilityRow(ctx, tx, repoID, visibility); err != nil {
+			return err
 		}
-	}
-	return err
+		if _, err := tx.Exec(ctx, `DELETE FROM repo_readers WHERE repo_id = $1`, repoID); err != nil {
+			return err
+		}
+		for _, person := range readers {
+			if err := insertReaderRow(ctx, tx, repoID, person); err != nil {
+				return err
+			}
+		}
+		if err := updateDefaultPushRow(ctx, tx, repoID, policy, pushers); err != nil {
+			return err
+		}
+		return activity.Record(ctx, tx, repoID, actorID, activity.RepoVisibilityChanged, "access: "+string(visibility)+"; push: "+string(policy))
+	})
 }
 
 // SetVisibility changes who may read a repository.
@@ -249,6 +256,9 @@ func (s *Service) SetVisibility(ctx context.Context, repoID string, v Visibility
 		return err
 	}
 	return s.db.Tx(ctx, func(tx postgres.Tx) error {
+		if err := lockRefIndex(ctx, tx, repoID); err != nil {
+			return err
+		}
 		if err := updateVisibilityRow(ctx, tx, repoID, v); err != nil {
 			return err
 		}
@@ -264,6 +274,9 @@ func (s *Service) SetVisibility(ctx context.Context, repoID string, v Visibility
 // itself, so every caller passes it in already knowing it.
 func (s *Service) AddReader(ctx context.Context, repoID, personID, readerName, actorID string) error {
 	return s.db.Tx(ctx, func(tx postgres.Tx) error {
+		if err := lockRefIndex(ctx, tx, repoID); err != nil {
+			return err
+		}
 		if err := insertReaderRow(ctx, tx, repoID, personID); err != nil {
 			return err
 		}
@@ -275,6 +288,9 @@ func (s *Service) AddReader(ctx context.Context, repoID, personID, readerName, a
 // See AddReader on readerName.
 func (s *Service) RemoveReader(ctx context.Context, repoID, personID, readerName, actorID string) error {
 	return s.db.Tx(ctx, func(tx postgres.Tx) error {
+		if err := lockRefIndex(ctx, tx, repoID); err != nil {
+			return err
+		}
 		if err := deleteReaderRow(ctx, tx, repoID, personID); err != nil {
 			return err
 		}
@@ -294,6 +310,12 @@ func (s *Service) SetDefaultPush(ctx context.Context, repoID string, policy Push
 		return err
 	}
 	return s.db.Tx(ctx, func(tx postgres.Tx) error {
+		if err := lockRefIndex(ctx, tx, repoID); err != nil {
+			return err
+		}
+		if err := validatePeople(ctx, tx, people); err != nil {
+			return err
+		}
 		if err := updateDefaultPushRow(ctx, tx, repoID, policy, people); err != nil {
 			return err
 		}

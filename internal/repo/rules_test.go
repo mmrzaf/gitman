@@ -11,7 +11,7 @@ func TestEvaluateNoMatchingRuleFollowsDefaultPush(t *testing.T) {
 	if !everyone.CanPush || !everyone.AllowForce || !everyone.AllowDelete {
 		t.Errorf("Evaluate = %+v, want push, force and delete allowed under a default of everyone", everyone)
 	}
-	if everyone.AllowDocker || everyone.AllowSecrets || everyone.AllowShip || everyone.RunOnPush {
+	if everyone.AllowDocker || everyone.AllowSecrets || everyone.AllowDeploy || everyone.RunOnPush {
 		t.Error("expected no CI capability to be granted when no rule matches")
 	}
 	if everyone.MatchedRule != nil {
@@ -60,7 +60,7 @@ func TestEvaluateEveryonePolicy(t *testing.T) {
 }
 
 func TestEvaluateAdminsPolicy(t *testing.T) {
-	rules := []Rule{{Kind: git.KindTag, Pattern: "v*", PushPolicy: PushAdmins, AllowShip: true}}
+	rules := []Rule{{Kind: git.KindTag, Pattern: "v*", PushPolicy: PushAdmins, AllowDeploy: true}}
 
 	member := Evaluate(rules, git.KindTag, "v1.4.2", "person-1", false, PushEveryone, nil)
 	if member.CanPush {

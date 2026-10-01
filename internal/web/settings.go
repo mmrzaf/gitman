@@ -131,7 +131,7 @@ func ruleValues(rule reposvc.Rule) url.Values {
 	}
 	for name, on := range map[string]bool{
 		"allow_force": rule.AllowForce, "allow_delete": rule.AllowDelete, "run_on_push": rule.RunOnPush,
-		"allow_docker": rule.AllowDocker, "allow_secrets": rule.AllowSecrets, "allow_ship": rule.AllowShip,
+		"allow_docker": rule.AllowDocker, "allow_secrets": rule.AllowSecrets, "allow_deploy": rule.AllowDeploy,
 	} {
 		if on {
 			v.Set(name, "on")
@@ -293,7 +293,7 @@ func (a *App) repoSettingsRuleSet(w http.ResponseWriter, r *http.Request) error 
 		Kind: kind, Pattern: pattern, PushPolicy: reposvc.PushPolicy(f.Get("push_policy")),
 		AllowForce: r.PostForm.Has("allow_force"), AllowDelete: r.PostForm.Has("allow_delete"),
 		RunOnPush: r.PostForm.Has("run_on_push"), AllowDocker: r.PostForm.Has("allow_docker"),
-		AllowSecrets: r.PostForm.Has("allow_secrets"), AllowShip: r.PostForm.Has("allow_ship"),
+		AllowSecrets: r.PostForm.Has("allow_secrets"), AllowDeploy: r.PostForm.Has("allow_deploy"),
 	}
 	if rule.PushPolicy == reposvc.PushPeople {
 		rule.PushPeople = r.PostForm["push_people"]
@@ -419,18 +419,7 @@ func (a *App) repoSettingsAccess(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	if f.Valid() {
-		actorID := personFrom(r).ID
-		if err := a.repos.SetVisibility(r.Context(), repo.ID, visibility, actorID); err != nil && !failForm(f, "visibility", err) {
-			return err
-		}
-	}
-	if f.Valid() {
-		if err := a.setReaders(r.Context(), repo.ID, r.PostForm["readers"], personFrom(r).ID); err != nil {
-			return err
-		}
-	}
-	if f.Valid() {
-		if err := a.repos.SetDefaultPush(r.Context(), repo.ID, policy, people, personFrom(r).ID); err != nil && !failForm(f, "", err) {
+		if err := a.repos.SetAccess(r.Context(), repo.ID, visibility, policy, r.PostForm["readers"], people, personFrom(r).ID); err != nil && !failForm(f, "", err) {
 			return err
 		}
 	}
@@ -444,46 +433,6 @@ func (a *App) repoSettingsAccess(w http.ResponseWriter, r *http.Request) error {
 		return a.reRenderRepoSettings(w, r, repo, state)
 	}
 	a.redirect(w, r, "/"+repo.Name+"/settings?tab=access", flashSuccess, "Saved.")
-	return nil
-}
-
-// setReaders makes a repository's explicit readers match exactly the
-// given person IDs, adding and removing only what changed.
-func (a *App) setReaders(ctx context.Context, repoID string, people []string, actorID string) error {
-	everyone, err := a.people.List(ctx)
-	if err != nil {
-		return err
-	}
-	usernames := make(map[string]string, len(everyone))
-	for _, p := range everyone {
-		usernames[p.ID] = p.Username
-	}
-	current, err := a.repos.ListReaders(ctx, repoID)
-	if err != nil {
-		return err
-	}
-	currentSet := make(map[string]bool, len(current))
-	for _, id := range current {
-		currentSet[id] = true
-	}
-	wantSet := make(map[string]bool, len(people))
-	for _, id := range people {
-		wantSet[id] = true
-	}
-	for _, id := range people {
-		if !currentSet[id] {
-			if err := a.repos.AddReader(ctx, repoID, id, usernames[id], actorID); err != nil {
-				return err
-			}
-		}
-	}
-	for _, id := range current {
-		if !wantSet[id] {
-			if err := a.repos.RemoveReader(ctx, repoID, id, usernames[id], actorID); err != nil {
-				return err
-			}
-		}
-	}
 	return nil
 }
 

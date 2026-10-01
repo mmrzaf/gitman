@@ -27,7 +27,7 @@ type Rule struct {
 	RunOnPush    bool
 	AllowDocker  bool
 	AllowSecrets bool
-	AllowShip    bool
+	AllowDeploy  bool
 }
 
 // Decision is what a rule set resolves to for one ref and one person. When
@@ -43,7 +43,7 @@ type Decision struct {
 	RunOnPush    bool
 	AllowDocker  bool
 	AllowSecrets bool
-	AllowShip    bool
+	AllowDeploy  bool
 	MatchedRule  *Rule
 }
 
@@ -108,7 +108,7 @@ func Evaluate(rules []Rule, kind git.Kind, name string, personID string, isAdmin
 		RunOnPush:    matched.RunOnPush,
 		AllowDocker:  matched.AllowDocker,
 		AllowSecrets: matched.AllowSecrets,
-		AllowShip:    matched.AllowShip,
+		AllowDeploy:  matched.AllowDeploy,
 		MatchedRule:  matched,
 	}
 	switch matched.PushPolicy {
