@@ -116,7 +116,7 @@ func New(cfg *config.Config, services Services, log *slog.Logger) (*App, error) 
 
 	mux := http.NewServeMux()
 	a.register(mux)
-	a.handler = a.recoverPanics(a.clientIPMiddleware(a.logRequests(a.routeFilesAtRef(mux))))
+	a.handler = a.recoverPanics(a.clientIPMiddleware(a.logRequests(canonicalNames(a.routeFilesAtRef(mux)))))
 	return a, nil
 }
 

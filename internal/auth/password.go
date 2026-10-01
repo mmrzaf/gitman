@@ -3,6 +3,7 @@ package auth
 import (
 	"fmt"
 	"sync"
+	"unicode/utf8"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -16,8 +17,8 @@ const bcryptCost = 12
 // little defensible security for a self-hosted tool with no public
 // registration, so none are enforced.
 func ValidatePassword(password string) error {
-	if len(password) < 8 {
-		return apperr.New(apperr.KindInvalid, "password must be at least 8 characters")
+	if !utf8.ValidString(password) || utf8.RuneCountInString(password) < 12 {
+		return apperr.New(apperr.KindInvalid, "password must be at least 12 characters")
 	}
 	if len(password) > 72 {
 		return apperr.New(apperr.KindInvalid, "password must be at most 72 bytes")

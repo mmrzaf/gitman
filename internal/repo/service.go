@@ -39,6 +39,7 @@ func NewService(db *postgres.DB, store *git.Store, secretKey string) *Service {
 // The row and the directory are created together: if either fails,
 // neither is left behind.
 func (s *Service) Create(ctx context.Context, name, description, defaultBranch, actorID string) (*Repo, error) {
+	name = strings.ToLower(name)
 	if err := names.ValidateRepository(name); err != nil {
 		return nil, err
 	}
