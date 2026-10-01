@@ -336,7 +336,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .page-header-text { flex: 1 1 420px; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-1); }
 .page-title { font-size: var(--text-2xl); }
 .page-subtitle { color: var(--muted); overflow-wrap: anywhere; }
-.page-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+.page-actions { min-width: 0; max-width: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
 
 /* Main content with a sidebar of context beside it. */
 .split {
@@ -635,7 +635,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .choices > legend { padding: 0; margin-bottom: var(--sp-2); font-weight: var(--weight-medium); }
 .choice {
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: auto minmax(0, 1fr);
   gap: 2px var(--sp-3);
   align-items: start;
   padding: var(--sp-2) var(--sp-3);
@@ -763,13 +763,15 @@ time { white-space: nowrap; }
 .panel-header {
   display: flex;
   align-items: center;
-  gap: var(--sp-3);
+  gap: var(--sp-2) var(--sp-3);
+  flex-wrap: wrap;
   min-height: 44px;
   padding: var(--sp-2) var(--sp-4);
   border-bottom: 1px solid var(--border);
 }
-.panel-title { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--text-md); }
-.panel-header .panel-actions { margin-left: auto; display: flex; gap: var(--sp-2); align-items: center; }
+.panel-title { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; overflow-wrap: anywhere; font-size: var(--text-md); }
+.panel-title > .icon, .panel-title > .count { flex-shrink: 0; }
+.panel-header .panel-actions { margin-left: auto; min-width: 0; max-width: 100%; display: flex; flex-wrap: wrap; gap: var(--sp-2); align-items: center; }
 .panel-body { padding: var(--sp-4); }
 .panel-footer { padding: var(--sp-2) var(--sp-4); border-top: 1px solid var(--border); color: var(--muted); font-size: var(--text-sm); }
 .panel > .table-scroll:last-child .table tr:last-child td { border-bottom: 0; }
@@ -840,6 +842,7 @@ time { white-space: nowrap; }
   padding: 0 var(--sp-3);
   border-bottom: 1px solid var(--border);
   overflow-x: auto;
+  overflow-y: hidden;
 }
 .tab {
   display: inline-flex;
@@ -971,6 +974,7 @@ time { white-space: nowrap; }
 .dialog-wide { width: min(680px, calc(100vw - 2 * var(--sp-4))); }
 .dialog::backdrop { background: var(--backdrop); }
 .dialog[open] { display: flex; flex-direction: column; }
+.dialog > form { display: flex; flex-direction: column; gap: 0; min-height: 0; }
 /* Rendered open without scripting — a form that failed, or a link to a
    form — the dialog sits in the page instead of floating over it. */
 .no-js .dialog[open] { position: static; margin: 0 auto var(--sp-6); width: 100%; max-width: 680px; max-height: none; }
@@ -980,12 +984,13 @@ time { white-space: nowrap; }
   gap: var(--sp-3);
   padding: var(--sp-4) var(--sp-5) var(--sp-3);
 }
-.dialog-title { font-size: var(--text-lg); }
+.dialog-title { min-width: 0; overflow-wrap: anywhere; font-size: var(--text-lg); }
 .dialog-header .dialog-close { margin-left: auto; }
-.dialog-body { display: grid; gap: var(--sp-4); padding: var(--sp-1) var(--sp-5) var(--sp-4); overflow-y: auto; }
+.dialog-body { min-height: 0; display: grid; gap: var(--sp-4); padding: var(--sp-1) var(--sp-5) var(--sp-4); overflow-y: auto; }
 .dialog-footer {
   display: flex;
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: var(--sp-2);
   padding: var(--sp-3) var(--sp-5);
   border-top: 1px solid var(--border);
@@ -1127,7 +1132,7 @@ time { white-space: nowrap; }
 .feed-item:last-child { border-bottom: 0; }
 .feed-item > .icon { align-self: center; color: var(--muted); }
 .feed-item > .status-icon { color: var(--status); }
-.feed-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.feed-text { position: relative; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Keyboard users can scroll the complete entry without changing row height. */
 .feed-text:focus-within { overflow-x: auto; text-overflow: clip; }
 .feed-text .ref { font-size: var(--text-xs); }
@@ -1187,6 +1192,7 @@ time { white-space: nowrap; }
   font-family: var(--font-mono);
   font-size: var(--text-md);
 }
+.path > a, .path-current { overflow-wrap: anywhere; min-width: 0; }
 .path a { color: var(--accent); }
 .path-sep { color: var(--muted); padding: 0 2px; }
 .path-current { font-weight: var(--weight-bold); color: var(--text); }
@@ -1204,7 +1210,8 @@ h1.path { font-size: var(--text-xl); letter-spacing: -0.01em; }
 }
 .toolbar-text { color: var(--muted); font-size: var(--text-sm); }
 .toolbar-spacer { flex: 1; }
-.ref-picker { display: flex; gap: var(--sp-2); align-items: center; }
+.ref-picker { display: flex; gap: var(--sp-2); align-items: center; min-width: 0; max-width: 100%; }
+.ref-picker .select-wrap { min-width: 0; }
 .commit-picker { align-items: flex-end; gap: var(--sp-3); padding: var(--sp-3); border-bottom: 0; border-radius: var(--radius-lg); }
 .commit-picker .field { flex: 1 1 220px; min-width: 0; grid-template-columns: minmax(0, 1fr); }
 .commit-picker .input { font-family: var(--font-mono); font-size: var(--text-mono); }
@@ -1306,7 +1313,7 @@ h1.path { font-size: var(--text-xl); letter-spacing: -0.01em; }
 .run-facts { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1) var(--sp-3); color: var(--muted); }
 .run-facts > * { display: inline-flex; align-items: center; gap: var(--sp-1); min-width: 0; max-width: 100%; }
 .run-facts .icon { color: var(--muted); }
-.run-reason { margin-top: var(--sp-1); }
+.run-reason { margin-top: var(--sp-1); overflow-wrap: anywhere; }
 
 .run-layout {
   display: grid;
@@ -1314,6 +1321,7 @@ h1.path { font-size: var(--text-xl); letter-spacing: -0.01em; }
   gap: var(--sp-4);
   align-items: start;
 }
+.run-layout > * { min-width: 0; }
 .run-side { display: grid; gap: var(--sp-4); position: sticky; top: calc(var(--topbar-h) + var(--sp-4)); }
 .run-output {
   display: flex;
@@ -1576,9 +1584,29 @@ h1.path { font-size: var(--text-xl); letter-spacing: -0.01em; }
   .table-cards th, .table-cards td { display: block; width: auto; min-width: 0; max-width: none; padding: 0 !important; border: 0; white-space: normal; overflow-wrap: anywhere; text-align: left; }
   .table-cards td[data-label]::before { content: attr(data-label); display: block; margin-bottom: 2px; color: var(--muted); font-size: var(--text-xs); font-weight: var(--weight-bold); }
   .table-cards tbody th, .table-cards tbody td { height: auto; }
-  .table-cards .table-cell { white-space: normal; }
-  .table-cards .cell-truncate { overflow: visible; }
+  .table-cards .table-cell { height: auto; overflow: visible; white-space: normal; }
+  .table-cards .table-cell > .cluster, .table-cards .cell-actions { flex-wrap: wrap; }
+  .table-cards .cell-stack > * { white-space: normal; overflow-wrap: anywhere; }
+  .table-cards .ref { max-width: 100%; }
+  .table-cards .chip { height: auto; min-height: 22px; white-space: normal; overflow-wrap: anywhere; }
+  .table-cards td[colspan] { grid-column: 1 / -1; }
+  .table-cards .cell-shrink { width: auto; white-space: normal; }
+  .table-cards .cell-truncate { grid-column: 1 / -1; overflow: visible; }
   .table-cards .table-rowheader, .table-cards td[data-label="Actions"], .table-cards td[data-label="Access"], .table-cards td[data-label="Description"] { grid-column: 1 / -1; }
+  .page-header { gap: var(--sp-3); }
+  .split, .split-main, .split-side { gap: var(--sp-4); }
+  .repobar-title { flex-wrap: wrap; gap: var(--sp-1); }
+  .repobar-name { max-width: 100%; }
+  .repobar-description { flex-basis: 100%; }
+  .repobar-link { padding-inline: var(--sp-2); min-height: 44px; }
+  .toolbar > * { max-width: 100%; }
+  .ref-picker .select { min-width: 0; max-width: 100%; }
+  .input, .select, .textarea { font-size: var(--text-md); }
+  .last-change { flex-wrap: wrap; }
+  .last-change .truncate { flex-basis: 100%; }
+  .facts { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .dialog { max-height: calc(100dvh - 2 * var(--sp-4)); }
+  .dialog-header, .dialog-body, .dialog-footer { padding-inline: var(--sp-4); }
   .panel-scroll > .empty { padding: var(--sp-4); gap: var(--sp-2); }
   .panel-scroll > .empty > .icon { display: none; }
   .table-cards td[data-label="Actions"]::before { display: none; }
