@@ -7,9 +7,8 @@ import (
 	"strings"
 )
 
-// ErrRefMoved is returned when a ref changed while it was being deleted:
-// another push or delete got to it first.
-var ErrRefMoved = errors.New("the ref changed while it was being deleted")
+// ErrRefMoved means a ref no longer matches the object a mutation expected.
+var ErrRefMoved = errors.New("the ref changed; fetch its current state before retrying")
 
 // DeleteRef deletes a branch or tag and returns the object it pointed at:
 // what a hook reports as the old value of a pushed delete. It returns

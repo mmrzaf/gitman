@@ -49,8 +49,7 @@ func (u Update) IsCreate() bool { return git.IsZeroHash(u.Old) }
 // IsDelete reports whether the update deletes the ref.
 func (u Update) IsDelete() bool { return git.IsZeroHash(u.New) }
 
-// ParseUpdates reads the "<old> <new> <ref>" lines Git gives pre-receive
-// and post-receive on standard input.
+// ParseUpdates reads the "<old> <new> <ref>" commands from proc-receive.
 func ParseUpdates(r io.Reader) ([]Update, error) {
 	var updates []Update
 	scanner := bufio.NewScanner(r)
@@ -79,7 +78,7 @@ func ParseUpdates(r io.Reader) ([]Update, error) {
 
 // Hook serves one push's hooks.
 type Hook struct {
-	// DB runs the post-receive transaction, which spans the repo and ci
+	// DB runs the push-recording transaction, which spans the repo and ci
 	// services so a push's record, ref index and runs commit together.
 	DB     *postgres.DB
 	People *auth.Service
@@ -136,7 +135,7 @@ func (pc *pushContext) who() repo.Who {
 
 // ValidatePush checks every update against Gitman's ref naming rules and
 // the repository's ref rules. It refuses the whole push if any update is
-// refused — Git applies a push atomically when pre-receive fails — and
+// refused; ApplyPush changes refs only after validation succeeds. It
 // explains every refusal, not just the first, so one retry fixes them
 // all.
 func (h *Hook) ValidatePush(ctx context.Context, updates []Update) error {
@@ -280,7 +279,7 @@ func (h *Hook) refused(ctx context.Context, pc *pushContext, refusals ...refusal
 	return ErrRejected
 }
 
-// updateRecord is what post-receive learns about one update before
+// updateRecord captures one authorized update before
 // writing anything.
 type updateRecord struct {
 	Update
@@ -318,6 +317,11 @@ func (h *Hook) prepareRecords(ctx context.Context, pc *pushContext, updates []Up
 		if !u.IsDelete() {
 			if rec.Commit, err = h.Git.ResolveCommit(ctx, u.New); err != nil {
 				return nil, fmt.Errorf("resolve %s: %w", u.Ref, err)
+			}
+			// Metadata is required to record the push, so unreadable commits
+			// must be rejected before any ref or durable intent is changed.
+			if _, err := h.Git.Commit(ctx, rec.Commit); err != nil {
+				return nil, fmt.Errorf("read commit for %s: %w", u.Ref, err)
 			}
 			if u.Kind == git.KindBranch && !u.IsCreate() {
 				ff, err := h.Git.IsAncestor(ctx, u.Old, u.New)

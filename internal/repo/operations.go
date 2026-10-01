@@ -83,6 +83,13 @@ func CompleteOperationTx(ctx context.Context, tx postgres.Tx, opID string) error
 	return err
 }
 
+// RejectOperation finishes an intent that provably did not change Git. Its
+// reason remains recorded, while subsequent repository mutations can proceed.
+func (s *Service) RejectOperation(ctx context.Context, opID string, reason error) error {
+	_, err := s.db.Q.Exec(ctx, `UPDATE repository_operations SET completed_at=now(),error=$2 WHERE id=$1 AND completed_at IS NULL`, opID, reason.Error())
+	return err
+}
+
 func (s *Service) PendingOperations(ctx context.Context) ([]Operation, error) {
 	rows, err := s.db.Q.Query(ctx, `SELECT id,repo_id,kind,name,COALESCE(actor_id,''),payload,created_at,error FROM repository_operations WHERE completed_at IS NULL ORDER BY created_at,id`)
 	if err != nil {

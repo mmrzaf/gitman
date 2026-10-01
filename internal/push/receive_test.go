@@ -20,7 +20,7 @@ const zeroHash = "0000000000000000000000000000000000000000"
 
 // receiveFixture is a repository Gitman knows about, whose bare Git
 // repository a test moves refs in directly, and a hook serving pushes to
-// it the way post-receive does.
+// it through the proc-receive recorder.
 type receiveFixture struct {
 	db   *postgres.DB
 	hook *Hook
@@ -86,8 +86,8 @@ func runGit(t *testing.T, dir string, args ...string) string {
 }
 
 // commit makes a commit carrying a pipeline and pushes it straight into
-// the bare repository as ref, the way Git has already moved a ref by the
-// time post-receive runs. It returns the commit.
+// the bare repository as ref to prepare objects and ref states for tests.
+// It returns the commit.
 func (f *receiveFixture) commit(t *testing.T, message, ref string) string {
 	t.Helper()
 	pipeline := "image: alpine:3.20\nsteps:\n  - name: test\n    run: echo " + message + "\n"
@@ -159,9 +159,8 @@ func (f *prFixture) asPerson(t *testing.T, username string) {
 	f.hook.Ctx.PersonID = p.ID
 }
 
-// commitFile pushes a real commit carrying a trivial pipeline directly
-// into the bare repository, the way Git has already moved a ref by the
-// time pre-receive/post-receive run, and returns its hash.
+// commitFile loads a commit carrying a trivial pipeline into the bare
+// repository and sets the ref state used by validation tests.
 func (f *prFixture) commitFile(t *testing.T, message, ref string) string {
 	t.Helper()
 	pipeline := "image: alpine:3.20\nsteps:\n  - name: test\n    run: echo " + message + "\n"
@@ -444,6 +443,19 @@ func TestApplyPushRejectsStaleReference(t *testing.T) {
 	got, err := f.hook.Git.ResolveCommit(context.Background(), "main")
 	if err != nil || got != newer {
 		t.Fatalf("head=%s err=%v", got, err)
+	}
+	pending, err := f.hook.Repos.PendingOperations(context.Background())
+	if err != nil || len(pending) != 0 {
+		t.Fatalf("stale push left pending operations: %v, %v", pending, err)
+	}
+	if err := f.hook.Repos.RecoverOperations(context.Background(), f.hook.RecoverPush); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.hook.ApplyPush(context.Background(), []Update{{Old: newer, New: older, Ref: "refs/heads/restored", Kind: git.KindBranch, Name: "restored"}}); err == nil {
+		t.Fatal("accepted an update to an absent ref with a nonzero old value")
+	}
+	if err := f.hook.ApplyPush(context.Background(), []Update{{Old: zeroHash, New: newer, Ref: "refs/heads/restored", Kind: git.KindBranch, Name: "restored"}}); err != nil {
+		t.Fatalf("valid push after stale rejection: %v", err)
 	}
 }
 

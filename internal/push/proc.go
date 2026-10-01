@@ -3,6 +3,7 @@ package push
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -78,7 +79,10 @@ func (h *Hook) ProcReceive(ctx context.Context, in io.Reader, out io.Writer) err
 	for _, u := range updates {
 		result := "ok " + u.Ref
 		if err != nil {
-			result = "ng " + u.Ref + " Gitman could not commit this operation; retry after recovery"
+			result = "ng " + u.Ref + " Gitman could not complete this push"
+			if errors.Is(err, git.ErrRefMoved) {
+				result = "ng " + u.Ref + " ref changed; fetch before retrying"
+			}
 		}
 		if _, writeErr := io.WriteString(out, git.PktLine(result+"\n")); writeErr != nil {
 			return writeErr
@@ -100,7 +104,14 @@ func (h *Hook) ApplyPush(ctx context.Context, updates []Update) error {
 		return nil
 	}
 	return h.Repos.WithMutation(ctx, h.Ctx.RepoID, func() error {
+		changes := make([]git.RefChange, len(updates))
+		for i, u := range updates {
+			changes[i] = git.RefChange{Ref: u.Ref, Old: u.Old, New: u.New}
+		}
 		if err := h.ValidatePush(ctx, updates); err != nil {
+			return err
+		}
+		if err := h.Git.CheckRefChanges(ctx, changes); err != nil {
 			return err
 		}
 		pc, err := h.load(ctx)
@@ -116,23 +127,35 @@ func (h *Hook) ApplyPush(ctx context.Context, updates []Update) error {
 		if err != nil {
 			return err
 		}
-		return h.RecoverPush(ctx, *op)
+		applied, err := h.recoverPush(ctx, *op)
+		if err != nil {
+			return err
+		}
+		if !applied {
+			return git.ErrRefMoved
+		}
+		return nil
 	})
 }
 
 // RecoverPush requires the repository mutation lock. Replaying a receipt never
 // creates another push or run, and never executes a pipeline itself.
 func (h *Hook) RecoverPush(ctx context.Context, op repo.Operation) error {
+	_, err := h.recoverPush(ctx, op)
+	return err
+}
+
+func (h *Hook) recoverPush(ctx context.Context, op repo.Operation) (bool, error) {
 	var intent pushIntent
 	if err := json.Unmarshal(op.Payload, &intent); err != nil {
-		return err
+		return false, err
 	}
 	if intent.Repository == nil || intent.Repository.ID != op.RepoID {
-		return fmt.Errorf("invalid push intent repository")
+		return false, fmt.Errorf("invalid push intent repository")
 	}
 	applied, err := h.Git.OperationApplied(ctx, op.ID, op.Payload)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if !applied {
 		var changes []git.RefChange
@@ -148,8 +171,24 @@ func (h *Hook) RecoverPush(ctx context.Context, op repo.Operation) error {
 				}
 			}
 		}
-		if err := h.Git.ApplyOperation(ctx, op.ID, changes, commits, op.Payload); err != nil {
-			return err
+		if err := h.Git.CheckRefChanges(ctx, changes); err != nil {
+			if errors.Is(err, git.ErrRefMoved) {
+				return false, h.Repos.RejectOperation(ctx, op.ID, err)
+			}
+			return false, err
+		}
+		if applyErr := h.Git.ApplyOperation(ctx, op.ID, changes, commits, op.Payload); applyErr != nil {
+			// A lost command response does not prove that Git rejected the change.
+			applied, err = h.Git.OperationApplied(ctx, op.ID, op.Payload)
+			if err != nil {
+				return false, err
+			}
+			if !applied {
+				if err := h.Git.CheckRefChanges(ctx, changes); errors.Is(err, git.ErrRefMoved) {
+					return false, h.Repos.RejectOperation(ctx, op.ID, err)
+				}
+				return false, applyErr
+			}
 		}
 	}
 	// Person need only identify the already-authorized intent. No fresh permission
@@ -157,9 +196,9 @@ func (h *Hook) RecoverPush(ctx context.Context, op repo.Operation) error {
 	pc := &pushContext{repo: intent.Repository}
 	person, err := h.People.GetByID(ctx, intent.PersonID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	pc.person = person
 	h.Ctx.RemoteAddr = intent.RemoteAddr
-	return h.recordPush(ctx, pc, intent.Records, op.ID)
+	return true, h.recordPush(ctx, pc, intent.Records, op.ID)
 }

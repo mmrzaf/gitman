@@ -3,6 +3,7 @@ package git
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -10,6 +11,28 @@ import (
 const InternalRefs = "refs/gitman/"
 
 type RefChange struct{ Ref, Old, New string }
+
+// CheckRefChanges checks exact object identities, including annotated tag objects.
+// Callers hold the repository mutation lock until application finishes.
+func (r *Repo) CheckRefChanges(ctx context.Context, changes []RefChange) error {
+	for _, change := range changes {
+		kind, name, ok := SplitFullName(change.Ref)
+		if !ok || ValidateName(name) != nil || !IsHash(change.Old) || !IsHash(change.New) {
+			return fmt.Errorf("invalid ref change")
+		}
+		current, err := r.RefOID(ctx, kind, name)
+		if errors.Is(err, ErrNotFound) && IsZeroHash(change.Old) {
+			continue
+		}
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			return err
+		}
+		if err != nil || current != change.Old {
+			return fmt.Errorf("%s: %w", change.Ref, ErrRefMoved)
+		}
+	}
+	return nil
+}
 
 // ApplyOperation changes public refs, pins every retained commit and installs a
 // receipt in one Git ref transaction. The receipt distinguishes an applied intent

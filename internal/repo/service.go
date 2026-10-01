@@ -387,24 +387,10 @@ func (s *Service) SyncRefs(ctx context.Context, r *Repo) (int, error) {
 	return n, err
 }
 
-// SyncRefsTx makes a repository's ref index match Git exactly, inside
-// the caller's transaction, and returns how many refs Git has: rows are
-// inserted and updated for every ref Git has and deleted for refs it no
-// longer has. Refs whose commit changed are attributed to personID.
-//
-// It first takes a per-repository lock held until the transaction ends,
-// and only then reads Git. Two pushes finishing at once therefore sync
-// one after the other, and the later one always reads the later state:
-// reading first and locking second would let an older snapshot commit
-// last and delete a branch the other push had just created.
-//
-// Syncing the whole index, rather than applying only the refs one push
-// named, also means a push that was never recorded — because its hook
-// failed after Git had already accepted it — is corrected by the next.
-//
-// It returns the refs Git has, as read under that lock: what a push's
-// post-receive must go by, since another push may have moved a ref it
-// named since Git accepted it.
+// SyncRefsTx replaces the ref index with Git's current state and records commit
+// metadata in the caller's transaction. The ref-index lock serializes database
+// writers; live mutations and recovery also hold the repository filesystem lock.
+// A failed recording transaction leaves its operation pending for recovery.
 func (s *Service) SyncRefsTx(ctx context.Context, tx postgres.Tx, repoID string, gitRepo *git.Repo, personID string) ([]git.Ref, error) {
 	if err := lockRefIndex(ctx, tx, repoID); err != nil {
 		return nil, err
