@@ -25,6 +25,7 @@ const (
 	RepoCreated              = "repo.created"
 	RepoDeleted              = "repo.deleted"
 	RepoDescribed            = "repo.description_changed"
+	RepoAccessChanged        = "repo.access_changed"
 	RepoVisibilityChanged    = "repo.visibility_changed"
 	RepoReaderAdded          = "repo.reader_added"
 	RepoReaderRemoved        = "repo.reader_removed"
@@ -39,6 +40,7 @@ const (
 	PersonEnabled            = "person.enabled"
 	PersonRole               = "person.role"
 	PasswordReset            = "person.password_reset"
+	CredentialsRevoked       = "person.credentials_revoked"
 )
 
 // NotifyChannel is the PostgreSQL channel that carries a repository's ID

@@ -113,30 +113,32 @@ func (s *Service) RefusedSince(ctx context.Context, repoIDs []string, since time
 	return refusedSince(ctx, s.db.Q, repoIDs, since, limit)
 }
 
-// ForRepo lists a repository's ref changes, refused pushes, finished runs,
-// shipped versions and settings changes, newest first, skipping the first skip and reporting whether more follow. Each
-// source is read to skip+limit+1 rows and merged here, so a page is
-// exactly what the merged feed holds at that place however the sources
-// interleave.
-func (s *Service) ForRepo(ctx context.Context, repoID string, skip, limit int) (entries []RepoEntry, more bool, err error) {
-	want := skip + limit + 1
-	changes, err := repoRefChanges(ctx, s.db.Q, repoID, want)
+// ForRepo uses a stable (timestamp, source, ID) cursor. Each source reads at
+// most limit+1 candidates; new activity never shifts previously paged entries.
+func (s *Service) ForRepo(ctx context.Context, repoID, before string, limit int) (entries []RepoEntry, more bool, err error) {
+	cursor, err := parseCursor(before)
 	if err != nil {
 		return nil, false, err
 	}
-	events, err := repoEvents(ctx, s.db.Q, repoID, want)
+	limit = max(1, min(limit, 100))
+	want := limit + 1
+	changes, err := repoRefChanges(ctx, s.db.Q, repoID, want, cursor)
 	if err != nil {
 		return nil, false, err
 	}
-	refusals, err := repoRefusals(ctx, s.db.Q, repoID, want)
+	events, err := repoEvents(ctx, s.db.Q, repoID, want, cursor)
 	if err != nil {
 		return nil, false, err
 	}
-	runs, err := repoRuns(ctx, s.db.Q, repoID, want)
+	refusals, err := repoRefusals(ctx, s.db.Q, repoID, want, cursor)
 	if err != nil {
 		return nil, false, err
 	}
-	deployments, err := repoDeployments(ctx, s.db.Q, repoID, want)
+	runs, err := repoRuns(ctx, s.db.Q, repoID, want, cursor)
+	if err != nil {
+		return nil, false, err
+	}
+	deployments, err := repoDeployments(ctx, s.db.Q, repoID, want, cursor)
 	if err != nil {
 		return nil, false, err
 	}
@@ -145,12 +147,11 @@ func (s *Service) ForRepo(ctx context.Context, repoID string, skip, limit int) (
 		if !all[i].At.Equal(all[j].At) {
 			return all[i].At.After(all[j].At)
 		}
+		if all[i].Kind != all[j].Kind {
+			return all[i].Kind > all[j].Kind
+		}
 		return all[i].id > all[j].id
 	})
-	if skip >= len(all) {
-		return nil, false, nil
-	}
-	all = all[skip:]
 	if len(all) > limit {
 		return all[:limit], true, nil
 	}

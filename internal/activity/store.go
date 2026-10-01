@@ -224,7 +224,7 @@ const bulkUpdates = 4
 // the run it started: one row per push_updates row, except that a push's
 // updates of the same kind and change, when there are bulkUpdates or more,
 // are one row that counts and names them.
-func repoRefChanges(ctx context.Context, q postgres.Querier, repoID string, limit int) ([]RepoEntry, error) {
+func repoRefChanges(ctx context.Context, q postgres.Querier, repoID string, limit int, cursor *feedCursor) ([]RepoEntry, error) {
 	rows, err := q.Query(ctx, `
 		WITH changes AS (
 			SELECT u.id, u.push_id, p.created_at, COALESCE(pe.username, '') AS actor, u.kind, u.name,
@@ -235,7 +235,7 @@ func repoRefChanges(ctx context.Context, q postgres.Querier, repoID string, limi
 			LEFT JOIN people pe ON pe.id = p.person_id
 			WHERE p.repo_id = $1
 		)
-		SELECT c.id, c.created_at, c.actor, c.kind, c.name, c.old_commit, c.new_commit,
+		SELECT * FROM (SELECT c.id, c.created_at, c.actor, c.kind, c.name, c.old_commit, c.new_commit,
 		       c.is_create, c.is_delete, c.is_force, COALESCE(r.number, 0), COALESCE(r.status, ''),
 		       1 AS total, ARRAY[]::text[] AS names
 		FROM changes c
@@ -248,9 +248,10 @@ func repoRefChanges(ctx context.Context, q postgres.Querier, repoID string, limi
 		FROM changes c
 		WHERE c.n >= $3
 		GROUP BY c.push_id, c.created_at, c.actor, c.kind, c.is_create, c.is_delete, c.is_force
+		) feed WHERE ($4::timestamptz IS NULL OR (created_at,'push'::text,id)<($4,$5::text,$6::text))
 		ORDER BY created_at DESC, id DESC
 		LIMIT $2
-	`, repoID, limit, bulkUpdates)
+	`, append([]any{repoID, limit, bulkUpdates}, cursorArgs(cursor)...)...)
 	if err != nil {
 		return nil, fmt.Errorf("list ref changes: %w", err)
 	}
@@ -309,15 +310,15 @@ func refusedSince(ctx context.Context, q postgres.Querier, repoIDs []string, sin
 }
 
 // repoEvents lists a repository's settings changes newest first.
-func repoEvents(ctx context.Context, q postgres.Querier, repoID string, limit int) ([]RepoEntry, error) {
+func repoEvents(ctx context.Context, q postgres.Querier, repoID string, limit int, cursor *feedCursor) ([]RepoEntry, error) {
 	rows, err := q.Query(ctx, `
 		SELECT e.id, e.created_at, COALESCE(p.username, ''), e.action, e.detail
 		FROM events e
 		LEFT JOIN people p ON p.id = e.person_id
-		WHERE e.repo_id = $1
+		WHERE e.repo_id = $1 AND ($3::timestamptz IS NULL OR (e.created_at,'event'::text,e.id)<($3,$4::text,$5::text))
 		ORDER BY e.created_at DESC, e.id DESC
 		LIMIT $2
-	`, repoID, limit)
+	`, append([]any{repoID, limit}, cursorArgs(cursor)...)...)
 	if err != nil {
 		return nil, fmt.Errorf("list repository events: %w", err)
 	}
@@ -335,15 +336,15 @@ func repoEvents(ctx context.Context, q postgres.Querier, repoID string, limit in
 
 // repoRefusals lists a repository's refused pushes newest first, each with
 // the reasons it was refused for.
-func repoRefusals(ctx context.Context, q postgres.Querier, repoID string, limit int) ([]RepoEntry, error) {
+func repoRefusals(ctx context.Context, q postgres.Querier, repoID string, limit int, cursor *feedCursor) ([]RepoEntry, error) {
 	rows, err := q.Query(ctx, `
 		SELECT f.id, f.created_at, COALESCE(p.username, '')
 		FROM push_refusals f
 		LEFT JOIN people p ON p.id = f.person_id
-		WHERE f.repo_id = $1
+		WHERE f.repo_id = $1 AND ($3::timestamptz IS NULL OR (f.created_at,'refusal'::text,f.id)<($3,$4::text,$5::text))
 		ORDER BY f.created_at DESC, f.id DESC
 		LIMIT $2
-	`, repoID, limit)
+	`, append([]any{repoID, limit}, cursorArgs(cursor)...)...)
 	if err != nil {
 		return nil, fmt.Errorf("list refused pushes: %w", err)
 	}
@@ -395,15 +396,15 @@ func repoRefusals(ctx context.Context, q postgres.Querier, repoID string, limit 
 }
 
 // repoRuns lists a repository's finished runs newest first.
-func repoRuns(ctx context.Context, q postgres.Querier, repoID string, limit int) ([]RepoEntry, error) {
+func repoRuns(ctx context.Context, q postgres.Querier, repoID string, limit int, cursor *feedCursor) ([]RepoEntry, error) {
 	rows, err := q.Query(ctx, `
 		SELECT r.id, r.finished_at, COALESCE(p.username, ''), r.number, r.status, r.ref_kind, r.ref_name
 		FROM runs r
 		LEFT JOIN people p ON p.id = r.triggered_by
-		WHERE r.repo_id = $1 AND r.finished_at IS NOT NULL
+		WHERE r.repo_id = $1 AND r.finished_at IS NOT NULL AND ($3::timestamptz IS NULL OR (r.finished_at,'run'::text,r.id)<($3,$4::text,$5::text))
 		ORDER BY r.finished_at DESC, r.id DESC
 		LIMIT $2
-	`, repoID, limit)
+	`, append([]any{repoID, limit}, cursorArgs(cursor)...)...)
 	if err != nil {
 		return nil, fmt.Errorf("list repository runs: %w", err)
 	}
@@ -423,16 +424,16 @@ func repoRuns(ctx context.Context, q postgres.Querier, repoID string, limit int)
 
 // repoDeployments lists what has been shipped from a repository, newest
 // first.
-func repoDeployments(ctx context.Context, q postgres.Querier, repoID string, limit int) ([]RepoEntry, error) {
+func repoDeployments(ctx context.Context, q postgres.Querier, repoID string, limit int, cursor *feedCursor) ([]RepoEntry, error) {
 	rows, err := q.Query(ctx, `
 		SELECT d.id, d.created_at, COALESCE(p.username, ''), d.target, d.version, d.commit_hash, COALESCE(r.number, 0)
 		FROM deployments d
 		LEFT JOIN people p ON p.id = d.person_id
 		LEFT JOIN runs r ON r.id = d.run_id
-		WHERE d.repo_id = $1
+		WHERE d.repo_id = $1 AND ($3::timestamptz IS NULL OR (d.created_at,'deployment'::text,d.id)<($3,$4::text,$5::text))
 		ORDER BY d.created_at DESC, d.id DESC
 		LIMIT $2
-	`, repoID, limit)
+	`, append([]any{repoID, limit}, cursorArgs(cursor)...)...)
 	if err != nil {
 		return nil, fmt.Errorf("list repository deployments: %w", err)
 	}

@@ -10,13 +10,16 @@
   </div>
 </header>
 <section class="panel" aria-labelledby="activity-title">
-  <div data-live-region="activity">{{template "repo-feed" (dict "Entries" $d.Entries "Repo" $repo)}}</div>
-  {{- if or $d.Skip $d.More}}
+  {{template "region-activity-activity" .}}
+  {{- if or $d.Before $d.More}}
   <nav class="panel-footer cluster" aria-label="Pages of activity">
-    {{- if $d.Skip}}<a class="btn btn-sm" href="{{$d.PageURL $d.NewerSkip}}">Newer</a>{{end}}
-    {{- if $d.More}}<a class="btn btn-sm" href="{{$d.PageURL $d.OlderSkip}}">Older</a>{{end}}
+    {{- if $d.Before}}<a class="btn btn-sm" href="{{$d.PageURL ""}}">Newest</a>{{end}}
+    {{- if $d.More}}<a class="btn btn-sm" href="{{$d.PageURL $d.Next}}">Older</a>{{end}}
   </nav>
   {{- end}}
 </section>
 </div>
 {{end}}
+
+{{define "region-activity-activity"}}{{$d := .Data}}{{$repo := $d.Repo}}<div data-live-region="activity">{{template "repo-feed" (repoFeedModel $d.Entries $repo)}}</div>{{end}}
+{{define "live"}}<main{{with .EventStream}} data-live-events="{{.}}"{{end}}>{{template "region-activity-activity" .}}</main>{{end}}

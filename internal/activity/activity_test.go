@@ -251,7 +251,7 @@ func TestForRepoListsRefChangesAndEventsNewestFirst(t *testing.T) {
 	exec(`INSERT INTO runs (id, repo_id, number, commit_hash, ref_kind, ref_name, trigger, push_id, status, finished_at)
 	      VALUES ('run3', $1, 3, repeat('d',40), 'branch', 'new', 'push', 'push3', 'failed', now())`, repoID)
 
-	entries, more, err := NewService(database).ForRepo(ctx, repoID, 0, 20)
+	entries, more, err := NewService(database).ForRepo(ctx, repoID, "", 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,12 +317,12 @@ func TestForRepoPages(t *testing.T) {
 	}
 	svc := NewService(database)
 	seen := map[string]bool{}
-	skip := 0
+	cursor := ""
 	for pages := 0; ; pages++ {
 		if pages > 10 {
 			t.Fatal("paging does not end")
 		}
-		entries, more, err := svc.ForRepo(ctx, repoID, skip, 2)
+		entries, more, err := svc.ForRepo(ctx, repoID, cursor, 2)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -336,12 +336,12 @@ func TestForRepoPages(t *testing.T) {
 		if !more {
 			break
 		}
-		skip += 2
+		cursor = entries[len(entries)-1].Cursor()
 	}
 	if len(seen) != 7 {
 		t.Fatalf("paging listed %d entries, want 7: %v", len(seen), seen)
 	}
-	if entries, more, err := svc.ForRepo(ctx, repoID, 100, 2); err != nil || more || len(entries) != 0 {
+	if entries, more, err := svc.ForRepo(ctx, repoID, (RepoEntry{Kind: KindEvent, At: time.Unix(1, 0), id: "past"}).Cursor(), 2); err != nil || more || len(entries) != 0 {
 		t.Fatalf("past the end = %v, %v, %v", entries, more, err)
 	}
 }
@@ -365,7 +365,7 @@ func TestForRepoListsRefusedPushesWithTheirReasons(t *testing.T) {
 	      ('f1', 2, 'refs/notes/x', 'only branches and tags can be pushed'),
 	      ('f2', 0, 'refs/heads/other', 'not this repository''s')`)
 
-	entries, _, err := NewService(database).ForRepo(ctx, repoID, 0, 10)
+	entries, _, err := NewService(database).ForRepo(ctx, repoID, "", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -416,7 +416,7 @@ func TestForRepoGroupsABulkPush(t *testing.T) {
 	      VALUES ('o1', 'old', 'branch', 'main', repeat('0',40), repeat('e',40), true)`)
 
 	svc := NewService(database)
-	entries, more, err := svc.ForRepo(ctx, "r1", 0, 20)
+	entries, more, err := svc.ForRepo(ctx, "r1", "", 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -447,11 +447,11 @@ func TestForRepoGroupsABulkPush(t *testing.T) {
 	}
 
 	// Paging counts lines, so a page never splits or repeats a bulk.
-	first, more, err := svc.ForRepo(ctx, "r1", 0, 3)
+	first, more, err := svc.ForRepo(ctx, "r1", "", 3)
 	if err != nil || !more || len(first) != 3 {
 		t.Fatalf("first page = %d, more=%v, %v", len(first), more, err)
 	}
-	rest, more, err := svc.ForRepo(ctx, "r1", 3, 3)
+	rest, more, err := svc.ForRepo(ctx, "r1", first[len(first)-1].Cursor(), 3)
 	if err != nil || more || len(rest) != 3 {
 		t.Fatalf("second page = %d, more=%v, %v", len(rest), more, err)
 	}
@@ -491,5 +491,53 @@ func TestRefusedSinceListsRecentRefusalsOfTheGivenRepositories(t *testing.T) {
 	}
 	if capped, err := svc.RefusedSince(ctx, []string{repoID, otherRepoID}, now.Add(-7*24*time.Hour), 1); err != nil || len(capped) != 1 {
 		t.Fatalf("with a limit: %+v, %v", capped, err)
+	}
+}
+
+func TestActivityCursorSurvivesNewEntriesAndSourceIDTies(t *testing.T) {
+	db := pgtest.Open(t)
+	ctx := context.Background()
+	repoID, _, _ := seed(t, db)
+	moment := time.Now().UTC().Truncate(time.Microsecond)
+	for _, query := range []string{
+		`INSERT INTO events(id,repo_id,created_at,action) VALUES('tie',$1,$2,'rule.saved')`,
+		`INSERT INTO pushes(id,repo_id,created_at) VALUES('tie',$1,$2)`,
+		`INSERT INTO push_updates(id,push_id,kind,name,old_commit,new_commit) VALUES('tie','tie','branch','tied',repeat('a',40),repeat('b',40))`,
+	} {
+		var err error
+		if strings.Contains(query, "$2") {
+			_, err = db.Pool.Exec(ctx, query, repoID, moment)
+		} else {
+			_, err = db.Pool.Exec(ctx, query)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	svc := NewService(db)
+	page, more, err := svc.ForRepo(ctx, repoID, "", 1)
+	if err != nil || !more || len(page) != 1 {
+		t.Fatalf("first=%v more=%v error=%v", page, more, err)
+	}
+	first := page[0]
+	cursor := first.Cursor()
+	if _, err := db.Pool.Exec(ctx, `INSERT INTO events(id,repo_id,created_at,action) VALUES('new',$1,$2,'rule.saved')`, repoID, moment.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	next, _, err := svc.ForRepo(ctx, repoID, cursor, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundOtherTie := false
+	for _, e := range next {
+		if e.id == "new" || e.Kind == first.Kind && e.id == first.id {
+			t.Fatalf("cursor repeated or admitted newer entry: %+v", e)
+		}
+		if e.id == "tie" {
+			foundOtherTie = true
+		}
+	}
+	if !foundOtherTie {
+		t.Fatal("cursor lost same-time, same-ID entry from a different source")
 	}
 }
