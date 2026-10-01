@@ -3,6 +3,7 @@
 // any of them.
 import "./forms.js";
 import "./time.js";
+import "./feed.js";
 import "./copy.js";
 import "./toast.js";
 import "./tabs.js";

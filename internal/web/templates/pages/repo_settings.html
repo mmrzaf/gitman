@@ -81,18 +81,18 @@
           <tbody>
           {{- range $d.Rules}}
             <tr>
-              <th scope="row" class="table-rowheader">{{template "ref" (dict "Kind" .Kind "Name" .Pattern)}}</th>
-              <td>{{if eq .PushPolicy "everyone"}}Everyone{{else if eq .PushPolicy "admins"}}Admins{{else}}{{len .PushPeople}} named {{if eq (len .PushPeople) 1}}person{{else}}people{{end}}{{end}}</td>
-              <td><span class="cluster">
+              <th scope="row" class="table-rowheader"><div class="table-cell">{{template "ref" (refModel .Kind .Pattern "")}}</div></th>
+              <td data-label="Who may push"><div class="table-cell">{{if eq .PushPolicy "everyone"}}Everyone{{else if eq .PushPolicy "admins"}}Admins{{else}}{{len .PushPeople}} named {{if eq (len .PushPeople) 1}}person{{else}}people{{end}}{{end}}</div></td>
+              <td data-label="Allows"><div class="table-cell"><span class="cluster">
                 {{- if .RunOnPush}}<span class="chip">{{template "icon" "play"}}run</span>{{end}}
                 {{- if .AllowDeploy}}<span class="chip">{{template "icon" "ship"}}deploy</span>{{end}}
                 {{- if .AllowSecrets}}<span class="chip">{{template "icon" "key"}}secrets</span>{{end}}
                 {{- if .AllowDocker}}<span class="chip chip-warning">{{template "icon" "warning"}}docker</span>{{end}}
                 {{- if .AllowForce}}<span class="chip">force-push</span>{{end}}
                 {{- if .AllowDelete}}<span class="chip">delete</span>{{end}}
-                {{- if not (or .RunOnPush .AllowShip .AllowSecrets .AllowDocker .AllowForce .AllowDelete)}}<span class="muted">pushing only</span>{{end}}
-              </span></td>
-              <td class="cell-shrink cell-end">
+                {{- if not (or .RunOnPush .AllowDeploy .AllowSecrets .AllowDocker .AllowForce .AllowDelete)}}<span class="muted">pushing only</span>{{end}}
+              </span></div></td>
+              <td data-label="Actions" class="cell-shrink cell-end"><div class="table-cell">
                 <details class="menu" data-menu>
                   <summary class="btn btn-ghost btn-icon btn-sm" aria-label="Actions for the {{.Kind}} rule {{.Pattern}}">{{template "icon" "more"}}</summary>
                   <div class="menu-list">
@@ -132,9 +132,9 @@
           <tbody>
           {{- range $d.Secrets}}
             <tr>
-              <th scope="row" class="table-rowheader mono">{{.Key}}</th>
-              <td class="cell-muted">{{template "time" .CreatedAt}}</td>
-              <td class="cell-shrink cell-end">
+              <th scope="row" class="table-rowheader mono"><div class="table-cell">{{.Key}}</div></th>
+              <td data-label="Set" class="cell-muted"><div class="table-cell">{{template "time" .CreatedAt}}</div></td>
+              <td data-label="Actions" class="cell-shrink cell-end"><div class="table-cell">
                 <details class="menu" data-menu>
                   <summary class="btn btn-ghost btn-icon btn-sm" aria-label="Actions for the secret {{.Key}}">{{template "icon" "more"}}</summary>
                   <div class="menu-list">

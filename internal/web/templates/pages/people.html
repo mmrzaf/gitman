@@ -19,11 +19,11 @@
         <tbody>
         {{- range $d.People}}
           <tr>
-            <th scope="row" class="table-rowheader mono">{{.Username}}{{if eq .ID $.Person.ID}} <span class="chip">you</span>{{end}}</th>
-            <td>{{if .IsAdmin}}<span class="chip chip-accent">{{template "icon" "shield"}}admin</span>{{else}}member{{end}}</td>
-            <td>{{if .Disabled}}<span class="status is-cancelled">{{template "icon" "cancelled"}}disabled</span>{{else}}<span class="status is-passed">{{template "icon" "passed"}}active</span>{{end}}</td>
-            <td class="cell-muted">{{template "time" .CreatedAt}}</td>
-            <td class="cell-shrink cell-end">
+            <th scope="row" class="table-rowheader mono"><div class="table-cell">{{.Username}}{{if eq .ID $.Person.ID}} <span class="chip">you</span>{{end}}</div></th>
+            <td data-label="Role"><div class="table-cell">{{if .IsAdmin}}<span class="chip chip-accent">{{template "icon" "shield"}}admin</span>{{else}}member{{end}}</div></td>
+            <td data-label="State"><div class="table-cell">{{if .Disabled}}<span class="status is-cancelled">{{template "icon" "cancelled"}}disabled</span>{{else}}<span class="status is-passed">{{template "icon" "passed"}}active</span>{{end}}</div></td>
+            <td data-label="Since" class="cell-muted"><div class="table-cell">{{template "time" .CreatedAt}}</div></td>
+            <td data-label="Actions" class="cell-shrink cell-end"><div class="table-cell">
               <details class="menu" data-menu>
                 <summary class="btn btn-ghost btn-icon btn-sm" aria-label="Actions for {{.Username}}">{{template "icon" "more"}}</summary>
                 <div class="menu-list">

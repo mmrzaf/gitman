@@ -127,8 +127,8 @@ git push -u origin {{.Branch}}</code></pre>
     {{- else if eq .Kind "push"}}{{template "icon" "push"}}
     {{- else if eq .Kind "deployment"}}{{template "icon" "ship"}}
     {{- else}}{{template "icon" "settings"}}{{end}}
-    <p class="feed-text">
-      {{- if $.ShowRepo}}<a class="feed-repo" href="/{{.RepoName}}">{{.RepoName}}</a> · {{end}}
+    <p class="feed-text" tabindex="0">
+      {{- if and $.ShowRepo .RepoName}}<a class="feed-repo" href="/{{.RepoName}}">{{.RepoName}}</a> · {{end}}
       {{- if eq .Kind "push"}}
         {{template "person" .Actor}} pushed
         {{- if gt .UpdateCount 1}} {{.UpdateCount}} refs
@@ -169,12 +169,12 @@ git push -u origin {{.Branch}}</code></pre>
     <tbody>
     {{- range .Rows}}
       <tr>
-        <td class="cell-truncate"><a href="/{{$repo.Name}}/commit/{{.Hash}}">{{.Subject}}</a>{{if .Merge}} <span class="chip">merge</span>{{end}}</td>
-        {{- if $refs}}<td class="cell-shrink"><span class="cluster">{{range .Refs}}{{template "ref" (dict "Kind" .Kind "Name" .Name "Href" (commitsURL $repo.Name .Name ""))}}{{end}}</span></td>{{end}}
-        {{- if $runs}}<td class="cell-shrink">{{with .Run}}<a class="run-ref" href="/{{$repo.Name}}/runs/{{.Number}}">{{template "status" .Status}}<span>#{{.Number}}</span></a>{{else}}<span class="muted">—</span>{{end}}</td>{{end}}
-        <td class="cell-shrink">{{template "person" .Author.Name}}</td>
-        <td class="cell-shrink cell-muted">{{template "time" .Author.When}}</td>
-        <td class="cell-shrink">{{template "commit" (dict "Repo" $repo.Name "Hash" .Hash)}}</td>
+        <td data-label="Commit" class="cell-truncate"><div class="table-cell"><a href="/{{$repo.Name}}/commit/{{.Hash}}">{{.Subject}}</a>{{if .Merge}} <span class="chip">merge</span>{{end}}</div></td>
+        {{- if $refs}}<td data-label="Refs" class="cell-shrink"><div class="table-cell"><span class="cluster">{{range .Refs}}{{template "ref" (refModel .Kind .Name (commitsURL $repo.Name .Name ""))}}{{end}}</span></div></td>{{end}}
+        {{- if $runs}}<td data-label="Run" class="cell-shrink"><div class="table-cell">{{with .Run}}<a class="run-ref" href="/{{$repo.Name}}/runs/{{.Number}}">{{template "status" .Status}}<span>#{{.Number}}</span></a>{{else}}<span class="muted">—</span>{{end}}</div></td>{{end}}
+        <td data-label="Author" class="cell-shrink"><div class="table-cell">{{template "person" .Author.Name}}</div></td>
+        <td data-label="When" class="cell-shrink cell-muted"><div class="table-cell">{{template "time" .Author.When}}</div></td>
+        <td data-label="Hash" class="cell-shrink"><div class="table-cell">{{template "commit" (commitModel $repo.Name .Hash)}}</div></td>
       </tr>
     {{- end}}
     </tbody>
@@ -197,7 +197,7 @@ git push -u origin {{.Branch}}</code></pre>
     {{- else if eq .Kind "deployment"}}{{template "icon" "ship"}}
     {{- else if eq .Change "deleted"}}{{template "icon" "trash"}}
     {{- else}}{{template "icon" "push"}}{{end}}
-    <p class="feed-text">
+    <p class="feed-text" tabindex="0">
       {{- if eq .Kind "event"}}
       {{template "person" .Actor}} {{eventText .Action .Detail}}
       {{- else if eq .Kind "refusal"}}

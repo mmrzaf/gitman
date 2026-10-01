@@ -29,3 +29,56 @@
 {{- end}}
 </div>
 {{end}}
+
+{{define "region-runs-runs"}}{{$d := .Data}}{{$repo := $d.Repo}}<section class="panel" aria-labelledby="runs-panel-title" data-live-region="runs">
+  <header class="panel-header">
+    <h2 class="panel-title" id="runs-panel-title">{{template "icon" "play"}}Runs</h2>
+    {{- if $d.Runnable}}
+    <span class="panel-actions"><a class="btn btn-sm btn-primary" href="/{{$repo.Name}}/runs?dialog=run-new" data-dialog-open="run-new" data-command="Run the pipeline of {{$repo.Name}}">{{template "icon" "play"}}Run</a></span>
+    {{- end}}
+  </header>
+  {{- if $d.Runs}}
+  {{$ran := anyRan $d.Runs}}{{$deployed := anyDeployed $d.Runs}}
+  <div class="table-scroll">
+    <table class="table table-cards">
+      <thead>
+        <tr>
+          <th scope="col">Run</th>
+          <th scope="col">Branch or tag</th>
+          <th scope="col">Commit</th>
+          <th scope="col">Started by</th>
+          {{- if $ran}}<th scope="col">Took</th>{{end}}
+          {{- if $deployed}}<th scope="col">Deployment</th>{{end}}
+          <th scope="col">Queued</th>
+        </tr>
+      </thead>
+      <tbody>
+      {{- range $d.Runs}}
+        <tr>
+          <th scope="row" class="table-rowheader"><div class="table-cell"><a class="run-ref" href="/{{$repo.Name}}/runs/{{.Number}}">{{template "status" .Status}}<span>#{{.Number}}</span></a></div></th>
+          <td data-label="Branch or tag"><div class="table-cell">{{template "ref" (refModel .RefKind .RefName (refURL $repo.Name .RefName ""))}}</div></td>
+          <td data-label="Commit" class="cell-shrink"><div class="table-cell">{{template "commit" (commitModel $repo.Name .Commit)}}</div></td>
+          <td data-label="Started by"><div class="table-cell"><span class="cluster nowrap">{{if eq .Trigger "push"}}{{template "icon" "push"}}<span class="visually-hidden">Pushed by </span>{{else}}{{template "icon" "play"}}<span class="visually-hidden">Started by </span>{{end}}{{template "person" .Actor}}</span></div></td>
+          {{- if $ran}}<td data-label="Duration" class="cell-shrink"><div class="table-cell">{{if .Ran}}{{duration .Took}}{{else}}<span class="muted">—</span>{{end}}</div></td>{{end}}
+          {{- if $deployed}}<td data-label="Target" class="cell-shrink"><div class="table-cell">{{if .Deployed}}{{.Target}}{{else}}<span class="muted">—</span>{{end}}</div></td>{{end}}
+          <td data-label="Queued" class="cell-shrink cell-muted"><div class="table-cell">{{template "time" .QueuedAt}}</div></td>
+        </tr>
+      {{- end}}
+      </tbody>
+    </table>
+  </div>
+  {{- if $d.More}}
+  <div class="panel-body"><a class="btn" href="/{{$repo.Name}}/runs?before={{$d.More}}">Older runs</a></div>
+  {{- end}}
+  {{- else}}
+  <div class="empty">
+    {{template "icon" "play"}}
+    <p class="empty-title">No runs yet</p>
+    <p>A push to a branch or tag whose ref rule has <strong>run</strong> on starts one{{if $d.Runnable}}, and so does <strong>Run</strong>{{end}}. The pipeline is <code>.gitman.yml</code> at the root of the commit.</p>
+    {{- if .Person.IsAdmin}}
+    <p><a href="/{{$repo.Name}}/settings?tab=rules">Set up ref rules</a></p>
+    {{- end}}
+  </div>
+  {{- end}}
+</section>{{end}}
+{{define "live"}}<main{{with .EventStream}} data-live-events="{{.}}"{{end}}>{{template "region-runs-runs" .}}</main>{{end}}

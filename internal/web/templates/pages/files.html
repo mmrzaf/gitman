@@ -66,11 +66,11 @@
       <caption class="visually-hidden">Files in {{if $d.Path}}{{$d.Path}}{{else}}{{$repo.Name}}{{end}}</caption>
       <tbody>
       {{- if $d.Path}}
-        <tr><td><a class="tree-name" href="{{refURL $repo.Name $d.Ref (dirOf $d.Path)}}">{{template "icon" "folder"}}<span>..</span><span class="visually-hidden">(parent directory)</span></a></td></tr>
+        <tr><td><div class="table-cell"><a class="tree-name" href="{{refURL $repo.Name $d.Ref (dirOf $d.Path)}}">{{template "icon" "folder"}}<span>..</span><span class="visually-hidden">(parent directory)</span></a></div></td></tr>
       {{- end}}
       {{- range $d.Entries}}
         <tr>
-          <td>
+          <td><div class="table-cell">
             {{- if eq .Kind "submodule"}}
             <span class="tree-name">{{template "icon" "module"}}<span>{{.Name}}</span><span class="chip">submodule</span></span>
             {{- else}}

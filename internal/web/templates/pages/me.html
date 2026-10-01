@@ -28,11 +28,11 @@
         <tbody>
         {{- range $d.Tokens}}
           <tr>
-            <th scope="row" class="table-rowheader">{{.Name}}<br><span class="cell-muted">created {{template "time" .CreatedAt}}</span></th>
-            <td>{{if eq .Scope "write"}}<span class="chip chip-accent">read and write</span>{{else}}<span class="chip">read</span>{{end}}</td>
-            <td class="cell-muted">{{if .LastUsedAt}}{{template "time" .LastUsedAt}}{{else}}never{{end}}</td>
-            <td class="cell-muted">{{if .ExpiresAt}}{{template "time" .ExpiresAt}}{{else}}never{{end}}</td>
-            <td class="cell-shrink cell-end">
+            <th scope="row" class="table-rowheader"><div class="table-cell">{{.Name}}<br><span class="cell-muted">created {{template "time" .CreatedAt}}</span></div></th>
+            <td data-label="Access"><div class="table-cell">{{if .AllRepositories}}<span class="chip">All repositories</span> {{else}}{{range .Repositories}}<span class="chip">{{.}}</span> {{end}}{{end}}{{if eq .Scope "write"}}<span class="chip chip-accent">read and write</span>{{else}}<span class="chip">read</span>{{end}}</div></td>
+            <td data-label="Last used" class="cell-muted"><div class="table-cell">{{if .LastUsedAt}}{{template "time" .LastUsedAt}}{{else}}never{{end}}</div></td>
+            <td data-label="Expires" class="cell-muted"><div class="table-cell">{{if .ExpiresAt}}{{template "time" .ExpiresAt}}{{else}}never{{end}}</div></td>
+            <td data-label="Actions" class="cell-shrink cell-end"><div class="table-cell">
               <form method="post" action="/me/tokens/{{.ID}}/delete" data-confirm="Revoke the token “{{.Name}}”?" data-confirm-detail="Anything that uses it stops working at once." data-confirm-action="Revoke token">
                 <button type="submit" class="btn btn-sm btn-danger">Revoke</button>
               </form>

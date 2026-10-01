@@ -786,9 +786,11 @@ time { white-space: nowrap; }
    widening the page. */
 .table-scroll, .lines, .feed-scroll, .diff-body, .picker-list, .tabs { position: relative; }
 .table-scroll { overflow-x: auto; }
-.table { width: 100%; font-size: var(--text-sm); }
+.table { --table-row-h: 44px; --table-cell-padding: var(--sp-2); width: 100%; font-size: var(--text-sm); }
+.table-rich { --table-row-h: 64px; }
+.table.tree { --table-row-h: 40px; --table-cell-padding: 6px; }
 .table th, .table td {
-  padding: var(--sp-2) var(--sp-3);
+  padding: var(--table-cell-padding) var(--sp-3);
   border-bottom: 1px solid var(--border);
   text-align: left;
   vertical-align: middle;
@@ -805,6 +807,19 @@ time { white-space: nowrap; }
   letter-spacing: 0.04em;
   white-space: nowrap;
 }
+/* Cell content owns its overflow, so metadata and controls cannot expand rows.
+   Text, badges and additional entries remain available by scrolling the cell. */
+.table tbody th, .table tbody td { height: var(--table-row-h); }
+.table-cell {
+  height: calc(var(--table-row-h) - 2 * var(--table-cell-padding) - 1px);
+  min-width: 0;
+  align-content: safe center;
+  overflow: auto;
+  overscroll-behavior: contain;
+  white-space: nowrap;
+}
+.table-cell > .cluster { flex-wrap: nowrap; }
+.table .cell-end > .table-cell { text-align: right; }
 .table tbody tr:hover { background: var(--surface-2); }
 .table tbody tr:last-child td, .table tbody tr:last-child th { border-bottom: 0; }
 .table .cell-shrink { width: 1%; white-space: nowrap; }
@@ -1096,16 +1111,15 @@ time { white-space: nowrap; }
 
 /* ---- Activity feed ------------------------------------------------ */
 
-.feed { display: grid; }
-/* A feed that has to scroll does so inside its panel. On a dashboard that
-   fits the window (see "The dashboards" below) its panel gives it the
-   height; everywhere else this caps it. */
+.feed { --feed-row-h: 40px; display: grid; }
+/* Bound feeds outside the fixed desktop dashboard layout. */
 .feed-scroll { max-height: min(70dvh, 560px); overflow-y: auto; overscroll-behavior: contain; }
 .feed-item {
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr) auto;
   gap: var(--sp-2);
-  align-items: baseline;
+  align-items: center;
+  height: var(--feed-row-h);
   padding: 6px var(--sp-4);
   border-bottom: 1px solid var(--border);
   font-size: var(--text-sm);
@@ -1113,9 +1127,12 @@ time { white-space: nowrap; }
 .feed-item:last-child { border-bottom: 0; }
 .feed-item > .icon { align-self: center; color: var(--muted); }
 .feed-item > .status-icon { color: var(--status); }
-.feed-text { min-width: 0; overflow-wrap: anywhere; }
+.feed-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Keyboard users can scroll the complete entry without changing row height. */
+.feed-text:focus-within { overflow-x: auto; text-overflow: clip; }
 .feed-text .ref { font-size: var(--text-xs); }
-.feed-reason { display: block; color: var(--muted); }
+.feed-reason { color: var(--muted); }
+.feed-reason::before { content: " · "; }
 .feed-time { color: var(--muted); font-size: var(--text-xs); }
 .feed-repo { font-weight: var(--weight-bold); color: var(--text); }
 
@@ -1376,6 +1393,11 @@ h1.path { font-size: var(--text-xl); letter-spacing: -0.01em; }
   .fit .panel-scroll .table thead th { position: sticky; top: 0; z-index: 2; }
 }
 
+/* Small windows use page scrolling for dashboard feeds. */
+@media (max-width: 1000px), (max-height: 559px) {
+  .page-home .feed-scroll, .page-repository .feed-scroll { max-height: none; }
+}
+
 @media (max-width: 900px) {
   .run-output .toolbar { flex-wrap: wrap; }
   .run-output-title { flex: 1 1 100%; }
@@ -1530,3 +1552,38 @@ h1.path { font-size: var(--text-xl); letter-spacing: -0.01em; }
   .icon, .select-wrap::after { background-color: CanvasText; }
   .status, .chip, .ref { border: 1px solid CanvasText; }
 }
+
+/* A compact desktop toolbar expands on touch screens. */
+@media (pointer: coarse), (max-width: 640px) {
+  .feed { --feed-row-h: 44px; }
+  .feed-text { overflow-x: auto; }
+  :root { --control-h: 44px; --control-h-sm: 44px; }
+  .table { --table-row-h: 64px; }
+  .table.tree { --table-row-h: 44px; }
+  .btn, .tab, .menu-item, .picker-option, .step, .sidenav a { min-height: 44px; }
+  .menu-theme { min-height: 44px; }
+  .run-facts { align-items: flex-start; }
+}
+
+/* Metadata tables retain their headers for assistive technology and become
+   labelled cards on narrow screens. Source trees and diffs remain tables. */
+@media (max-width: 640px) {
+  .table-cards { display: block; }
+  .table-cards thead { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); }
+  .table-cards tbody { display: grid; }
+  .table-cards tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); min-width: 0; padding: var(--sp-3) var(--sp-4); gap: var(--sp-3); border-bottom: 1px solid var(--border); }
+  .table-cards tr:last-child { border-bottom: 1px solid transparent; }
+  .table-cards th, .table-cards td { display: block; width: auto; min-width: 0; max-width: none; padding: 0 !important; border: 0; white-space: normal; overflow-wrap: anywhere; text-align: left; }
+  .table-cards td[data-label]::before { content: attr(data-label); display: block; margin-bottom: 2px; color: var(--muted); font-size: var(--text-xs); font-weight: var(--weight-bold); }
+  .table-cards tbody th, .table-cards tbody td { height: auto; }
+  .table-cards .table-cell { white-space: normal; }
+  .table-cards .cell-truncate { overflow: visible; }
+  .table-cards .table-rowheader, .table-cards td[data-label="Actions"], .table-cards td[data-label="Access"], .table-cards td[data-label="Description"] { grid-column: 1 / -1; }
+  .panel-scroll > .empty { padding: var(--sp-4); gap: var(--sp-2); }
+  .panel-scroll > .empty > .icon { display: none; }
+  .table-cards td[data-label="Actions"]::before { display: none; }
+}
+
+/* Push instructions retain readable commands without widening the page. */
+.empty { min-width: 0; }
+.empty .secret-value { max-width: 100%; overflow-x: auto; text-align: left; }
