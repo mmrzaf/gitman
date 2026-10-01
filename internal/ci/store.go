@@ -353,30 +353,69 @@ func selectLatestDeploymentPerRef(ctx context.Context, q postgres.Querier, repoI
 // returns it. SKIP LOCKED lets any number of workers claim concurrently
 // without ever taking the same run. It returns postgres.ErrNotFound when
 // nothing is queued.
-func claimNextRun(ctx context.Context, tx postgres.Tx, workerID, fetchTokenHash string) (*Claim, error) {
+func claimNextRun(ctx context.Context, tx postgres.Tx, workerID, fetchTokenHash string, timeout time.Duration, images []string) (*Claim, error) {
+	rows, err := tx.Query(ctx, `SELECT repo_id FROM runs WHERE NOT (SELECT maintenance FROM instance) AND status='queued' AND required_images <@ $1::text[] AND NOT EXISTS(SELECT 1 FROM repository_operations o WHERE o.repo_id=runs.repo_id AND o.completed_at IS NULL) GROUP BY repo_id ORDER BY min(queued_at),min(id) LIMIT 256`, images)
+	if err != nil {
+		return nil, err
+	}
+	var candidates []string
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		candidates = append(candidates, v)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	// Lock order is execution gate, then run. Deletion holds the exclusive gate
+	// while installing its durable intent, so no claim can slip past admission.
+	for _, repoID := range candidates {
+		var acquired bool
+		if err := tx.QueryRow(ctx, `SELECT pg_try_advisory_xact_lock_shared(hashtextextended('gitman.execution.' || $1,0))`, repoID).Scan(&acquired); err != nil {
+			return nil, err
+		}
+		if !acquired {
+			continue
+		}
+		claim, err := claimNextRunForRepo(ctx, tx, workerID, fetchTokenHash, timeout, images, repoID)
+		if errors.Is(err, postgres.ErrNotFound) {
+			continue
+		}
+		return claim, err
+	}
+	return nil, postgres.ErrNotFound
+}
+
+func claimNextRunForRepo(ctx context.Context, tx postgres.Tx, workerID, fetchTokenHash string, timeout time.Duration, images []string, repoID string) (*Claim, error) {
 	c := &Claim{}
 	err := tx.QueryRow(ctx, `
-		UPDATE runs SET status = 'running', started_at = now(), worker_id = $1, fetch_token_hash = $2
+		UPDATE runs SET status = 'running', started_at = now(), worker_id = $1, fetch_token_hash = $2,
+ deadline_at = now() + (COALESCE(NULLIF(timeout_ns, 0), $3)::double precision / 1000000000) * interval '1 second'
 		FROM repos
 		WHERE runs.id = (
-			SELECT id FROM runs WHERE status = 'queued' ORDER BY queued_at, id
+			SELECT id FROM runs WHERE NOT (SELECT maintenance FROM instance) AND status = 'queued' AND repo_id=$5 AND required_images <@ $4::text[] AND NOT EXISTS(SELECT 1 FROM repository_operations o WHERE o.repo_id=runs.repo_id AND o.completed_at IS NULL) ORDER BY queued_at, id
 			FOR UPDATE SKIP LOCKED LIMIT 1
 		) AND repos.id = runs.repo_id
 		RETURNING runs.id, runs.repo_id, repos.name, runs.number, runs.commit_hash, runs.ref_kind,
-		          runs.ref_name, runs.target, runs.version, runs.allow_secrets, runs.pipeline
-	`, workerID, fetchTokenHash).Scan(&c.RunID, &c.RepoID, &c.RepoName, &c.Number, &c.Commit, &c.RefKind,
-		&c.RefName, &c.Target, &c.Version, &c.AllowSecrets, &c.Pipeline)
+		          runs.ref_name, runs.target, runs.version, runs.allow_secrets, runs.pipeline, runs.deadline_at
+	`, workerID, fetchTokenHash, int64(timeout), images, repoID).Scan(&c.RunID, &c.RepoID, &c.RepoName, &c.Number, &c.Commit, &c.RefKind,
+		&c.RefName, &c.Target, &c.Version, &c.AllowSecrets, &c.Pipeline, &c.Deadline)
 	if err != nil {
 		return nil, postgres.NormalizeNotFound(err)
 	}
-	rows, err := tx.Query(ctx, `SELECT id, index, name, status = 'skipped' FROM steps WHERE run_id = $1 ORDER BY index`, c.RunID)
+	rows, err := tx.Query(ctx, `SELECT id, index, name, type, status = 'skipped' FROM steps WHERE run_id = $1 ORDER BY index`, c.RunID)
 	if err != nil {
 		return nil, fmt.Errorf("list steps: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var st ClaimedStep
-		if err := rows.Scan(&st.ID, &st.Index, &st.Name, &st.Skipped); err != nil {
+		if err := rows.Scan(&st.ID, &st.Index, &st.Name, &st.Type, &st.Skipped); err != nil {
 			return nil, fmt.Errorf("scan step: %w", err)
 		}
 		c.Steps = append(c.Steps, st)
@@ -601,15 +640,15 @@ func markWorkerStopped(ctx context.Context, q postgres.Querier, workerID string)
 	return nil
 }
 
-// selectAnyWorkerOnline reports whether a worker has not stopped and has
+// selectAnyWorkerReady reports whether a worker has not stopped and has
 // heartbeated within staleAfter, judged by the database's clock, as
 // selectLostRuns does.
-func selectAnyWorkerOnline(ctx context.Context, q postgres.Querier, staleAfter time.Duration) (bool, error) {
+func selectAnyWorkerReady(ctx context.Context, q postgres.Querier, staleAfter time.Duration) (bool, error) {
 	var online bool
 	if err := q.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM workers
-			WHERE stopped_at IS NULL AND heartbeat_at >= now() - make_interval(secs => $1)
+			WHERE stopped_at IS NULL AND ready AND readiness_at >= now() - make_interval(secs => $1) AND heartbeat_at >= now() - make_interval(secs => $1)
 		)
 	`, staleAfter.Seconds()).Scan(&online); err != nil {
 		return false, fmt.Errorf("check for online workers: %w", err)
@@ -763,7 +802,7 @@ func deleteGoneWorkers(ctx context.Context, q postgres.Querier, before time.Time
 	tag, err := q.Exec(ctx, `
 		DELETE FROM workers
 		WHERE COALESCE(stopped_at, heartbeat_at) < $1
-		  AND NOT EXISTS (SELECT 1 FROM runs WHERE runs.worker_id = workers.id AND runs.status = 'running')
+		  AND NOT EXISTS (SELECT 1 FROM runs WHERE runs.worker_id = workers.id AND (runs.status = 'running' OR EXISTS(SELECT 1 FROM steps WHERE run_id=runs.id AND container_name IS NOT NULL AND container_removed_at IS NULL)))
 	`, before)
 	if err != nil {
 		return 0, fmt.Errorf("delete gone workers: %w", err)

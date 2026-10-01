@@ -367,6 +367,8 @@ func (s *Service) Cancel(ctx context.Context, repoID string, number int64, by st
 
 // RegisterWorker records a worker process starting.
 func (s *Service) RegisterWorker(ctx context.Context, workerID, hostname string) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	return upsertWorker(ctx, s.db.Q, workerID, hostname)
 }
 
@@ -379,6 +381,8 @@ func (s *Service) Heartbeat(ctx context.Context, workerID string, activeRuns int
 
 // StopWorker records a worker process shutting down.
 func (s *Service) StopWorker(ctx context.Context, workerID string) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	return markWorkerStopped(ctx, s.db.Q, workerID)
 }
 
@@ -391,11 +395,11 @@ func (s *Service) StopWorker(ctx context.Context, workerID string) error {
 // exactly when a live worker would have.
 const WorkerLostAfter = 5 * time.Minute
 
-// AnyWorkerOnline reports whether any worker is running: one that has
+// AnyWorkerReady reports whether any worker is running: one that has
 // not stopped and has sent a heartbeat within WorkerLostAfter. Without
 // one, a queued run waits until a worker starts.
-func (s *Service) AnyWorkerOnline(ctx context.Context) (bool, error) {
-	return selectAnyWorkerOnline(ctx, s.db.Q, WorkerLostAfter)
+func (s *Service) AnyWorkerReady(ctx context.Context) (bool, error) {
+	return selectAnyWorkerReady(ctx, s.db.Q, WorkerLostAfter)
 }
 
 // FailLostRuns fails every running run whose worker stopped, or has not

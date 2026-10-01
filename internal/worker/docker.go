@@ -134,6 +134,8 @@ func (d *Docker) Available(ctx context.Context) error {
 // Gitman never pulls images; a missing image is a setup problem for the
 // operator, not something a run fixes by downloading.
 func (d *Docker) ImageExists(ctx context.Context, image string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	out, err := d.command(ctx, "image", "inspect", "--format", "{{.Id}}", "--", image).CombinedOutput()
 	if err == nil {
 		return true, nil
@@ -148,11 +150,48 @@ func (d *Docker) ImageExists(ctx context.Context, image string) (bool, error) {
 	return false, fmt.Errorf("docker image inspect %s: %s", image, strings.TrimSpace(lastLines(string(out), 3)))
 }
 
-// Run runs one step's container, streaming its combined output to out,
-// and returns the step's exit code. When ctx ends first, the docker
-// client is killed and the container is removed in the background —
-// stopping only the client would leave the container running — and Run
-// returns ctx's error.
+// TerminationUnknown means the daemon has not confirmed that the container
+// is gone. The caller must retain its workspace and pause new claims.
+type TerminationUnknown struct {
+	Name string
+	Err  error
+}
+
+func (e *TerminationUnknown) Error() string {
+	return "container termination is unconfirmed: " + e.Name + ": " + e.Err.Error()
+}
+func (e *TerminationUnknown) Unwrap() error { return e.Err }
+
+var errContainerAbsent = errors.New("container is absent")
+
+type containerState struct {
+	Running  bool
+	ExitCode int
+	Status   string
+	Error    string
+}
+
+func (d *Docker) state(ctx context.Context, name string) (*containerState, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	out, err := d.command(ctx, "inspect", "--format", "{{json .State}}", name).CombinedOutput()
+	if err != nil {
+		message := strings.ToLower(string(out))
+		if ctx.Err() == nil && (strings.Contains(message, "no such container") || strings.Contains(message, "no such object")) {
+			return nil, errContainerAbsent
+		}
+		return nil, fmt.Errorf("inspect container: %w: %s", err, lastLines(string(out), 3))
+	}
+	var state containerState
+	if err := json.Unmarshal(out, &state); err != nil {
+		return nil, fmt.Errorf("decode container state: %w", err)
+	}
+	return &state, nil
+}
+
+// Run creates a retained container, persists its ID, then starts and attaches.
+// A client's exit status is never used as the script's exit status: the daemon's
+// retained state is the execution receipt. The caller removes it after recording.
 func (d *Docker) Run(ctx context.Context, spec containerSpec, out io.Writer) (int, error) {
 	create, stopCreate := context.WithTimeout(ctx, 10*time.Second)
 	spec.Resources = d.Resources
