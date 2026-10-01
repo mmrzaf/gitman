@@ -51,7 +51,7 @@ func (a *App) peopleAdd(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	p, err := a.people.Create(r.Context(), username, password, f.Get("role") == "admin", personFrom(r).ID)
+	p, err := a.people.CreateBootstrap(r.Context(), username, password, f.Get("role") == "admin", personFrom(r).ID)
 	switch {
 	case errors.Is(err, postgres.ErrAlreadyExists):
 		f.Fail("username", "Someone already has that username.")
@@ -103,9 +103,15 @@ func (a *App) peopleDisable(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) peopleEnable(w http.ResponseWriter, r *http.Request) error {
-	return a.personAction(w, r, func(p *auth.Person) (string, error) {
-		return "Enabled " + p.Username + ".", a.people.Enable(r.Context(), p.ID, personFrom(r).ID)
-	})
+	p, err := a.personByUsername(r)
+	if err != nil {
+		return err
+	}
+	password, err := a.people.Enable(r.Context(), p.ID, personFrom(r).ID)
+	if err != nil {
+		return err
+	}
+	return a.renderPeople(w, r, http.StatusOK, peoplePage{Form: newForm(nil), Username: p.Username, Password: password})
 }
 
 func (a *App) peopleRole(w http.ResponseWriter, r *http.Request) error {

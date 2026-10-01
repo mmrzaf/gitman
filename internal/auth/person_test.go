@@ -122,7 +122,7 @@ func TestDisableRevokesSessionsAndBlocksLogin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, _, err := svc.CreateSession(ctx, p.ID, time.Hour)
+	token, _, err := svc.CreateSession(ctx, p, time.Hour)
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -138,10 +138,11 @@ func TestDisableRevokesSessionsAndBlocksLogin(t *testing.T) {
 		t.Fatalf("VerifyLogin after disable = %v, want ErrDisabled", err)
 	}
 
-	if err := svc.Enable(ctx, p.ID, ""); err != nil {
+	password, err := svc.Enable(ctx, p.ID, "")
+	if err != nil {
 		t.Fatalf("Enable: %v", err)
 	}
-	if _, err := svc.VerifyLogin(ctx, "darius", "correct-horse-battery"); err != nil {
+	if _, err := svc.VerifyLogin(ctx, "darius", password); err != nil {
 		t.Fatalf("VerifyLogin after enable: %v", err)
 	}
 }
@@ -193,7 +194,7 @@ func TestResetPasswordRevokesSessions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, _, err := svc.CreateSession(ctx, p.ID, time.Hour)
+	token, _, err := svc.CreateSession(ctx, p, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,18 +276,18 @@ func TestChangePassword(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, _, err := svc.CreateSession(ctx, p.ID, time.Hour)
+	token, _, err := svc.CreateSession(ctx, p, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if err := svc.ChangePassword(ctx, p.ID, "wrong-password", "a-new-password"); !errors.Is(err, ErrInvalidCredentials) {
+	if _, err := svc.ChangePassword(ctx, p.ID, "wrong-password", "a-new-password"); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("ChangePassword with a wrong current password = %v, want ErrInvalidCredentials", err)
 	}
-	if err := svc.ChangePassword(ctx, p.ID, "correct-horse-battery", "short"); err == nil {
+	if _, err := svc.ChangePassword(ctx, p.ID, "correct-horse-battery", "short"); err == nil {
 		t.Fatal("expected a too-short new password to be rejected")
 	}
-	if err := svc.ChangePassword(ctx, p.ID, "correct-horse-battery", "a-new-password"); err != nil {
+	if _, err := svc.ChangePassword(ctx, p.ID, "correct-horse-battery", "a-new-password"); err != nil {
 		t.Fatalf("ChangePassword: %v", err)
 	}
 	if _, err := svc.VerifyLogin(ctx, "darius", "a-new-password"); err != nil {

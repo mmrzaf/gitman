@@ -173,6 +173,20 @@ func (a *App) page(level access, h handler) http.Handler {
 			return
 		}
 
+		if person != nil && person.BootstrapExpiresAt != nil && r.URL.Path != "/me" && r.URL.Path != "/me/password" && r.URL.Path != "/logout" {
+			http.Redirect(w, r, "/me?tab=password", http.StatusSeeOther)
+			return
+		}
+
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && a.repos != nil {
+			ctx, release, err := a.repos.AdmitMutation(r.Context())
+			if err != nil {
+				a.renderError(w, r, err)
+				return
+			}
+			defer release()
+			r = r.WithContext(ctx)
+		}
 		if err := h(w, r); err != nil {
 			a.renderError(w, r, err)
 		}

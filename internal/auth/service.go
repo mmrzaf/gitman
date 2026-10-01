@@ -58,7 +58,11 @@ func (s *Service) create(ctx context.Context, username, password string, isAdmin
 	if err != nil {
 		return nil, err
 	}
-	p := &Person{ID: id.New(), Username: username, PasswordHash: hash, IsAdmin: isAdmin}
+	p := &Person{ID: id.New(), Username: strings.ToLower(username), PasswordHash: hash, IsAdmin: isAdmin}
+	if bootstrap {
+		expires := time.Now().Add(24 * time.Hour)
+		p.BootstrapExpiresAt = &expires
+	}
 	err = s.db.Tx(ctx, func(tx postgres.Tx) error {
 		if err := insertPerson(ctx, tx, p); err != nil {
 			return err
@@ -142,14 +146,22 @@ func (s *Service) Enable(ctx context.Context, personID, actorID string) (string,
 		if err != nil {
 			return err
 		}
-		if !p.Disabled() {
-			return nil
+		tag, err := tx.Exec(ctx, `UPDATE people SET disabled_at = NULL, password_hash = $2, auth_generation = auth_generation + 1, bootstrap_expires_at = now() + interval '24 hours' WHERE id = $1 AND disabled_at IS NOT NULL`, personID, hash)
+		if err != nil {
+			return err
 		}
-		if err := setDisabled(ctx, tx, personID, false); err != nil {
+		if tag.RowsAffected() == 0 {
+			return apperr.New(apperr.KindConflict, "person is already enabled")
+		}
+		if err := revokeCredentials(ctx, tx, personID); err != nil {
 			return err
 		}
 		return activity.Record(ctx, tx, "", actorID, activity.PersonEnabled, p.Username)
 	})
+	if err != nil {
+		return "", err
+	}
+	return password, nil
 }
 
 // SetAdmin changes a person's role. Removing the admin role from the
@@ -199,7 +211,10 @@ func (s *Service) ResetPassword(ctx context.Context, personID, newPassword, acto
 		if err := setPasswordHash(ctx, tx, personID, hash); err != nil {
 			return err
 		}
-		if err := deleteSessionsOf(ctx, tx, personID); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE people SET bootstrap_expires_at = now() + interval '24 hours' WHERE id = $1`, personID); err != nil {
+			return err
+		}
+		if err := revokeCredentials(ctx, tx, personID); err != nil {
 			return err
 		}
 		return activity.Record(ctx, tx, "", actorID, activity.PasswordReset, p.Username)
@@ -269,10 +284,13 @@ func (s *Service) VerifyLogin(ctx context.Context, username, password string) (*
 	if p.Disabled() {
 		return nil, ErrDisabled
 	}
+	if p.BootstrapExpiresAt != nil && !p.BootstrapExpiresAt.After(time.Now()) {
+		return nil, ErrInvalidCredentials
+	}
 	return p, nil
 }
 
-// CreateSession starts a session for personID and returns the plain
+// CreateSession starts a session for the verified person snapshot and returns the plain
 // token to set as a cookie. Only the token's hash is stored.
 func (s *Service) CreateSession(ctx context.Context, person *Person, ttl time.Duration) (plain string, expiresAt time.Time, err error) {
 	plain, err = token.New(sessionTokenBytes)
