@@ -50,8 +50,6 @@ jobs:
         run: |
           docker build --build-arg VERSION=ci -t gitman:ci .
           test "$(docker run --rm gitman:ci gitman version)" = 'gitman ci'
-          docker run --rm gitman:ci pg_dump --version
-          docker run --rm gitman:ci pg_restore --version
           cp .env.example .env
           GITMAN_DATABASE_PASSWORD=ci GITMAN_DATA_DIR=/tmp/gitman-compose docker compose config --quiet
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6

@@ -8,7 +8,6 @@ docker: true
 requires:
   - golang:1.27-bookworm
   - debian:bookworm-slim
-  - postgres:16-bookworm
 env:
   GOPROXY: https://proxy.golang.org,direct
   DEBIAN_MIRROR: http://deb.debian.org/debian

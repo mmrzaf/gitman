@@ -60,7 +60,6 @@ Not runtime settings — passed at `docker build` time, so the image itself can 
 | `GO_IMAGE` | `golang:1.27-bookworm` | Builder base image. |
 | `RUNTIME_IMAGE` | `debian:bookworm-slim` | Runtime base image. |
 | `DOCKER_CLI_IMAGE` | `docker:29-cli` | The image the worker's `docker` client is copied from. |
-| `POSTGRES_IMAGE` | `postgres:16-bookworm` | Backup/restore client binaries. |
 | `DEBIAN_MIRROR` | `http://deb.debian.org/debian` | Debian package mirror for the runtime image. |
 | `DEBIAN_SECURITY_MIRROR` | `http://security.debian.org/debian-security` | Debian security mirror for the runtime image. |
 | `GOPROXY` | `https://proxy.golang.org,direct` | Go module proxy used during the build. |

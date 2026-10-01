@@ -28,8 +28,10 @@ Never release target ownership by deleting database rows.
 writes during the snapshot. It requires a new destination outside the data
 directory and writes `database.dump`, `repos.tar.gz` and a final checksummed
 `manifest.json`. Failed attempts do not have a valid final manifest. PostgreSQL's
-`pg_dump` must be installed and support the server version; the image includes a
-PostgreSQL 16 client. A newer database requires a matching/newer client.
+`pg_dump` and `pg_restore` must be installed where these commands run, with a
+client version matching or newer than the database server. The Gitman image does
+not include PostgreSQL tools. Run backup and restore using the native Gitman
+binary on a host with those tools and access to the database and repository data.
 
 Keep `GITMAN_SECRET_KEY` in a separate protected store. The manifest records only
 its SHA-256 fingerprint. Losing the key loses the encrypted repository secrets.
@@ -37,9 +39,6 @@ The snapshot contains credential hashes, secret ciphertext, source and logs;
 protect it as production data. Copy it to independent storage and regularly test
 restoration.
 
-In Compose, mount the backup directory at the same destination in a one-off
-Gitman container. Run it as the image's Gitman user, with the same database,
-secret key and data mounts as web. Ensure that user can write the backup mount.
 
 ## Restore
 
