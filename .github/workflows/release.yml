@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Existing release tag to publish, for example v1.0.0-beta.17'
+        description: 'Existing release tag to publish, for example v1.0.0'
         required: true
         type: string
 
@@ -210,7 +210,7 @@ jobs:
       - name: Upload binary artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: binary-${{ matrix.goos }}-${{ matrix.goarch }}
+          name: release-binary-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/*
           if-no-files-found: error
 
@@ -237,7 +237,7 @@ jobs:
       - name: Upload source artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: source-archive
+          name: release-source-archive
           path: dist/*.tar.gz
           if-no-files-found: error
 
@@ -332,7 +332,7 @@ jobs:
       - name: Upload Docker archive artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: docker-archive
+          name: release-docker-archive
           path: dist/*
           if-no-files-found: error
 
@@ -367,6 +367,7 @@ jobs:
       - name: Download release artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
+          pattern: release-*
           path: release
           merge-multiple: true
 
