@@ -1,0 +1,7 @@
+{{define "content"}}
+<div class="page"><header class="page-header"><div class="page-header-text"><h1 class="page-title">Repository recovery</h1><p class="page-subtitle">Unfinished operations block further repository mutations. Recovery completes their recorded intent and never reruns pipeline scripts.</p></div>
+<form method="post" action="/operations/recover"><button class="btn" type="submit">Retry recovery</button></form></header>
+<section class="panel"><div class="table-scroll"><table class="table table-cards table-rich"><thead><tr><th scope="col">Operation</th><th scope="col">Repository</th><th scope="col">Started</th><th scope="col">Recovery error</th></tr></thead><tbody>
+{{range .Data.Operations}}<tr><th scope="row"><div class="table-cell">{{.Kind}}<br><code>{{.ID}}</code></div></th><td data-label="Repository"><div class="table-cell"><code>{{.RepoID}}</code>{{if .Name}}<br>{{.Name}}{{end}}</div></td><td data-label="Started"><div class="table-cell">{{template "time" .CreatedAt}}</div></td><td data-label="Recovery error"><div class="table-cell">{{if .Error}}{{.Error}}{{else}}Awaiting reconciliation{{end}}</div></td></tr>{{else}}<tr><td colspan="4"><div class="table-cell">No unfinished repository operations.</div></td></tr>{{end}}
+</tbody></table></div></section></div>
+{{end}}

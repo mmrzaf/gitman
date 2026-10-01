@@ -42,6 +42,9 @@ func (a *App) register(mux *http.ServeMux) {
 	mux.Handle("POST /me/tokens", a.page(member, a.meCreateToken))
 	mux.Handle("POST /me/tokens/{id}/delete", a.page(member, a.meDeleteToken))
 
+	mux.Handle("GET /operations", a.page(admin, a.operationsView))
+	mux.Handle("POST /operations/recover", a.page(admin, a.operationsRecover))
+	mux.Handle("GET /workers", a.page(admin, a.workersView))
 	mux.Handle("GET /people", a.page(admin, a.peopleView))
 	mux.Handle("POST /people", a.page(admin, a.peopleAdd))
 	mux.Handle("POST /people/{username}/disable", a.page(admin, a.peopleDisable))

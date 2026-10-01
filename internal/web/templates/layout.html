@@ -32,6 +32,7 @@
       <div class="menu-list">
         <p class="menu-heading" aria-hidden="true">Signed in as <strong>{{.Person.Username}}</strong>{{if .Person.IsAdmin}} · admin{{end}}</p>
         {{- if .Person.IsAdmin}}
+        <a class="menu-item" href="/workers"{{if eq .Name "workers"}} aria-current="page"{{end}}>{{template "icon" "play"}}Workers</a>
         <a class="menu-item" href="/people"{{if eq .Name "people"}} aria-current="page"{{end}}>{{template "icon" "person"}}People</a>
         <div class="menu-separator" role="separator"></div>
         {{- end}}
@@ -61,6 +62,8 @@
     </div>
     <nav class="repobar-nav" aria-label="Repository">
       <a class="repobar-link" href="/{{.Repo.Name}}"{{if eq .Section "overview"}} aria-current="page"{{end}}>{{template "icon" "repo"}}Overview</a>
+      <a class="repobar-link" href="{{refURL .Repo.Name .Repo.DefaultBranch ""}}"{{if eq .Section "files"}} aria-current="page"{{end}}>{{template "icon" "folder"}}Files</a>
+      <a class="repobar-link" href="/{{.Repo.Name}}/activity"{{if eq .Section "activity"}} aria-current="page"{{end}}>{{template "icon" "history"}}Activity</a>
       <a class="repobar-link" href="/{{.Repo.Name}}/commits"{{if eq .Section "commits"}} aria-current="page"{{end}}>{{template "icon" "commit"}}Commits</a>
       <a class="repobar-link" href="/{{.Repo.Name}}/runs"{{if eq .Section "runs"}} aria-current="page"{{end}}>{{template "icon" "play"}}Runs</a>
       {{- if $.Person.IsAdmin}}
