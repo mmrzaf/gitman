@@ -278,12 +278,19 @@ func (s *Service) StepFinished(ctx context.Context, runID, stepID string, status
 // AppendLog stores the next chunk of a step's output. sequence numbers
 // start at 0 and increase by one per chunk.
 func (s *Service) AppendLog(ctx context.Context, runID, stepID string, sequence int, content string) error {
-	return s.db.Tx(ctx, func(tx postgres.Tx) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	err := s.db.Tx(ctx, func(tx postgres.Tx) error {
 		if err := insertLogChunk(ctx, tx, stepID, sequence, content); err != nil {
 			return err
 		}
 		return notify(ctx, tx, LogChannel, runID)
 	})
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.ConstraintName == "repository_log_budget" {
+		_, _ = s.db.Q.Exec(ctx, `UPDATE steps SET log_recording_error='Repository log storage reached its 1 GiB budget. Some output could not be recorded.' WHERE id=$1`, stepID)
+	}
+	return err
 }
 
 // StopReason says why the worker executing a run should stop it, or is

@@ -1,10 +1,9 @@
 package worker
 
 import (
-	"bytes"
 	"context"
+	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -39,18 +38,15 @@ const (
 	// maxStepLogBytes caps a step's stored output. Past it, output is
 	// discarded after a note saying so; the step itself keeps running.
 	maxStepLogBytes = 16 << 20
-	// maxLineBytes bounds the unterminated line held back for masking. A
-	// longer line is masked and stored in pieces.
+	// maxLineBytes bounds each piece passed to the storage buffer.
 	maxLineBytes = 64 << 10
-	// minMaskedLen is the shortest secret value that is masked. Masking
-	// one- to three-character values would garble ordinary output while
-	// protecting nothing.
+	// minMaskedLen limits partial lines of a multiline secret. Complete
+	// secret values are always masked, regardless of length.
 	minMaskedLen = 4
 	mask         = "***"
 )
 
-// secretMasker replaces secret values in text. A multi-line secret is
-// also masked line by line, because output is masked a line at a time.
+// secretMasker matches complete secrets and their nontrivial individual lines.
 type secretMasker struct {
 	matcher *redact.Matcher
 }
@@ -59,7 +55,7 @@ func newSecretMasker(secrets map[string]string) *secretMasker {
 	seen := map[string]bool{}
 	var values []string
 	add := func(v string) {
-		if len(v) >= minMaskedLen && !seen[v] {
+		if len(v) > 0 && !seen[v] {
 			seen[v] = true
 			values = append(values, v)
 		}
@@ -67,36 +63,17 @@ func newSecretMasker(secrets map[string]string) *secretMasker {
 	for _, v := range secrets {
 		add(v)
 		for _, line := range strings.Split(v, "\n") {
-			add(strings.TrimRight(line, "\r"))
+			line = strings.TrimRight(line, "\r")
+			if len(line) >= minMaskedLen {
+				add(line)
+			}
 		}
 	}
 	return &secretMasker{matcher: redact.New(values)}
 }
 
-func (m *secretMasker) mask(s string) string {
-	for _, v := range m.values {
-		s = strings.ReplaceAll(s, v, mask)
-	}
-	return s
-}
+func (m *secretMasker) mask(s string) string { return m.matcher.Mask(s) }
 
-// holdBackLen is the longest secret's length minus one. A force-split
-// line is masked and emitted a piece at a time, and masking a piece
-// cannot see past its own end — so that many trailing bytes of a piece
-// are kept back for the next one rather than masked immediately.
-// Without it, a secret straddling the split point would never appear
-// whole in either piece, and so would never be masked at all.
-func (m *secretMasker) holdBackLen() int {
-	if len(m.values) == 0 {
-		return 0
-	}
-	return len(m.values[0]) - 1 // values is sorted longest first
-}
-
-// storable makes text written by a step safe to store as PostgreSQL
-// text, which holds neither NUL bytes nor invalid UTF-8: each of those is
-// replaced by U+FFFD, so the rest of the output is kept rather than the
-// whole write refused.
 func storable(s string) string {
 	return strings.ReplaceAll(strings.ToValidUTF8(s, "\uFFFD"), "\x00", "\uFFFD")
 }
@@ -115,8 +92,8 @@ func cutAtRune(s string, n int) string {
 // logSink stores one chunk of a step's output.
 type logSink func(ctx context.Context, sequence int, content string) error
 
-// logWriter collects a step's combined output, masks secrets in it a
-// line at a time, and stores it in chunks from its own goroutine, so
+// logWriter collects a step's combined output, masks secrets
+// across arbitrary write boundaries, and stores it in chunks from its own goroutine, so
 // writing output never waits for the database. It is safe for concurrent
 // use.
 type logWriter struct {
@@ -130,7 +107,7 @@ type logWriter struct {
 	mu   sync.Mutex
 	cond *sync.Cond // bound to mu; signals a writer waiting for room
 
-	line      []byte          // the unterminated line, not yet masked
+	textTail  []byte          // a UTF-8 character split across writes
 	pending   strings.Builder // masked, not yet stored
 	unsent    string          // the next chunk to store, at most logChunkBytes
 	sequence  int             // the sequence number of the next chunk
@@ -198,19 +175,13 @@ func (w *logWriter) Write(p []byte) (int, error) {
 		_, size := utf8.DecodeRune(text[end:])
 		end += size
 	}
-	for len(w.line) > maxLineBytes {
-		n := len(cutAtRune(string(w.line[:maxLineBytes+1]), maxLineBytes))
-		if n == 0 {
-			n = maxLineBytes
-		}
-		if holdBack := w.masker.holdBackLen(); holdBack > 0 {
-			if holdBack > n-1 {
-				holdBack = n - 1
-			}
-			n -= holdBack
-		}
-		w.emitLocked(string(w.line[:n]))
-		w.line = w.line[n:]
+	w.textTail = append(w.textTail, text[end:]...)
+	text = text[:end]
+	// Bound emitted pieces independently of input write size.
+	for len(text) > 0 {
+		n := len(cutAtRune(string(text), maxLineBytes))
+		w.emitLocked(string(text[:n]))
+		text = text[n:]
 	}
 	return len(p), nil
 }
@@ -229,7 +200,7 @@ func (w *logWriter) emitLocked(text string) {
 	if w.truncated {
 		return
 	}
-	text = storable(w.masker.mask(text))
+	text = storable(text)
 	if w.overCapLocked(len(text)) {
 		w.pending.WriteString(truncationNote)
 		w.truncated = true
@@ -363,6 +334,9 @@ func (w *logWriter) flush(force bool) bool {
 func (w *logWriter) Close() error {
 	close(w.stop)
 	<-w.done
+	closeCtx, stopClose := context.WithTimeout(w.ctx, 30*time.Second)
+	defer stopClose()
+	w.ctx = closeCtx // the periodic flusher is stopped before replacing its context
 	w.mu.Lock()
 	w.closing = true
 	// Wake a writer blocked in waitForRoomLocked immediately, rather than
@@ -372,11 +346,11 @@ func (w *logWriter) Close() error {
 	w.emitLocked(string(append(w.textTail, w.redactor.Append(nil, true)...)))
 	w.textTail = nil
 	w.mu.Unlock()
-	for w.flush(true) {
+	for closeCtx.Err() == nil && w.flush(true) {
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return w.err
+	return errors.Join(w.err, closeCtx.Err())
 }
 
 // note adds a line of Gitman's own to the step's output, such as why the

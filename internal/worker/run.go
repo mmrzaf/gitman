@@ -85,7 +85,7 @@ func (e *execution) run(ctx context.Context) ci.Outcome {
 	// its worker, past its timeout or past a person cancelling it.
 	runCtx, stop := context.WithCancelCause(ctx)
 	defer stop(nil)
-	timer := time.AfterFunc(timeout, func() { stop(errTimedOut) })
+	timer := time.AfterFunc(time.Until(c.Deadline), func() { stop(errTimedOut) })
 	defer timer.Stop()
 	go e.watchCancellation(runCtx, stop)
 
@@ -133,8 +133,32 @@ func (e *execution) run(ctx context.Context) ci.Outcome {
 			break
 		}
 		stepOutcome, stepStatus, exitCode := e.runStep(runCtx, ctx, record, step, cfg, env, masker, timeout)
-		if err := e.journal.StepFinished(record, c.RunID, step.ID, stepStatus, exitCode); err != nil {
-			e.log.Warn("could not record a step's end", "run", c.RunID, "step", step.Name, "error", err)
+
+		if stepOutcome != nil && stepOutcome.RecoveryRequired {
+			return *stepOutcome
+		}
+		finishCtx, stopFinish := context.WithTimeout(record, 30*time.Second)
+		err := retryBriefly(finishCtx, 3, time.Second, func(ctx context.Context) error {
+			return e.journal.StepFinished(ctx, c.RunID, step.ID, stepStatus, exitCode)
+		})
+		stopFinish()
+		if err != nil {
+			o := e.internalFailure("Could not record the step's execution receipt", err)
+			o.RecoveryRequired = true
+			return o
+		}
+		// Keep the exited container until its receipt has committed. Failed removal
+		// leaves a stopped container for periodic cleanup and is safe for the workspace.
+		if err := e.docker.stopContainer("gitman-" + c.RunID + "-" + strconv.Itoa(step.Index)); err != nil {
+			o := e.internalFailure("Could not confirm container cleanup", err)
+			o.RecoveryRequired = true
+			return o
+		}
+
+		if err := e.journal.ContainerRemoved(record, c.RunID, "gitman-"+c.RunID+"-"+strconv.Itoa(step.Index)); err != nil {
+			o := e.internalFailure("Could not record confirmed cleanup", err)
+			o.RecoveryRequired = true
+			return o
 		}
 		if stepOutcome != nil {
 			outcome = *stepOutcome
@@ -163,6 +187,8 @@ func interrupted(runCtx, workerCtx context.Context, timeout time.Duration, durin
 		return ci.Outcome{Status: ci.StatusCancelled}, true
 	case errors.Is(cause, errTimedOut):
 		return failed("The run passed its %s timeout %s.", timeout, during), true
+	case errors.Is(cause, errDiskBudget):
+		return failed("The run exceeded its configured workspace budget or the host's disk reserve."), true
 	case workerCtx.Err() != nil:
 		return failed("The worker was shut down %s.", during), true
 	}
@@ -225,7 +251,10 @@ func (e *execution) runStep(runCtx, workerCtx, record context.Context, step ci.C
 		}
 	}
 	code, err := e.docker.Run(runCtx, containerSpec{
-		Name:         "gitman-" + c.RunID + "-" + strconv.Itoa(step.Index),
+		Name: name,
+		Created: func(ctx context.Context, containerID string) error {
+			return e.journal.ContainerCreated(ctx, c.RunID, step.ID, containerID)
+		},
 		RunID:        c.RunID,
 		Image:        cfg.Image,
 		Script:       cfg.Steps[step.Index].Run,
@@ -236,6 +265,13 @@ func (e *execution) runStep(runCtx, workerCtx, record context.Context, step ci.C
 		DockerSocket: cfg.Docker,
 	}, logs)
 
+	var uncertain *TerminationUnknown
+	if errors.As(err, &uncertain) {
+		o := e.internalFailure("Container termination is unconfirmed; workspace retained for recovery", err)
+		o.RecoveryRequired = true
+		return &o, ci.StepRunning, nil
+	}
+
 	var stop stopped
 	switch cause := context.Cause(runCtx); {
 	case err != nil && errors.As(cause, &stop):
@@ -244,6 +280,10 @@ func (e *execution) runStep(runCtx, workerCtx, record context.Context, step ci.C
 	case err != nil && errors.Is(cause, errTimedOut):
 		logs.note(fmt.Sprintf("stopped: the run passed its %s timeout", timeout))
 		o := failed("The run passed its %s timeout during step %q.", timeout, step.Name)
+		return &o, ci.StepFailed, nil
+	case err != nil && errors.Is(cause, errDiskBudget):
+		logs.note("stopped: workspace budget or disk reserve exceeded")
+		o := failed("The run exceeded its configured workspace budget or the host's disk reserve.")
 		return &o, ci.StepFailed, nil
 	case err != nil && workerCtx.Err() != nil:
 		logs.note("stopped: the worker was shut down")

@@ -15,12 +15,14 @@ import (
 	"github.com/mmrzaf/gitman/internal/git"
 	"github.com/mmrzaf/gitman/internal/postgres"
 	"github.com/mmrzaf/gitman/internal/postgres/pgtest"
+	"github.com/mmrzaf/gitman/internal/repo"
 )
 
 // runFixture is a real run, queued and then claimed against PostgreSQL
 // exactly as a worker claims one, and the source Git repository holding
 // the pipeline its commit checks out.
 type runFixture struct {
+	db    *postgres.DB
 	svc   *ci.Service
 	claim *ci.Claim
 	url   string
@@ -69,7 +71,7 @@ func buildRunFixture(t *testing.T, pipeline, committed, commit string, images ..
 		var err error
 		created, err = svc.CreateTx(ctx, tx, ci.CreateParams{
 			RepoID: "demo", Commit: commit, RefKind: git.KindBranch, RefName: "main",
-			Trigger: ci.TriggerManual, Pipeline: []byte(pipeline),
+			Trigger: ci.TriggerManual, Pipeline: []byte(pipeline), Decision: repo.Decision{AllowDeploy: true},
 		})
 		return err
 	})
@@ -83,11 +85,11 @@ func buildRunFixture(t *testing.T, pipeline, committed, commit string, images ..
 	if err := svc.RegisterWorker(ctx, "w1", "host"); err != nil {
 		t.Fatal(err)
 	}
-	claim, err := svc.ClaimNext(ctx, "w1")
+	claim, err := svc.ClaimNext(ctx, "w1", 30*time.Minute, []string{"alpine:3.20"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &runFixture{svc: svc, claim: claim, url: "file://" + src, fake: newFakeDocker(t, images...)}
+	return &runFixture{db: database, svc: svc, claim: claim, url: "file://" + src, fake: newFakeDocker(t, images...)}
 }
 
 // execute runs the fixture's claim to completion, records its end the
@@ -103,6 +105,14 @@ func (f *runFixture) execute(t *testing.T, secrets map[string]string, timeout ti
 	e := &execution{claim: f.claim, journal: f.svc, docker: f.fake.docker, ws: ws, repoURL: f.url,
 		secrets: secrets, defaultTimeout: timeout, cancelPoll: 50 * time.Millisecond,
 		log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	cfg, err := ci.Parse(f.claim.Pipeline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Timeout > 0 {
+		timeout = cfg.Timeout
+	}
+	f.claim.Deadline = time.Now().Add(timeout)
 	outcome := e.run(ctx)
 	if err := f.svc.Finish(ctx, f.claim.RunID, outcome); err != nil {
 		t.Fatal(err)
@@ -354,5 +364,99 @@ func TestRunReasonsKeepInternalsOut(t *testing.T) {
 	outcome, _ := f.execute(t, nil, time.Minute)
 	if outcome.Status != ci.StatusFailed || outcome.Reason != "Could not check for image alpine:3.20. The worker's log has the details." {
 		t.Fatalf("outcome = %+v", outcome)
+	}
+}
+
+func TestUnconfirmedCleanupRetainsWorkspaceAndRecoveryNeverReruns(t *testing.T) {
+	f := newRunFixture(t, "image: alpine:3.20\nsteps:\n  - name: test\n    run: echo executed-once\n", "alpine:3.20")
+	root, transport := t.TempDir(), t.TempDir()
+	if err := os.Symlink(strings.TrimPrefix(f.url, "file://"), filepath.Join(transport, "demo.git")); err != nil {
+		t.Fatal(err)
+	}
+	w := New(Config{WorkspaceRoot: root, WebURL: "file://" + transport, DefaultTimeout: time.Minute}, f.db, f.svc, nil, f.fake.docker, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	w.id = "w1"
+	t.Setenv("FAKE_DOCKER_RM_FAIL", "1")
+	outcome := w.execute(t.Context(), f.claim, w.log)
+	if !outcome.RecoveryRequired {
+		t.Fatalf("unconfirmed removal finalized execution: %+v", outcome)
+	}
+	if _, err := os.Stat(filepath.Join(root, f.claim.RunID)); err != nil {
+		t.Fatal("workspace was removed before termination")
+	}
+	if w.recoverExecutions(t.Context()) {
+		t.Fatal("failed removal was mistaken for recovery")
+	}
+	t.Setenv("FAKE_DOCKER_RM_FAIL", "")
+	if !w.recoverExecutions(t.Context()) {
+		t.Fatal("recovery did not complete after Docker recovered")
+	}
+	if calls := f.fake.CallsTo(t, "start"); len(calls) != 1 {
+		t.Fatalf("script was rerun: %v", calls)
+	}
+	detail, err := f.svc.Run(t.Context(), f.claim.RepoID, f.claim.Number)
+	if err != nil || detail.Status != ci.StatusFailed || detail.Steps[0].ExitCode == nil || *detail.Steps[0].ExitCode != 0 {
+		t.Fatalf("recovered result = %+v, %v", detail, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, f.claim.RunID)); !os.IsNotExist(err) {
+		t.Fatalf("confirmed cleanup retained workspace: %v", err)
+	}
+}
+
+func TestExplicitDeployRecordsOnlyAfterItsScriptPasses(t *testing.T) {
+	f := newRunFixture(t, "image: alpine:3.20\ntargets:\n  staging:\n    branch: main\nsteps:\n  - name: build\n    run: echo build\n  - name: deploy\n    type: deploy\n    when: target\n    run: echo deployed\n", "alpine:3.20")
+	outcome, detail := f.execute(t, nil, time.Minute)
+	if outcome.Status != ci.StatusPassed || !detail.Deployed || detail.Steps[1].Type != ci.StepDeploy {
+		t.Fatalf("deploy result = %+v, %+v", outcome, detail)
+	}
+	live, err := f.svc.LiveForRepo(t.Context(), f.claim.RepoID)
+	if err != nil || len(live) != 1 || live[0].Target != "staging" {
+		t.Fatalf("deployments = %+v, %v", live, err)
+	}
+}
+
+func TestPostDeploymentFailureKeepsDeploymentReceipt(t *testing.T) {
+	f := newRunFixture(t, "image: alpine:3.20\ntargets:\n  production:\n    branch: main\nsteps:\n  - name: deploy\n    type: deploy\n    when: target\n    run: echo deployed\n  - name: health\n    when: target\n    run: exit 7\n", "alpine:3.20")
+	outcome, detail := f.execute(t, nil, time.Minute)
+	if outcome.Status != ci.StatusFailed || !detail.Deployed || detail.Steps[0].Status != ci.StepPassed || detail.Steps[1].Status != ci.StepFailed {
+		t.Fatalf("outcome=%+v detail=%+v", outcome, detail)
+	}
+	live, err := f.svc.LiveForRepo(t.Context(), f.claim.RepoID)
+	if err != nil || len(live) != 1 {
+		t.Fatalf("deployments=%v err=%v", live, err)
+	}
+}
+
+func TestLeftoverCleanupPersistsDeploymentBeforeRemoval(t *testing.T) {
+	f := newRunFixture(t, "image: alpine:3.20\ntargets:\n  production:\n    branch: main\nsteps:\n  - name: deploy\n    type: deploy\n    when: target\n    run: echo deployed\n", "alpine:3.20")
+	ctx := t.Context()
+	root := t.TempDir()
+	ws, err := createWorkspace(root, f.claim.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	step := f.claim.Steps[0]
+	name := "retained-deploy"
+	for _, err := range []error{f.svc.StepStarted(ctx, f.claim.RunID, step.ID), f.svc.PlanContainer(ctx, f.claim.RunID, step.ID, name), f.svc.BeginDeployment(ctx, f.claim.RunID, step.ID)} {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	spec := containerSpec{Name: name, RunID: f.claim.RunID, Image: "alpine:3.20", Script: "echo deployed", Source: ws.source(), Meta: ws.meta(), Created: func(ctx context.Context, id string) error {
+		return f.svc.ContainerCreated(ctx, f.claim.RunID, step.ID, id)
+	}}
+	if code, err := f.fake.docker.Run(ctx, spec, &strings.Builder{}); err != nil || code != 0 {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	if err := f.svc.Finish(ctx, f.claim.RunID, failed("Worker lost")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAKE_DOCKER_PS", name+" "+f.claim.RunID+"\n")
+	containers, _, err := RemoveLeftovers(ctx, f.fake.docker, root, f.svc.RunningRunIDs, f.svc.RecoverStepExit, f.svc.ConfirmContainersRemoved)
+	if err != nil || containers != 1 {
+		t.Fatalf("containers=%d err=%v", containers, err)
+	}
+	live, err := f.svc.LiveForRepo(ctx, f.claim.RepoID)
+	if err != nil || len(live) != 1 {
+		t.Fatalf("deployments=%v err=%v", live, err)
 	}
 }

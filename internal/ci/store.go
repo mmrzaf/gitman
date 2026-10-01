@@ -483,12 +483,13 @@ func settleOpenSteps(ctx context.Context, q postgres.Querier, runID string, runn
 // steps alone.
 func insertLogChunk(ctx context.Context, q postgres.Querier, stepID string, sequence int, content string) error {
 	if _, err := q.Exec(ctx, `
-		INSERT INTO step_logs (step_id, sequence, content, byte_len)
-		SELECT $1, $2, $3, $4
+		WITH inserted AS (INSERT INTO step_logs (step_id, sequence, content, byte_len, line_count)
+		SELECT $1, $2, $3, $4, $5
 		WHERE EXISTS (SELECT 1 FROM steps JOIN runs ON runs.id = steps.run_id
 		              WHERE steps.id = $1 AND runs.status = 'running')
-		ON CONFLICT (step_id, sequence) DO NOTHING
-	`, stepID, sequence, content, len(content)); err != nil {
+		ON CONFLICT (step_id, sequence) DO NOTHING RETURNING byte_len, line_count)
+		UPDATE steps SET log_bytes = log_bytes + i.byte_len, log_lines = log_lines + i.line_count FROM inserted i WHERE steps.id = $1
+	`, stepID, sequence, content, len(content), strings.Count(content, "\n")); err != nil {
 		return fmt.Errorf("append log: %w", err)
 	}
 	return nil
