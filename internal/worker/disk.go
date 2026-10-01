@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/mmrzaf/gitman/internal/config"
 	"io/fs"
-	"path/filepath"
+	"os"
 	"syscall"
 	"time"
+
+	"github.com/mmrzaf/gitman/internal/config"
 )
 
 const (
@@ -31,9 +32,16 @@ func reserveAvailable(root string, reserve uint64) error {
 // workspaceUsage counts regular files without following symlinks. The budget
 // covers checkout metadata as well as build output, including sparse files.
 func workspaceUsage(ctx context.Context, root string, limit int64) (int64, error) {
+	return filesystemUsage(ctx, os.DirFS(root), limit)
+}
+
+func filesystemUsage(ctx context.Context, tree fs.FS, limit int64) (int64, error) {
 	var used int64
-	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+	err := fs.WalkDir(tree, ".", func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
+			if path != "." && errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
 			return err
 		}
 		if err := ctx.Err(); err != nil {
@@ -44,6 +52,10 @@ func workspaceUsage(ctx context.Context, root string, limit int64) (int64, error
 		}
 		info, err := entry.Info()
 		if err != nil {
+			// Build tools remove output concurrently with monitoring.
+			if path != "." && errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
 			return err
 		}
 		if info.Size() > limit-used {
@@ -71,7 +83,7 @@ func monitorDisk(ctx context.Context, root, reserveRoot string, resources config
 		}
 		cancel()
 		if err != nil && ctx.Err() == nil {
-			stop(fmt.Errorf("%w: %v", errDiskBudget, err))
+			stop(fmt.Errorf("monitor workspace disk: %w", err))
 			return
 		}
 		select {
