@@ -70,7 +70,7 @@ type hub struct {
 }
 
 func newHub() *hub {
-	return &hub{subs: map[*subscriber]struct{}{}, closed: make(chan struct{})}
+	return &hub{subs: map[*subscriber]struct{}{}, people: map[string]int{}, closed: make(chan struct{})}
 }
 
 // close ends every open event stream, and any opened after.
@@ -186,20 +186,33 @@ func (a *App) mustReadStep(ctx context.Context, stepID string, person *auth.Pers
 func (a *App) events(w http.ResponseWriter, r *http.Request) error {
 	person := personFrom(r)
 	runID := r.URL.Query().Get("run")
+	repoID := r.URL.Query().Get("repo")
 	stepID := r.URL.Query().Get("step")
-	if (runID != "" && !runIDPattern.MatchString(runID)) || (stepID != "" && !runIDPattern.MatchString(stepID)) {
+	if (repoID != "" && !runIDPattern.MatchString(repoID)) || (runID != "" && !runIDPattern.MatchString(runID)) || (stepID != "" && !runIDPattern.MatchString(stepID)) {
 		return apperr.New(apperr.KindInvalid, "That is not a run or a step.")
 	}
+	setup, endSetup := context.WithTimeout(r.Context(), 15*time.Second)
+	defer endSetup()
+	if repoID != "" {
+		readable, err := a.repos.CanReadID(setup, repoID, person.ID, person.IsAdmin)
+		if err != nil {
+			return err
+		}
+		if !readable {
+			return notFound("There is no such repository.")
+		}
+	}
 	if runID != "" {
-		if err := a.mustReadRun(r.Context(), runID, person); err != nil {
+		if err := a.mustReadRun(setup, runID, person); err != nil {
 			return err
 		}
 	}
 	if stepID != "" {
-		if err := a.mustReadStep(r.Context(), stepID, person); err != nil {
+		if err := a.mustReadStep(setup, stepID, person); err != nil {
 			return err
 		}
 	}
+	endSetup()
 	after := -1
 	if v, err := strconv.Atoi(r.URL.Query().Get("after")); err == nil {
 		after = v
@@ -279,7 +292,9 @@ func (a *App) events(w http.ResponseWriter, r *http.Request) error {
 			}
 			for _, c := range chunks {
 				data, _ := json.Marshal(map[string]string{"content": ansiEscape.ReplaceAllString(c.Content, "")})
-				fmt.Fprintf(w, "id: %d\nevent: log\ndata: %s\n\n", c.Sequence, data)
+				if _, err := fmt.Fprintf(w, "id: %d\nevent: log\ndata: %s\n\n", c.Sequence, data); err != nil {
+					return false
+				}
 				after = c.Sequence
 			}
 			if len(chunks) < liveLogBatch {
@@ -374,7 +389,9 @@ func (a *App) events(w http.ResponseWriter, r *http.Request) error {
 				changed(runID)
 			}
 			// A comment line keeps proxies from closing an idle stream.
-			fmt.Fprint(w, ": ping\n\n")
+			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
+				return nil
+			}
 			if !sendLogs() {
 				return nil
 			}
