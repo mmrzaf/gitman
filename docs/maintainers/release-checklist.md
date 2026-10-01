@@ -51,7 +51,3 @@ Releases are cut by pushing a tag matching `v*` (e.g. `v1.0.0`,
   mirrors. Mirrors are for restricted-network *self-hosted* pipeline runs
   (see this repository's own [`.gitman.yml`](../../.gitman.yml)), not for
   GitHub-hosted runners.
-- There's no data migration between major Gitman versions with different
-  storage backends (e.g. the move from SQLite to PostgreSQL) — that's a
-  fresh install, not an upgrade. Say so in the release notes if a release
-  changes the storage backend.

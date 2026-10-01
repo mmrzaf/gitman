@@ -17,11 +17,11 @@ To run every test, including the DB-dependent ones:
 
 ```sh
 export GITMAN_TEST_DATABASE_URL='postgres://postgres@localhost/gitman_test?sslmode=disable'
-go test -p 1 -count=1 ./...     # one package at a time: DB tests share one database
+go test -p 1 -count=1 ./...     # isolated schemas; limits CPU use
 ```
 
 `make verify` runs the same local checks the release pipeline does:
-tests with the race detector, `go vet`, `golangci-lint`, and a build with
+formatting, shell syntax, tests with the race detector, vet, pinned lint and vulnerability scans, and a build with
 a version smoke check. See the [`Makefile`](../Makefile) for the full
 target list (`build`, `build-all`, `test`, `test-coverage`, `lint`,
 `fmt`, `deps`, `release-source`).
@@ -49,3 +49,12 @@ gitman check .gitman.yml
 ```
 
 See [Pipeline configuration](ci/configuration.md) for the schema.
+
+Integration scripts create unique databases ending in `_test` and unique temporary
+directories. They stop only their own processes, drop only the database they
+created, and retain logs/screenshots for inspection. CI runs backup restoration,
+real Docker execution and browser checks and uploads their evidence. Set
+`GITMAN_INTEGRATION_ARTIFACTS` to copy those artifacts to a chosen directory.
+Use `npm ci --prefix scripts` and `scripts/node_modules/.bin/playwright install chromium`
+for the pinned browser dependencies. The in-app Browser is preferred when its
+runtime is available; these repository scripts are the reproducible CI fallback.

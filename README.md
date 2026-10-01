@@ -20,16 +20,18 @@ handful of ideas — people, repositories, ref rules and pipelines.
 
 ## Running it
 
-Gitman runs with Docker Compose on a host that already runs Traefik, on
-an external `proxy` network, and PostgreSQL, as `postgres` on an external
-`data` network. Build the image on the host, then start it from a
-directory holding `compose.yaml` and a `.env` made from `.env.example`:
+The standalone Compose setup includes PostgreSQL and requires no external
+networks or reverse proxy. Copy `.env.example` to `.env`, set a database
+password and an absolute data directory, then start it:
 
 ```sh
-docker build --build-arg VERSION=v1.0.0-beta.22 -t gitman:1.0.0-beta.22 .
-sudo install -d -o 1000 -g 1000 /srv/apps/gitman/data
-docker compose up -d
+cp .env.example .env
+docker compose up --build -d
 ```
+
+Web is available at `http://localhost:8080`. For public HTTPS, configure
+`GITMAN_DOMAIN` and use the [production Compose example](docs/operator/docker.md).
+The schema has one current baseline and ordinary versioned migrations.
 
 Create the first admin; the command prints their password:
 
@@ -37,7 +39,8 @@ Create the first admin; the command prints their password:
 docker compose exec web gitman admin person add --admin darius
 ```
 
-Sign in at `https://<GITMAN_DOMAIN>`, create a repository from Home, and
+Sign in at `http://localhost:8080` (or your configured HTTPS address), change
+the temporary password, create a repository from Home, and
 make an access token under **Access tokens**, in the menu under your
 username at the top right of every page. Git uses your username and that
 token as the password:
@@ -46,18 +49,20 @@ token as the password:
 git clone https://git.example.com/waiotech.git
 ```
 
-A read token can clone and fetch; pushing needs a write token.
+A read token can clone and fetch; pushing needs a write token. Tokens cover all
+current and future repositories by default; optionally limit
+one to selected repositories. Your permissions still apply. Tokens expire after
+30 days by default.
 [Docker deployment](docs/operator/docker.md) has the whole setup.
 
-### Behind Traefik
+### Behind a reverse proxy
 
 - `GITMAN_TRUSTED_PROXIES` must cover every proxy in front of Gitman:
-  Traefik, and a CDN such as ArvanCloud if one is in front of it. Otherwise
+  the reverse proxy, and a CDN if one is in front of it. Otherwise
   every request appears to come from the nearest proxy and the sign-in
   limiter counts everyone together.
 - Clones and pushes stream, and can be large and slow. If the entry point
-  sets a read timeout, raise it, for example
-  `--entryPoints.websecure.transport.respondingTimeouts.readTimeout=0`.
+  sets a short transfer timeout, configure it to accommodate those transfers.
 
 ### Workers and the data directory
 
@@ -72,15 +77,16 @@ with its own instance ID and cleans up only its own.
 
 Gitman never pulls images. Every image a pipeline uses (`image`, and
 anything listed in `requires`) must already be on the worker's Docker
-host; a run with a missing image fails and says which one.
+host. A run stays queued until a ready worker has every required image.
+Execution checks again before starting a step.
 
 ### Mirrors
 
 Every download the image build makes is a build argument (`GO_IMAGE`,
-`RUNTIME_IMAGE`, `DOCKER_CLI_IMAGE`, `DEBIAN_MIRROR`,
+`RUNTIME_IMAGE`, `DOCKER_CLI_IMAGE`, `POSTGRES_IMAGE`, `DEBIAN_MIRROR`,
 `DEBIAN_SECURITY_MIRROR`, `GOPROXY`); see the top of the `Dockerfile`.
-Gitman's own [`.gitman.yml`](.gitman.yml) builds it with Liara's
-mirrors.
+Gitman's own [`.gitman.yml`](.gitman.yml) uses the public registries and module
+proxy by default; change these arguments to use your own mirrors.
 
 ## Configuration
 
@@ -93,10 +99,18 @@ Everything is set through the environment.
 | `GITMAN_PUBLIC_URL` | `http://localhost:8080` | The address people use; shown in clone URLs and push output. |
 | `GITMAN_WEB_URL` | the public URL | Where workers reach web to fetch run checkouts. |
 | `GITMAN_PORT` | `8080` | The web process's port. |
-| `GITMAN_SECRET_KEY` | empty | Encrypts repository secrets; at least 32 characters. Empty disables secrets. Changing it makes stored secrets unreadable. |
+| `GITMAN_SECRET_KEY` | empty | Encrypts repository secrets; base64 encoding of exactly 32 random bytes. Empty disables secrets. Changing it makes stored secrets unreadable. |
 | `GITMAN_TRUSTED_PROXIES` | empty | Comma-separated addresses or CIDR ranges allowed to set `X-Forwarded-For`. |
-| `GITMAN_RETENTION_DAYS` | `90` | Days finished runs and their logs are kept; `0` keeps them forever. |
+| `GITMAN_LOG_RETENTION_DAYS` | `30` | Log retention, independent from run summaries. |
+| `GITMAN_RUN_RETENTION_DAYS` | `90` | Run metadata; retains latest indexed current-head summary. |
+| `GITMAN_AUDIT_RETENTION_DAYS` | `365` | Push, refusal, settings and completed-operation history. |
+| `GITMAN_DEPLOYMENT_RETENTION_DAYS` | `365` | Deployment history; retains latest record per target. |
 | `GITMAN_DATABASE_MAX_CONNS` | `0` | Caps `web` and `worker`'s own connection pool sizes; `0` keeps each process's own default. |
+| `GITMAN_STEP_MEMORY_MIB` | `2048` | Memory including swap per step container, in MiB. |
+| `GITMAN_STEP_CPUS` | `2` | CPU quota per step container. |
+| `GITMAN_STEP_PIDS` | `256` | Maximum processes per step container. |
+| `GITMAN_WORKSPACE_GIB` | `10` | Monitored workspace size per run, in GiB. |
+| `GITMAN_DISK_RESERVE_GIB` | `5` | Minimum free space for pushes and worker execution, in GiB. |
 | `GITMAN_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. |
 | `GITMAN_LOG_FORMAT` | `text` | `text` or `json`. |
 
@@ -122,7 +136,7 @@ Compose-level settings and image build arguments.
   - whether force-pushes and deletions are allowed;
   - whether a push runs the pipeline;
   - whether that pipeline may use Docker, get the repository's secrets,
-    and ship to a target.
+    and execute an explicit deploy step.
 
 A ref no rule matches is otherwise unprotected — force-push and deletion
 are always allowed, and pushes to it run nothing — but who may push to it
@@ -151,7 +165,7 @@ requires:                      # images that must already be on the host
 env:                           # for every step
   GOPROXY: https://goproxy.example.com,direct
 
-targets:                       # where a ref ships to
+targets:                       # target contexts matched by ref
   staging:
     branch: develop
     env:
@@ -167,6 +181,7 @@ steps:
   - name: check
     run: docker run --rm "waiotech:$GITMAN_VERSION" waiotech version
   - name: deploy
+    type: deploy
     when: target               # always (default), target, branch, tag, or a target's name
     run: ./deploy.sh "$DEPLOY_DIR" "waiotech:$GITMAN_VERSION"
 ```
@@ -191,10 +206,11 @@ next to it, so tests that need them belong in a CI that has them.
   a command line, and their values are masked in stored output.
 - Lines of `key=value` appended to the file `$GITMAN_SUMMARY` appear on
   the run's page.
-- A passing run with a target is recorded as a deployment: the
-  repository page shows what is live on each target.
+- A successful `type: deploy` step records a deployment. Later checks may
+  fail without erasing that deployment receipt.
 
-There is no built-in artifact or deploy step: a pipeline ships by running
+There is no artifact service. A `type: deploy` step records a successful
+deployment script; it does not verify service health. Pipelines deploy by running
 whatever the target actually needs, the same as it would outside Gitman.
 A step's container has full outbound network access. Some patterns:
 
@@ -205,6 +221,7 @@ container it starts on the host's Docker:
 
 ```yaml
 - name: deploy
+  type: deploy
   when: production
   run: |
     docker run --rm \
@@ -233,6 +250,7 @@ secrets (a secret's value may be multi-line, such as a whole key file):
 
 ```yaml
 - name: deploy
+  type: deploy
   when: production
   run: |
     install -m 600 -D /dev/stdin ~/.ssh/id_ed25519 <<< "$DEPLOY_KEY"
@@ -271,7 +289,7 @@ The same binary administers an instance
 gitman admin person add [--admin] <username>
 gitman admin person list | disable | enable | reset-password <username>
 gitman admin person role <username> admin|member
-gitman admin token create [--write] [--days N] <username> <name>
+gitman admin token create [--write] [--days N] [--repos name[,name]] <username> <name>
 gitman admin repo create [--description TEXT] [--default-branch NAME] <name>
 gitman admin repo list | delete <name> | sync <name>
 gitman admin repo visibility <name> everyone|restricted
@@ -281,7 +299,7 @@ gitman admin reader add | remove <repo> <username>
 gitman admin reader list <repo>
 gitman admin rule list <repo>
 gitman admin rule set [--push everyone|admins|people] [--people a,b] [--force] [--delete]
-                      [--run] [--docker] [--secrets] [--ship] <repo> branch|tag <pattern>
+                      [--run] [--docker] [--secrets] [--deploy] <repo> branch|tag <pattern>
 gitman admin rule delete <repo> branch|tag <pattern>
 gitman admin run cancel <repo> <number>
 gitman admin worker cleanup
@@ -290,27 +308,19 @@ gitman admin migrate
 
 ## Operating it
 
-- **Backups:** the database (`pg_dump`) and the `repos` directory under
-  `GITMAN_DATA_DIR`. Hooks are rewritten at every start, and workspaces
-  exist only while a run does. After restoring repositories from a
-  different moment than the database, run `gitman admin repo sync <name>`
-  to rebuild each one's ref index from Git.
-- **Retention:** the web process prunes expired sessions and finished
-  runs older than `GITMAN_RETENTION_DAYS` every hour. Each ref's latest
-  run and every deployment record are kept.
-- **Upgrades:** migrations run automatically when web or a worker starts.
-- **Lost workers:** a run whose worker stops responding for a minute is
-  failed with that reason, and its step container and workspace are
-  removed by a live worker on the same host within another few minutes.
-  After a database outage, a worker waits a minute of its own healthy
-  heartbeats before judging any other worker lost. A worker whose Docker
-  daemon does not answer claims no runs until it does.
-  If a worker is killed outright (SIGKILL, OOM) and nothing else is
-  running on that host, nothing removes them automatically; run
-  `gitman admin worker cleanup` there, or schedule it, to reclaim them.
-  Runs are never retried automatically.
-- **Health:** `/healthz` reports the process is up; `/readyz` also checks
-  the database.
+Use maintenance snapshots to keep PostgreSQL and Git state consistent. Back up
+with `gitman admin maintenance enable`, wait for `maintenance status`, then
+`maintenance backup <new-directory>`. Store the encryption key separately. Restore
+requires an empty database and data directory and leaves maintenance enabled.
+See [backups and recovery](docs/operator/backups-and-upgrades.md).
+
+Workers preserve execution receipts until recording commits. Recovery confirms
+termination before releasing deployment ownership, and never reruns scripts.
+Pending repository operations are visible in **Operations**; worker readiness and
+local image inventory appear in **Workers**. Logs have independent age and size
+limits. See [architecture](docs/architecture.md) and [configuration](docs/operator/configuration.md).
+
+The schema has one current baseline and ordinary versioned migrations.
 
 ## Developing
 
@@ -347,3 +357,8 @@ GITMAN_TEST_DATABASE_URL='postgres://postgres@localhost/gitman_test?sslmode=disa
   locking are what let web and workers coordinate without talking to
   each other.
 - **Syntax highlighting.** Code is shown as it is.
+
+## License
+
+Gitman is available under the [MIT license](LICENSE). Dependency licenses
+and notices are included in [Third-party notices](THIRD_PARTY_NOTICES.md).

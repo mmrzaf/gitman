@@ -1,28 +1,21 @@
 # Getting started
 
-Gitman runs with Docker Compose on a host that already runs Traefik and
-PostgreSQL in Docker. See [Docker deployment](operator/docker.md) for the
-full picture; this is the quickest path to a running instance.
+The standalone Compose setup includes PostgreSQL, web and a worker.
+See [Docker deployment](operator/docker.md) for public HTTPS and scaling.
 
 ## Prerequisites
 
-- Docker with the Compose plugin.
-- Traefik on an external Docker network named `proxy`.
-- PostgreSQL reachable as `postgres` on an external Docker network named
-  `data`, with a database and user for Gitman.
+Docker with the Compose plugin, and local images for your pipelines.
 
 ## Steps
 
 ```sh
-docker build --build-arg VERSION=v1.0.0-beta.22 -t gitman:1.0.0-beta.22 .
-cp .env.example .env            # then fill it in — see operator/configuration.md
-sudo install -d -o 1000 -g 1000 /srv/apps/gitman/data
-docker compose up -d
+cp .env.example .env
+# Set a database password and an absolute data directory in .env.
+docker compose up --build -d
 ```
 
-`.env` needs at least `GITMAN_IMAGE`, `GITMAN_DOMAIN`,
-`GITMAN_DATABASE_URL` and `GITMAN_DATA_DIR`. See [Configuration
-reference](operator/configuration.md) for every setting.
+Start with an empty database and data directory; migrations apply the current schema.
 
 Create the first admin; the command prints their generated password:
 
@@ -30,7 +23,8 @@ Create the first admin; the command prints their generated password:
 docker compose exec web gitman admin person add --admin darius
 ```
 
-Sign in at `https://<GITMAN_DOMAIN>`, create a repository from Home, and
+Sign in at `http://localhost:8080` (or your configured public HTTPS domain),
+change the temporary password, create a repository from Home, and
 create an access token for yourself under **Access tokens** (in the menu
 under your username, top right of every page). Git uses your username and
 that token as the password:

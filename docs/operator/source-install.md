@@ -39,7 +39,7 @@ needed).
 
 If `worker` runs outside of Compose, it needs the same view of
 `GITMAN_DATA_DIR` that `web` has, and a Docker daemon it can reach — see
-[Workers and the data directory](docker.md#the-data-directory) for why
+[Workers and the data directory](docker.md) for why
 the path has to match exactly.
 
 See [Configuration reference](configuration.md) for every setting.

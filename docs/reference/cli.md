@@ -11,6 +11,7 @@ The `gitman` binary picks its role from its first argument.
 | `gitman admin ...` | Manage people, tokens, repositories and rules. |
 | `gitman hook ...` | Run a Git hook. Started by Git itself, not by hand. |
 | `gitman check <file>` | Validate a `.gitman.yml` pipeline file. |
+| `gitman restore <backup-directory>` | Verify and restore a maintenance snapshot into empty destinations. |
 | `gitman version` | Print the Gitman version (`gitman <version>`). |
 
 ## `gitman admin`
@@ -21,8 +22,9 @@ Run inside the `web` container in the supported Compose setup:
 ```
 gitman admin person add [--admin] <username>
 gitman admin person list | disable | enable | reset-password <username>
+gitman admin person revoke-all <username>
 gitman admin person role <username> admin|member
-gitman admin token create [--write] [--days N] <username> <name>
+gitman admin token create [--write] [--days N] [--repos name[,name]] <username> <name>
 gitman admin repo create [--description TEXT] [--default-branch NAME] <name>
 gitman admin repo list | delete <name> | sync <name>
 gitman admin repo visibility <name> everyone|restricted
@@ -32,10 +34,14 @@ gitman admin reader add | remove <repo> <username>
 gitman admin reader list <repo>
 gitman admin rule list <repo>
 gitman admin rule set [--push everyone|admins|people] [--people a,b] [--force] [--delete]
-                      [--run] [--docker] [--secrets] [--ship] <repo> branch|tag <pattern>
+                      [--run] [--docker] [--secrets] [--deploy] <repo> branch|tag <pattern>
 gitman admin rule delete <repo> branch|tag <pattern>
 gitman admin run cancel <repo> <number>
+gitman admin worker list
 gitman admin worker cleanup
+gitman admin operation list | recover
+gitman admin maintenance enable | disable | status
+gitman admin maintenance backup <new-directory>
 gitman admin migrate
 ```
 
@@ -44,13 +50,18 @@ Flags go before the positional arguments.
 ### Notes
 
 - `admin person add --admin` creates an admin account; the command prints
-  the generated password. `disable`/`enable` toggle sign-in without
-  deleting the account — people are never deleted.
+  a temporary password, valid for 24 hours and requiring a change.
+  `disable` revokes credentials; `enable` issues a fresh temporary password.
+  People are never deleted.
 - `admin token create --write` grants a token push access, not just
-  clone/fetch. `--days N` sets an expiry.
+  clone/fetch. Omit `--repos` for all current and future repositories, or use
+  `--repos name[,name]` to limit it to selected repositories. The owner's
+  permissions still apply. `--days N` sets an
+  expiry between 1 and 365 days; the default is 30. The person must have
+  changed their temporary password first.
 - `admin repo sync <name>` rebuilds a repository's ref index from Git —
-  needed after restoring `repos/` from a different point in time than the
-  database. See [Backups and upgrades](../operator/backups-and-upgrades.md).
+  for an intentional filesystem edit; it is not a substitute for a consistent
+  backup. Restore verifies the index without silently rewriting it. See [Backups and upgrades](../operator/backups-and-upgrades.md).
 - `admin repo visibility` sets who may read a repository; `restricted`
   limits it to its readers (`admin reader add`/`remove`/`list`) and
   admins. `admin repo default-push` sets who may push to a branch or tag
@@ -61,7 +72,7 @@ Flags go before the positional arguments.
   branch](../user-guide.md#default-branch).
 - `admin rule set` flags map directly to what a rule grants: `--force`/
   `--delete` (force-push/deletion), `--run` (pushes trigger the
-  pipeline), `--docker`/`--secrets`/`--ship` (what a triggered run may
+  pipeline), `--docker`/`--secrets`/`--deploy` (what a triggered run may
   use). See [Security model](../operator/security.md).
 - `admin run cancel` stops a run in progress; the same is available from
   a run's page in the UI to anyone allowed to push to its ref.

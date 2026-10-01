@@ -2,7 +2,7 @@
 
 ## Signing in
 
-Sign in with the username and password an admin created for you (or that
+Sign in with the username and temporary password an admin created for you (or that
 you reset). There is no self-registration — every account is created by
 an admin with `gitman admin person add`.
 
@@ -25,7 +25,7 @@ organizations or namespaces, just one flat list of what's readable to you.
 
 ## A repository
 
-Its nav has four items:
+Its navigation has six sections (Settings is visible to admins):
 
 - **Overview** — what is deployed to each target (if the pipeline
   defines any) and how many commits each lacks, its branches and tags, the
@@ -35,6 +35,9 @@ Its nav has four items:
   version only when that says more than its commit: a tag's name does, and
   a branch's version is its commit, so it shows the commit once. The newest
   tags are listed, with a link to all of them.
+- **Files** — browse the tree at a branch, tag or commit, with file previews,
+  raw links, history and a file finder.
+- **Activity** — pushes, runs, deployments and repository changes.
 - **Commits** — a branch's, tag's or commit's commits, newest first, each
   with its latest run, the branches and tags now at it, and a marker on
   merges. To see what differs between two refs, choose the second in
@@ -43,17 +46,16 @@ Its nav has four items:
 
 - **Runs** — every run of this repository's pipeline, newest first,
   paged: its branch or tag and commit, who started it, how long it took,
-  and the target it shipped to.
+  and the target it deployed to.
 - **Settings** — admins only: description, default branch, ref rules,
   secrets, who may read the repository and push to a ref no rule matches,
   and deletion.
 
 ### Browsing files
 
-The files of a branch, tag or commit are a step down from where you are
-looking at changes, not a section of their own: a branch or tag's name on the
-Overview opens its files, **Browse files** is on Commits, and a commit's
-page has one too. Jump to a file by path with the
+Open **Files** to browse a branch, tag or commit. A branch or tag's name on
+Overview also opens its files; **Browse files** is available on Commits and
+a commit's page. Jump to a file by path with the
 go-to-file finder, and **Commits** on a file or directory lists the commits
 that changed it. **Download**, next to the ref picker, gives the whole tree
 as a `.tar.gz`.
@@ -86,8 +88,8 @@ type a commit's hash. The page then shows, top to bottom:
 
 So two tags show what a release added, the default branch against a
 branch shows what merging it would bring, and a branch against what is
-live on a target shows what has not shipped. A branch's compare button on
-the Overview, and the **N commits not shipped** on a deployed target there
+live on a target shows what has not deployed. A branch's compare button on
+the Overview, and the **N commits not deployed** on a deployed target there
 or on Home, open it ready-made. **Swap sides** shows the other direction. Leave **Compared
 with** empty for the plain list of commits.
 
@@ -96,7 +98,7 @@ with** empty for the plain list of commits.
 The Overview lists what has happened to the repository, newest first, and
 **All activity** pages through all of it: branches and tags being created,
 pushed, force-pushed, moved and deleted, with who did it, where from and to,
-and the run it started; runs that finished; what was shipped; and changes to
+and the run it started; runs that finished; what was deployed; and changes to
 its settings. A push Gitman refused shows too, with who pushed and why each
 ref was refused: Git tells the pusher only that the hook declined it, and
 the reasons are easy to lose among its output.
@@ -187,3 +189,12 @@ stays attached to what they did.
 See [Security model](operator/security.md) for how ref rules and roles
 fit together, and the [CLI reference](reference/cli.md) for doing any of
 this from the command line instead.
+
+Generated passwords expire after 24 hours. Change yours on the Password tab
+before using repositories or creating access tokens. Choose a password of at
+least 12 characters and at most 72 UTF-8 bytes. Access tokens cover all current and future repositories by default, or an
+optional selection. Your permissions still apply. They expire after 30 days, or
+up to one year. Password changes revoke your existing sessions and tokens.
+Raw links stream exact bytes, including files above the preview limit. Text is
+shown as plain text and raster images use their native type; other formats
+download. Repository content cannot execute as a page on Gitman's origin.

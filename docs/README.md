@@ -20,7 +20,7 @@
 ### Operating Gitman
 
 - [Configuration reference](operator/configuration.md) — every setting, Compose and standalone.
-- [Docker deployment](operator/docker.md) — the supported Compose setup, behind Traefik and with PostgreSQL on the host.
+- [Docker deployment](operator/docker.md) — the supported Compose setup, standalone PostgreSQL and optional Caddy HTTPS.
 - [Building from source](operator/source-install.md)
 - [Backups and upgrades](operator/backups-and-upgrades.md)
 - [Security model](operator/security.md)

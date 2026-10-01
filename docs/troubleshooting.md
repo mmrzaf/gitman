@@ -65,4 +65,4 @@ and `/healthz` for pure liveness.
 ## Large clone or push hangs / times out
 
 This is almost always a reverse proxy's read timeout, not Gitman's — see
-[Behind Traefik](operator/docker.md#behind-traefik).
+[HTTPS proxy configuration](operator/docker.md).

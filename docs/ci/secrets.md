@@ -6,10 +6,10 @@ is no per-repository way to turn it on regardless of key.
 
 ## Setting a key
 
-`GITMAN_SECRET_KEY` must be at least 32 characters:
+`GITMAN_SECRET_KEY` must be base64 encoding of exactly 32 random bytes:
 
 ```sh
-openssl rand -base64 48
+openssl rand -base64 32
 ```
 
 Changing the key after secrets have been stored makes them unreadable —
@@ -35,3 +35,11 @@ rule matches gets no secrets, the same as it gets no Docker access.
 
 See [Security model](../operator/security.md) for how this fits with the
 rest of the ref-rule permission system.
+
+Secret values must contain valid UTF-8, contain no NUL bytes, and occupy at
+most 8 KiB each or 128 KiB in total per repository. Redaction matches bytes
+before text normalization and preserves matches across arbitrary writes,
+newlines, and storage chunks. Complete values are always masked; individual
+lines of a multiline value are additionally masked when at least four bytes.
+Keep the encryption key in a separate protected backup; losing it makes
+stored secrets unrecoverable.
