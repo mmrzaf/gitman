@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"github.com/mmrzaf/gitman/internal/redact"
 )
 
 // Limits on what a step's output costs to store.
@@ -50,7 +52,7 @@ const (
 // secretMasker replaces secret values in text. A multi-line secret is
 // also masked line by line, because output is masked a line at a time.
 type secretMasker struct {
-	values []string // longest first, so a secret containing another is masked whole
+	matcher *redact.Matcher
 }
 
 func newSecretMasker(secrets map[string]string) *secretMasker {
@@ -68,8 +70,7 @@ func newSecretMasker(secrets map[string]string) *secretMasker {
 			add(strings.TrimRight(line, "\r"))
 		}
 	}
-	sort.Slice(values, func(i, j int) bool { return len(values[i]) > len(values[j]) })
-	return &secretMasker{values: values}
+	return &secretMasker{matcher: redact.New(values)}
 }
 
 func (m *secretMasker) mask(s string) string {
@@ -119,9 +120,9 @@ type logSink func(ctx context.Context, sequence int, content string) error
 // writing output never waits for the database. It is safe for concurrent
 // use.
 type logWriter struct {
-	ctx    context.Context
-	sink   logSink
-	masker *secretMasker
+	redactor *redact.Stream
+	ctx      context.Context
+	sink     logSink
 
 	// flushMu serializes storing, which happens without holding mu.
 	flushMu sync.Mutex
@@ -147,7 +148,7 @@ type logWriter struct {
 }
 
 func newLogWriter(ctx context.Context, sink logSink, masker *secretMasker) *logWriter {
-	w := &logWriter{ctx: ctx, sink: sink, masker: masker,
+	w := &logWriter{redactor: masker.matcher.Stream(), ctx: ctx, sink: sink,
 		kick: make(chan struct{}, 1), stop: make(chan struct{}), done: make(chan struct{})}
 	w.cond = sync.NewCond(&w.mu)
 	go w.flushPeriodically()
@@ -188,14 +189,14 @@ func (w *logWriter) kickLocked() {
 func (w *logWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.line = append(w.line, p...)
-	for {
-		i := bytes.IndexByte(w.line, '\n')
-		if i < 0 {
-			break
-		}
-		w.emitLocked(string(w.line[:i+1]))
-		w.line = w.line[i+1:]
+	text := append(w.textTail, w.redactor.Append(p, false)...)
+	w.textTail = nil
+	// Retain an incomplete final character until the next write. Invalid
+	// complete bytes are normalized only after secret matching.
+	end := 0
+	for end < len(text) && utf8.FullRune(text[end:]) {
+		_, size := utf8.DecodeRune(text[end:])
+		end += size
 	}
 	for len(w.line) > maxLineBytes {
 		n := len(cutAtRune(string(w.line[:maxLineBytes+1]), maxLineBytes))
@@ -368,10 +369,8 @@ func (w *logWriter) Close() error {
 	// leaving it to notice closing only once its own backpressure timeout
 	// fires: nothing will ever drain the buffer for it now.
 	w.cond.Broadcast()
-	if len(w.line) > 0 {
-		w.emitLocked(string(w.line))
-		w.line = nil
-	}
+	w.emitLocked(string(append(w.textTail, w.redactor.Append(nil, true)...)))
+	w.textTail = nil
 	w.mu.Unlock()
 	for w.flush(true) {
 	}
