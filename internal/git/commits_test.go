@@ -106,7 +106,8 @@ func TestRefsAndAncestry(t *testing.T) {
 	second := f.commit(t, "second")
 	gitCmd(t, f.work, "tag", "-a", "v1.0.0", "-m", "release", first)
 	gitCmd(t, f.work, "tag", "light", second)
-	f.push(t, "main", "v1.0.0", "light")
+	gitCmd(t, f.work, "tag", "-a", "nested", "-m", "nested release", "v1.0.0")
+	f.push(t, "main", "v1.0.0", "light", "nested")
 
 	refs, err := f.repo.Refs(ctx)
 	if err != nil {
@@ -123,6 +124,12 @@ func TestRefsAndAncestry(t *testing.T) {
 	light, ok := findRef(refs, KindTag, "light")
 	if !ok || light.Commit != second || light.Target != second {
 		t.Fatalf("lightweight tag = %+v", light)
+	}
+
+	nested, ok := findRef(refs, KindTag, "nested")
+	target := gitCmd(t, f.work, "rev-parse", "refs/tags/nested")
+	if !ok || nested.Commit != first || nested.Target != target {
+		t.Fatalf("nested tag = %+v, want commit %s and target %s", nested, first, target)
 	}
 
 	if yes, err := f.repo.IsAncestor(ctx, first, second); err != nil || !yes {

@@ -231,7 +231,7 @@ func (r *Repo) FileAt(ctx context.Context, commitHash, path string, max int64) (
 // Refs returns every branch and tag.
 func (r *Repo) Refs(ctx context.Context) ([]Ref, error) {
 	out, err := run(ctx, r.opts(), "for-each-ref",
-		"--format=%(refname)%00%(objectname)%00%(*objectname)",
+		"--format=%(refname)%00%(objectname)%00%(*objectname)%00%(objecttype)%00%(*objecttype)",
 		"refs/heads", "refs/tags")
 	if err != nil {
 		return nil, err
@@ -242,7 +242,7 @@ func (r *Repo) Refs(ctx context.Context) ([]Ref, error) {
 			continue
 		}
 		fields := strings.Split(line, "\x00")
-		if len(fields) != 3 {
+		if len(fields) != 5 {
 			return nil, fmt.Errorf("unexpected for-each-ref line %q", line)
 		}
 		kind, name, ok := SplitFullName(fields[0])
@@ -252,6 +252,12 @@ func (r *Repo) Refs(ctx context.Context) ([]Ref, error) {
 		commit := fields[1]
 		if fields[2] != "" {
 			commit = fields[2]
+		}
+		if fields[3] == "tag" && fields[4] != "commit" {
+			commit, err = r.ResolveCommit(ctx, fields[1])
+			if err != nil {
+				return nil, fmt.Errorf("resolve tag %s: %w", name, err)
+			}
 		}
 		refs = append(refs, Ref{Kind: kind, Name: name, Target: fields[1], Commit: commit})
 	}
