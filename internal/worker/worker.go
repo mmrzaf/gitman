@@ -348,7 +348,7 @@ func (w *Worker) cleanup(ctx context.Context) {
 func (w *Worker) removeLeftovers(ctx context.Context) {
 	tick, cancel := context.WithTimeout(ctx, dutyTimeout)
 	defer cancel()
-	containers, workspaces, err := RemoveLeftovers(tick, w.docker, w.cfg.WorkspaceRoot, w.ci.RunningRunIDs)
+	containers, workspaces, err := RemoveLeftovers(tick, w.docker, w.cfg.WorkspaceRoot, w.ci.RunningRunIDs, w.ci.RecoverStepExit, w.ci.ConfirmContainersRemoved)
 	if err != nil && ctx.Err() == nil {
 		w.log.Warn("could not remove leftovers of ended runs", "error", err)
 	}
@@ -405,4 +405,64 @@ func RemoveLeftovers(ctx context.Context, docker *Docker, workspaceRoot string,
 		workspaces++
 	}
 	return containers, workspaces, errors.Join(errs...)
+}
+
+// recoverExecutions runs before every claim on this worker, after execution has
+// returned. A failed cleanup pauses claims and retains all mounted directories.
+func (w *Worker) recoverExecutions(ctx context.Context) bool {
+	runs, err := w.ci.RecoveryRuns(ctx, w.id, w.engineID)
+	if err != nil {
+		w.log.Warn("could not inspect execution recovery", "error", err)
+		return false
+	}
+
+	for _, run := range runs {
+		if run.Foreign && (w.healthySince.Load() == 0 || time.Since(time.Unix(0, w.healthySince.Load())) < ci.WorkerLostAfter) {
+			return false
+		}
+		unlock, locked, err := executionLock(w.cfg.WorkspaceRoot, run.ID)
+		if err != nil || !locked {
+			return false
+		}
+		// The number of interrupted runs is bounded by worker capacity. Hold
+		// each lock through all receipt recording and workspace cleanup.
+		defer unlock()
+		for _, name := range run.Containers {
+			state, err := w.docker.stopRetained(ctx, name)
+			if err != nil {
+				w.log.Warn("execution termination pending", "run", run.ID, "container", name, "error", err)
+				return false
+			}
+			if state != nil && state.Status == "exited" {
+				if err := w.ci.RecoverStepExit(ctx, run.ID, name, state.ExitCode); err != nil {
+					w.log.Warn("could not persist retained exit receipt", "error", err)
+					return false
+				}
+			}
+		}
+		if err := w.ci.ConfirmExecutionStopped(ctx, run.ID); err != nil {
+			return false
+		}
+		// Every container is now confirmed stopped. Keep receipts until finalization
+		// commits, including when the database's first commit reply is lost.
+		if err := w.ci.Finish(ctx, run.ID, failed("Execution was interrupted. Containers were stopped; no steps were rerun.")); err != nil {
+			w.log.Warn("could not finalize recovered execution", "run", run.ID, "error", err)
+			return false
+		}
+		for _, name := range run.Containers {
+			if err := w.docker.removeContainer(ctx, name); err != nil {
+				w.log.Warn("execution removal pending", "error", err)
+				return false
+			}
+			if err := w.ci.ContainerRemoved(ctx, run.ID, name); err != nil {
+				return false
+			}
+		}
+		if err := os.RemoveAll(filepath.Join(w.cfg.WorkspaceRoot, run.ID)); err != nil {
+			w.log.Warn("could not remove recovered workspace", "run", run.ID, "error", err)
+			return false
+		}
+	}
+
+	return true
 }
