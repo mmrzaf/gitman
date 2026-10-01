@@ -118,7 +118,7 @@ func runningRun(t *testing.T, b *browser, database *postgres.DB, repo *reposvc.R
 	if err := svc.RegisterWorker(ctx, "w1", "host"); err != nil {
 		t.Fatal(err)
 	}
-	claim, err := svc.ClaimNext(ctx, "w1")
+	claim, err := svc.ClaimNext(ctx, "w1", 30*time.Minute, []string{"alpine:3.20"})
 	if err != nil || claim == nil {
 		t.Fatalf("ClaimNext = %v, %v", claim, err)
 	}
@@ -246,6 +246,8 @@ func TestRunsTableShowsCommitDurationWhoAndTarget(t *testing.T) {
 	             ('r2', $1, 2, $4, 'tag', 'v1.0.0', 'manual', $3, 'passed', '', 'w1', now() - interval '9 minutes', now() - interval '9 minutes' + interval '1 second'),
 	             ('r3', $1, 3, $5, 'branch', 'release', 'push', $3, 'failed', 'staging', 'w1', now() - interval '8 minutes', now() - interval '8 minutes' + interval '12 seconds')`,
 		repo.ID, commit('a'), mina.ID, commit('b'), commit('c'))
+	exec(`INSERT INTO deployments (id, repo_id, target, version, commit_hash, run_id, person_id)
+	      VALUES ('d1', $1, 'staging', 'aaaaaaa', $2, 'r1', $3)`, repo.ID, commit('a'), mina.ID)
 	exec(`INSERT INTO runs (id, repo_id, number, commit_hash, ref_kind, ref_name, trigger, triggered_by, status)
 	      VALUES ('r4', $1, 4, $2, 'branch', 'main', 'manual', $3, 'queued')`, repo.ID, commit('d'), mina.ID)
 	exec(`INSERT INTO runs (id, repo_id, number, commit_hash, ref_kind, ref_name, trigger, triggered_by, status, reason, finished_at)
@@ -253,7 +255,7 @@ func TestRunsTableShowsCommitDurationWhoAndTarget(t *testing.T) {
 
 	resp, body := b.do(http.MethodGet, "/waiotech/runs", nil, nil)
 	expect(t, resp, body, http.StatusOK,
-		`<th scope="col">Commit</th>`, `<th scope="col">Started by</th>`, `<th scope="col">Took</th>`, `<th scope="col">Shipped to</th>`)
+		`<th scope="col">Commit</th>`, `<th scope="col">Started by</th>`, `<th scope="col">Took</th>`, `<th scope="col">Deployment</th>`)
 
 	// One row per run, by number, each read as the cells of its own row.
 	row := func(n int) string {

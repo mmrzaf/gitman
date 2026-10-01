@@ -285,21 +285,23 @@ func TestActivityPagesAndListsRunsAndShipments(t *testing.T) {
 	      VALUES ('d1', $1, 'staging', $2, $3, 'r1', $4)`, repo.ID, head[:12], head, person.ID)
 
 	resp, body := b.do(http.MethodGet, "/waiotech/activity", nil, nil)
-	expect(t, resp, body, http.StatusOK, `id="activity-title"`, `href="/waiotech/runs/1">Run #1</a> passed`, "shipped", "to <strong>staging</strong>")
+	expect(t, resp, body, http.StatusOK, `id="activity-title"`, `href="/waiotech/runs/1">Run #1</a> passed`, "deployed", "to <strong>staging</strong>")
 
 	// A page holds activityPageSize entries; the rest are a click away.
 	for i := 0; i < activityPageSize; i++ {
 		exec(`INSERT INTO events (id, repo_id, person_id, action) VALUES ($1, $2, $3, 'rule.saved')`, fmt.Sprintf("e%d", i), repo.ID, person.ID)
 	}
 	resp, body = b.do(http.MethodGet, "/waiotech/activity", nil, nil)
-	expect(t, resp, body, http.StatusOK, `href="/waiotech/activity?skip=30">Older`)
+	expect(t, resp, body, http.StatusOK, `href="/waiotech/activity?before=`)
 	if strings.Contains(body, ">Newer<") {
 		t.Error("the first page has a Newer link")
 	}
-	resp, body = b.do(http.MethodGet, "/waiotech/activity?skip=30", nil, nil)
-	expect(t, resp, body, http.StatusOK, `>Newer<`)
-	resp, body = b.do(http.MethodGet, "/waiotech/activity?skip=abc", nil, nil)
-	expect(t, resp, body, http.StatusOK)
+	start := strings.Index(body, `href="/waiotech/activity?before=`) + len(`href="`)
+	end := strings.Index(body[start:], `"`)
+	resp, body = b.do(http.MethodGet, body[start:start+end], nil, nil)
+	expect(t, resp, body, http.StatusOK, `>Newest<`)
+	resp, body = b.do(http.MethodGet, "/waiotech/activity?before=abc", nil, nil)
+	expect(t, resp, body, http.StatusUnprocessableEntity)
 }
 
 func TestOverviewHasNoTabsAndLinksToWhatIsNotDeployed(t *testing.T) {
@@ -341,7 +343,7 @@ func TestOverviewHasNoTabsAndLinksToWhatIsNotDeployed(t *testing.T) {
 	}
 	// Only production lacks anything, so only its row counts commits not
 	// shipped; staging, at the default branch, is up to date.
-	expect(t, resp, body, http.StatusOK, `<th scope="col">Not shipped</th>`, `href="/waiotech/commits?base=`+old+`&amp;ref=main">1 commit</a>`, "Up to date")
+	expect(t, resp, body, http.StatusOK, `<th scope="col">Comparison</th>`, `href="/waiotech/commits?base=`+old+`&amp;ref=main">1 commit not deployed</a>`, "Up to date")
 	if n := strings.Count(body, "Up to date"); n != 1 {
 		t.Fatalf("%d targets are up to date, want only staging", n)
 	}
@@ -404,7 +406,7 @@ func TestColumnsFollowWhatThereIs(t *testing.T) {
 	// No runs, no deployments.
 	resp, body := b.do(http.MethodGet, "/waiotech", nil, nil)
 	expect(t, resp, body, http.StatusOK, `<th scope="col">Commit</th>`, `<th scope="col">Updated</th>`)
-	for _, absent := range []string{"Last run", "Last shipped"} {
+	for _, absent := range []string{"Last run", "Last deployed"} {
 		if strings.Contains(body, absent) {
 			t.Errorf("the Overview has a %q column with nothing in it", absent)
 		}
@@ -432,11 +434,11 @@ func TestColumnsFollowWhatThereIs(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp, body = b.do(http.MethodGet, "/waiotech", nil, nil)
-	expect(t, resp, body, http.StatusOK, "Last run", "Last shipped")
+	expect(t, resp, body, http.StatusOK, "Last run", "Last deployed")
 	resp, body = b.do(http.MethodGet, "/waiotech/commits", nil, nil)
 	expect(t, resp, body, http.StatusOK, `<th scope="col">Run</th>`)
 	resp, body = b.do(http.MethodGet, "/waiotech/runs", nil, nil)
-	expect(t, resp, body, http.StatusOK, `<th scope="col">Took</th>`, `<th scope="col">Shipped to</th>`)
+	expect(t, resp, body, http.StatusOK, `<th scope="col">Took</th>`, `<th scope="col">Deployment</th>`)
 }
 
 // A long diff opens its first files and leaves the rest closed, each one a

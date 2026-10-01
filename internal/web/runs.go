@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -18,12 +19,8 @@ import (
 	reposvc "github.com/mmrzaf/gitman/internal/repo"
 )
 
-// maxRenderedLog is how much of a step's output the Run page shows. A
-// longer log shows its end — where a failure is — with a link to the
-// whole thing.
-const maxRenderedLog = 1 << 20
-
 type runPage struct {
+	CanRun bool
 	repoFrame
 	Run      *ci.RunDetail
 	Selected *ci.StepDetail
@@ -104,10 +101,10 @@ type runsPage struct {
 	More int64
 }
 
-// anyShipped and anyRan report whether any run of a list shipped to a target,
+// anyDeployed and anyRan report whether any run of a list shipped to a target,
 // or ran at all: a column nothing would fill is left out.
-func anyShipped(runs []ci.Summary) bool {
-	return slices.ContainsFunc(runs, func(r ci.Summary) bool { return r.Status == ci.StatusPassed && r.Target != "" })
+func anyDeployed(runs []ci.Summary) bool {
+	return slices.ContainsFunc(runs, func(r ci.Summary) bool { return r.Deployed })
 }
 
 func anyRan(runs []ci.Summary) bool {
@@ -115,7 +112,7 @@ func anyRan(runs []ci.Summary) bool {
 }
 
 // LiveEvents keeps the Runs page's in-progress rows current.
-func (runsPage) LiveEvents() string { return "/events" }
+func (p runsPage) LiveEvents() string { return "/events?repo=" + p.Repo.ID }
 
 func (a *App) runs(w http.ResponseWriter, r *http.Request) error {
 	repo, err := a.repoByName(r)
@@ -193,6 +190,11 @@ func (a *App) runView(w http.ResponseWriter, r *http.Request) error {
 	}
 	now := a.now()
 	page := runPage{repoFrame: repoFrame{Repo: repo}, Run: run, Selected: selectedStep(r, run), LogAfter: -1, Now: now}
+	decision, err := a.mayRun(r, repo, run.RefKind, run.RefName, "run it")
+	if err != nil && apperr.KindOf(err) != apperr.KindForbidden {
+		return err
+	}
+	page.CanRun = decision.CanPush
 	if run.StartedAt != nil {
 		end := now
 		if run.FinishedAt != nil {
@@ -201,38 +203,20 @@ func (a *App) runView(w http.ResponseWriter, r *http.Request) error {
 		page.Duration = end.Sub(*run.StartedAt).Round(time.Second)
 	}
 	if run.Status == ci.StatusQueued {
-		online, err := a.ci.AnyWorkerOnline(r.Context())
+		online, err := a.ci.AnyWorkerReadyForRun(r.Context(), run.ID)
 		if err != nil {
 			return err
 		}
 		page.NoWorker = !online
 	}
-	if page.Selected != nil {
-		var log strings.Builder
-		for {
-			chunks, err := a.ci.LogChunks(r.Context(), page.Selected.ID, page.LogAfter, 256)
-			if err != nil {
-				return err
-			}
-			for _, c := range chunks {
-				log.WriteString(c.Content)
-				page.LogAfter = c.Sequence
-			}
-			if len(chunks) < 256 {
-				break
-			}
+	if page.Selected != nil && page.Selected.LogsExpiredAt == nil && r.Header.Get("X-Gitman-Refresh") != "regions" {
+		tail, err := a.ci.LogTail(r.Context(), page.Selected.ID)
+		if err != nil {
+			return err
 		}
-		text, first := log.String(), 1
-		if len(text) > maxRenderedLog {
-			cut := len(text) - maxRenderedLog
-			if i := strings.IndexByte(text[cut:], '\n'); i >= 0 {
-				cut += i + 1
-			}
-			first += strings.Count(text[:cut], "\n")
-			text, page.LogCut = text[cut:], true
-		}
-		text = ansiEscape.ReplaceAllString(text, "")
-		page.Log, page.LogOpen = splitLog(text, first), text != "" && !strings.HasSuffix(text, "\n")
+		page.LogAfter, page.LogCut = tail.After, tail.Cut
+		text := ansiEscape.ReplaceAllString(tail.Text, "")
+		page.Log, page.LogOpen = splitLog(text, tail.First), text != "" && !strings.HasSuffix(text, "\n")
 	}
 	a.render(w, r, http.StatusOK, "run", fmt.Sprintf("#%d · %s", run.Number, repo.Name), page)
 	return nil
@@ -241,7 +225,10 @@ func (a *App) runView(w http.ResponseWriter, r *http.Request) error {
 // runLog serves one step's whole output as plain text, exactly as
 // stored.
 func (a *App) runLog(w http.ResponseWriter, r *http.Request) error {
-	repo, run, err := a.runByNumber(r)
+	parent := r.Context()
+	setup, stopSetup := context.WithTimeout(parent, 15*time.Second)
+	defer stopSetup()
+	repo, run, err := a.runByNumber(r.WithContext(setup))
 	if err != nil {
 		return err
 	}
@@ -249,16 +236,31 @@ func (a *App) runLog(w http.ResponseWriter, r *http.Request) error {
 	if err != nil || i < 0 || i >= len(run.Steps) {
 		return notFound("Run #%d has no such step.", run.Number)
 	}
+	stopSetup()
+	ctx, stop := context.WithTimeout(parent, 15*time.Minute)
+	defer stop()
 	step := run.Steps[i]
+	if step.LogsExpiredAt != nil {
+		return apperr.New(apperr.KindNotFound, "This output expired under the log retention policy.")
+	}
 	setRawHeaders(w.Header(), "text/plain; charset=utf-8", fmt.Sprintf("%s-%d-%s.log", repo.Name, run.Number, safeFileName(step.Name)))
+	out := &deadlineWriter{dst: w, controller: http.NewResponseController(w)}
 	after := -1
+	started := false
 	for {
-		chunks, err := a.ci.LogChunks(r.Context(), step.ID, after, 256)
+		read, stopRead := context.WithTimeout(ctx, 10*time.Second)
+		chunks, err := a.ci.LogChunks(read, step.ID, after, 256)
+		stopRead()
 		if err != nil {
-			return err
+			if !started {
+				return err
+			}
+			a.log.Warn("log download failed", "step", step.ID, "error", err)
+			return nil
 		}
 		for _, c := range chunks {
-			if _, err := w.Write([]byte(c.Content)); err != nil {
+			started = true
+			if _, err := out.Write([]byte(c.Content)); err != nil {
 				return nil
 			}
 			after = c.Sequence
@@ -327,7 +329,7 @@ type runnableRef struct {
 // them: the default branch, the other branches by name, then tags, most
 // recently moved first.
 func (a *App) runnableRefs(r *http.Request, repo *reposvc.Repo) ([]runnableRef, error) {
-	refs, err := a.repos.ListRefs(r.Context(), repo.ID)
+	indexed, err := a.repos.ListRefs(r.Context(), repo.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -335,9 +337,12 @@ func (a *App) runnableRefs(r *http.Request, repo *reposvc.Repo) ([]runnableRef, 
 	if err != nil {
 		return nil, err
 	}
+	return runnableRefsFor(r, repo, indexed, rules), nil
+}
+func runnableRefsFor(r *http.Request, repo *reposvc.Repo, indexed []reposvc.IndexedRef, rules []reposvc.Rule) []runnableRef {
 	person := personFrom(r)
 	var branches, tags []runnableRef
-	for _, ref := range refs {
+	for _, ref := range indexed {
 		if !reposvc.Evaluate(rules, ref.Kind, ref.Name, person.ID, person.IsAdmin, repo.DefaultPushPolicy, repo.DefaultPushPeople).CanPush {
 			continue
 		}
@@ -355,7 +360,7 @@ func (a *App) runnableRefs(r *http.Request, repo *reposvc.Repo) ([]runnableRef, 
 		}
 		return branches[i].Name < branches[j].Name
 	})
-	return append(branches, tags...), nil
+	return append(branches, tags...)
 }
 
 // runRef starts a run of a branch or tag's current commit, exactly as a

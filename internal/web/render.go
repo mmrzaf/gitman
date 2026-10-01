@@ -35,33 +35,37 @@ type views struct {
 
 func loadViews(assets *assets) (*views, error) {
 	funcs := template.FuncMap{
-		"asset":      assets.url,
-		"ago":        ago,
-		"iso":        func(t time.Time) string { return t.UTC().Format(time.RFC3339) },
-		"datetime":   func(t time.Time) string { return t.UTC().Format("2006-01-02 15:04 UTC") },
-		"short":      shortHash,
-		"field":      newField,
-		"dict":       dict,
-		"eventText":  eventText,
-		"add":        func(a, b int) int { return a + b },
-		"sub":        func(a, b int) int { return a - b },
-		"duration":   formatDuration,
-		"deref":      func(p *int) int { return *p },
-		"lineKind":   lineKind,
-		"dirOf":      dirOf,
-		"refURL":     refURL,
-		"commitsURL": commitsURL,
-		"archiveURL": archiveURL,
-		"ownVersion": ownVersion,
-		"compareURL": compareURL,
-		"anyRun":     anyRun,
-		"anyShipped": anyShipped,
-		"anyRan":     anyRan,
-		"anyRefs":    anyRefs,
-		"hasRun":     hasRun,
-		"hasShipped": hasShipped,
-		"hasCounts":  hasCounts,
-		"diffTotals": diffTotals,
+		"asset":    assets.url,
+		"ago":      ago,
+		"iso":      func(t time.Time) string { return t.UTC().Format(time.RFC3339) },
+		"datetime": func(t time.Time) string { return t.UTC().Format("2006-01-02 15:04 UTC") },
+		"short":    shortHash,
+		"field":    newField,
+		"refModel": refModel, "refKind": func(s string) git.Kind { return git.Kind(s) },
+		"commitModel": commitModel, "emptyModel": emptyModel, "firstPushModel": firstPushModel,
+		"revealModel": revealModel, "copyFieldModel": copyFieldModel, "feedModel": feedModel,
+		"repoFeedModel": repoFeedModel, "commitTableModel": commitTableModel, "diffModel": diffModel,
+		"refsModel": refsModel, "refFieldModel": refFieldModel, "ruleFormModel": ruleFormModel,
+		"eventText":   eventText,
+		"add":         func(a, b int) int { return a + b },
+		"sub":         func(a, b int) int { return a - b },
+		"duration":    formatDuration,
+		"deref":       func(p *int) int { return *p },
+		"lineKind":    lineKind,
+		"dirOf":       dirOf,
+		"refURL":      refURL,
+		"commitsURL":  commitsURL,
+		"archiveURL":  archiveURL,
+		"ownVersion":  ownVersion,
+		"compareURL":  compareURL,
+		"anyRun":      anyRun,
+		"anyDeployed": anyDeployed,
+		"anyRan":      anyRan,
+		"anyRefs":     anyRefs,
+		"hasRun":      hasRun,
+		"hasDeployed": hasDeployed,
+		"hasCounts":   hasCounts,
+		"diffTotals":  diffTotals,
 	}
 	base, err := template.New("").Funcs(funcs).ParseFS(templateFiles, "templates/layout.html", "templates/partials.html")
 	if err != nil {
@@ -107,9 +111,7 @@ type liveSource interface {
 }
 
 // repoFrame is embedded in the data of every page inside a repository:
-// the repository, and which of its sections — "overview", "commits",
-// "runs" or "settings" — the page belongs to, if any. The file browser
-// belongs to the Overview, which it is reached from.
+// the repository and the selected section of its navigation.
 type repoFrame struct {
 	Repo    *reposvc.Repo
 	Section string
@@ -161,7 +163,14 @@ func (a *App) render(w http.ResponseWriter, r *http.Request, status int, name, t
 	if f, ok := data.(framed); ok {
 		page.Frame = f.frame()
 	}
-	err := set.ExecuteTemplate(&buf, "layout", page)
+	target := "layout"
+	if set.Lookup("live") != nil {
+		w.Header().Add("Vary", "X-Gitman-Refresh")
+		if r.Header.Get("X-Gitman-Refresh") == "regions" {
+			target = "live"
+		}
+	}
+	err := set.ExecuteTemplate(&buf, target, page)
 	if err != nil {
 		a.log.Error("render page", "page", name, "error", err)
 		http.Error(w, "Internal error.", http.StatusInternalServerError)
@@ -336,24 +345,6 @@ func shortHash(h string) string {
 		return h[:7]
 	}
 	return h
-}
-
-// dict builds a map from alternating string keys and values, so a
-// template can pass more than one named value into a shared partial —
-// text/template only lets {{template}} pass a single value otherwise.
-func dict(pairs ...any) (map[string]any, error) {
-	if len(pairs)%2 != 0 {
-		return nil, fmt.Errorf("dict: odd number of arguments")
-	}
-	m := make(map[string]any, len(pairs)/2)
-	for i := 0; i < len(pairs); i += 2 {
-		key, ok := pairs[i].(string)
-		if !ok {
-			return nil, fmt.Errorf("dict: key %v is not a string", pairs[i])
-		}
-		m[key] = pairs[i+1]
-	}
-	return m, nil
 }
 
 // eventDescriptions maps a settings-change event's action to the phrase

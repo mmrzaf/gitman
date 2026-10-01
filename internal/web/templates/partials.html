@@ -11,7 +11,7 @@
 {{define "status-icon"}}<span class="status-icon is-{{.}}" title="{{.}}">{{template "icon" .}}<span class="visually-hidden">{{.}}</span></span>{{end}}
 
 {{/* ref: a branch or tag, cut short when long with the whole name on
-     hover. Takes (dict "Kind" "Name" and, to link it, "Href"). */}}
+     hover. Takes (typed view: "Kind" "Name" and, to link it, "Href"). */}}
 {{define "ref"}}
 {{- if .Href}}<a class="ref" href="{{.Href}}" title="{{.Kind}} {{.Name}}">{{else}}<span class="ref" title="{{.Kind}} {{.Name}}">{{end -}}
 {{template "icon" .Kind}}<span class="ref-name">{{.Name}}</span>
@@ -44,7 +44,7 @@
 {{end}}
 
 {{/* first-push: what a repository with nothing pushed says, and the two
-     commands that change that. Takes (dict "Clone" url "Branch" name). */}}
+     commands that change that. Takes (typed view: "Clone" url "Branch" name). */}}
 {{define "first-push"}}
 <div class="empty">
   {{template "icon" "push"}}
@@ -65,7 +65,7 @@ git push -u origin {{.Branch}}</code></pre>
 {{end}}
 
 {{/* reveal: a secret shown once — a generated password or a new token.
-     Takes (dict "Label" "Value" "Note"). */}}
+     Takes (typed view: "Label" "Value" "Note"). */}}
 {{define "reveal"}}
 <div class="callout is-passed" role="status">
   {{template "icon" "key"}}
@@ -81,7 +81,7 @@ git push -u origin {{.Branch}}</code></pre>
 {{end}}
 
 {{/* copy-field: a read-only value with a button that copies it. Takes
-     (dict "ID" "Label" "Value"). */}}
+     (typed view: "ID" "Label" "Value"). */}}
 {{define "copy-field"}}
 <div class="field">
   <label class="field-label" for="{{.ID}}">{{.Label}}</label>
@@ -117,7 +117,7 @@ git push -u origin {{.Branch}}</code></pre>
 {{end}}
 
 {{/* feed: pushes, runs, deployments and settings changes, newest first.
-     Takes (dict "Entries" []activity.Entry "ShowRepo" bool). */}}
+     Takes (typed view: "Entries" []activity.Entry "ShowRepo" bool). */}}
 {{define "feed"}}
 {{if .Entries}}
 <ol class="feed">
@@ -132,14 +132,14 @@ git push -u origin {{.Branch}}</code></pre>
       {{- if eq .Kind "push"}}
         {{template "person" .Actor}} pushed
         {{- if gt .UpdateCount 1}} {{.UpdateCount}} refs
-        {{- else if .IsDelete}} and deleted {{template "ref" (dict "Kind" .RefKind "Name" .RefName)}}
-        {{- else if .IsCreate}} {{template "ref" (dict "Kind" .RefKind "Name" .RefName)}} <span class="muted">(new)</span> at {{template "commit" (dict "Repo" .RepoName "Hash" .NewCommit)}}
-        {{- else}} {{template "ref" (dict "Kind" .RefKind "Name" .RefName)}} to {{template "commit" (dict "Repo" .RepoName "Hash" .NewCommit)}}
+        {{- else if .IsDelete}} and deleted {{template "ref" (refModel .RefKind .RefName "")}}
+        {{- else if .IsCreate}} {{template "ref" (refModel .RefKind .RefName "")}} <span class="muted">(new)</span> at {{template "commit" (commitModel .RepoName .NewCommit)}}
+        {{- else}} {{template "ref" (refModel .RefKind .RefName "")}} to {{template "commit" (commitModel .RepoName .NewCommit)}}
         {{- end}}
       {{- else if eq .Kind "run"}}
         <a href="/{{.RepoName}}/runs/{{.RunNumber}}">Run #{{.RunNumber}}</a> {{.Status}}{{if .Actor}} <span class="muted">· {{template "person" .Actor}}</span>{{end}}
       {{- else if eq .Kind "deployment"}}
-        {{template "person" .Actor}} shipped {{if ownVersion .Version .Commit}}<span class="version">{{.Version}}</span>{{else}}{{template "commit" (dict "Repo" .RepoName "Hash" .Commit)}}{{end}} to <strong>{{.Target}}</strong>
+        {{template "person" .Actor}} deployed {{if ownVersion .Version .Commit}}<span class="version">{{.Version}}</span>{{else}}{{template "commit" (commitModel .RepoName .Commit)}}{{end}} to <strong>{{.Target}}</strong>
       {{- else if eq .Kind "event"}}
         {{template "person" .Actor}} {{eventText .Action .Detail}}
       {{- end}}
@@ -149,17 +149,17 @@ git push -u origin {{.Branch}}</code></pre>
   {{end}}
 </ol>
 {{else}}
-{{template "empty" (dict "Icon" "history" "Title" "No activity yet")}}
+{{template "empty" (emptyModel "history" "No activity yet" "" false)}}
 {{end}}
 {{end}}
 
 {{/* commit-table: commits, each with its branches and tags, its latest run
-     and its author; a column nothing fills is left out. Takes (dict "Rows"
+     and its author; a column nothing fills is left out. Takes (typed view: "Rows"
      []commitRow "Repo" *repo.Repo). */}}
 {{define "commit-table"}}
 {{$repo := .Repo}}{{$refs := anyRefs .Rows}}{{$runs := anyRun .Rows}}
 <div class="table-scroll">
-  <table class="table">
+  <table class="table table-cards">
     <thead><tr>
       <th scope="col">Commit</th>
       {{- if $refs}}<th scope="col">Refs</th>{{end}}
@@ -183,8 +183,8 @@ git push -u origin {{.Branch}}</code></pre>
 {{end}}
 
 {{/* repo-feed: one repository's activity, newest first: ref changes, refused
-     pushes, finished runs, versions shipped and settings changes. Takes
-     (dict "Entries" []activity.RepoEntry "Repo" *repo.Repo). */}}
+     pushes, finished runs, versions deployed and settings changes. Takes
+     (typed view: "Entries" []activity.RepoEntry "Repo" *repo.Repo). */}}
 {{define "repo-feed"}}
 {{$repo := .Repo}}
 {{if .Entries}}
@@ -203,21 +203,21 @@ git push -u origin {{.Branch}}</code></pre>
       {{- else if eq .Kind "refusal"}}
       {{template "person" .Actor}}'s push was refused
       {{- range .Refused}}
-      <span class="feed-reason">{{if .RefName}}{{template "ref" (dict "Kind" .RefKind "Name" .RefName)}} {{else if .Ref}}<span class="mono">{{.Ref}}</span> {{end}}{{.Reason}}</span>
+      <span class="feed-reason">{{if .RefName}}{{template "ref" (refModel .RefKind .RefName "")}} {{else if .Ref}}<span class="mono">{{.Ref}}</span> {{end}}{{.Reason}}</span>
       {{- end}}
       {{- else if eq .Kind "run"}}
-      <a href="/{{$repo.Name}}/runs/{{.RunNumber}}">Run #{{.RunNumber}}</a> {{.RunStatus}} {{template "ref" (dict "Kind" .RefKind "Name" .RefName)}}{{if .Actor}} <span class="muted">· {{template "person" .Actor}}</span>{{end}}
+      <a href="/{{$repo.Name}}/runs/{{.RunNumber}}">Run #{{.RunNumber}}</a> {{.RunStatus}} {{template "ref" (refModel .RefKind .RefName "")}}{{if .Actor}} <span class="muted">· {{template "person" .Actor}}</span>{{end}}
       {{- else if eq .Kind "deployment"}}
-      {{template "person" .Actor}} shipped {{if ownVersion .Version .Commit}}<span class="version">{{.Version}}</span>{{else}}{{template "commit" (dict "Repo" $repo.Name "Hash" .Commit)}}{{end}} to <strong>{{.Target}}</strong>
+      {{template "person" .Actor}} deployed {{if ownVersion .Version .Commit}}<span class="version">{{.Version}}</span>{{else}}{{template "commit" (commitModel $repo.Name .Commit)}}{{end}} to <strong>{{.Target}}</strong>
       {{- else if gt .Count 1}}
       {{$kind := .RefKind}}{{$count := .Count}}{{$named := len .Names}}
       {{template "person" .Actor}} {{.Change}} {{$count}} {{if eq $kind "tag"}}tags{{else}}branches{{end}}
-      <span class="feed-reason">{{range .Names}}{{template "ref" (dict "Kind" $kind "Name" .)}} {{end}}{{if gt $count $named}}<span class="muted">and {{sub $count $named}} more</span>{{end}}</span>
+      <span class="feed-reason">{{range .Names}}{{template "ref" (refModel $kind . "")}} {{end}}{{if gt $count $named}}<span class="muted">and {{sub $count $named}} more</span>{{end}}</span>
       {{- else}}
-      {{template "person" .Actor}} {{.Change}} {{template "ref" (dict "Kind" .RefKind "Name" .RefName)}}
-      {{- if eq .Change "created"}} at {{template "commit" (dict "Repo" $repo.Name "Hash" .NewCommit)}}
-      {{- else if eq .Change "deleted"}} <span class="muted">(was {{template "commit" (dict "Repo" $repo.Name "Hash" .OldCommit)}})</span>
-      {{- else}} {{template "commit" (dict "Repo" $repo.Name "Hash" .OldCommit)}} <span class="muted" aria-hidden="true">→</span><span class="visually-hidden">to</span> {{template "commit" (dict "Repo" $repo.Name "Hash" .NewCommit)}}
+      {{template "person" .Actor}} {{.Change}} {{template "ref" (refModel .RefKind .RefName "")}}
+      {{- if eq .Change "created"}} at {{template "commit" (commitModel $repo.Name .NewCommit)}}
+      {{- else if eq .Change "deleted"}} <span class="muted">(was {{template "commit" (commitModel $repo.Name .OldCommit)}})</span>
+      {{- else}} {{template "commit" (commitModel $repo.Name .OldCommit)}} <span class="muted" aria-hidden="true">→</span><span class="visually-hidden">to</span> {{template "commit" (commitModel $repo.Name .NewCommit)}}
       {{- end}}
       {{- if .RunNumber}} <span class="muted">·</span> <a class="run-ref" href="/{{$repo.Name}}/runs/{{.RunNumber}}">{{template "status-icon" .RunStatus}}<span>#{{.RunNumber}}</span></a>{{end}}
       {{- end}}
@@ -227,7 +227,7 @@ git push -u origin {{.Branch}}</code></pre>
   {{end}}
 </ol>
 {{else}}
-{{template "empty" (dict "Icon" "history" "Title" "No activity yet")}}
+{{template "empty" (emptyModel "history" "No activity yet" "" false)}}
 {{end}}
 {{end}}
 
@@ -298,6 +298,6 @@ git push -u origin {{.Branch}}</code></pre>
   {{if $d.MoreFiles}}<p class="panel-footer">{{$d.MoreFiles}} more changed file{{if ne $d.MoreFiles 1}}s{{end}} not shown: the diff reached its size limit.</p>{{end}}
 </section>
 {{else}}
-<div class="panel">{{template "empty" (dict "Icon" "compare" "Title" "No changes")}}</div>
+<div class="panel">{{template "empty" (emptyModel "compare" "No changes" "" false)}}</div>
 {{end}}
 {{end}}

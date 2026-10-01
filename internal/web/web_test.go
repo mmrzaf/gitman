@@ -22,7 +22,7 @@ import (
 	reposvc "github.com/mmrzaf/gitman/internal/repo"
 )
 
-const testSecretKey = "a very secret passphrase, at least 32 bytes long"
+const testSecretKey = "STsEYlF+KWuLHwa+R+yP7w5HqEwoKF2zUqpbukDA9PE="
 
 type browser struct {
 	t       *testing.T
@@ -82,7 +82,7 @@ func setup(t *testing.T) (*postgres.DB, *browser) {
 	database := pgtest.Open(t)
 	store := git.NewStore(t.TempDir())
 	t.Cleanup(store.Close)
-	cfg := &config.Config{DataDir: t.TempDir(), PublicURL: "http://gitman.test", Port: 8080, SecretKey: testSecretKey}
+	cfg := &config.Config{Retention: config.DefaultRetention(), DataDir: t.TempDir(), PublicURL: "http://gitman.test", Port: 8080, SecretKey: testSecretKey}
 	app, err := New(cfg, testServices(database, store, cfg.SecretKey), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
@@ -268,6 +268,7 @@ func TestHomeBoard(t *testing.T) {
 	}
 	for _, q := range []string{
 		`INSERT INTO repos (id, name, description) VALUES ('r1', 'waiotech', ''), ('r2', 'cerv', '')`,
+		`INSERT INTO refs (repo_id, kind, name, commit_hash) VALUES ('r1', 'branch', 'main', 'aaaaaaaaaaaa')`,
 		`INSERT INTO runs (id, repo_id, number, commit_hash, trigger, status, finished_at, ref_kind, ref_name) VALUES ('run1', 'r1', 7, 'aaaaaaaaaaaa', 'push', 'passed', now(), 'branch', 'main')`,
 		`INSERT INTO deployments (id, repo_id, target, version, commit_hash, run_id, person_id, created_at)
 		 VALUES ('d1', 'r1', 'staging', '3f2a91cb1de0', 'aaaaaaaaaaaa', 'run1', '` + p.ID + `', now() - interval '2 hours'),
@@ -281,7 +282,7 @@ func TestHomeBoard(t *testing.T) {
 	resp, body := b.do(http.MethodGet, "/", nil, nil)
 	// One column per target anything has shipped to; a repository that
 	// has shipped nothing there says so.
-	expect(t, resp, body, http.StatusOK, "waiotech", "3f2a91cb1de0", "<span>#7</span>", "2 h ago", "cerv", `<td>staging</td>`)
+	expect(t, resp, body, http.StatusOK, "waiotech", "3f2a91cb1de0", "<span>#7</span>", "2 h ago", "cerv", `>staging</div></td>`)
 	if !strings.Contains(body, `class="brand" href="/" aria-label="Gitman home"`) ||
 		!strings.Contains(body, `class="menu-item" href="/people"`) || strings.Contains(body, `class="topbar-link"`) {
 		t.Error("the logo must link home and People must be in the admin account menu")
@@ -320,7 +321,7 @@ func setupApp(t *testing.T) (*App, *postgres.DB, *git.Store, *browser) {
 	database := pgtest.Open(t)
 	store := git.NewStore(t.TempDir())
 	t.Cleanup(store.Close)
-	cfg := &config.Config{DataDir: t.TempDir(), PublicURL: "http://gitman.test", Port: 8080, SecretKey: testSecretKey}
+	cfg := &config.Config{Retention: config.DefaultRetention(), DataDir: t.TempDir(), PublicURL: "http://gitman.test", Port: 8080, SecretKey: testSecretKey}
 	app, err := New(cfg, testServices(database, store, cfg.SecretKey), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
