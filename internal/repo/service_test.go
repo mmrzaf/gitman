@@ -191,7 +191,7 @@ func TestSyncRefs(t *testing.T) {
 	}
 }
 
-const testSecretKey = "a very secret passphrase, at least 32 bytes long"
+const testSecretKey = "STsEYlF+KWuLHwa+R+yP7w5HqEwoKF2zUqpbukDA9PE="
 
 func TestSecretsNeverExposeValue(t *testing.T) {
 	ctx := context.Background()
@@ -485,6 +485,9 @@ func TestSetDefaultPush(t *testing.T) {
 		t.Fatalf("Create: DefaultPushPolicy = %q, want %q", r.DefaultPushPolicy, PushEveryone)
 	}
 
+	if _, err := database.Q.Exec(ctx, `INSERT INTO people (id, username, password_hash) VALUES ('person-1', 'person-one', 'unused')`); err != nil {
+		t.Fatal(err)
+	}
 	if err := svc.SetDefaultPush(ctx, r.ID, PushPeople, []string{"person-1"}, ""); err != nil {
 		t.Fatalf("SetDefaultPush: %v", err)
 	}

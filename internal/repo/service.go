@@ -2,11 +2,13 @@ package repo
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/mmrzaf/gitman/internal/activity"
@@ -53,34 +55,31 @@ func (s *Service) Create(ctx context.Context, name, description, defaultBranch, 
 		return nil, err
 	}
 
-	var r *Repo
-	created := false
-	err := s.db.Tx(ctx, func(tx postgres.Tx) error {
-		var err error
-		if r, err = insertRepo(ctx, tx, id.New(), name, description, defaultBranch, actorID); err != nil {
+	repoID := id.New()
+	var result *Repo
+	err := s.WithMutation(ctx, repoID, func() error {
+		// Reserve the name before touching Git; competing creates share this lock.
+		unlock, err := s.git.MutationLock(ctx, fmt.Sprintf("%x", sha256.Sum256([]byte(name))))
+		if err != nil {
 			return err
 		}
-		if err := activity.Record(ctx, tx, r.ID, actorID, activity.RepoCreated, r.Name); err != nil {
+		defer unlock()
+		if _, err := s.GetByName(ctx, name); err == nil {
+			return postgres.ErrAlreadyExists
+		} else if !errors.Is(err, postgres.ErrNotFound) {
 			return err
 		}
-		// The directory is created last inside the transaction, so a
-		// failed insert never leaves a directory behind; if the commit
-		// itself fails, the directory is removed below.
-		if err := s.git.Create(ctx, r.ID, defaultBranch); err != nil {
+		op, err := s.BeginOperation(ctx, repoID, "create", name, actorID, repositoryIntent{Name: name, Description: description, Branch: defaultBranch})
+		if err != nil {
 			return err
 		}
-		created = true
-		return nil
+		if err := s.applyRepositoryOperation(ctx, *op); err != nil {
+			return err
+		}
+		result, err = s.GetByID(ctx, repoID)
+		return err
 	})
-	if err != nil {
-		if created {
-			if delErr := s.git.Delete(r.ID); delErr != nil && !errors.Is(delErr, git.ErrNotFound) {
-				return nil, fmt.Errorf("%w (and its half-created directory could not be removed either: %v)", err, delErr)
-			}
-		}
-		return nil, err
-	}
-	return r, nil
+	return result, err
 }
 
 // GetByName looks up a repository by name.
@@ -127,6 +126,8 @@ func (s *Service) CanRead(ctx context.Context, r *Repo, personID string, isAdmin
 // CanReadID is CanRead for a caller that has a repository's ID but has
 // not loaded the repository itself, such as an event naming it.
 func (s *Service) CanReadID(ctx context.Context, repoID, personID string, isAdmin bool) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	r, err := s.GetByID(ctx, repoID)
 	if err != nil {
 		return false, err
@@ -146,32 +147,20 @@ func (s *Service) Open(r *Repo) (*git.Repo, error) {
 	return gitRepo, nil
 }
 
-// Delete removes a repository's record — and with it, through foreign
-// keys, its refs, rules, pushes and runs — and then its directory. If
-// removing the directory fails after the record is gone, the repository
-// is already unreachable, and the returned error names the files an
-// operator must remove.
+// Delete journals the operation, moves storage aside, and removes the database
+// record and its dependent data. Recovery completes an interrupted deletion.
 func (s *Service) Delete(ctx context.Context, repoID, actorID string) error {
-	var name string
-	err := s.db.Tx(ctx, func(tx postgres.Tx) error {
-		// A push landing now finishes recording itself first, or finds
-		// the repository gone; never half of each.
-		if err := lockRefIndex(ctx, tx, repoID); err != nil {
+	return s.WithMutation(ctx, repoID, func() error {
+		r, err := s.GetByID(ctx, repoID)
+		if err != nil {
 			return err
 		}
-		var err error
-		if name, err = deleteRepoRow(ctx, tx, repoID); err != nil {
+		op, err := s.BeginOperation(ctx, repoID, "delete", "", actorID, repositoryIntent{Name: r.Name})
+		if err != nil {
 			return err
 		}
-		return activity.Record(ctx, tx, "", actorID, activity.RepoDeleted, name)
+		return s.applyRepositoryOperation(ctx, *op)
 	})
-	if err != nil {
-		return err
-	}
-	if err := s.git.Delete(repoID); err != nil && !errors.Is(err, git.ErrNotFound) {
-		return fmt.Errorf("repository %s was removed but its files were not: %w", name, err)
-	}
-	return nil
 }
 
 // SetDescription updates a repository's description.
@@ -193,39 +182,48 @@ func (s *Service) SetDescription(ctx context.Context, repoID, description, actor
 // against. It must be a branch the repository has. Gitman never changes
 // the default branch on its own; this is the only way it changes.
 //
-// The record and Git's HEAD change together: HEAD is moved last inside
-// the transaction, and moved back if the transaction then fails to
-// commit.
+// A durable intent lets recovery finish an interrupted HEAD change.
 func (s *Service) SetDefaultBranch(ctx context.Context, r *Repo, branch, actorID string) error {
 	if err := ValidateDefaultBranch(branch); err != nil {
 		return err
 	}
-	gitRepo, err := s.Open(r)
-	if err != nil {
-		return err
-	}
-	var previous string
-	headMoved := false
-	err = s.db.Tx(ctx, func(tx postgres.Tx) error {
-		// Holding the ref index lock keeps a push from being recorded
-		// between checking that the branch exists and choosing it.
-		if err := lockRefIndex(ctx, tx, r.ID); err != nil {
+	return s.WithMutation(ctx, r.ID, func() error {
+		current, err := s.GetByID(ctx, r.ID)
+		if err != nil {
 			return err
 		}
-		refs, err := gitRepo.Refs(ctx)
+		if current.DefaultBranch == branch {
+			return nil
+		}
+		gr, err := s.Open(current)
 		if err != nil {
-			return fmt.Errorf("list refs: %w", err)
+			return err
+		}
+		refs, err := gr.Refs(ctx)
+		if err != nil {
+			return err
 		}
 		if !slices.ContainsFunc(refs, func(ref git.Ref) bool { return ref.Kind == git.KindBranch && ref.Name == branch }) {
 			return apperr.New(apperr.KindInvalid, fmt.Sprintf("%s has no branch named %q", r.Name, branch))
 		}
-		if previous, err = updateDefaultBranchRow(ctx, tx, r.ID, branch); err != nil {
+		op, err := s.BeginOperation(ctx, r.ID, "head", "", actorID, repositoryIntent{Branch: branch})
+		if err != nil {
 			return err
 		}
-		if previous == branch {
-			return nil
-		}
-		if err := activity.Record(ctx, tx, r.ID, actorID, activity.RepoDefaultBranchChanged, branch); err != nil {
+		return s.applyRepositoryOperation(ctx, *op)
+	})
+}
+
+// SetAccess replaces a repository's complete access policy atomically.
+func (s *Service) SetAccess(ctx context.Context, repoID string, visibility Visibility, policy PushPolicy, readers, pushers []string, actorID string) error {
+	if err := ValidateVisibility(visibility); err != nil {
+		return err
+	}
+	if err := ValidateDefaultPush(policy, pushers); err != nil {
+		return err
+	}
+	return s.db.Tx(ctx, func(tx postgres.Tx) error {
+		if err := lockRefIndex(ctx, tx, repoID); err != nil {
 			return err
 		}
 		if err := validatePeople(ctx, tx, append(append([]string{}, readers...), pushers...)); err != nil {
@@ -333,6 +331,12 @@ func (s *Service) SaveRule(ctx context.Context, repoID string, r Rule, actorID s
 		return err
 	}
 	return s.db.Tx(ctx, func(tx postgres.Tx) error {
+		if err := lockRefIndex(ctx, tx, repoID); err != nil {
+			return err
+		}
+		if err := validatePeople(ctx, tx, r.PushPeople); err != nil {
+			return err
+		}
 		if err := upsertRule(ctx, tx, id.New(), repoID, r, actorID); err != nil {
 			return err
 		}
@@ -343,6 +347,9 @@ func (s *Service) SaveRule(ctx context.Context, repoID string, r Rule, actorID s
 // DeleteRule removes the rule for (kind, pattern).
 func (s *Service) DeleteRule(ctx context.Context, repoID string, kind git.Kind, pattern, actorID string) error {
 	return s.db.Tx(ctx, func(tx postgres.Tx) error {
+		if err := lockRefIndex(ctx, tx, repoID); err != nil {
+			return err
+		}
 		if err := deleteRuleRow(ctx, tx, repoID, kind, pattern); err != nil {
 			return err
 		}
@@ -411,6 +418,15 @@ func (s *Service) SyncRefsTx(ctx context.Context, tx postgres.Tx, repoID string,
 	commits := make([]string, len(actual))
 	for i, r := range actual {
 		kinds[i], refNames[i], commits[i] = string(r.Kind), r.Name, r.Commit
+	}
+	if err := storeCommitMetadata(ctx, tx, repoID, commits, func(hash string) (string, string, string, time.Time, error) {
+		c, err := gitRepo.Commit(ctx, hash)
+		if err != nil {
+			return "", "", "", time.Time{}, err
+		}
+		return c.Subject, c.Author.Name, c.Author.Email, c.Author.When, nil
+	}); err != nil {
+		return nil, err
 	}
 	return actual, syncRefsRows(ctx, tx, repoID, kinds, refNames, commits, personID)
 }
