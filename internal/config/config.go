@@ -16,6 +16,10 @@ import (
 	"strings"
 )
 
+func DefaultRetention() Retention { return Retention{Logs: 30, Runs: 90, Audit: 365, Deployments: 365} }
+
+type Retention struct{ Logs, Runs, Audit, Deployments int }
+
 // Config holds every setting Gitman reads from its environment.
 type Config struct {
 	Resources Resources
@@ -37,10 +41,8 @@ type Config struct {
 	// network it is usually the web container's internal address.
 	WebURL string
 
-	// RetentionDays is how many days finished runs and their logs are
-	// kept. Each ref's latest run and every deployment record are kept
-	// regardless. 0 keeps everything.
-	RetentionDays int
+	// Retention separates logs, run metadata, audit records and deployments.
+	Retention Retention
 
 	// SecretKey encrypts repository secrets at rest. Secret storage is
 	// unavailable when this is empty.
@@ -95,10 +97,11 @@ const (
 	EnvPort        = "GITMAN_PORT"
 	// EnvDatabaseMaxConns caps the web and worker processes' connection
 	// pool sizes; 0 (the default) keeps each process's own default.
-	EnvDatabaseMaxConns = "GITMAN_DATABASE_MAX_CONNS"
-	// EnvRetentionDays is how many days finished runs and their logs are
-	// kept; 0 keeps them forever.
-	EnvRetentionDays = "GITMAN_RETENTION_DAYS"
+	EnvDatabaseMaxConns        = "GITMAN_DATABASE_MAX_CONNS"
+	EnvLogRetentionDays        = "GITMAN_LOG_RETENTION_DAYS"
+	EnvRunRetentionDays        = "GITMAN_RUN_RETENTION_DAYS"
+	EnvAuditRetentionDays      = "GITMAN_AUDIT_RETENTION_DAYS"
+	EnvDeploymentRetentionDays = "GITMAN_DEPLOYMENT_RETENTION_DAYS"
 	// EnvTrustedProxies is a comma-separated list of IP addresses or
 	// CIDR ranges, such as "172.16.0.0/12" for a proxy on a Docker
 	// network.
@@ -134,8 +137,19 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
-	if cfg.RetentionDays, err = getEnvInt(EnvRetentionDays, 90); err != nil {
-		return nil, err
+	for _, setting := range []struct {
+		name     string
+		fallback int
+		dst      *int
+	}{
+		{EnvStepMemoryMiB, 2048, &cfg.Resources.MemoryMiB}, {EnvStepCPUs, 2, &cfg.Resources.CPUs},
+		{EnvStepPIDs, 256, &cfg.Resources.PIDs}, {EnvWorkspaceGiB, 10, &cfg.Resources.WorkspaceGiB}, {EnvDiskReserveGiB, 5, &cfg.Resources.DiskReserveGiB},
+		{EnvLogRetentionDays, 30, &cfg.Retention.Logs}, {EnvRunRetentionDays, 90, &cfg.Retention.Runs},
+		{EnvAuditRetentionDays, 365, &cfg.Retention.Audit}, {EnvDeploymentRetentionDays, 365, &cfg.Retention.Deployments},
+	} {
+		if *setting.dst, err = getEnvInt(setting.name, setting.fallback); err != nil {
+			return nil, err
+		}
 	}
 
 	proxies, err := parseProxies(os.Getenv(EnvTrustedProxies))
@@ -191,8 +205,16 @@ func (c *Config) Validate() error {
 	if c.DatabaseMaxConns < 0 || c.DatabaseMaxConns > 1000 || c.DatabaseMaxConns > 0 && c.DatabaseMaxConns < 4 {
 		return fmt.Errorf("%s must be 0 (the process's own default) or between 4 and 1000", EnvDatabaseMaxConns)
 	}
-	if c.RetentionDays < 0 || c.RetentionDays > 36500 {
-		return fmt.Errorf("%s must be between 0 (keep forever) and 36500 days", EnvRetentionDays)
+	for _, setting := range []struct {
+		name string
+		days int
+	}{
+		{EnvLogRetentionDays, c.Retention.Logs}, {EnvRunRetentionDays, c.Retention.Runs},
+		{EnvAuditRetentionDays, c.Retention.Audit}, {EnvDeploymentRetentionDays, c.Retention.Deployments},
+	} {
+		if setting.days < 1 || setting.days > 36500 {
+			return fmt.Errorf("%s must be between 1 and 36500 days", setting.name)
+		}
 	}
 	if c.SecretKey != "" {
 		raw, err := base64.StdEncoding.DecodeString(c.SecretKey)

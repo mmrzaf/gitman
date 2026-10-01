@@ -559,3 +559,165 @@ func (s *Service) PruneRuns(ctx context.Context, before time.Time) (int64, error
 func (s *Service) PruneWorkers(ctx context.Context, before time.Time) (int64, error) {
 	return deleteGoneWorkers(ctx, s.db.Q, before)
 }
+
+func (s *Service) LogTail(ctx context.Context, stepID string) (*LogTail, error) {
+	return selectLogTail(ctx, s.db.Q, stepID)
+}
+
+// PlanContainer records a deterministic recovery handle before Docker creation.
+func (s *Service) PlanContainer(ctx context.Context, runID, stepID, name string) error {
+	ctx, stop := context.WithTimeout(ctx, 10*time.Second)
+	defer stop()
+	tag, err := s.db.Q.Exec(ctx, `UPDATE steps SET container_name = $3 WHERE id = $2 AND run_id = $1 AND status = 'running' AND EXISTS (SELECT 1 FROM runs WHERE id = $1 AND status = 'running' AND NOT cancel_requested)`, runID, stepID, name)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrRunEnded
+	}
+	return nil
+}
+
+func (s *Service) ContainerCreated(ctx context.Context, runID, stepID, containerID string) error {
+	ctx, stop := context.WithTimeout(ctx, 10*time.Second)
+	defer stop()
+	tag, err := s.db.Q.Exec(ctx, `UPDATE steps SET container_id = $3 WHERE id = $2 AND run_id = $1 AND status = 'running' AND EXISTS (SELECT 1 FROM runs WHERE id = $1 AND status = 'running' AND NOT cancel_requested) AND (type = 'run' OR EXISTS(SELECT 1 FROM deployment_targets WHERE owner_run_id = $1 AND owner_step_id = $2 AND generation = steps.deployment_generation))`, runID, stepID, containerID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrRunEnded
+	}
+	return nil
+}
+
+// RecoveryRun identifies a run interrupted on this worker. Recovery stops its
+// containers and fails the run; it never re-executes pipeline scripts.
+type RecoveryRun struct {
+	ID         string
+	Containers []string
+	Foreign    bool
+}
+
+func (s *Service) RecoveryRuns(ctx context.Context, workerID, engineID string) ([]RecoveryRun, error) {
+	ctx, stop := context.WithTimeout(ctx, 10*time.Second)
+	defer stop()
+	rows, err := s.db.Q.Query(ctx, `SELECT r.id, ARRAY(SELECT container_name FROM steps WHERE run_id = r.id AND container_name IS NOT NULL AND container_removed_at IS NULL), r.worker_id <> $1 FROM runs r JOIN workers w ON w.id=r.worker_id WHERE (r.worker_id = $1 OR ($2<>'' AND w.engine_id=$2 AND (w.stopped_at IS NOT NULL OR w.heartbeat_at < now()-interval '1 minute'))) AND (r.status = 'running' OR EXISTS (SELECT 1 FROM steps WHERE run_id = r.id AND container_name IS NOT NULL AND container_removed_at IS NULL))`, workerID, engineID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var runs []RecoveryRun
+	for rows.Next() {
+		var run RecoveryRun
+		if err := rows.Scan(&run.ID, &run.Containers, &run.Foreign); err != nil {
+			return nil, err
+		}
+		runs = append(runs, run)
+	}
+	return runs, rows.Err()
+}
+
+// SetWorkerReadiness is independent of heartbeat. An alive worker may be unable
+// to execute work because Docker, disk capacity or recovery is unavailable.
+func (s *Service) SetWorkerReadiness(ctx context.Context, workerID string, ready bool, reason string, images []string) error {
+	ctx, stop := context.WithTimeout(ctx, 10*time.Second)
+	defer stop()
+	if images == nil {
+		images = []string{}
+	}
+	_, err := s.db.Q.Exec(ctx, `UPDATE workers SET ready = $2, readiness_reason = $3, images = $4, readiness_at = now() WHERE id = $1`, workerID, ready, reason, normalizeImages(images))
+	return err
+}
+
+type WorkerStatus struct {
+	ID, Hostname, Reason string
+	Ready                bool
+	Heartbeat            time.Time
+	Stopped              *time.Time
+	Images               []string
+	ActiveRuns           int
+}
+
+func (s *Service) Workers(ctx context.Context) ([]WorkerStatus, error) {
+	rows, err := s.db.Q.Query(ctx, `SELECT id, hostname, ready AND stopped_at IS NULL AND heartbeat_at >= now() - interval '1 minute' AND readiness_at >= now() - interval '1 minute', CASE WHEN stopped_at IS NOT NULL THEN 'Stopped' WHEN heartbeat_at < now() - interval '1 minute' THEN 'Heartbeat is stale' WHEN readiness_at IS NULL OR readiness_at < now() - interval '1 minute' THEN 'Readiness has not been checked recently' ELSE readiness_reason END, heartbeat_at, stopped_at, images, active_runs FROM workers ORDER BY started_at DESC LIMIT 100`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var workers []WorkerStatus
+	for rows.Next() {
+		var w WorkerStatus
+		if err := rows.Scan(&w.ID, &w.Hostname, &w.Ready, &w.Reason, &w.Heartbeat, &w.Stopped, &w.Images, &w.ActiveRuns); err != nil {
+			return nil, err
+		}
+		workers = append(workers, w)
+	}
+	return workers, rows.Err()
+}
+
+func (s *Service) AnyWorkerReadyForRun(ctx context.Context, runID string) (bool, error) {
+	var ready bool
+	err := s.db.Q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM workers w JOIN runs r ON r.id = $1 WHERE w.ready AND w.stopped_at IS NULL AND w.heartbeat_at >= now() - interval '1 minute' AND w.readiness_at >= now() - interval '1 minute' AND r.required_images <@ w.images)`, runID).Scan(&ready)
+	return ready, err
+}
+
+// RecoverStepExit stores a retained daemon receipt without starting anything.
+func (s *Service) RecoverStepExit(ctx context.Context, runID, name string, code int) error {
+	ctx, stop := context.WithTimeout(ctx, 10*time.Second)
+	defer stop()
+	return s.db.Tx(ctx, func(tx postgres.Tx) error {
+		var stepID string
+		if err := tx.QueryRow(ctx, `SELECT id FROM steps WHERE run_id=$1 AND (container_name=$2 OR container_id=$2)`, runID, name).Scan(&stepID); err != nil {
+			return postgres.NormalizeNotFound(err)
+		}
+		status := StepFailed
+		if code == 0 {
+			status = StepPassed
+		}
+		return finishExecutionReceipt(ctx, tx, runID, stepID, status, &code, true)
+	})
+}
+
+func (s *Service) ContainerRemoved(ctx context.Context, runID, name string) error {
+	ctx, stop := context.WithTimeout(ctx, 10*time.Second)
+	defer stop()
+	_, err := s.db.Q.Exec(ctx, `UPDATE steps SET container_removed_at = now() WHERE run_id = $1 AND container_name = $2 AND container_removed_at IS NULL`, runID, name)
+	return err
+}
+
+func (s *Service) AdmitMutation(ctx context.Context) (context.Context, func(), error) {
+	return s.db.AdmitMutation(ctx)
+}
+
+func (s *Service) BindWorkerEngine(ctx context.Context, workerID, engineID, root string) error {
+	ctx, stop := context.WithTimeout(ctx, 10*time.Second)
+	defer stop()
+	return s.db.Tx(ctx, func(tx postgres.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('gitman.engine.' || $1,0))`, engineID); err != nil {
+			return err
+		}
+		var incompatible bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM workers WHERE engine_id=$1 AND workspace_root<>$2)`, engineID, root).Scan(&incompatible); err != nil {
+			return err
+		}
+		if incompatible {
+			return errors.New("workers sharing a Docker engine must share the same absolute workspace root")
+		}
+		_, err := tx.Exec(ctx, `UPDATE workers SET engine_id=$2,workspace_root=$3 WHERE id=$1`, workerID, engineID, root)
+		return err
+	})
+}
+func (s *Service) Maintenance(ctx context.Context) (bool, error) { return s.db.Maintenance(ctx) }
+
+// ConfirmContainersRemoved is called only after cleanup removed every labelled
+// container while holding the run's filesystem execution lock.
+func (s *Service) ConfirmContainersRemoved(ctx context.Context, runID string) error {
+	if err := s.ConfirmExecutionStopped(ctx, runID); err != nil {
+		return err
+	}
+	ctx, stop := context.WithTimeout(ctx, 10*time.Second)
+	defer stop()
+	_, err := s.db.Q.Exec(ctx, `UPDATE steps SET container_removed_at=now() WHERE run_id=$1 AND container_name IS NOT NULL AND container_removed_at IS NULL`, runID)
+	return err
+}
