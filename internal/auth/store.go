@@ -155,18 +155,18 @@ const tokenColumns = `id, person_id, name, scope, created_at, expires_at, last_u
 
 func scanToken(row interface{ Scan(...any) error }) (*AccessToken, error) {
 	t := &AccessToken{}
-	if err := row.Scan(&t.ID, &t.PersonID, &t.Name, &t.Scope, &t.CreatedAt, &t.ExpiresAt, &t.LastUsedAt); err != nil {
+	if err := row.Scan(&t.ID, &t.PersonID, &t.Name, &t.Scope, &t.CreatedAt, &t.ExpiresAt, &t.LastUsedAt, &t.AllRepositories, &t.Repositories); err != nil {
 		return nil, err
 	}
 	return t, nil
 }
 
-func insertToken(ctx context.Context, q postgres.Querier, t *AccessToken, tokenHash string) error {
+func insertToken(ctx context.Context, q postgres.Querier, t *AccessToken, tokenHash string, generation int64) error {
 	err := q.QueryRow(ctx, `
-		INSERT INTO tokens (id, person_id, name, token_hash, scope, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO tokens (id, person_id, name, token_hash, scope, expires_at, auth_generation, all_repositories)
+		SELECT $1, id, $3, $4, $5, $6, auth_generation, $8 FROM people WHERE id = $2 AND auth_generation = $7 AND disabled_at IS NULL AND bootstrap_expires_at IS NULL
 		RETURNING created_at
-	`, t.ID, t.PersonID, t.Name, tokenHash, t.Scope, t.ExpiresAt).Scan(&t.CreatedAt)
+	`, t.ID, t.PersonID, t.Name, tokenHash, t.Scope, t.ExpiresAt, generation, t.AllRepositories).Scan(&t.CreatedAt)
 	return postgres.NormalizeWrite(err)
 }
 
@@ -206,18 +206,22 @@ func deleteTokenRow(ctx context.Context, q postgres.Querier, tokenID string) err
 // useToken resolves a token hash to its owner and scope, recording the
 // use. The expiry check, the disabled-person check and the last_used_at
 // update are one statement, so a token revoked or a person disabled
-// concurrently can never authenticate.
-func useToken(ctx context.Context, q postgres.Querier, tokenHash string) (*Person, Scope, error) {
+// concurrently stops subsequent authentication. Each token also carries
+// the password generation at creation, closing reset/creation races.
+func useToken(ctx context.Context, q postgres.Querier, tokenHash, repositoryName string) (*Person, Scope, error) {
 	var scope Scope
 	p, err := scanPerson(q.QueryRow(ctx, `
 		UPDATE tokens SET last_used_at = now()
 		FROM people
 		WHERE tokens.token_hash = $1
 		  AND tokens.person_id = people.id
-		  AND (tokens.expires_at IS NULL OR tokens.expires_at > now())
+		  AND tokens.expires_at > now()
+		  AND tokens.auth_generation = people.auth_generation
+		  AND people.bootstrap_expires_at IS NULL
+		  AND (tokens.all_repositories OR EXISTS (SELECT 1 FROM token_repos tr JOIN repos r ON r.id = tr.repo_id WHERE tr.token_id = tokens.id AND r.name = lower($2)))
 		  AND people.disabled_at IS NULL
 		RETURNING `+personColumns+`, tokens.scope
-	`, tokenHash), &scope)
+	`, tokenHash, repositoryName), &scope)
 	if err != nil {
 		if errors.Is(postgres.NormalizeNotFound(err), postgres.ErrNotFound) {
 			return nil, "", ErrInvalidToken

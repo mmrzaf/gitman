@@ -8,10 +8,12 @@ import (
 	"github.com/mmrzaf/gitman/internal/apperr"
 	"github.com/mmrzaf/gitman/internal/auth"
 	"github.com/mmrzaf/gitman/internal/postgres"
+	reposvc "github.com/mmrzaf/gitman/internal/repo"
 )
 
 type mePage struct {
 	Tokens       []auth.AccessToken
+	Repositories []*reposvc.Repo
 	PasswordForm *form
 	TokenForm    *form
 	NewToken     string
@@ -26,7 +28,11 @@ func (a *App) meView(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	a.render(w, r, http.StatusOK, "me", "Your account", mePage{
+	repositories, err := a.repos.ListReadable(r.Context(), person.ID, person.IsAdmin)
+	if err != nil {
+		return err
+	}
+	a.render(w, r, http.StatusOK, "me", "Your account", mePage{Repositories: repositories,
 		Tokens: tokens, PasswordForm: newForm(nil), TokenForm: newForm(nil),
 		Tab: tabFrom(r, "tokens", "password"), Dialog: dialogFrom(r, "token-new"),
 	})
@@ -46,7 +52,7 @@ func (a *App) mePasswordChange(w http.ResponseWriter, r *http.Request) error {
 		return a.reRenderMe(w, r, mePage{PasswordForm: f, TokenForm: newForm(nil), Tab: "password"})
 	}
 
-	err := a.people.ChangePassword(r.Context(), person.ID, current, next)
+	person, err := a.people.ChangePassword(r.Context(), person.ID, current, next)
 	switch {
 	case errors.Is(err, auth.ErrInvalidCredentials):
 		f.Fail("current_password", "That is not your current password.")
@@ -59,12 +65,12 @@ func (a *App) mePasswordChange(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	// Changing the password ended every session, this one included.
-	token, expires, err := a.people.CreateSession(r.Context(), person.ID, sessionTTL)
+	token, expires, err := a.people.CreateSession(r.Context(), person, sessionTTL)
 	if err != nil {
 		return err
 	}
 	a.setSessionCookie(w, token, expires)
-	a.redirect(w, r, "/me?tab=password", flashSuccess, "Password changed. Your other sessions were signed out.")
+	a.redirect(w, r, "/me?tab=password", flashSuccess, "Password changed. Other sessions and all access tokens were revoked.")
 	return nil
 }
 
@@ -76,6 +82,10 @@ func (a *App) reRenderMe(w http.ResponseWriter, r *http.Request, page mePage) er
 		return err
 	}
 	page.Tokens = tokens
+	page.Repositories, err = a.repos.ListReadable(r.Context(), personFrom(r).ID, personFrom(r).IsAdmin)
+	if err != nil {
+		return err
+	}
 	a.render(w, r, http.StatusUnprocessableEntity, "me", "Your account", page)
 	return nil
 }
@@ -99,18 +109,31 @@ func (a *App) meCreateToken(w http.ResponseWriter, r *http.Request) error {
 	case "90":
 		d := 90 * 24 * time.Hour
 		ttl = &d
-	case "never", "":
+	case "", "30-default":
+		d := 30 * 24 * time.Hour
+		ttl = &d
 	default:
 		f.Fail("expires", "Unrecognized expiry.")
 	}
 	if name == "" {
 		f.Fail("name", "Enter a name.")
 	}
+	var selectedRepositories []string
+	switch f.Get("repositories_scope") {
+	case "", "all":
+	case "selected":
+		selectedRepositories = r.PostForm["repositories"]
+		if len(selectedRepositories) == 0 {
+			f.Fail("repositories", "Select at least one repository.")
+		}
+	default:
+		f.Fail("repositories", "Unrecognized repository access.")
+	}
 	if !f.Valid() {
 		return a.reRenderMe(w, r, mePage{PasswordForm: newForm(nil), TokenForm: f, Tab: "tokens", Dialog: "token-new"})
 	}
 
-	plain, _, err := a.people.CreateToken(r.Context(), person.ID, name, scope, ttl)
+	plain, _, err := a.people.CreateToken(r.Context(), person.ID, name, scope, ttl, selectedRepositories)
 	switch {
 	case failForm(f, "name", err):
 		return a.reRenderMe(w, r, mePage{PasswordForm: newForm(nil), TokenForm: f, Tab: "tokens", Dialog: "token-new"})
@@ -123,7 +146,11 @@ func (a *App) meCreateToken(w http.ResponseWriter, r *http.Request) error {
 	}
 	// The token is shown in this response only, and kept out of caches.
 	noStore(w)
-	a.render(w, r, http.StatusOK, "me", "Your account", mePage{
+	repositories, err := a.repos.ListReadable(r.Context(), person.ID, person.IsAdmin)
+	if err != nil {
+		return err
+	}
+	a.render(w, r, http.StatusOK, "me", "Your account", mePage{Repositories: repositories,
 		Tokens: tokens, PasswordForm: newForm(nil), TokenForm: newForm(nil), NewToken: plain, Tab: "tokens",
 	})
 	return nil
@@ -140,5 +167,15 @@ func (a *App) meDeleteToken(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	a.redirect(w, r, "/me", flashSuccess, "Revoked \u201c"+token.Name+"\u201d.")
+	return nil
+}
+
+func (a *App) meRevokeAll(w http.ResponseWriter, r *http.Request) error {
+	p := personFrom(r)
+	if err := a.people.RevokeAll(r.Context(), p.ID, p.ID); err != nil {
+		return err
+	}
+	a.clearSessionCookie(w)
+	a.redirect(w, r, "/login", flashSuccess, "All sessions and access tokens revoked. Sign in again.")
 	return nil
 }

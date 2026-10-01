@@ -14,16 +14,16 @@
 </nav>
 
 <div class="stack" id="panel-tokens" data-tab-panel="tokens"{{if ne $d.Tab "tokens"}} hidden{{end}}>
-  {{- with $d.NewToken}}{{template "reveal" (dict "Label" "Your new token" "Value" . "Note" "Copy it now: it won't be shown again.")}}{{end}}
+  {{- with $d.NewToken}}{{template "reveal" (revealModel "Your new token" . "Copy it now: it won't be shown again.")}}{{end}}
   <section class="panel" aria-labelledby="tokens-title">
     <header class="panel-header">
       <h2 class="panel-title" id="tokens-title">{{template "icon" "key"}}Access tokens</h2>
       <span class="panel-actions"><a class="btn btn-sm btn-primary" href="/me?dialog=token-new" data-dialog-open="token-new" data-command="Create an access token">{{template "icon" "plus"}}New token</a></span>
     </header>
-    <p class="panel-intro">Git over HTTPS takes your username and a token as the password.</p>
+    <p class="panel-intro">Git over HTTP or HTTPS takes your username and a token as the password.</p>
     {{- if $d.Tokens}}
     <div class="table-scroll">
-      <table class="table">
+      <table class="table table-cards table-rich">
         <thead><tr><th scope="col">Name</th><th scope="col">Access</th><th scope="col">Last used</th><th scope="col">Expires</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
         <tbody>
         {{- range $d.Tokens}}
@@ -36,14 +36,14 @@
               <form method="post" action="/me/tokens/{{.ID}}/delete" data-confirm="Revoke the token “{{.Name}}”?" data-confirm-detail="Anything that uses it stops working at once." data-confirm-action="Revoke token">
                 <button type="submit" class="btn btn-sm btn-danger">Revoke</button>
               </form>
-            </td>
+            </div></td>
           </tr>
         {{- end}}
         </tbody>
       </table>
     </div>
     {{- else}}
-    {{template "empty" (dict "Icon" "key" "Title" "No tokens yet" "Text" "Create one to clone and push over HTTPS.")}}
+    {{template "empty" (emptyModel "key" "No tokens yet" "Create one to clone and push over HTTP or HTTPS." false)}}
     {{- end}}
   </section>
 </div>
@@ -52,14 +52,22 @@
   <header class="panel-header"><h2 class="panel-title" id="password-title">{{template "icon" "lock"}}Change password</h2></header>
   <form method="post" action="/me/password" class="panel-body form form-narrow">
     {{template "form-error" $d.PasswordForm.Error}}
+    {{if .Person.BootstrapExpiresAt}}<p class="panel-intro">Change your temporary password to continue. It expires after 24 hours.</p>{{end}}
     {{template "field" field $d.PasswordForm "current_password" "Current password" "password" "required" "autocomplete:current-password"}}
-    {{template "field" field $d.PasswordForm "new_password" "New password" "password" "required" "autocomplete:new-password" "hint:At least 8 characters."}}
+    {{template "field" field $d.PasswordForm "new_password" "New password" "password" "required" "autocomplete:new-password" "hint:At least 12 characters; at most 72 bytes."}}
     {{template "field" field $d.PasswordForm "confirm_password" "Confirm new password" "password" "required" "autocomplete:new-password"}}
-    <p class="field-hint">Changing it signs you out everywhere else.</p>
+    <p class="field-hint">Changing it signs you out everywhere else and revokes all access tokens.</p>
     <div class="form-actions form-actions-start"><button type="submit" class="btn btn-primary">Change password</button></div>
   </form>
 </section>
 
+<section class="panel credential-revoke" aria-labelledby="revoke-title">
+ <header class="panel-header"><h2 class="panel-title" id="revoke-title">Revoke all credentials</h2></header>
+ <form method="post" action="/me/revoke-all" class="panel-body" data-confirm="Revoke all sessions and access tokens?" data-confirm-detail="You will be signed out too. Your password stays the same." data-confirm-action="Revoke all">
+  <p>Sign out every browser and revoke every Git access token.</p>
+  <div class="form-actions form-actions-start"><button class="btn btn-danger" type="submit">Revoke all and sign out</button></div>
+ </form>
+</section>
 <dialog class="dialog" id="token-new" aria-labelledby="token-new-title" data-dialog{{if eq $d.Dialog "token-new"}} open{{end}}>
   <form method="post" action="/me/tokens" class="form">
     <header class="dialog-header"><h2 class="dialog-title" id="token-new-title">New access token</h2>{{template "dialog-close" "/me"}}</header>
@@ -71,11 +79,20 @@
         <label class="choice"><input type="radio" name="scope" value="read"{{if ne ($d.TokenForm.Get "scope") "write"}} checked{{end}}><span class="choice-label">Read</span><span class="choice-hint">Clone and fetch.</span></label>
         <label class="choice"><input type="radio" name="scope" value="write"{{if eq ($d.TokenForm.Get "scope") "write"}} checked{{end}}><span class="choice-label">Read and write</span><span class="choice-hint">Also push, where the ref rules allow.</span></label>
       </fieldset>
+      <fieldset class="choices">
+        <legend>Repositories</legend>
+        <label class="choice"><input type="radio" name="repositories_scope" value="all"{{if ne ($d.TokenForm.Get "repositories_scope") "selected"}} checked{{end}}><span class="choice-label">All repositories</span><span class="choice-hint">Current and future repositories you can access.</span></label>
+        <label class="choice"><input type="radio" name="repositories_scope" value="selected"{{if eq ($d.TokenForm.Get "repositories_scope") "selected"}} checked{{end}}><span class="choice-label">Selected repositories</span></label>
+        <div class="token-repositories">
+        {{range $d.Repositories}}<label class="choice"><input type="checkbox" name="repositories" value="{{.ID}}"{{if $d.TokenForm.Picked "repositories" .ID}} checked{{end}}><span class="choice-label">{{.Name}}</span></label>{{else}}<p class="field-hint">No repositories available yet.</p>{{end}}
+        </div>
+        {{with index $d.TokenForm.Errors "repositories"}}<p class="field-error" role="alert">{{.}}</p>{{end}}
+      </fieldset>
       <div class="field">
         <label class="field-label" for="f-expires">Expires</label>
         <span class="select-wrap">
           <select class="select" id="f-expires" name="expires"{{with index $d.TokenForm.Errors "expires"}} aria-invalid="true"{{end}}>
-            <option value="never">Never</option>
+
             <option value="30"{{if eq ($d.TokenForm.Get "expires") "30"}} selected{{end}}>In 30 days</option>
             <option value="90"{{if eq ($d.TokenForm.Get "expires") "90"}} selected{{end}}>In 90 days</option>
           </select>

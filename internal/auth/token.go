@@ -32,11 +32,13 @@ func (s Scope) Satisfies(required Scope) bool {
 // AccessToken is a credential for Git over HTTP. Its plain value is
 // shown once, when it is created; only its hash is stored.
 type AccessToken struct {
-	ID         string
-	PersonID   string
-	Name       string
-	Scope      Scope
-	CreatedAt  time.Time
-	ExpiresAt  *time.Time
-	LastUsedAt *time.Time
+	AllRepositories bool
+	Repositories    []string
+	ID              string
+	PersonID        string
+	Name            string
+	Scope           Scope
+	CreatedAt       time.Time
+	ExpiresAt       *time.Time
+	LastUsedAt      *time.Time
 }

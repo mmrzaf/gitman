@@ -344,12 +344,43 @@ func (s *Service) CreateToken(ctx context.Context, personID, name string, scope 
 	if err != nil {
 		return "", nil, fmt.Errorf("generate access token: %w", err)
 	}
-	created = &AccessToken{ID: id.New(), PersonID: personID, Name: name, Scope: scope}
-	if ttl != nil {
-		expiresAt := time.Now().Add(*ttl)
-		created.ExpiresAt = &expiresAt
+	p, err := s.GetByID(ctx, personID)
+	if err != nil {
+		return "", nil, err
 	}
-	if err := insertToken(ctx, s.db.Q, created, token.Hash(plain)); err != nil {
+	if p.Disabled() || p.BootstrapExpiresAt != nil {
+		return "", nil, apperr.New(apperr.KindForbidden, "change your password before creating access tokens")
+	}
+	duration := 30 * 24 * time.Hour
+	if ttl != nil {
+		duration = *ttl
+	}
+	if duration <= 0 || duration > 365*24*time.Hour {
+		return "", nil, apperr.New(apperr.KindInvalid, "token expiry must be positive and at most 365 days")
+	}
+	expiresAt := time.Now().Add(duration)
+	created = &AccessToken{ID: id.New(), PersonID: personID, Name: name, Scope: scope, ExpiresAt: &expiresAt, AllRepositories: len(repositories) == 0, Repositories: repositories}
+	err = s.db.Tx(ctx, func(tx postgres.Tx) error {
+		if err := insertToken(ctx, tx, created, token.Hash(plain), p.Generation); err != nil {
+			return err
+		}
+		seen := map[string]bool{}
+		for _, repoID := range repositories {
+			if seen[repoID] {
+				continue
+			}
+			seen[repoID] = true
+			tag, err := tx.Exec(ctx, `INSERT INTO token_repos (token_id, repo_id) SELECT $1, r.id FROM repos r JOIN people p ON p.id = $3 WHERE r.id = $2 AND (p.is_admin OR r.visibility = 'everyone' OR EXISTS (SELECT 1 FROM repo_readers rr WHERE rr.repo_id = r.id AND rr.person_id = p.id))`, created.ID, repoID, personID)
+			if err != nil {
+				return err
+			}
+			if tag.RowsAffected() != 1 {
+				return apperr.New(apperr.KindInvalid, "select repositories you can read")
+			}
+		}
+		return nil
+	})
+	if err != nil {
 		return "", nil, err
 	}
 	return plain, created, nil

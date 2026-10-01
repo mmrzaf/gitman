@@ -42,7 +42,7 @@ func TestMeChangePassword(t *testing.T) {
 	resp, body = b.do(http.MethodPost, "/me/password", url.Values{
 		"current_password": {"correct-horse-battery"}, "new_password": {"short"}, "confirm_password": {"short"},
 	}, nil)
-	expect(t, resp, body, http.StatusUnprocessableEntity, "at least 8 characters")
+	expect(t, resp, body, http.StatusUnprocessableEntity, "at least 12 characters")
 
 	resp, body = b.do(http.MethodPost, "/me/password", url.Values{
 		"current_password": {"correct-horse-battery"}, "new_password": {"a-new-password"}, "confirm_password": {"different"},
@@ -72,8 +72,11 @@ func TestMeChangePassword(t *testing.T) {
 func TestMeTokens(t *testing.T) {
 	database, b := setup(t)
 	signIn(t, database, b, "darius", false)
+	if _, err := database.Q.Exec(t.Context(), `INSERT INTO repos (id, name) VALUES ('token-repo', 'token-repo')`); err != nil {
+		t.Fatal(err)
+	}
 
-	resp, body := b.do(http.MethodPost, "/me/tokens", url.Values{"name": {"laptop"}, "scope": {"write"}, "expires": {"never"}}, nil)
+	resp, body := b.do(http.MethodPost, "/me/tokens", url.Values{"name": {"laptop"}, "scope": {"write"}, "expires": {"30"}, "repositories_scope": {"selected"}, "repositories": {"token-repo"}}, nil)
 	expect(t, resp, body, http.StatusOK, "Your new token", "laptop", "write")
 	if cc := resp.Header.Get("Cache-Control"); cc != "no-store" {
 		t.Errorf("the page showing a new token has Cache-Control %q, want no-store", cc)
@@ -104,7 +107,7 @@ func TestMeTokens(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, otherToken, err := auth.NewService(database).CreateToken(context.Background(), other.ID, "x", auth.ScopeRead, nil)
+	_, otherToken, err := auth.NewService(database).CreateToken(context.Background(), other.ID, "x", auth.ScopeRead, nil, []string{"token-repo"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,10 +167,8 @@ func TestPeopleManagement(t *testing.T) {
 	resp, body = b.do(http.MethodGet, "/people", nil, nil)
 	expect(t, resp, body, http.StatusOK, "disabled")
 
-	resp, _ = b.do(http.MethodPost, "/people/sara/enable", url.Values{}, nil)
-	if resp.StatusCode != http.StatusSeeOther {
-		t.Fatalf("enable: %d", resp.StatusCode)
-	}
+	resp, body = b.do(http.MethodPost, "/people/sara/enable", url.Values{}, nil)
+	expect(t, resp, body, http.StatusOK, "Password for sara")
 
 	resp, body = b.do(http.MethodPost, "/people/sara/reset-password", url.Values{}, nil)
 	expect(t, resp, body, http.StatusOK, "Password for sara")
@@ -230,13 +231,13 @@ func TestRepoCreateAndSettings(t *testing.T) {
 	expect(t, resp, body, http.StatusOK, "Updated")
 
 	resp, _ = b.do(http.MethodPost, "/waiotech/settings/rules", url.Values{
-		"kind": {"branch"}, "pattern": {"main"}, "push_policy": {"everyone"}, "run_on_push": {"on"}, "allow_ship": {"on"},
+		"kind": {"branch"}, "pattern": {"main"}, "push_policy": {"everyone"}, "run_on_push": {"on"}, "allow_deploy": {"on"},
 	}, nil)
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("save rule: %d", resp.StatusCode)
 	}
 	resp, body = b.do(http.MethodGet, "/waiotech/settings", nil, nil)
-	expect(t, resp, body, http.StatusOK, "main", "everyone", "run", "ship")
+	expect(t, resp, body, http.StatusOK, "main", "everyone", "run", "deploy")
 
 	resp, body = b.do(http.MethodPost, "/waiotech/settings/rules", url.Values{
 		"kind": {"branch"}, "pattern": {"has space"}, "push_policy": {"everyone"},
@@ -248,11 +249,11 @@ func TestRepoCreateAndSettings(t *testing.T) {
 	lead := mustPerson(t, database, "lead")
 	resp, body = b.do(http.MethodPost, "/waiotech/settings/rules", url.Values{
 		"kind": {"tag"}, "pattern": {"v 1"}, "push_policy": {"people"}, "push_people": {lead.ID},
-		"allow_force": {"on"}, "allow_ship": {"on"},
+		"allow_force": {"on"}, "allow_deploy": {"on"},
 	}, nil)
 	expect(t, resp, body, http.StatusUnprocessableEntity,
 		`name="kind" value="tag" checked>`, `name="push_policy" value="people" checked>`,
-		`value="`+lead.ID+`" checked>`, `name="allow_force" checked>`, `name="allow_ship" checked>`,
+		`value="`+lead.ID+`" checked>`, `name="allow_force" checked>`, `name="allow_deploy" checked>`,
 		// It opens where it was: the rules tab, in the new-rule dialog.
 		`data-tab="rules" aria-current="page"`, `id="rule-new" aria-labelledby="rule-new-title" data-dialog open>`)
 	if strings.Contains(body, `name="allow_delete" checked`) {
@@ -264,7 +265,7 @@ func TestRepoCreateAndSettings(t *testing.T) {
 	resp, body = b.do(http.MethodGet, "/waiotech/settings?tab=rules&dialog=rule-edit&kind=branch&pattern=main", nil, nil)
 	expect(t, resp, body, http.StatusOK, `id="rule-edit" aria-labelledby="rule-edit-title" data-dialog data-dialog-params="kind pattern" open>`,
 		`<input type="hidden" name="mode" value="edit">`, `<input type="hidden" name="pattern" value="main">`,
-		`name="run_on_push" checked>`, `name="allow_ship" checked>`, `name="push_policy" value="everyone" checked>`)
+		`name="run_on_push" checked>`, `name="allow_deploy" checked>`, `name="push_policy" value="everyone" checked>`)
 	if strings.Contains(body, `name="allow_docker" checked`) {
 		t.Error("the edited rule came back allowing Docker, which it does not")
 	}
@@ -351,7 +352,7 @@ func TestSecretsUnavailableWithoutInstanceKey(t *testing.T) {
 		t.Skip("git binary not available")
 	}
 	database, store := pgtest.Open(t), newWebStore(t)
-	cfg := &config.Config{DataDir: t.TempDir(), PublicURL: "http://gitman.test", Port: 8080}
+	cfg := &config.Config{Retention: config.DefaultRetention(), DataDir: t.TempDir(), PublicURL: "http://gitman.test", Port: 8080}
 	app, err := New(cfg, testServices(database, store, cfg.SecretKey), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
@@ -393,7 +394,7 @@ func TestRepositoryPage(t *testing.T) {
 	expect(t, resp, body, http.StatusOK, "waiotech", "Plant maintenance", "http://gitman.test/waiotech.git", "No pushes yet",
 		// Nothing has shipped, and the Overview says so, in a panel that is
 		// there for the first deployment to appear in on a live page.
-		`data-live-region="targets"`, "Nothing shipped yet")
+		`data-live-region="targets"`, "Nothing deployed yet")
 	if strings.Contains(body, "Settings") {
 		t.Error("a non-admin should not see a Settings link")
 	}
@@ -450,4 +451,17 @@ func TestJumpPage(t *testing.T) {
 	if strings.Contains(body, `/waiotech/settings`) || strings.Contains(body, `href="/people"`) || strings.Contains(body, `class="topbar-link"`) {
 		t.Error("a member is offered pages only admins may open")
 	}
+}
+
+func TestMeTokenDefaultsToAllRepositoriesAndValidatesSelection(t *testing.T) {
+	db, b := setup(t)
+	signIn(t, db, b, "darius", false)
+	resp, body := b.do(http.MethodPost, "/me/tokens", url.Values{"name": {"laptop"}}, nil)
+	expect(t, resp, body, http.StatusOK, "Your new token", "All repositories")
+	tokens, err := auth.NewService(db).ListTokens(t.Context(), mustPerson(t, db, "darius").ID)
+	if err != nil || len(tokens) != 1 || !tokens[0].AllRepositories {
+		t.Fatalf("tokens=%v err=%v", tokens, err)
+	}
+	resp, body = b.do(http.MethodPost, "/me/tokens", url.Values{"name": {"deploy"}, "repositories_scope": {"selected"}}, nil)
+	expect(t, resp, body, http.StatusUnprocessableEntity, "Select at least one repository.")
 }
