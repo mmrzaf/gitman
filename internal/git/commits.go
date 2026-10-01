@@ -35,7 +35,7 @@ func OpenHookRepo(path string, env []string) *Repo {
 	return &Repo{
 		path:   path,
 		env:    env,
-		source: &standaloneSource{path: path, env: env},
+		source: &standaloneSource{path: path, env: env, gate: make(chan struct{}, 1)},
 		// A fraction of Store's shared cache: this one serves a single
 		// push's hook invocation, not every concurrent reader in the
 		// process, so it does not need nearly as much room.
@@ -454,4 +454,17 @@ func errNotFoundIfMissing(err error) error {
 		}
 	}
 	return err
+}
+
+// DefaultBranch returns the branch named by HEAD, including an unborn branch.
+func (r *Repo) DefaultBranch(ctx context.Context) (string, error) {
+	out, err := run(ctx, r.opts(), "symbolic-ref", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	kind, name, ok := SplitFullName(strings.TrimSpace(string(out)))
+	if !ok || kind != KindBranch {
+		return "", fmt.Errorf("HEAD must name a branch")
+	}
+	return name, nil
 }

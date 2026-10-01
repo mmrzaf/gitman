@@ -16,21 +16,11 @@ var ErrRefMoved = errors.New("the ref changed while it was being deleted")
 // ErrNotFound for a ref that is not there, and ErrRefMoved when the ref
 // moved between being read and being deleted, which leaves it alone.
 func (r *Repo) DeleteRef(ctx context.Context, kind Kind, name string) (old string, err error) {
-	if err := ValidateName(name); err != nil {
-		return "", ErrNotFound
-	}
-	full := FullName(kind, name)
-	out, err := run(ctx, r.opts(), "rev-parse", "--verify", "--quiet", full)
+	old, err = r.RefOID(ctx, kind, name)
 	if err != nil {
-		if exitCode(err) == 1 {
-			return "", ErrNotFound
-		}
 		return "", err
 	}
-	old = strings.TrimSpace(string(out))
-	if !IsHash(old) {
-		return "", fmt.Errorf("unexpected rev-parse output %q", out)
-	}
+	full := FullName(kind, name)
 	if err := r.deleteRefIf(ctx, full, old); err != nil {
 		return "", err
 	}
@@ -47,4 +37,23 @@ func (r *Repo) deleteRefIf(ctx context.Context, full, old string) error {
 		return err
 	}
 	return nil
+}
+
+func (r *Repo) RefOID(ctx context.Context, kind Kind, name string) (string, error) {
+	if err := ValidateName(name); err != nil {
+		return "", ErrNotFound
+	}
+	full := FullName(kind, name)
+	out, err := run(ctx, r.opts(), "rev-parse", "--verify", "--quiet", full)
+	if err != nil {
+		if exitCode(err) == 1 {
+			return "", ErrNotFound
+		}
+		return "", err
+	}
+	old := strings.TrimSpace(string(out))
+	if !IsHash(old) {
+		return "", fmt.Errorf("unexpected rev-parse output %q", out)
+	}
+	return old, nil
 }

@@ -1,6 +1,9 @@
 package git
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestValidateNameAccepts(t *testing.T) {
 	valid := []string{"main", "develop", "release/1.2", "v1.4.2", "feature/login-fix"}
@@ -64,14 +67,14 @@ func TestValidatePattern(t *testing.T) {
 }
 
 func TestLooksLikeCommitHash(t *testing.T) {
-	hashLike := []string{"3f2a91c", "a81c03e91be2d4fedcba98", "0123456789abcdef0123456789abcdef01234567"}
+	hashLike := []string{"ABCDEF1", strings.Repeat("a", 64), "3f2a91c", "a81c03e91be2d4fedcba98", "0123456789abcdef0123456789abcdef01234567"}
 	for _, name := range hashLike {
 		if !LooksLikeCommitHash(name) {
 			t.Errorf("LooksLikeCommitHash(%q) = false, want true", name)
 		}
 	}
 
-	notHashLike := []string{"develop", "main", "v1.4.2", "abc", "release/1.2", "ABCDEF1"}
+	notHashLike := []string{"develop", "main", "v1.4.2", "abc", "release/1.2", strings.Repeat("a", 65)}
 	for _, name := range notHashLike {
 		if LooksLikeCommitHash(name) {
 			t.Errorf("LooksLikeCommitHash(%q) = true, want false", name)

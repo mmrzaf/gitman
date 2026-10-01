@@ -70,6 +70,9 @@ func ValidateName(name string) error {
 		if component == "" {
 			return apperr.New(apperr.KindInvalid, "ref name must not have an empty path component")
 		}
+		if strings.HasSuffix(component, ".lock") {
+			return apperr.New(apperr.KindInvalid, "ref name components must not end with .lock")
+		}
 		if strings.HasPrefix(component, ".") {
 			return apperr.New(apperr.KindInvalid, "ref name components must not start with '.'")
 		}
@@ -90,15 +93,15 @@ func ValidatePattern(pattern string) error {
 	return nil
 }
 
-var hashLikePattern = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
+var hashLikePattern = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
 
 // LooksLikeCommitHash reports whether name has the shape of an abbreviated
-// or full Git commit hash. Gitman resolves "@<7-40 hex characters>" as a
+// or full Git commit hash. Gitman resolves "@<7-64 hex characters>" as a
 // commit, so a branch or tag with the same shape would be permanently
 // unreachable by name; ref creation rejects it instead of resolving it
 // ambiguously.
 func LooksLikeCommitHash(name string) bool {
-	return hashLikePattern.MatchString(name)
+	return hashLikePattern.MatchString(strings.ToLower(name))
 }
 
 // FullName is the full ref name of a branch or tag: the inverse of
