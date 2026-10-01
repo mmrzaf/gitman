@@ -91,7 +91,15 @@ func (w When) ShouldRun(refKind git.Kind, targetName string) bool {
 }
 
 // Step is one entry of the pipeline's steps list.
+type StepKind string
+
+const (
+	StepRun    StepKind = "run"
+	StepDeploy StepKind = "deploy"
+)
+
 type Step struct {
+	Type StepKind
 	Name string
 	When When
 	Run  string
@@ -223,6 +231,7 @@ type rawTarget struct {
 }
 
 type rawStep struct {
+	Type string `yaml:"type"`
 	Name string `yaml:"name"`
 	When string `yaml:"when"`
 	Run  string `yaml:"run"`
@@ -496,6 +505,7 @@ func validate(raw *rawConfig) (*Config, error) {
 		raw.Steps = nil
 	}
 	seenStepNames := make(map[string]bool, len(raw.Steps))
+	deployCount := 0
 	for i, rs := range raw.Steps {
 		name := strings.TrimSpace(rs.Name)
 		if name == "" {
@@ -535,7 +545,27 @@ func validate(raw *rawConfig) (*Config, error) {
 			continue
 		}
 
-		cfg.Steps = append(cfg.Steps, Step{Name: name, When: when, Run: rs.Run})
+		kind := StepKind(rs.Type)
+		if kind == "" {
+			kind = StepRun
+		}
+		if kind != StepRun && kind != StepDeploy {
+			v.errorf("steps[%d] %q: type must be run or deploy", i, name)
+			continue
+		}
+		if kind == StepDeploy {
+			deployCount++
+			if deployCount > 1 {
+				v.errorf("steps: at most one deploy step is allowed")
+			}
+			if when.Kind != WhenTarget && when.Kind != WhenNamed {
+				v.errorf("steps[%d] %q: deploy requires when: target or a configured target name", i, name)
+			}
+			if len(cfg.Targets) == 0 {
+				v.errorf("steps[%d] %q: deploy requires at least one target", i, name)
+			}
+		}
+		cfg.Steps = append(cfg.Steps, Step{Name: name, Type: kind, When: when, Run: rs.Run})
 	}
 
 	if err := v.err(); err != nil {

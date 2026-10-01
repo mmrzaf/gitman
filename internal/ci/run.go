@@ -80,6 +80,7 @@ type Created struct {
 // Summary is a run as shown in a list: enough to identify it and show
 // its outcome, without its steps.
 type Summary struct {
+	Deployed bool
 	ID       string
 	RepoName string
 	Number   int64
@@ -90,8 +91,8 @@ type Summary struct {
 	Trigger Trigger
 	Status  Status
 	Reason  string
-	// Target is the target the run resolved for its ref, which it ships to
-	// when it passes.
+	// Target is the context resolved for the ref. A successful explicit
+	// deploy step, rather than run completion, records a deployment.
 	Target string
 	// Actor is who triggered the run: who pushed, or who started it by
 	// hand.
@@ -120,6 +121,8 @@ const FetchUsername = "gitman-run"
 
 // Claim is a run a worker has taken, with everything it needs to run it.
 type Claim struct {
+	// Deadline is persisted in the claim transaction, before any preparation.
+	Deadline time.Time
 	RunID    string
 	RepoID   string
 	RepoName string
@@ -145,6 +148,7 @@ type Claim struct {
 // ClaimedStep is one step of a claimed run. A step skipped at creation
 // (its "when" did not match) stays skipped.
 type ClaimedStep struct {
+	Type    StepKind
 	ID      string
 	Index   int
 	Name    string
@@ -153,8 +157,10 @@ type ClaimedStep struct {
 
 // Outcome is how a run ended.
 type Outcome struct {
-	Status Status
-	Reason string
+	// RecoveryRequired leaves the run running until containers and receipts are reconciled.
+	RecoveryRequired bool
+	Status           Status
+	Reason           string
 	// Summary holds the key=value lines the run wrote to $GITMAN_SUMMARY.
 	Summary map[string]string
 }
@@ -180,14 +186,17 @@ func (r *RunDetail) Finished() bool {
 
 // StepDetail is one step of a run, as shown on the Run page.
 type StepDetail struct {
-	ID         string
-	Index      int
-	Name       string
-	Status     StepStatus
-	ExitCode   *int
-	StartedAt  *time.Time
-	FinishedAt *time.Time
-	LogBytes   int64
+	Type              StepKind
+	ID                string
+	Index             int
+	Name              string
+	Status            StepStatus
+	ExitCode          *int
+	StartedAt         *time.Time
+	FinishedAt        *time.Time
+	LogRecordingError string
+	LogsExpiredAt     *time.Time
+	LogBytes          int64
 }
 
 // Duration is how long the step ran, or has been running as of now; zero
@@ -213,4 +222,12 @@ type SummaryEntry struct {
 type LogChunk struct {
 	Sequence int
 	Content  string
+}
+
+// LogTail is a bounded display window with original line numbering.
+type LogTail struct {
+	Text  string
+	After int
+	First int
+	Cut   bool
 }

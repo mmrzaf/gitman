@@ -21,6 +21,7 @@ steps:
   - name: test
     run: go test ./...
   - name: release
+    type: deploy
     when: target
     run: ./release.sh
 `
@@ -28,7 +29,7 @@ steps:
 func TestPlanResolvesTargetAndSteps(t *testing.T) {
 	pl := planRun(CreateParams{
 		Commit: strings.Repeat("a", 40), RefKind: git.KindTag, RefName: "v1.4.2",
-		Pipeline: []byte(shipping), Decision: repo.Decision{AllowShip: true},
+		Pipeline: []byte(shipping), Decision: repo.Decision{AllowDeploy: true},
 	})
 	if pl.status != StatusQueued || pl.target != "production" || pl.version != "v1.4.2" {
 		t.Fatalf("plan = %+v", pl)
@@ -72,7 +73,7 @@ func TestPlanFailures(t *testing.T) {
 		},
 		"shipping not allowed": {
 			CreateParams{Commit: commit, RefKind: git.KindTag, RefName: "v1", Pipeline: []byte(shipping)},
-			`Tag v1 resolves to target "production", but no rule allows shipping from it.`,
+			`Tag v1 resolves to target "production", but no rule allows deployment from it.`,
 		},
 	}
 	for name, c := range cases {
@@ -233,7 +234,7 @@ func TestInProgress(t *testing.T) {
 	insertTestRun(t, database, "run2", "r1", 2, "branch", "main", "running", false)
 	insertTestRun(t, database, "run3", "r1", 3, "branch", "main", "passed", true)
 
-	list, err := NewService(database).InProgress(context.Background(), 10)
+	list, err := NewService(database).InProgressForRepos(context.Background(), []string{"r1"}, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,19 +248,26 @@ func TestInProgress(t *testing.T) {
 	}
 }
 
-func TestLatestRunPerRef(t *testing.T) {
+func TestLatestHeadRunPerRef(t *testing.T) {
 	database := pgtest.Open(t)
 	seedRepo(t, database, "r1", "demo")
 	insertTestRun(t, database, "run1", "r1", 1, "branch", "main", "passed", true)
 	insertTestRun(t, database, "run2", "r1", 2, "branch", "main", "failed", true)
 	insertTestRun(t, database, "run3", "r1", 3, "tag", "v1", "passed", true)
 
-	latest, err := NewService(database).LatestRunPerRef(context.Background(), "r1")
+	if _, err := database.Q.Exec(t.Context(), `INSERT INTO refs (repo_id,kind,name,commit_hash) VALUES ('r1','branch','main',repeat('a',40)), ('r1','tag','v1',repeat('a',40))`); err != nil {
+		t.Fatal(err)
+	}
+	insertTestRun(t, database, "manual-old", "r1", 4, "branch", "main", "passed", true)
+	if _, err := database.Q.Exec(t.Context(), `UPDATE runs SET commit_hash = repeat('b',40) WHERE id = 'manual-old'`); err != nil {
+		t.Fatal(err)
+	}
+	latest, err := NewService(database).LatestHeadRunPerRef(context.Background(), "r1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(latest) != 2 {
-		t.Fatalf("LatestRunPerRef = %d entries, want 2: %+v", len(latest), latest)
+		t.Fatalf("LatestHeadRunPerRef = %d entries, want 2: %+v", len(latest), latest)
 	}
 	if latest["branch/main"].Number != 2 || latest["branch/main"].Status != StatusFailed {
 		t.Errorf("branch/main = %+v", latest["branch/main"])
@@ -345,7 +353,7 @@ func createQueuedRun(t *testing.T, database *postgres.DB, svc *Service, allowSec
 		run, err = svc.CreateTx(ctx, tx, CreateParams{
 			RepoID: "r1", Commit: strings.Repeat("a", 40), RefKind: git.KindBranch, RefName: "main",
 			Trigger: TriggerPush, Pipeline: []byte("image: alpine:3.20\ntargets:\n  staging:\n    branch: main\nsteps:\n  - name: test\n    run: 'true'\n  - name: release\n    when: tag\n    run: 'true'\n"),
-			Decision: repo.Decision{AllowShip: true, AllowSecrets: allowSecrets},
+			Decision: repo.Decision{AllowDeploy: true, AllowSecrets: allowSecrets},
 		})
 		return err
 	})
@@ -365,14 +373,14 @@ func TestRunLifecycle(t *testing.T) {
 	}
 	run := createQueuedRun(t, database, svc, true)
 
-	claim, err := svc.ClaimNext(ctx, "w1")
+	claim, err := svc.ClaimNext(ctx, "w1", 30*time.Minute, []string{"alpine:3.20"})
 	if err != nil || claim == nil || claim.RunID != run.ID || claim.RepoName != "demo" || !claim.AllowSecrets || claim.Target != "staging" {
 		t.Fatalf("ClaimNext = %+v, %v", claim, err)
 	}
 	if len(claim.Steps) != 2 || claim.Steps[0].Skipped || !claim.Steps[1].Skipped {
 		t.Fatalf("claimed steps = %+v", claim.Steps)
 	}
-	if again, err := svc.ClaimNext(ctx, "w2"); err != nil || again != nil {
+	if again, err := svc.ClaimNext(ctx, "w2", 30*time.Minute, []string{"alpine:3.20"}); err != nil || again != nil {
 		t.Fatalf("second ClaimNext = %+v, %v; a run must be claimed once", again, err)
 	}
 
@@ -402,8 +410,8 @@ func TestRunLifecycle(t *testing.T) {
 		t.Fatalf("fetch token after the run finished = %v, want ErrInvalidFetchToken", err)
 	}
 	live, err := svc.LiveForRepo(ctx, "r1")
-	if err != nil || len(live) != 1 || live[0].Target != "staging" {
-		t.Fatalf("a passing run with a target must record a deployment: %+v, %v", live, err)
+	if err != nil || len(live) != 0 {
+		t.Fatalf("a build-only run must not record a deployment: %+v, %v", live, err)
 	}
 	var status, summary, logs string
 	if err := database.Pool.QueryRow(ctx, `
@@ -442,7 +450,7 @@ func TestCancel(t *testing.T) {
 	if err := svc.RegisterWorker(ctx, "w1", "host"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.ClaimNext(ctx, "w1"); err != nil {
+	if _, err := svc.ClaimNext(ctx, "w1", 30*time.Minute, []string{"alpine:3.20"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.Cancel(ctx, "r1", running.Number, "darius"); err != nil {
@@ -474,7 +482,7 @@ func TestFailLostRuns(t *testing.T) {
 	if err := svc.RegisterWorker(ctx, "w1", "host"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.ClaimNext(ctx, "w1"); err != nil {
+	if _, err := svc.ClaimNext(ctx, "w1", 30*time.Minute, []string{"alpine:3.20"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -511,7 +519,7 @@ func TestFailLostRunsComparesAgainstTheDatabasesClock(t *testing.T) {
 	if err := svc.RegisterWorker(ctx, "w1", "host"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.ClaimNext(ctx, "w1"); err != nil {
+	if _, err := svc.ClaimNext(ctx, "w1", 30*time.Minute, []string{"alpine:3.20"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.Pool.Exec(ctx, `UPDATE workers SET heartbeat_at = clock_timestamp() - interval '90 seconds' WHERE id = 'w1'`); err != nil {
@@ -540,6 +548,10 @@ func TestPruneRunsKeepsEachRefsLatestAndDeployments(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Only active heads retain their last summary. Deleted refs age out.
+	if _, err := database.Pool.Exec(ctx, `INSERT INTO refs(repo_id,kind,name,commit_hash) SELECT repo_id,ref_kind,ref_name,commit_hash FROM runs WHERE id IN ('old2','tag1')`); err != nil {
+		t.Fatal(err)
+	}
 	n, err := NewService(database).PruneRuns(ctx, time.Now().Add(-90*24*time.Hour))
 	if err != nil || n != 1 {
 		t.Fatalf("PruneRuns = %d, %v; want only main's older run pruned", n, err)
@@ -577,7 +589,7 @@ func TestALostRunStopsItsWorker(t *testing.T) {
 	if err := svc.RegisterWorker(ctx, "w1", "host"); err != nil {
 		t.Fatal(err)
 	}
-	claim, err := svc.ClaimNext(ctx, "w1")
+	claim, err := svc.ClaimNext(ctx, "w1", 30*time.Minute, []string{"alpine:3.20"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -631,7 +643,7 @@ func TestAppendLogIsIgnoredOnceItsRunHasEnded(t *testing.T) {
 	if err := svc.RegisterWorker(ctx, "w1", "host"); err != nil {
 		t.Fatal(err)
 	}
-	claim, err := svc.ClaimNext(ctx, "w1")
+	claim, err := svc.ClaimNext(ctx, "w1", 30*time.Minute, []string{"alpine:3.20"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -668,7 +680,7 @@ func TestAppendLogAcceptsTheSameChunkTwice(t *testing.T) {
 	if err := svc.RegisterWorker(ctx, "w1", "host"); err != nil {
 		t.Fatal(err)
 	}
-	claim, err := svc.ClaimNext(ctx, "w1")
+	claim, err := svc.ClaimNext(ctx, "w1", 30*time.Minute, []string{"alpine:3.20"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -683,16 +695,16 @@ func TestAppendLogAcceptsTheSameChunkTwice(t *testing.T) {
 	}
 }
 
-// TestAnyWorkerOnline is what tells a person why a queued run is not
+// TestAnyWorkerReady is what tells a person why a queued run is not
 // starting: a worker is online from the moment it registers until it
 // stops, or until its heartbeat is WorkerLostAfter old.
-func TestAnyWorkerOnline(t *testing.T) {
+func TestAnyWorkerReady(t *testing.T) {
 	ctx := context.Background()
 	database := pgtest.Open(t)
 	svc := NewService(database)
 	online := func() bool {
 		t.Helper()
-		ok, err := svc.AnyWorkerOnline(ctx)
+		ok, err := svc.AnyWorkerReady(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -705,9 +717,17 @@ func TestAnyWorkerOnline(t *testing.T) {
 	if err := svc.RegisterWorker(ctx, "w1", "host"); err != nil {
 		t.Fatal(err)
 	}
-	if !online() {
-		t.Fatal("not online right after a worker registered")
+
+	if online() {
+		t.Fatal("registration was mistaken for readiness")
 	}
+	if err := svc.SetWorkerReadiness(ctx, "w1", true, "Ready", []string{"alpine:3.20"}); err != nil {
+		t.Fatal(err)
+	}
+	if !online() {
+		t.Fatal("ready worker was not reported")
+	}
+
 	if _, err := database.Pool.Exec(ctx,
 		`UPDATE workers SET heartbeat_at = now() - make_interval(secs => $1) - interval '1 second'`,
 		WorkerLostAfter.Seconds()); err != nil {
@@ -730,7 +750,7 @@ func TestAnyWorkerOnline(t *testing.T) {
 	}
 }
 
-func TestLatestDefaultRunsIsTheNewestRunOfEachDefaultBranch(t *testing.T) {
+func TestLatestDefaultHeadRunsIsTheNewestRunOfEachDefaultBranch(t *testing.T) {
 	database := pgtest.Open(t)
 	ctx := context.Background()
 	insert := func(q string, args ...any) {
@@ -747,7 +767,9 @@ func TestLatestDefaultRunsIsTheNewestRunOfEachDefaultBranch(t *testing.T) {
 	        ('a4', 'r1', 4, repeat('d',40), 'tag', 'main', 'push', 'passed', now()),
 	        ('b1', 'r2', 1, repeat('e',40), 'branch', 'main', 'push', 'failed', now()),
 	        ('b2', 'r2', 2, repeat('f',40), 'branch', 'develop', 'push', 'cancelled', now())`)
-	runs, err := NewService(database).LatestDefaultRuns(ctx, []string{"r1", "r2", "r3"})
+	insert(`INSERT INTO refs (repo_id,kind,name,commit_hash) VALUES ('r1','branch','main',repeat('b',40)), ('r2','branch','develop',repeat('f',40))`)
+	insert(`INSERT INTO runs (id,repo_id,number,commit_hash,ref_kind,ref_name,trigger,status,finished_at) VALUES ('old-manual','r1',5,repeat('a',40),'branch','main','manual','passed',now())`)
+	runs, err := NewService(database).LatestDefaultHeadRuns(ctx, []string{"r1", "r2", "r3"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2,8 +2,11 @@ package ci
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mmrzaf/gitman/internal/git"
 	"github.com/mmrzaf/gitman/internal/id"
@@ -20,24 +23,29 @@ func allocateRunNumber(ctx context.Context, tx postgres.Querier, repoID string) 
 	return number, nil
 }
 
-func insertRun(ctx context.Context, tx postgres.Querier, run *Created, p CreateParams, number int64, finished bool) error {
+func insertRun(ctx context.Context, tx postgres.Querier, run *Created, p CreateParams, number int64, finished bool, timeout time.Duration) error {
+	images := []string{}
+	if cfg, err := Parse(p.Pipeline); err == nil {
+		images = append(images, cfg.Image)
+		images = append(images, cfg.Requires...)
+	}
 	_, err := tx.Exec(ctx, `
 		INSERT INTO runs (id, repo_id, number, commit_hash, ref_kind, ref_name, trigger, triggered_by, push_id,
-		                  status, reason, target, version, allow_secrets, pipeline, finished_at)
+		                  status, reason, target, version, allow_secrets, pipeline, finished_at, timeout_ns, required_images)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, ''), NULLIF($9, ''), $10, $11, $12, $13, $14,
-		        CASE WHEN $15 THEN NULL ELSE $16::bytea END, CASE WHEN $15 THEN now() END)
+		        CASE WHEN $15 THEN NULL ELSE $16::bytea END, CASE WHEN $15 THEN now() END, $17, $18)
 	`, run.ID, p.RepoID, number, p.Commit, string(p.RefKind), p.RefName, p.Trigger, p.PersonID, p.PushID,
-		run.Status, run.Reason, run.Target, run.Version, p.Decision.AllowSecrets, finished, p.Pipeline)
+		run.Status, run.Reason, run.Target, run.Version, p.Decision.AllowSecrets, finished, p.Pipeline, int64(timeout), normalizeImages(images))
 	if err != nil {
 		return fmt.Errorf("insert run: %w", err)
 	}
 	return nil
 }
 
-func insertStep(ctx context.Context, tx postgres.Querier, runID string, index int, name string, status StepStatus) error {
+func insertStep(ctx context.Context, tx postgres.Querier, runID string, index int, name string, kind StepKind, status StepStatus) error {
 	_, err := tx.Exec(ctx, `
-		INSERT INTO steps (id, run_id, index, name, status) VALUES ($1, $2, $3, $4, $5)
-	`, id.New(), runID, index, name, status)
+		INSERT INTO steps (id, run_id, index, name, status, type) VALUES ($1, $2, $3, $4, $5, $6)
+	`, id.New(), runID, index, name, status, kind)
 	if err != nil {
 		return fmt.Errorf("insert step: %w", err)
 	}
@@ -88,39 +96,14 @@ func supersedeQueued(ctx context.Context, tx postgres.Querier, repoID string, re
 
 const summaryColumns = `
 	r.id, repos.name, r.number, r.ref_kind, r.ref_name, r.commit_hash, r.trigger, r.status, r.reason, r.target,
-	COALESCE(p.username, ''), r.queued_at, r.started_at, r.finished_at
+	COALESCE(p.username, ''), r.queued_at, r.started_at, r.finished_at, EXISTS(SELECT 1 FROM deployments WHERE run_id = r.id)
 `
 
 func scanSummary(row interface{ Scan(...any) error }) (Summary, error) {
 	var s Summary
 	err := row.Scan(&s.ID, &s.RepoName, &s.Number, &s.RefKind, &s.RefName, &s.Commit, &s.Trigger, &s.Status, &s.Reason, &s.Target,
-		&s.Actor, &s.QueuedAt, &s.StartedAt, &s.FinishedAt)
+		&s.Actor, &s.QueuedAt, &s.StartedAt, &s.FinishedAt, &s.Deployed)
 	return s, err
-}
-
-func selectInProgress(ctx context.Context, q postgres.Querier, limit int) ([]Summary, error) {
-	rows, err := q.Query(ctx, `
-		SELECT `+summaryColumns+`
-		FROM runs r
-		JOIN repos ON repos.id = r.repo_id
-		LEFT JOIN people p ON p.id = r.triggered_by
-		WHERE r.status IN ('queued', 'running')
-		ORDER BY COALESCE(r.started_at, r.queued_at) DESC
-		LIMIT $1
-	`, limit)
-	if err != nil {
-		return nil, fmt.Errorf("list in-progress runs: %w", err)
-	}
-	defer rows.Close()
-	var result []Summary
-	for rows.Next() {
-		s, err := scanSummary(rows)
-		if err != nil {
-			return nil, fmt.Errorf("scan run: %w", err)
-		}
-		result = append(result, s)
-	}
-	return result, rows.Err()
 }
 
 func selectInProgressForRepos(ctx context.Context, q postgres.Querier, repoIDs []string, limit int) ([]Summary, error) {
@@ -177,13 +160,13 @@ func selectRunsForRepo(ctx context.Context, q postgres.Querier, repoID string, b
 // map of per-ref results.
 func refKey(kind git.Kind, name string) string { return string(kind) + "/" + name }
 
-func selectLatestRunPerRef(ctx context.Context, q postgres.Querier, repoID string) (map[string]Summary, error) {
+func selectLatestHeadRunPerRef(ctx context.Context, q postgres.Querier, repoID string) (map[string]Summary, error) {
 	rows, err := q.Query(ctx, `
 		SELECT DISTINCT ON (r.ref_kind, r.ref_name) `+summaryColumns+`
 		FROM runs r
 		JOIN repos ON repos.id = r.repo_id
 		LEFT JOIN people p ON p.id = r.triggered_by
-		WHERE r.repo_id = $1 AND r.ref_kind <> ''
+		WHERE r.repo_id = $1 AND EXISTS (SELECT 1 FROM refs head WHERE head.repo_id = r.repo_id AND head.kind = r.ref_kind AND head.name = r.ref_name AND head.commit_hash = r.commit_hash)
 		ORDER BY r.ref_kind, r.ref_name, r.number DESC
 	`, repoID)
 	if err != nil {
@@ -228,15 +211,15 @@ func selectRunsOfRef(ctx context.Context, q postgres.Querier, repoID string, kin
 	return result, rows.Err()
 }
 
-// selectLatestDefaultRuns returns the newest run of each repository's
+// selectLatestDefaultHeadRuns returns the newest run of each repository's
 // default branch, keyed by repository ID.
-func selectLatestDefaultRuns(ctx context.Context, q postgres.Querier, repoIDs []string) (map[string]Summary, error) {
+func selectLatestDefaultHeadRuns(ctx context.Context, q postgres.Querier, repoIDs []string) (map[string]Summary, error) {
 	rows, err := q.Query(ctx, `
 		SELECT DISTINCT ON (r.repo_id) r.repo_id, `+summaryColumns+`
 		FROM runs r
 		JOIN repos ON repos.id = r.repo_id
 		LEFT JOIN people p ON p.id = r.triggered_by
-		WHERE r.repo_id = ANY($1) AND r.ref_kind = 'branch' AND r.ref_name = repos.default_branch
+		WHERE r.repo_id = ANY($1) AND r.ref_kind = 'branch' AND r.ref_name = repos.default_branch AND EXISTS(SELECT 1 FROM refs head WHERE head.repo_id = r.repo_id AND head.kind = 'branch' AND head.name = repos.default_branch AND head.commit_hash = r.commit_hash)
 		ORDER BY r.repo_id, r.number DESC
 	`, repoIDs)
 	if err != nil {
@@ -248,7 +231,7 @@ func selectLatestDefaultRuns(ctx context.Context, q postgres.Querier, repoIDs []
 		var repoID string
 		var s Summary
 		if err := rows.Scan(&repoID, &s.ID, &s.RepoName, &s.Number, &s.RefKind, &s.RefName, &s.Commit, &s.Trigger, &s.Status, &s.Reason, &s.Target,
-			&s.Actor, &s.QueuedAt, &s.StartedAt, &s.FinishedAt); err != nil {
+			&s.Actor, &s.QueuedAt, &s.StartedAt, &s.FinishedAt, &s.Deployed); err != nil {
 			return nil, fmt.Errorf("scan run: %w", err)
 		}
 		result[repoID] = s
@@ -690,15 +673,15 @@ func selectRunDetail(ctx context.Context, q postgres.Querier, repoID string, num
 		LEFT JOIN people p ON p.id = r.triggered_by
 		WHERE r.repo_id = $1 AND r.number = $2
 	`, repoID, number).Scan(&d.ID, &d.RepoName, &d.Number, &d.RefKind, &d.RefName, &d.Commit, &d.Trigger, &d.Status, &d.Reason, &d.Target,
-		&d.Actor, &d.QueuedAt, &d.StartedAt, &d.FinishedAt,
+		&d.Actor, &d.QueuedAt, &d.StartedAt, &d.FinishedAt, &d.Deployed,
 		&d.RepoID, &d.Version, &d.AllowSecrets, &d.CancelRequested)
 	if err != nil {
 		return nil, postgres.NormalizeNotFound(err)
 	}
 
 	rows, err := q.Query(ctx, `
-		SELECT s.id, s.index, s.name, s.status, s.exit_code, s.started_at, s.finished_at,
-		       COALESCE((SELECT sum(byte_len) FROM step_logs WHERE step_id = s.id), 0)
+		SELECT s.id, s.index, s.name, s.type, s.status, s.exit_code, s.started_at, s.finished_at,
+		       s.log_bytes,s.logs_expired_at,s.log_recording_error
 		FROM steps s WHERE s.run_id = $1 ORDER BY s.index
 	`, d.ID)
 	if err != nil {
@@ -706,7 +689,7 @@ func selectRunDetail(ctx context.Context, q postgres.Querier, repoID string, num
 	}
 	for rows.Next() {
 		var st StepDetail
-		if err := rows.Scan(&st.ID, &st.Index, &st.Name, &st.Status, &st.ExitCode, &st.StartedAt, &st.FinishedAt, &st.LogBytes); err != nil {
+		if err := rows.Scan(&st.ID, &st.Index, &st.Name, &st.Type, &st.Status, &st.ExitCode, &st.StartedAt, &st.FinishedAt, &st.LogBytes, &st.LogsExpiredAt, &st.LogRecordingError); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("scan step: %w", err)
 		}
@@ -761,11 +744,11 @@ func deleteOldRuns(ctx context.Context, q postgres.Querier, before time.Time, li
 		DELETE FROM runs WHERE id IN (
 			SELECT r.id FROM runs r
 			WHERE r.finished_at < $1
-			  AND r.id <> (
-				SELECT latest.id FROM runs latest
-				WHERE latest.repo_id = r.repo_id AND latest.ref_kind = r.ref_kind AND latest.ref_name = r.ref_name
-				  AND latest.finished_at IS NOT NULL
-				ORDER BY latest.number DESC LIMIT 1
+			  AND NOT EXISTS(SELECT 1 FROM steps s WHERE s.run_id=r.id AND s.container_name IS NOT NULL AND s.container_removed_at IS NULL)
+			  AND NOT EXISTS(SELECT 1 FROM deployment_targets WHERE owner_run_id=r.id)
+			  AND r.id NOT IN (
+				SELECT DISTINCT ON (head.repo_id,head.kind,head.name) latest.id FROM refs head JOIN runs latest ON latest.repo_id=head.repo_id AND latest.ref_kind=head.kind AND latest.ref_name=head.name AND latest.commit_hash=head.commit_hash
+				WHERE latest.finished_at IS NOT NULL ORDER BY head.repo_id,head.kind,head.name,latest.number DESC
 			  )
 			LIMIT $2
 		)
@@ -795,4 +778,60 @@ func selectInstanceID(ctx context.Context, q postgres.Querier) (string, error) {
 		return "", fmt.Errorf("read instance ID: %w", postgres.NormalizeNotFound(err))
 	}
 	return instanceID, nil
+}
+
+// selectLogTail reads at most 256 recent chunks, retaining only chunks within
+// the byte/line window. Content transferred is bounded by the window plus
+// one chunk; line accounting comes from metadata rather than old content.
+func selectLogTail(ctx context.Context, q postgres.Querier, stepID string) (*LogTail, error) {
+	tail := &LogTail{After: -1, First: 1}
+	var totalBytes, totalLines int64
+	rows, err := q.Query(ctx, `WITH recent AS (
+ SELECT sequence, content, byte_len, line_count FROM step_logs WHERE step_id = $1 ORDER BY sequence DESC LIMIT 256
+ ), counted AS (
+ SELECT *, COALESCE(SUM(byte_len) OVER (ORDER BY sequence DESC ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING),0) AS prior_bytes,
+ COALESCE(SUM(line_count) OVER (ORDER BY sequence DESC ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING),0) AS prior_lines FROM recent
+ ) SELECT COALESCE(c.sequence,-1), COALESCE(c.content,''), s.log_bytes, s.log_lines FROM steps s LEFT JOIN counted c ON c.prior_bytes < 1048576 AND c.prior_lines < 20000 WHERE s.id = $1 ORDER BY c.sequence`, stepID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var text strings.Builder
+	for rows.Next() {
+		var content string
+		if err := rows.Scan(&tail.After, &content, &totalBytes, &totalLines); err != nil {
+			return nil, err
+		}
+		text.WriteString(content)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	tail.Text = text.String()
+	tail.First = int(totalLines) - strings.Count(tail.Text, "\n") + 1
+	cut := max(0, len(tail.Text)-(1<<20))
+	if cut > 0 {
+		for cut < len(tail.Text) && !utf8.RuneStart(tail.Text[cut]) {
+			cut++
+		}
+		if n := strings.IndexByte(tail.Text[cut:], '\n'); n >= 0 {
+			cut += n + 1
+		}
+	}
+	lines := strings.Count(tail.Text[cut:], "\n")
+	if !strings.HasSuffix(tail.Text, "\n") && len(tail.Text) > cut {
+		lines++
+	}
+	for lines > 20000 {
+		n := strings.IndexByte(tail.Text[cut:], '\n')
+		if n < 0 {
+			break
+		}
+		cut += n + 1
+		lines--
+	}
+	tail.First += strings.Count(tail.Text[:cut], "\n")
+	tail.Text = tail.Text[cut:]
+	tail.Cut = int64(len(tail.Text)) < totalBytes
+	return tail, nil
 }
