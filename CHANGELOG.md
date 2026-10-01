@@ -3,12 +3,40 @@
 What changed in each release, for the people who run Gitman. Newest first.
 Each release's section is also its GitHub release notes.
 
+## [Unreleased]
+
+### Fixed
+
+- Use PostgreSQL 18 and matching client tools in CI and release integration checks.
+- Reject stale ref updates and unreadable commit metadata before recording push
+  intent. Recovery closes unapplied ref conflicts so later mutations can proceed.
+- Index nested annotated tags by their fully resolved commit, and normalize NUL
+  and invalid UTF-8 in metadata stored in PostgreSQL.
+- Preserve full Docker container IDs during receipt recovery and cleanup.
+- Allow build output to disappear during disk monitoring without cancelling the
+  run or reporting a false budget violation.
+- Keep integration evidence separate from release downloads and checksums.
+
+### Changed
+
+- Let mobile metadata cards wrap their full content and controls, keep panel
+  headings and toolbars within narrow screens, and make dialog forms scroll
+  within the available height. Desktop dashboard sizes and compact rows remain.
+- Keep the self-hosted tag pipeline focused on building the image and reporting
+  its image and version. Verification runs in GitHub Actions.
+- Remove bundled PostgreSQL tools and the PostgreSQL image build dependency.
+  Backup and restore use tools installed on the host.
+- Backup integration checks restored reader grants and revocation, token scope,
+  secret values, completed logs and deployments, and pinned historical source.
+- Check theme radio states and accessibility with the account menu open.
+- Remove the session-specific implementation checklist from the documentation.
+
 ## [1.0.0-beta.22] - 2026-09-30
 
 Refs and history: managing branches, tags and revisions from the web.
 
-**Upgrading:** nothing to do by hand. One migration runs when web or a
-worker starts.
+**Installation:** this release uses a new database baseline. It does not
+automatically upgrade an existing beta 21 database.
 
 ### Added
 
