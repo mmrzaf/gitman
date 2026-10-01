@@ -18,6 +18,7 @@ import (
 // Docker runs steps as containers through the docker command-line
 // client, the same client an operator uses to inspect them.
 type Docker struct {
+	Resources config.Resources
 	// Binary is the docker client to run, "docker" to find it on PATH.
 	Binary string
 	// Socket is the Docker socket on the host, mounted into steps of a
@@ -58,10 +59,11 @@ func (d *Docker) command(ctx context.Context, args ...string) *exec.Cmd {
 
 // containerSpec is one step's container.
 type containerSpec struct {
-	Name   string
-	RunID  string
-	Image  string
-	Script string
+	Resources config.Resources
+	Name      string
+	RunID     string
+	Image     string
+	Script    string
 	// Source and Meta are host directories mounted at /workspace and
 	// /gitman.
 	Source string
@@ -81,10 +83,12 @@ type containerSpec struct {
 // workspace is a host directory the worker reads as root afterwards, and
 // a step must not be able to leave a device node there.
 func (spec containerSpec) args(socket, instance string) []string {
-	args := []string{"run", "--rm", "--name", spec.Name,
+	resources := spec.Resources.WithDefaults()
+	args := []string{"create", "--name", spec.Name,
 		"--label", runLabel + "=" + spec.RunID,
 		"--label", instanceLabel + "=" + instance,
 		"--cap-drop", "MKNOD",
+		"--memory", fmt.Sprintf("%dm", resources.MemoryMiB), "--memory-swap", fmt.Sprintf("%dm", resources.MemoryMiB), "--cpus", fmt.Sprint(resources.CPUs), "--pids-limit", fmt.Sprint(resources.PIDs), "--pull", "never",
 		"--workdir", containerSource,
 		"--volume", spec.Source + ":" + containerSource,
 		"--volume", spec.Meta + ":" + containerMeta,
@@ -150,7 +154,9 @@ func (d *Docker) ImageExists(ctx context.Context, image string) (bool, error) {
 // stopping only the client would leave the container running — and Run
 // returns ctx's error.
 func (d *Docker) Run(ctx context.Context, spec containerSpec, out io.Writer) (int, error) {
-	cmd := d.command(ctx, spec.args(d.Socket, d.Instance)...)
+	create, stopCreate := context.WithTimeout(ctx, 10*time.Second)
+	spec.Resources = d.Resources
+	cmd := d.command(create, spec.args(d.Socket, d.Instance)...)
 	cmd.Env = os.Environ()
 	for _, key := range sortedKeys(spec.Secrets) {
 		cmd.Env = append(cmd.Env, key+"="+spec.Secrets[key])

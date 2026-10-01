@@ -185,3 +185,23 @@ func TestNewLogger(t *testing.T) {
 		t.Errorf("expected a text-formatted info line, got: %s", out)
 	}
 }
+
+func TestResourceProfile(t *testing.T) {
+	setBase(t)
+	t.Setenv(EnvStepMemoryMiB, "8192")
+	t.Setenv(EnvStepCPUs, "8")
+	t.Setenv(EnvStepPIDs, "1024")
+	t.Setenv(EnvWorkspaceGiB, "100")
+	t.Setenv(EnvDiskReserveGiB, "20")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Resources != (Resources{8192, 8, 1024, 100, 20}) {
+		t.Fatalf("resources=%+v", cfg.Resources)
+	}
+	t.Setenv(EnvStepMemoryMiB, "0")
+	if _, err := Load(); err == nil {
+		t.Fatal("zero memory limit accepted")
+	}
+}

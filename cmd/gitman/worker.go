@@ -57,12 +57,14 @@ func runWorker(args []string) error {
 		return err
 	}
 	store := git.NewStore(cfg.ReposPath())
+	store.SetDiskReserve(uint64(cfg.Resources.DiskReserveGiB) << 30)
 	defer store.Close()
 	w := worker.New(worker.Config{
 		WorkspaceRoot:  cfg.WorkspacesPath(),
 		WebURL:         cfg.WebURL,
 		DefaultTimeout: defaultRunTimeout,
 		Hostname:       hostname,
+		Resources:      cfg.Resources,
 	}, database, ciService, reposvc.NewService(database, store, cfg.SecretKey), docker, log)
 	return w.Run(ctx)
 }

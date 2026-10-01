@@ -18,6 +18,7 @@ import (
 
 // Config holds every setting Gitman reads from its environment.
 type Config struct {
+	Resources Resources
 	// DatabaseURL is a PostgreSQL connection string, as accepted by pgx.
 	// PostgreSQL is Gitman's only store.
 	DatabaseURL string
@@ -143,6 +144,9 @@ func Load() (*Config, error) {
 	}
 	cfg.TrustedProxies = proxies
 
+	if err := cfg.Resources.Validate(); err != nil {
+		return nil, err
+	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -154,6 +158,10 @@ func Load() (*Config, error) {
 // DataDir absolute so every process and every Git subprocess agrees on
 // where it is regardless of working directory.
 func (c *Config) Validate() error {
+	c.Resources = c.Resources.WithDefaults()
+	if err := c.Resources.Validate(); err != nil {
+		return err
+	}
 	if c.DatabaseURL == "" {
 		return fmt.Errorf("%s is required", EnvDatabaseURL)
 	}

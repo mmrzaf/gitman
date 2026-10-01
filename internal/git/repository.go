@@ -37,15 +37,17 @@ const (
 // Store is the directory of bare repositories, one per repository ID, and
 // the shared object reader pool and object cache used to read them.
 type Store struct {
-	root  string
-	pool  *readerPool
-	cache *objectCache
+	root        string
+	diskReserve uint64
+	pool        *readerPool
+	cache       *objectCache
 }
 
 // NewStore returns a Store rooted at root. Call Close to stop its readers.
 func NewStore(root string) *Store {
 	return &Store{
-		root: root,
+		root:        root,
+		diskReserve: 5 << 30,
 		// 64 readers: comfortably above the concurrency this process
 		// actually sees in practice (page requests plus one worker's
 		// pipeline fetches), without keeping an unbounded number of git
@@ -58,6 +60,9 @@ func NewStore(root string) *Store {
 		cache: newObjectCache(64 << 20),
 	}
 }
+
+// SetDiskReserve sets the operator's minimum free space for Git push admission.
+func (s *Store) SetDiskReserve(bytes uint64) { s.diskReserve = bytes }
 
 // Close stops every object reader the store started.
 func (s *Store) Close() {
