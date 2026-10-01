@@ -286,9 +286,10 @@ func selectRefs(ctx context.Context, q postgres.Querier, repoID string) ([]Index
 // been pushed, where that branch points, keyed by repository.
 func selectDefaultHeads(ctx context.Context, q postgres.Querier, repoIDs []string) (map[string]IndexedRef, error) {
 	rows, err := q.Query(ctx, `
-		SELECT r.repo_id, r.kind, r.name, r.commit_hash, r.updated_at, r.updated_by
+		SELECT r.repo_id, r.kind, r.name, r.commit_hash, r.updated_at, r.updated_by,m.subject,m.author_name,m.author_email,m.authored_at
 		FROM refs r
 		JOIN repos p ON p.id = r.repo_id
+		LEFT JOIN commit_metadata m ON m.repo_id=r.repo_id AND m.hash=r.commit_hash
 		WHERE r.repo_id = ANY($1) AND r.kind = 'branch' AND r.name = p.default_branch
 	`, repoIDs)
 	if err != nil {
@@ -299,8 +300,18 @@ func selectDefaultHeads(ctx context.Context, q postgres.Querier, repoIDs []strin
 	for rows.Next() {
 		var repoID string
 		var r IndexedRef
-		if err := rows.Scan(&repoID, &r.Kind, &r.Name, &r.Commit, &r.UpdatedAt, &r.UpdatedBy); err != nil {
+		var subject, name, email *string
+		var at *time.Time
+		if err := rows.Scan(&repoID, &r.Kind, &r.Name, &r.Commit, &r.UpdatedAt, &r.UpdatedBy, &subject, &name, &email, &at); err != nil {
 			return nil, fmt.Errorf("scan default branch: %w", err)
+		}
+		if subject != nil {
+			r.Head = &git.Commit{Hash: r.Commit, Subject: *subject, Author: git.Signature{Name: *name, Email: *email, When: func() time.Time {
+				if at == nil {
+					return time.Time{}
+				}
+				return *at
+			}()}}
 		}
 		heads[repoID] = r
 	}

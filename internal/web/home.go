@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -45,9 +46,10 @@ type homeRepo struct {
 // homeDeployment is what is live on one target of one repository, and how
 // far the default branch has gone since.
 type homeDeployment struct {
-	Repo   string
-	Target string
-	Live   ci.Deployment
+	Comparison commitComparison
+	Repo       string
+	Target     string
+	Live       ci.Deployment
 	// Behind is how many commits the default branch has that the target
 	// lacks, and SinceURL compares them; both are empty when it is up to
 	// date.
@@ -65,6 +67,7 @@ type attention struct {
 }
 
 type homePage struct {
+	After, Next string
 	Repos       []homeRepo
 	Deployments []homeDeployment
 	// Attention are the things that want a look; AttentionMore counts those
@@ -105,7 +108,7 @@ func (a *App) buildHomeData(r *http.Request, createForm *form) (homePage, error)
 	if err != nil {
 		return homePage{}, err
 	}
-	latestRuns, err := a.ci.LatestDefaultRuns(ctx, readableIDs)
+	latestRuns, err := a.ci.LatestDefaultHeadRuns(ctx, readableIDs)
 	if err != nil {
 		return homePage{}, err
 	}
@@ -122,19 +125,23 @@ func (a *App) buildHomeData(r *http.Request, createForm *form) (homePage, error)
 		return homePage{}, err
 	}
 
-	page := homePage{CreateForm: createForm, Timeline: feed}
+	page := homePage{CreateForm: createForm, Timeline: feed, After: after, Next: next}
 	running := map[string][]ci.Summary{}
 	for _, run := range inProgress {
 		running[run.RepoName] = append(running[run.RepoName], run)
 	}
 	var items []attention
 	if slices.ContainsFunc(inProgress, func(run ci.Summary) bool { return run.Status == ci.StatusQueued }) {
-		online, err := a.ci.AnyWorkerOnline(ctx)
+		online, err := a.ci.AnyWorkerReady(ctx)
 		if err != nil {
 			return homePage{}, err
 		}
 		if !online {
-			items = append(items, attention{Icon: "queued", Text: "Runs are queued and no worker is online, so they wait until one starts."})
+			item := attention{Icon: "queued", Text: "Runs are waiting for a ready worker."}
+			if person.IsAdmin {
+				item.URL = "/workers"
+			}
+			items = append(items, item)
 		}
 	}
 
@@ -144,7 +151,7 @@ func (a *App) buildHomeData(r *http.Request, createForm *form) (homePage, error)
 	}
 
 	var failed, behind []attention
-	for _, repo := range list {
+	for _, repo := range all {
 		row := homeRepo{Name: repo.Name, Description: repo.Description, DefaultBranch: repo.DefaultBranch, Running: running[repo.Name]}
 		if run, ok := latestRuns[repo.ID]; ok {
 			row.Run = &run
@@ -156,27 +163,39 @@ func (a *App) buildHomeData(r *http.Request, createForm *form) (homePage, error)
 		head, pushed := heads[repo.ID]
 		var gitRepo *git.Repo
 		if pushed {
-			if gitRepo, err = a.repos.Open(repo); err != nil {
-				// A repository that cannot be read is not worth losing Home for.
-				a.log.Warn("could not open a repository for Home", "repo", repo.Name, "error", err)
-				gitRepo = nil
-			} else if row.Head, err = gitRepo.Commit(ctx, head.Commit); err != nil {
-				a.log.Warn("could not read a default branch's latest commit", "repo", repo.Name, "error", err)
+			if len(byRepo[repo.ID]) > 0 {
+				if gitRepo, err = a.repos.Open(repo); err != nil {
+					// A repository that cannot be read is not worth losing Home for.
+					a.log.Warn("could not open a repository for Home", "repo", repo.Name, "error", err)
+					gitRepo = nil
+				}
+			}
+			row.Head = head.Head
+			if row.Head == nil {
+				row.Head = &git.Commit{Hash: head.Commit, Subject: "Commit metadata unavailable"}
 			}
 		}
-		page.Repos = append(page.Repos, row)
+		if listed[repo.ID] {
+			page.Repos = append(page.Repos, row)
+		}
 
+		var deployedHashes []string
 		for _, d := range byRepo[repo.ID] {
-			dep := homeDeployment{Repo: repo.Name, Target: d.Target, Live: d}
+			deployedHashes = append(deployedHashes, d.Commit)
+		}
+		comparisons := compareDeployments(ctx, gitRepo, head.Commit, deployedHashes)
+		for _, d := range byRepo[repo.ID] {
+			dep := homeDeployment{Repo: repo.Name, Target: d.Target, Live: d, Comparison: comparisons[d.Commit]}
 			if pushed && gitRepo != nil && d.Commit != head.Commit {
-				if counts, err := gitRepo.Divergences(ctx, d.Commit, []string{head.Commit}); err == nil {
-					dep.Behind = counts[head.Commit].Ahead
-				}
+				dep.Behind = dep.Comparison.Ahead
 				if dep.Behind > 0 {
 					dep.SinceURL = compareURL(repo.Name, d.Commit, repo.DefaultBranch)
 					behind = append(behind, attention{Icon: "compare", URL: dep.SinceURL,
 						Text: fmt.Sprintf("%s: %s is %d commit%s behind %s.", repo.Name, d.Target, dep.Behind, plural(dep.Behind), repo.DefaultBranch)})
 				}
+			}
+			if dep.Comparison.State == "ahead" || dep.Comparison.State == "diverged" {
+				dep.SinceURL = compareURL(repo.Name, d.Commit, repo.DefaultBranch)
 			}
 			page.Deployments = append(page.Deployments, dep)
 		}
@@ -267,4 +286,14 @@ func (a *App) reRenderHomeCreate(w http.ResponseWriter, r *http.Request, f *form
 	page.Dialog = "new-repo"
 	a.render(w, r, status, "home", "Home", page)
 	return nil
+}
+
+func (p homePage) PageURL(after string) string {
+	u := &url.URL{Path: "/"}
+	if after != "" {
+		q := url.Values{}
+		q.Set("after", after)
+		u.RawQuery = q.Encode()
+	}
+	return u.String()
 }
