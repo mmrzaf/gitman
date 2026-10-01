@@ -2,9 +2,10 @@ package repo
 
 import (
 	"context"
-	"github.com/mmrzaf/gitman/internal/postgres"
 	"strings"
 	"time"
+
+	"github.com/mmrzaf/gitman/internal/postgres"
 )
 
 // ListReadablePage applies access and keyset pagination before reading metadata.
@@ -53,7 +54,7 @@ func storeCommitMetadata(ctx context.Context, tx postgres.Tx, repoID string, has
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO commit_metadata(repo_id,hash,subject,author_name,author_email,authored_at) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(repo_id,hash) DO NOTHING`, repoID, h, strings.ToValidUTF8(subject, "�"), strings.ToValidUTF8(name, "�"), strings.ToValidUTF8(email, "�"), validMetadataTime(at)); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO commit_metadata(repo_id,hash,subject,author_name,author_email,authored_at) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(repo_id,hash) DO NOTHING`, repoID, h, metadataText(subject), metadataText(name), metadataText(email), validMetadataTime(at)); err != nil {
 			return err
 		}
 		known[h] = true
@@ -66,4 +67,9 @@ func validMetadataTime(at time.Time) *time.Time {
 		return nil
 	}
 	return &at
+}
+
+// PostgreSQL text excludes NUL and invalid UTF-8, both permitted in raw Git data.
+func metadataText(value string) string {
+	return strings.ReplaceAll(strings.ToValidUTF8(value, "�"), "\x00", "�")
 }
