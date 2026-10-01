@@ -140,7 +140,7 @@ func writeFile(t *testing.T, dir, name string, content []byte) {
 // seedFilesRepo creates a repository through the web app, pushes real
 // commits and branches directly into its bare directory (bypassing the
 // HTTP Git transport, which git_http_test.go already covers end to end),
-// and syncs the ref index the way post-receive normally would.
+// and syncs the ref index through the push recorder.
 func seedFilesRepo(t *testing.T, database *postgres.DB, store *git.Store, b *browser) *reposvc.Repo {
 	t.Helper()
 	resp, body := b.do(http.MethodPost, "/repos", url.Values{"name": {"waiotech"}}, nil)
@@ -201,7 +201,7 @@ func seedFilesRepo(t *testing.T, database *postgres.DB, store *git.Store, b *bro
 }
 
 // syncRepoRefs brings the ref index up to date from the repository's
-// actual Git state, the way post-receive does after a real push.
+// actual Git state, as push recording does after applying Git updates.
 func syncRepoRefs(t *testing.T, database *postgres.DB, store *git.Store, repoID string) {
 	t.Helper()
 	svc := reposvc.NewService(database, store, "")

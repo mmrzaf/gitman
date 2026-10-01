@@ -5,7 +5,7 @@
 // an access token as the password. There is no anonymous access. A read
 // token can clone and fetch; pushing needs a write token, and then each
 // ref the push updates is checked against the repository's ref rules by
-// the pre-receive hook.
+// the proc-receive hook.
 
 package web
 

@@ -32,7 +32,7 @@ const (
 )
 
 // gitHookEnv lists the variables Git sets for a hook that the hook's own
-// Git commands must see. During pre-receive, pushed objects sit in a
+// Git commands must see. During receive-pack, incoming objects may sit in a
 // quarantine directory named by these variables until the push is
 // accepted.
 var gitHookEnv = []string{

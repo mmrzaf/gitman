@@ -28,7 +28,7 @@ func CheckDir(dir, reposPath, repoID string) error {
 }
 
 // Explain tells the pusher, on out, why the named hook failed with err,
-// and returns err. A refusal needs no more: PreReceive has already given
+// and returns err. A refusal needs no more: validation has already given
 // its reasons. A failure writing to out is left unchecked: out is the
 // pusher's own connection, the only place such a failure could be
 // reported, so there is nowhere to report it to.
