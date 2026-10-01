@@ -1,11 +1,10 @@
 // Package config loads and validates the small set of environment
 // variables Gitman needs to run. Behavior that other tools expose as a
-// tunable is a fixed constant here, chosen for the single-team,
-// self-hosted deployments Gitman targets, so there is little left to
-// configure.
+// tunable is fixed unless it depends on the operator's host or storage.
 package config
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io"
 	"log/slog"
@@ -72,7 +71,7 @@ func (c *Config) ReposPath() string {
 }
 
 // HooksPath is the directory holding the Git hook scripts that route
-// pre-receive and post-receive back into this binary. The web process
+// proc-receive back into this binary. The web process
 // regenerates it on every start, so the scripts always point at the
 // binary that is actually running.
 func (c *Config) HooksPath() string {
@@ -176,17 +175,22 @@ func (c *Config) Validate() error {
 	if err := validateBaseURL(c.WebURL); err != nil {
 		return fmt.Errorf("%s %w", EnvWebURL, err)
 	}
+	c.PublicURL = strings.TrimSuffix(c.PublicURL, "/")
+	c.WebURL = strings.TrimSuffix(c.WebURL, "/")
 	if c.Port < 1 || c.Port > 65535 {
 		return fmt.Errorf("%s must be between 1 and 65535", EnvPort)
 	}
-	if c.DatabaseMaxConns < 0 || c.DatabaseMaxConns > 1000 {
-		return fmt.Errorf("%s must be between 0 (the process's own default) and 1000", EnvDatabaseMaxConns)
+	if c.DatabaseMaxConns < 0 || c.DatabaseMaxConns > 1000 || c.DatabaseMaxConns > 0 && c.DatabaseMaxConns < 4 {
+		return fmt.Errorf("%s must be 0 (the process's own default) or between 4 and 1000", EnvDatabaseMaxConns)
 	}
 	if c.RetentionDays < 0 || c.RetentionDays > 36500 {
 		return fmt.Errorf("%s must be between 0 (keep forever) and 36500 days", EnvRetentionDays)
 	}
-	if c.SecretKey != "" && len(c.SecretKey) < 32 {
-		return fmt.Errorf("%s must be at least 32 characters", EnvSecretKey)
+	if c.SecretKey != "" {
+		raw, err := base64.StdEncoding.DecodeString(c.SecretKey)
+		if err != nil || len(raw) != 32 {
+			return fmt.Errorf("%s must be base64 encoding of 32 random bytes", EnvSecretKey)
+		}
 	}
 	switch c.LogLevel {
 	case "debug", "info", "warn", "error":
@@ -227,9 +231,9 @@ func (c *Config) NewLogger(w io.Writer) *slog.Logger {
 
 func validateBaseURL(raw string) error {
 	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" ||
+	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.RawPath != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") ||
 		(parsed.Scheme != "http" && parsed.Scheme != "https") {
-		return fmt.Errorf("must be an absolute http or https URL without credentials, query or fragment")
+		return fmt.Errorf("must be an absolute http or https URL without credentials, path prefix, query or fragment")
 	}
 	return nil
 }
