@@ -11,7 +11,7 @@ import (
 
 // BindRepositoryStorage pairs a database with its repository storage by instance
 // identity. The marker travels with the files when an operator moves storage.
-func (d *DB) BindRepositoryStorage(ctx context.Context, root string) error {
+func (d *DB) BindRepositoryStorage(ctx context.Context, root string) (result error) {
 	var instance string
 	if err := d.Q.QueryRow(ctx, `SELECT id FROM instance`).Scan(&instance); err != nil {
 		return err
@@ -67,14 +67,12 @@ func (d *DB) BindRepositoryStorage(ctx context.Context, root string) error {
 	if err != nil {
 		return err
 	}
-	defer os.Remove(file.Name())
+	defer func() { result = errors.Join(result, os.Remove(file.Name())) }()
 	if _, err := file.WriteString(instance + "\n"); err != nil {
-		file.Close()
-		return err
+		return errors.Join(err, file.Close())
 	}
 	if err := file.Sync(); err != nil {
-		file.Close()
-		return err
+		return errors.Join(err, file.Close())
 	}
 	if err := file.Close(); err != nil {
 		return err
@@ -86,7 +84,7 @@ func (d *DB) BindRepositoryStorage(ctx context.Context, root string) error {
 	if err != nil {
 		return err
 	}
-	defer dir.Close()
+	defer func() { result = errors.Join(result, dir.Close()) }()
 	if err := dir.Sync(); err != nil {
 		return err
 	}
