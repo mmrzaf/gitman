@@ -34,26 +34,28 @@ func (r *Repo) Divergences(ctx context.Context, base string, heads []string) (ma
 	}
 	result := make(map[string]Divergence, len(heads))
 	var todo []string
+	seen := map[string]bool{}
+	var firstErr error
 	for _, head := range heads {
 		if !IsHash(head) {
-			return nil, ErrNotFound
-		}
-		if _, done := result[head]; done {
+			firstErr = ErrNotFound
 			continue
 		}
+		if seen[head] {
+			continue
+		}
+		seen[head] = true
 		if cached, ok := r.cache.get("divergence:" + base + ":" + head); ok {
 			result[head] = cached.(Divergence)
 			continue
 		}
-		result[head] = Divergence{}
 		todo = append(todo, head)
 	}
 
 	var (
-		mu       sync.Mutex
-		wg       sync.WaitGroup
-		firstErr error
-		slots    = make(chan struct{}, divergenceWorkers)
+		mu    sync.Mutex
+		wg    sync.WaitGroup
+		slots = make(chan struct{}, divergenceWorkers)
 	)
 	for _, head := range todo {
 		slots <- struct{}{}
@@ -74,10 +76,7 @@ func (r *Repo) Divergences(ctx context.Context, base string, heads []string) (ma
 		}()
 	}
 	wg.Wait()
-	if firstErr != nil {
-		return nil, firstErr
-	}
-	return result, nil
+	return result, firstErr
 }
 
 // divergence counts one pair: "base...head" with --left-right prints the

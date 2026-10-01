@@ -58,26 +58,26 @@ func TestADeploymentShowsItsVersionOnlyWhenItIsNotTheCommit(t *testing.T) {
 	expect(t, resp, body, http.StatusOK,
 		// The tag's version is shown as itself, beside its commit, in the list of
 		// what is deployed, in its row and in the feed.
-		`<td class="cell-shrink"><span class="version">v1.0.0</span> <a class="hash" href="/waiotech/commit/`+tagged+`"`,
+		`<td data-label="Deployment commit" class="cell-shrink"><div class="table-cell"><span class="version">v1.0.0</span> <a class="hash" href="/waiotech/commit/`+tagged+`"`,
 		// The branch's leads with nothing but its commit, which says all there is to say.
-		`<td class="cell-shrink"><a class="hash" href="/waiotech/commit/`+main+`"`,
+		`<td data-label="Deployment commit" class="cell-shrink"><div class="table-cell"><a class="hash" href="/waiotech/commit/`+main+`"`,
 		`<span class="version">v1.0.0</span> <span class="muted">→</span> production`,
-		`shipped <span class="version">v1.0.0</span> to <strong>production</strong>`,
+		`deployed <span class="version">v1.0.0</span> to <strong>production</strong>`,
 		// The branch's is its commit, which is shown as a commit.
-		`<td class="cell-shrink">staging</td>`,
-		`shipped <a class="hash" href="/waiotech/commit/`+main+`" title="`+main+`">`+main[:7]+`</a> to <strong>staging</strong>`)
+		`<td data-label="Last deployed" class="cell-shrink"><div class="table-cell">staging</div></td>`,
+		`deployed <a class="hash" href="/waiotech/commit/`+main+`" title="`+main+`">`+main[:7]+`</a> to <strong>staging</strong>`)
 	if strings.Contains(body, `class="version">`+main[:12]) {
 		t.Error("the Overview shows a branch deploy's commit as its version")
 	}
 
 	resp, body = b.do(http.MethodGet, "/", nil, nil)
-	expect(t, resp, body, http.StatusOK, `<td>production</td>`, `<td>staging</td>`, `<span class="version">v1.0.0</span>`)
+	expect(t, resp, body, http.StatusOK, `>production</div></td>`, `>staging</div></td>`, `<span class="version">v1.0.0</span>`)
 	if n := strings.Count(body, `class="version">`); n != 2 {
-		// One in the list of deployments, one in the feed's shipped line.
+		// One in the list of deployments, one in the feed's deployed line.
 		t.Errorf("Home shows %d versions, want the tag's in the list and in the feed", n)
 	}
 	if strings.Contains(body, `class="version">`+main[:12]) {
 		t.Error("Home shows a branch deploy's commit as its version")
 	}
-	expect(t, resp, body, http.StatusOK, `shipped <a class="hash" href="/waiotech/commit/`+main+`"`)
+	expect(t, resp, body, http.StatusOK, `deployed <a class="hash" href="/waiotech/commit/`+main+`"`)
 }
