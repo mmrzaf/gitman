@@ -92,12 +92,26 @@ func (p homePage) HasRun() bool {
 func (a *App) buildHomeData(r *http.Request, createForm *form) (homePage, error) {
 	ctx := r.Context()
 	person := personFrom(r)
-	list, err := a.repos.ListReadable(ctx, person.ID, person.IsAdmin)
+	after := r.URL.Query().Get("after")
+	list, err := a.repos.ListReadablePage(ctx, person.ID, person.IsAdmin, after, 26)
 	if err != nil {
 		return homePage{}, err
 	}
-	readableIDs := make([]string, len(list))
-	for i, repo := range list {
+	next := ""
+	if len(list) > 25 {
+		next = list[24].Name
+		list = list[:25]
+	}
+	all, err := a.repos.ListReadable(ctx, person.ID, person.IsAdmin)
+	if err != nil {
+		return homePage{}, err
+	}
+	listed := map[string]bool{}
+	for _, repo := range list {
+		listed[repo.ID] = true
+	}
+	readableIDs := make([]string, len(all))
+	for i, repo := range all {
 		readableIDs[i] = repo.ID
 	}
 	live, err := a.ci.LiveForRepos(ctx, readableIDs)

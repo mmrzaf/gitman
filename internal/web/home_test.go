@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -28,8 +29,8 @@ func TestHomeListsRepositoriesAndWhatIsDeployed(t *testing.T) {
 	// there is no column for runs.
 	resp, body := b.do(http.MethodGet, "/", nil, nil)
 	expect(t, resp, body, http.StatusOK, `id="repos-title"`, "Nothing in it", "Nothing pushed yet", "Update README",
-		`id="deployments-title"`, "Nothing shipped yet", "Nothing needs attention", `data-live-region="attention"`)
-	if strings.Contains(body, `<th scope="col">Run</th>`) || strings.Contains(body, `<th scope="col">Not shipped</th>`) {
+		`id="deployments-title"`, "Nothing deployed yet", "Nothing needs attention", `data-live-region="attention"`)
+	if strings.Contains(body, `<th scope="col">Run</th>`) || strings.Contains(body, `<th scope="col">Comparison</th>`) {
 		t.Error("Home has a column with nothing in it")
 	}
 
@@ -48,7 +49,7 @@ func TestHomeListsRepositoriesAndWhatIsDeployed(t *testing.T) {
 
 	resp, body = b.do(http.MethodGet, "/", nil, nil)
 	expect(t, resp, body, http.StatusOK, `<th scope="col">Run</th>`, "passed", "<span>#1</span>", `id="deployments-title"`,
-		`<th scope="col">Not shipped</th>`)
+		`<th scope="col">Comparison</th>`)
 	// The repository's row: its latest commit, which leads to it, and its run.
 	row := body[strings.Index(body, `href="/waiotech">waiotech</a>`):]
 	row = row[:strings.Index(row, "</tr>")]
@@ -61,11 +62,11 @@ func TestHomeListsRepositoriesAndWhatIsDeployed(t *testing.T) {
 	// staging is at it.
 	list := body[strings.Index(body, `id="deployments-title"`):]
 	list = list[:strings.Index(list, "</section>")]
-	production, staging := strings.Index(list, "<td>production</td>"), strings.Index(list, "<td>staging</td>")
+	production, staging := strings.Index(list, ">production</div></td>"), strings.Index(list, ">staging</div></td>")
 	if production < 0 || staging < 0 || production > staging {
 		t.Errorf("the deployments are not one row per target, in order:\n%s", list)
 	}
-	if !strings.Contains(list, `>1 commit</a>`) || strings.Count(list, "Up to date") != 1 {
+	if !strings.Contains(list, `>1 commit not deployed</a>`) || strings.Count(list, "Up to date") != 1 {
 		t.Errorf("the deployments do not say how far behind each target is:\n%s", list)
 	}
 	// Two columns, then the list of small cards: attention, then activity.
@@ -122,7 +123,7 @@ func TestHomeNeedsAttention(t *testing.T) {
 	        VALUES ('r3', $1, 3, $2, 'branch', 'main', 'manual', $3, 'queued')`, repo.ID, head, person.ID)
 	insert(`UPDATE workers SET stopped_at = now()`)
 	resp, body = b.do(http.MethodGet, "/", nil, nil)
-	expect(t, resp, body, http.StatusOK, "Runs are queued and no worker is online")
+	expect(t, resp, body, http.StatusOK, "Runs are waiting for a ready worker.")
 }
 
 func TestOverviewHasBranchesTagsAndTheRunStrip(t *testing.T) {
@@ -144,8 +145,8 @@ func TestOverviewHasBranchesTagsAndTheRunStrip(t *testing.T) {
 		}
 	}
 	for _, link := range []string{`class="repobar-link" href="/waiotech@main"`, `>Files</a>`} {
-		if strings.Contains(body, link) {
-			t.Errorf("the repo bar still has Files (%s)", link)
+		if !strings.Contains(body, link) {
+			t.Errorf("the repo bar lacks Files (%s)", link)
 		}
 	}
 
@@ -182,7 +183,39 @@ func TestCommitsSwapInPlaceAndLinkToTheFiles(t *testing.T) {
 			t.Errorf("Commits is live (%s)", live)
 		}
 	}
-	// The Files page belongs to the Overview it is reached from.
+	// The Files page has its own selected navigation item.
 	resp, body = b.do(http.MethodGet, "/waiotech@main", nil, nil)
-	expect(t, resp, body, http.StatusOK, `class="repobar-link" href="/waiotech" aria-current="page"`)
+	expect(t, resp, body, http.StatusOK, `class="repobar-link" href="/waiotech@main" aria-current="page"`)
+}
+
+func TestHomeOperationalPanelsIncludeRepositoriesOutsideListPage(t *testing.T) {
+	db, b := setup(t)
+	signIn(t, db, b, "darius", false)
+	ctx := t.Context()
+	for i := 0; i < 26; i++ {
+		name := fmt.Sprintf("project-%02d", i)
+		if _, err := db.Q.Exec(ctx, `INSERT INTO repos(id,name) VALUES($1,$1)`, name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, query := range []string{
+		`INSERT INTO refs(repo_id,kind,name,commit_hash) VALUES('project-25','branch','main',repeat('a',40))`,
+		`INSERT INTO runs(id,repo_id,number,commit_hash,ref_kind,ref_name,trigger,status,finished_at) VALUES('outside-run','project-25',1,repeat('a',40),'branch','main','push','failed',now())`,
+		`INSERT INTO deployments(id,repo_id,target,version,commit_hash,run_id) VALUES('outside-deploy','project-25','production','v1',repeat('a',40),'outside-run')`,
+	} {
+		if _, err := db.Q.Exec(ctx, query); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resp, body := b.do(http.MethodGet, "/", nil, nil)
+	expect(t, resp, body, http.StatusOK, "project-25: the latest run of main failed.", "production")
+	repos := body[strings.Index(body, `id="repos-title"`):]
+	repos = repos[:strings.Index(repos, "</section>")]
+	if strings.Contains(repos, "project-25") {
+		t.Fatal("repository list was not paginated")
+	}
+	for _, path := range []string{"/", "/?after=project-24"} {
+		resp, body = b.do(http.MethodGet, path, nil, nil)
+		expect(t, resp, body, http.StatusOK, "project-25: the latest run of main failed.", "production")
+	}
 }
