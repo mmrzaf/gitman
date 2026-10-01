@@ -411,6 +411,9 @@ func decryptSecret(key string, ciphertext, nonce, boundTo []byte) (string, error
 	if err != nil {
 		return "", err
 	}
+	if len(nonce) != gcm.NonceSize() || len(ciphertext) < gcm.Overhead() {
+		return "", fmt.Errorf("invalid encrypted secret structure")
+	}
 	plaintext, err := gcm.Open(nil, nonce, ciphertext, boundTo)
 	if err != nil {
 		return "", fmt.Errorf("decrypt: wrong key, or the value was altered or moved")
@@ -418,17 +421,16 @@ func decryptSecret(key string, ciphertext, nonce, boundTo []byte) (string, error
 	return string(plaintext), nil
 }
 
-// secretCipher builds an AES-256-GCM instance from key. key is the
-// operator's GITMAN_SECRET_KEY, expected to already be high-entropy
-// (config requires at least 32 characters), so a fast hash is enough to
-// turn it into a fixed-size AES key; there is no low-entropy human
-// passphrase here to defend against with a slow KDF.
+// secretCipher uses the operator's base64-encoded 256-bit key directly.
 func secretCipher(key string) (cryptocipher.AEAD, error) {
 	if key == "" {
 		return nil, fmt.Errorf("GITMAN_SECRET_KEY is not configured")
 	}
-	sum := sha256.Sum256([]byte(key))
-	block, err := aes.NewCipher(sum[:])
+	raw, err := base64.StdEncoding.DecodeString(key)
+	if err != nil || len(raw) != 32 {
+		return nil, fmt.Errorf("GITMAN_SECRET_KEY must be base64 encoding of 32 random bytes")
+	}
+	block, err := aes.NewCipher(raw)
 	if err != nil {
 		return nil, fmt.Errorf("initialize cipher: %w", err)
 	}

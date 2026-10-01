@@ -36,8 +36,7 @@ func NewService(db *postgres.DB, store *git.Store, secretKey string) *Service {
 }
 
 // Create adds a repository record and initializes its bare repository.
-// The row and the directory are created together: if either fails,
-// neither is left behind.
+// Intent commits before Git changes; recovery completes any interrupted creation.
 func (s *Service) Create(ctx context.Context, name, description, defaultBranch, actorID string) (*Repo, error) {
 	name = strings.ToLower(name)
 	if err := names.ValidateRepository(name); err != nil {
@@ -471,14 +470,28 @@ func (s *Service) SetSecret(ctx context.Context, repoID, key, value, actorID str
 	if value == "" {
 		return apperr.New(apperr.KindInvalid, "secret value must not be empty")
 	}
-	if utf8.RuneCountInString(value) > MaxSecretValueLen {
-		return apperr.New(apperr.KindInvalid, fmt.Sprintf("secret value must be at most %d characters", MaxSecretValueLen))
+	if strings.IndexByte(value, 0) >= 0 || !utf8.ValidString(value) {
+		return apperr.New(apperr.KindInvalid, "secret value must be valid text without NUL bytes")
+	}
+	if len(value) > MaxSecretValueLen {
+		return apperr.New(apperr.KindInvalid, fmt.Sprintf("secret value must be at most %d bytes", MaxSecretValueLen))
 	}
 	ciphertext, nonce, err := encryptSecret(s.secretKey, value, secretContext(repoID, key))
 	if err != nil {
 		return err
 	}
 	return s.db.Tx(ctx, func(tx postgres.Tx) error {
+		// Serialize the budget check with every secret mutation for this repo.
+		if err := lockRefIndex(ctx, tx, repoID); err != nil {
+			return err
+		}
+		var used int
+		if err := tx.QueryRow(ctx, `SELECT COALESCE(SUM(octet_length(key) + GREATEST(octet_length(ciphertext)-16, 0) + 2), 0) FROM secrets WHERE repo_id = $1 AND key <> $2`, repoID, key).Scan(&used); err != nil {
+			return err
+		}
+		if used+len(key)+len(value)+2 > 128<<10 {
+			return apperr.New(apperr.KindInvalid, "repository secret environment must total at most 128 KiB, including names")
+		}
 		if err := upsertSecretRow(ctx, tx, id.New(), repoID, key, ciphertext, nonce, actorID); err != nil {
 			return err
 		}
@@ -517,4 +530,17 @@ func (s *Service) RunSecrets(ctx context.Context, repoID string) (map[string]str
 		values[key] = plain
 	}
 	return values, nil
+}
+
+func validatePeople(ctx context.Context, q postgres.Querier, people []string) error {
+	for _, person := range people {
+		var exists bool
+		if err := q.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM people WHERE id = $1)`, person).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			return apperr.New(apperr.KindInvalid, "select existing people")
+		}
+	}
+	return nil
 }
