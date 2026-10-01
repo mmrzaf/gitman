@@ -175,7 +175,7 @@ func (s *Store) Delete(repoID string) error {
 // Sweep removes directories left behind by a Create or Delete that was
 // interrupted by a crash. It is meant to run once at startup, before any
 // Create is in flight.
-func (s *Store) Sweep() error {
+func (s *Store) Sweep(ctx context.Context) error {
 	entries, err := os.ReadDir(s.root)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -187,9 +187,20 @@ func (s *Store) Sweep() error {
 	for _, entry := range entries {
 		name := entry.Name()
 		if strings.HasPrefix(name, tmpPrefix) || strings.HasPrefix(name, trashPrefix) {
+			key := strings.TrimPrefix(strings.TrimPrefix(name, tmpPrefix), trashPrefix)
+			if i := strings.LastIndexByte(key, '-'); i > 0 && len(key)-i-1 == 12 {
+				key = key[:i]
+			}
+			check, stop := context.WithTimeout(ctx, 50*time.Millisecond)
+			unlock, err := s.MutationLock(check, key)
+			stop()
+			if err != nil {
+				continue
+			}
 			if err := os.RemoveAll(filepath.Join(s.root, name)); err != nil {
 				errs = append(errs, err)
 			}
+			unlock()
 		}
 	}
 	return errors.Join(errs...)
@@ -270,6 +281,11 @@ func (r *reader) close() {
 // pipe, the process is killed to unblock it and the reader is marked
 // broken, since the pipe's position is then unknown.
 func (r *reader) do(ctx context.Context, op func() error) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if r.broken {
 		return errReaderBroken
 	}
@@ -398,13 +414,14 @@ type readerPool struct {
 	max     int
 	idle    time.Duration
 	done    chan struct{}
+	changed chan struct{}
 	closed  bool
 }
 
 var errPoolClosed = errors.New("object reader pool is closed")
 
 func newReaderPool(max int, idle time.Duration) *readerPool {
-	p := &readerPool{readers: make(map[string]*reader), max: max, idle: idle, done: make(chan struct{})}
+	p := &readerPool{readers: make(map[string]*reader), max: max, idle: idle, done: make(chan struct{}), changed: make(chan struct{})}
 	go p.reapLoop()
 	return p
 }
@@ -443,60 +460,72 @@ func (p *readerPool) closeIdleLocked(cutoff time.Time, keep int) {
 	}
 }
 
-// acquire returns the repository's reader, locked for the caller's
-// exclusive use. A bounded retry, not a loop, because a reader can only
-// go from broken to forgotten to freshly created here — three attempts
-// is more than this pool's own code ever needs, so hitting the bound
-// means something keeps recreating a broken reader, not that this
-// particular acquire was simply unlucky.
-func (p *readerPool) acquire(path string) (*reader, error) {
-	for attempt := 0; attempt < 3; attempt++ {
-		r, err := p.lookup(path)
-		if err != nil {
+// acquire reserves one reader without exceeding the process limit. Waiting
+// for either a busy repository or capacity is cancellable. Creation occurs
+// under the pool lock so concurrent requests never spawn duplicate readers.
+func (p *readerPool) acquire(ctx context.Context, path string) (*reader, error) {
+	for {
+		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		r.mu.Lock()
-		if !r.broken {
-			return r, nil
+		p.mu.Lock()
+		if p.closed {
+			p.mu.Unlock()
+			return nil, errPoolClosed
 		}
-		r.mu.Unlock()
-		p.forget(path, r)
+		if r := p.readers[path]; r != nil {
+			if r.mu.TryLock() {
+				if !r.broken {
+					p.mu.Unlock()
+					return r, nil
+				}
+				r.close()
+				delete(p.readers, path)
+				r.mu.Unlock()
+			} else {
+				changed := p.changed
+				p.mu.Unlock()
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-changed:
+				}
+				continue
+			}
+		}
+		// Evict one idle reader when full; busy readers retain their slot.
+		if len(p.readers) >= p.max {
+			for other, r := range p.readers {
+				if r.mu.TryLock() {
+					r.close()
+					delete(p.readers, other)
+					r.mu.Unlock()
+					break
+				}
+			}
+		}
+		if len(p.readers) < p.max {
+			r, err := startReader(path, nil)
+			if err == nil {
+				r.mu.Lock()
+				p.readers[path] = r
+			}
+			p.mu.Unlock()
+			return r, err
+		}
+		changed := p.changed
+		p.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-changed:
+		}
 	}
-	return nil, errReaderBroken
 }
 
-func (p *readerPool) lookup(path string) (*reader, error) {
-	p.mu.Lock()
-	if p.closed {
-		p.mu.Unlock()
-		return nil, errPoolClosed
-	}
-	if r, ok := p.readers[path]; ok {
-		p.mu.Unlock()
-		return r, nil
-	}
-	p.mu.Unlock()
-
-	fresh, err := startReader(path, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.closed {
-		fresh.close()
-		return nil, errPoolClosed
-	}
-	if r, ok := p.readers[path]; ok {
-		fresh.close()
-		return r, nil
-	}
-	if len(p.readers) >= p.max {
-		p.closeIdleLocked(time.Now(), p.max-1)
-	}
-	p.readers[path] = fresh
-	return fresh, nil
+func (p *readerPool) signalLocked() {
+	close(p.changed)
+	p.changed = make(chan struct{})
 }
 
 // forget removes r from the pool if it is still registered and closes it.
@@ -504,6 +533,7 @@ func (p *readerPool) forget(path string, r *reader) {
 	p.mu.Lock()
 	if p.readers[path] == r {
 		delete(p.readers, path)
+		p.signalLocked()
 	}
 	p.mu.Unlock()
 	r.mu.Lock()
@@ -517,6 +547,9 @@ func (p *readerPool) release(path string, r *reader) {
 	if broken {
 		p.forget(path, r)
 	}
+	p.mu.Lock()
+	p.signalLocked()
+	p.mu.Unlock()
 }
 
 func (p *readerPool) close() {
@@ -527,6 +560,7 @@ func (p *readerPool) close() {
 	}
 	p.closed = true
 	close(p.done)
+	p.signalLocked()
 	readers := p.readers
 	p.readers = nil
 	p.mu.Unlock()
@@ -543,7 +577,7 @@ type pooledSource struct {
 }
 
 func (s pooledSource) with(ctx context.Context, fn func(*reader) error) error {
-	r, err := s.pool.acquire(s.path)
+	r, err := s.pool.acquire(ctx, s.path)
 	if err != nil {
 		return err
 	}
@@ -555,15 +589,19 @@ func (s pooledSource) with(ctx context.Context, fn func(*reader) error) error {
 // pool — inside a Git hook, where the reader must see the hook's
 // quarantined objects through the environment Git gave the hook.
 type standaloneSource struct {
-	mu   sync.Mutex
+	gate chan struct{}
 	path string
 	env  []string
 	r    *reader
 }
 
 func (s *standaloneSource) with(ctx context.Context, fn func(*reader) error) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	select {
+	case s.gate <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	defer func() { <-s.gate }()
 	if s.r == nil || s.r.broken {
 		if s.r != nil {
 			s.r.close()
@@ -578,8 +616,8 @@ func (s *standaloneSource) with(ctx context.Context, fn func(*reader) error) err
 }
 
 func (s *standaloneSource) close() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.gate <- struct{}{}
+	defer func() { <-s.gate }()
 	if s.r != nil {
 		s.r.close()
 		s.r = nil

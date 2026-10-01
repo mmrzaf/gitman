@@ -79,11 +79,11 @@ func TestStoreSweep(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := store.Sweep(); err != nil {
+	if err := store.Sweep(context.Background()); err != nil {
 		t.Fatalf("Sweep: %v", err)
 	}
 	entries, _ := os.ReadDir(root)
-	if len(entries) != 1 || entries[0].Name() != "keep.git" {
-		t.Fatalf("after Sweep: %v, want only keep.git", entries)
+	if len(entries) != 2 || entries[0].Name() != ".locks" || entries[1].Name() != "keep.git" {
+		t.Fatalf("after Sweep: %v, want keep.git and the mutation-lock directory", entries)
 	}
 }
