@@ -6,14 +6,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"mime"
 	"net/http"
 	"net/url"
 	"path"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mmrzaf/gitman/internal/apperr"
 	"github.com/mmrzaf/gitman/internal/git"
@@ -57,11 +58,6 @@ type resolved struct {
 	Path   string
 }
 
-// commitPrefixPattern matches a plausible abbreviated or full commit
-// hash: hex digits, at least 7 of them (Git's shortest useful
-// abbreviation), at most 64 (a full SHA-256 hash).
-var commitPrefixPattern = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
-
 // notFound is a not-found error with a message meant for the page.
 func notFound(format string, args ...any) error {
 	return apperr.New(apperr.KindNotFound, fmt.Sprintf(format, args...))
@@ -96,7 +92,7 @@ func (a *App) resolveRefAndPath(ctx context.Context, gitRepo *git.Repo, repoID, 
 	}
 
 	candidate, path, _ := strings.Cut(refAndPath, "/")
-	if !commitPrefixPattern.MatchString(candidate) {
+	if !git.LooksLikeCommitHash(candidate) {
 		return nil, notFound("%q is not a branch, tag, or commit of this repository.", candidate)
 	}
 	commit, err := gitRepo.ResolveCommit(ctx, candidate)
@@ -208,7 +204,13 @@ func (a *App) files(w http.ResponseWriter, r *http.Request, name, refAndPath str
 	if err != nil {
 		return err
 	}
-	ctx := r.Context()
+	budget := 15 * time.Second
+	if r.URL.Query().Has("raw") {
+		budget = 15 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), budget)
+	defer cancel()
+	r = r.WithContext(ctx)
 	gitRepo, err := a.repos.Open(repo)
 	if err != nil {
 		return err
@@ -254,7 +256,7 @@ func (a *App) files(w http.ResponseWriter, r *http.Request, name, refAndPath str
 	}
 
 	page := filesPage{
-		repoFrame: repoFrame{Repo: repo, Section: "overview"},
+		repoFrame: repoFrame{Repo: repo, Section: "files"},
 		Ref:       res.Name, Commit: res.Commit, Path: res.Path,
 		Breadcrumb:   breadcrumb(res.Path),
 		RawURL:       refURL(repo.Name, res.Name, res.Path) + "?raw",
@@ -262,6 +264,9 @@ func (a *App) files(w http.ResponseWriter, r *http.Request, name, refAndPath str
 		RefIsBranch:  res.Kind == git.KindBranch,
 		RefIsTag:     res.Kind == git.KindTag,
 		ArchiveRef:   res.Name,
+	}
+	if entry.Kind != git.EntryFile {
+		page.RawURL = ""
 	}
 	if res.Kind == "" {
 		page.ArchiveRef = res.Commit
@@ -348,7 +353,7 @@ func (a *App) filesUnpushed(w http.ResponseWriter, r *http.Request, repo *reposv
 	if err != nil {
 		return err
 	}
-	page := filesUnpushedPage{repoFrame: repoFrame{Repo: repo, Section: "overview"}, CloneURL: a.cloneURL(repo)}
+	page := filesUnpushedPage{repoFrame: repoFrame{Repo: repo, Section: "files"}, CloneURL: a.cloneURL(repo)}
 	for _, ref := range refs {
 		if ref.Kind == git.KindBranch {
 			page.Branches = append(page.Branches, ref.Name)
@@ -378,21 +383,26 @@ func historySkip(r *http.Request) int {
 
 // fileRaw serves a file's exact bytes, with no page around them. What a
 // repository holds is written by any member, so it is never served as
-// something a browser runs: see rawContentType and setRawHeaders.
+// something a browser runs: see setRawHeaders.
 func (a *App) fileRaw(w http.ResponseWriter, r *http.Request, gitRepo *git.Repo, entry git.TreeEntry, entryPath string) error {
 	if entry.Kind != git.EntryFile {
 		return notFound("Only files have a raw view.")
 	}
-	data, err := gitRepo.Blob(r.Context(), entry.Hash, maxFileDisplayBytes)
+	size, err := gitRepo.BlobSize(r.Context(), entry.Hash)
 	if err != nil {
-		var tooLarge *git.TooLargeError
-		if errors.As(err, &tooLarge) {
-			return apperr.New(apperr.KindTooLarge, "This file is too large to view raw.")
-		}
 		return err
 	}
-	setRawHeaders(w.Header(), rawContentType(entryPath, data), path.Base(entryPath))
-	_, _ = w.Write(data)
+	sniff := &rawWriter{dst: &deadlineWriter{dst: w, controller: http.NewResponseController(w)}, header: w.Header(), filename: path.Base(entryPath)}
+	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Minute)
+	defer cancel()
+	if err := gitRepo.StreamBlob(ctx, entry.Hash, sniff); err != nil {
+		// Streaming may already have committed headers. Do not append HTML
+		// to downloaded bytes after a client disconnect or command failure.
+		a.log.Warn("raw download ended", "path", entryPath, "error", err)
+	} else if err := sniff.flush(); err != nil {
+		a.log.Warn("raw download ended", "path", entryPath, "error", err)
+	}
 	return nil
 }
 
@@ -538,7 +548,7 @@ func (a *App) commitView(w http.ResponseWriter, r *http.Request) error {
 // which searches every commit message, is not part of a commit's address.
 func (a *App) commitNamed(r *http.Request, gitRepo *git.Repo, repo *reposvc.Repo) (string, error) {
 	sha := r.PathValue("sha")
-	if !commitPrefixPattern.MatchString(sha) {
+	if !git.LooksLikeCommitHash(sha) {
 		return "", notFound("%q is not a commit of %s.", sha, repo.Name)
 	}
 	hash, err := gitRepo.ResolveCommit(r.Context(), sha)
@@ -546,32 +556,6 @@ func (a *App) commitNamed(r *http.Request, gitRepo *git.Repo, repo *reposvc.Repo
 		return "", notFound("%q is not a commit of %s.", sha, repo.Name)
 	}
 	return hash, err
-}
-
-// rawImageTypes are the file types a raw view serves as themselves:
-// raster images, which a browser displays but cannot execute. SVG is
-// not among them — it can carry script — and is served as text.
-var rawImageTypes = map[string]string{
-	".png":  "image/png",
-	".jpg":  "image/jpeg",
-	".jpeg": "image/jpeg",
-	".gif":  "image/gif",
-	".webp": "image/webp",
-	".ico":  "image/x-icon",
-}
-
-// rawContentType decides how a raw file is served: a raster image as
-// itself, any other binary as a download, and all text — HTML,
-// JavaScript and SVG included — as plain text, so a file pushed to a
-// repository can never run as a page of Gitman's own origin.
-func rawContentType(name string, data []byte) string {
-	if t, ok := rawImageTypes[strings.ToLower(path.Ext(name))]; ok && looksBinary(data) {
-		return t
-	}
-	if looksBinary(data) {
-		return "application/octet-stream"
-	}
-	return "text/plain; charset=utf-8"
 }
 
 // setRawHeaders sets the headers of any response that carries repository
@@ -588,4 +572,61 @@ func setRawHeaders(h http.Header, contentType, filename string) {
 	h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Cache-Control", "no-cache")
+}
+
+// deadlineWriter renews the write budget for each download block.
+type deadlineWriter struct {
+	dst        http.ResponseWriter
+	controller *http.ResponseController
+}
+
+func (w *deadlineWriter) Write(p []byte) (int, error) {
+	_ = w.controller.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	return w.dst.Write(p)
+}
+
+// rawWriter sniffs only the first 512 bytes and streams the rest. Active formats
+// are shown as plain text; only raster images are allowed their native type.
+type rawWriter struct {
+	dst      io.Writer
+	header   http.Header
+	filename string
+	prefix   []byte
+	started  bool
+}
+
+func (w *rawWriter) flush() error {
+	if w.started {
+		return nil
+	}
+	kind := http.DetectContentType(w.prefix)
+	switch kind {
+	case "image/png", "image/jpeg", "image/gif", "image/webp":
+	default:
+		if strings.HasPrefix(kind, "text/") {
+			kind = "text/plain; charset=utf-8"
+		} else {
+			kind = "application/octet-stream"
+		}
+	}
+	setRawHeaders(w.header, kind, w.filename)
+	w.started = true
+	_, err := w.dst.Write(w.prefix)
+	w.prefix = nil
+	return err
+}
+func (w *rawWriter) Write(p []byte) (int, error) {
+	if w.started {
+		return w.dst.Write(p)
+	}
+	n := min(512-len(w.prefix), len(p))
+	w.prefix = append(w.prefix, p[:n]...)
+	if len(w.prefix) < 512 {
+		return n, nil
+	}
+	if err := w.flush(); err != nil {
+		return n, err
+	}
+	rest, err := w.dst.Write(p[n:])
+	return n + rest, err
 }

@@ -1,6 +1,8 @@
 package web
 
 import (
+	"context"
+	"io"
 	"mime"
 	"net/http"
 	"net/url"
@@ -41,7 +43,7 @@ func splitArchiveName(name string) (ref string, format git.ArchiveFormat, ok boo
 // so an archive Git fails to make before writing anything can still be
 // answered with an error page instead of a download that is empty.
 type archiveWriter struct {
-	w       http.ResponseWriter
+	w       io.Writer
 	start   func()
 	started bool
 }
@@ -59,6 +61,10 @@ func (a *archiveWriter) Write(p []byte) (int, error) {
 // resolves the repository as every page does, so a repository a person
 // cannot read is not found, and it takes one of the slots Git HTTP shares.
 func (a *App) archive(w http.ResponseWriter, r *http.Request) error {
+	transfer := r.Context()
+	setup, endSetup := context.WithTimeout(transfer, 15*time.Second)
+	defer endSetup()
+	r = r.WithContext(setup)
 	repo, err := a.repoByName(r)
 	if err != nil {
 		return err
@@ -79,6 +85,10 @@ func (a *App) archive(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+
+	endSetup()
+	ctx, endTransfer := context.WithTimeout(transfer, archiveWriteTimeout)
+	defer endTransfer()
 
 	// A commit is named by its first characters, the way a link to it is.
 	label := res.Name
@@ -110,7 +120,7 @@ func (a *App) archive(w http.ResponseWriter, r *http.Request) error {
 	defer release()
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(archiveWriteTimeout))
 
-	out := &archiveWriter{w: w, start: setHeaders}
+	out := &archiveWriter{w: &deadlineWriter{dst: w, controller: http.NewResponseController(w)}, start: setHeaders}
 	start := time.Now()
 	if err := gitRepo.Archive(ctx, out, format, res.Commit, name); err != nil {
 		if !out.started {

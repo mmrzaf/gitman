@@ -283,10 +283,9 @@ func TestFilesRaw(t *testing.T) {
 	if resp.StatusCode != http.StatusOK || body != "print('hi')\n" {
 		t.Fatalf("raw file: %d %q", resp.StatusCode, body)
 	}
-	// The extension gives a more precise type (text/x-python) than a
-	// flat text/plain would; what matters is that it's text, not octets.
-	if !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/") {
-		t.Errorf("raw Content-Type = %q, want a text/* type", resp.Header.Get("Content-Type"))
+	// Raw files are downloads, with exact bytes and no browser execution.
+	if resp.Header.Get("Content-Type") != "text/plain; charset=utf-8" {
+		t.Errorf("raw Content-Type = %q, want safe plain text", resp.Header.Get("Content-Type"))
 	}
 	if got := resp.Header.Get("Content-Disposition"); !strings.Contains(got, "app.py") {
 		t.Errorf("Content-Disposition = %q", got)
@@ -295,6 +294,11 @@ func TestFilesRaw(t *testing.T) {
 	resp, _ = b.do(http.MethodGet, "/waiotech@main/binary.bin?raw", nil, nil)
 	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "application/octet-stream" {
 		t.Fatalf("raw binary: %d %q", resp.StatusCode, resp.Header.Get("Content-Type"))
+	}
+
+	resp, body = b.do(http.MethodGet, "/waiotech@main/big.bin?raw", nil, nil)
+	if resp.StatusCode != http.StatusOK || body != strings.Repeat("x", maxFileDisplayBytes+1) {
+		t.Fatalf("large raw download: status %d, size %d", resp.StatusCode, len(body))
 	}
 
 	resp, body = b.do(http.MethodGet, "/waiotech@main?raw", nil, nil)
