@@ -140,7 +140,20 @@ type handler func(w http.ResponseWriter, r *http.Request) error
 // headers, the cross-origin check for state-changing requests, the
 // signed-in person, the pending flash message, and the access check.
 func (a *App) page(level access, h handler) http.Handler {
+	return a.pageWithBudget(level, h, 15*time.Second)
+}
+
+func (a *App) stream(level access, h handler) http.Handler {
+	return a.pageWithBudget(level, h, 0)
+}
+
+func (a *App) pageWithBudget(level access, h handler, budget time.Duration) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if budget > 0 {
+			ctx, cancel := context.WithTimeout(r.Context(), budget)
+			defer cancel()
+			r = r.WithContext(ctx)
+		}
 		rc := http.NewResponseController(w)
 		_ = rc.SetReadDeadline(time.Now().Add(a.pageReadTimeout))
 		_ = rc.SetWriteDeadline(time.Now().Add(a.pageWriteTimeout))

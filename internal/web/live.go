@@ -29,7 +29,10 @@ const (
 	// on its own, so no connection is held open forever.
 	liveLifetime = time.Hour
 	// liveLogBatch is how many log chunks one read sends at most.
-	liveLogBatch = 64
+	liveLogBatch     = 64
+	liveWriteTimeout = 10 * time.Second
+	livePerPerson    = 8
+	liveGlobal       = 256
 )
 
 // liveChannels are the notifications live pages follow: runs changing,
@@ -54,8 +57,10 @@ type subscriber struct {
 
 // hub fans PostgreSQL notifications out to every open event stream.
 type hub struct {
-	mu   sync.Mutex
-	subs map[*subscriber]struct{}
+	mu          sync.Mutex
+	subs        map[*subscriber]struct{}
+	people      map[string]int
+	connections int
 	// closed ends every open stream when the server shuts down. A stream
 	// is a request that never finishes on its own, so without it a
 	// graceful shutdown would wait out its whole grace period for any
@@ -83,6 +88,26 @@ func (h *hub) subscribe() (*subscriber, func()) {
 		delete(h.subs, s)
 		h.mu.Unlock()
 	}
+}
+
+// admit limits open streams before any response headers are committed.
+func (h *hub) admit(personID string) (func(), bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.connections >= liveGlobal || h.people[personID] >= livePerPerson {
+		return nil, false
+	}
+	h.connections++
+	h.people[personID]++
+	return func() {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		h.connections--
+		h.people[personID]--
+		if h.people[personID] == 0 {
+			delete(h.people, personID)
+		}
+	}, true
 }
 
 // publish never blocks: a subscriber too slow to keep up misses the
@@ -183,6 +208,14 @@ func (a *App) events(w http.ResponseWriter, r *http.Request) error {
 		after = v
 	}
 
+	release, admitted := a.hub.admit(person.ID)
+	if !admitted {
+		w.Header().Set("Retry-After", "10")
+		w.WriteHeader(http.StatusTooManyRequests)
+		return nil
+	}
+	defer release()
+
 	h := w.Header()
 	h.Set("Content-Type", "text/event-stream")
 	h.Set("Cache-Control", "no-cache")
@@ -190,13 +223,39 @@ func (a *App) events(w http.ResponseWriter, r *http.Request) error {
 	rc := http.NewResponseController(w)
 	// A stream outlives the page deadlines; it ends after liveLifetime.
 	_ = rc.SetReadDeadline(time.Time{})
-	_ = rc.SetWriteDeadline(time.Time{})
+	_ = rc.SetWriteDeadline(time.Now().Add(liveWriteTimeout))
 	sub, unsubscribe := a.hub.subscribe()
 	defer unsubscribe()
 
 	ctx, cancel := context.WithTimeout(r.Context(), liveLifetime)
 	defer cancel()
-	fmt.Fprint(w, "retry: 3000\n\n")
+	if _, err := fmt.Fprint(w, "retry: 3000\n\n"); err != nil {
+		return nil
+	}
+	// Re-resolve the session and permissions before each output batch. A
+	// captured Person must never keep an obsolete admin grant alive.
+	authorized := func() bool {
+		check, stop := context.WithTimeout(ctx, liveWriteTimeout)
+		defer stop()
+		fresh, err := a.people.SessionPerson(check, sessionTokenFrom(r))
+		if err != nil {
+			return false
+		}
+		person = fresh
+		if repoID != "" {
+			readable, err := a.repos.CanReadID(check, repoID, person.ID, person.IsAdmin)
+			if err != nil || !readable {
+				return false
+			}
+		}
+		if runID != "" && a.mustReadRun(check, runID, person) != nil {
+			return false
+		}
+		if stepID != "" && a.mustReadStep(check, stepID, person) != nil {
+			return false
+		}
+		return true
+	}
 
 	// sendLogs writes the step's output written since the last send, and
 	// reports whether the stream can go on.
@@ -205,7 +264,13 @@ func (a *App) events(w http.ResponseWriter, r *http.Request) error {
 			return true
 		}
 		for {
-			chunks, err := a.ci.LogChunks(ctx, stepID, after, liveLogBatch)
+			if !authorized() {
+				return false
+			}
+			_ = rc.SetWriteDeadline(time.Now().Add(liveWriteTimeout))
+			read, stopRead := context.WithTimeout(ctx, liveWriteTimeout)
+			chunks, err := a.ci.LogChunks(read, stepID, after, liveLogBatch)
+			stopRead()
 			if err != nil {
 				if ctx.Err() == nil {
 					a.log.Warn("event stream ended", "step", stepID, "error", err)
@@ -222,8 +287,11 @@ func (a *App) events(w http.ResponseWriter, r *http.Request) error {
 			}
 		}
 	}
+	writeFailed := false
 	changed := func(id string) {
-		fmt.Fprintf(w, "event: change\ndata: %s\n\n", id)
+		if _, err := fmt.Fprintf(w, "event: change\ndata: %s\n\n", id); err != nil {
+			writeFailed = true
+		}
 	}
 
 	if !sendLogs() || rc.Flush() != nil {
@@ -238,6 +306,24 @@ func (a *App) events(w http.ResponseWriter, r *http.Request) error {
 		case <-a.hub.closed:
 			return nil
 		case n := <-sub.notices:
+			if n.channel == ci.LogChannel && stepID == "" {
+				continue
+			}
+			if repoID != "" && n.channel != "" {
+				check, stopCheck := context.WithTimeout(ctx, liveWriteTimeout)
+				changedRepo := n.payload
+				if n.channel == ci.NotifyChannel || n.channel == ci.LogChannel {
+					changedRepo, _ = a.ci.RepoIDForRun(check, n.payload)
+				}
+				stopCheck()
+				if changedRepo != repoID {
+					continue
+				}
+			}
+			if !authorized() {
+				return nil
+			}
+			_ = rc.SetWriteDeadline(time.Now().Add(liveWriteTimeout))
 			switch {
 			case n.channel == "":
 				changed(runID)
@@ -280,6 +366,10 @@ func (a *App) events(w http.ResponseWriter, r *http.Request) error {
 				}
 			}
 		case <-poll.C:
+			if !authorized() {
+				return nil
+			}
+			_ = rc.SetWriteDeadline(time.Now().Add(liveWriteTimeout))
 			if sub.missed.Swap(false) {
 				changed(runID)
 			}
@@ -288,6 +378,9 @@ func (a *App) events(w http.ResponseWriter, r *http.Request) error {
 			if !sendLogs() {
 				return nil
 			}
+		}
+		if writeFailed {
+			return nil
 		}
 		if err := rc.Flush(); err != nil {
 			return nil

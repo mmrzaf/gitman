@@ -50,17 +50,17 @@ func (a *App) register(mux *http.ServeMux) {
 	mux.Handle("POST /people/{username}/reset-password", a.page(admin, a.peopleResetPassword))
 
 	mux.Handle("GET /{repo}", a.page(member, a.repository))
-	mux.Handle("GET /events", a.page(member, a.events))
+	mux.Handle("GET /events", a.stream(member, a.events))
 
 	mux.Handle("POST /{repo}/refs/delete", a.page(member, a.refDelete))
 	mux.Handle("GET /{repo}/commit/{sha}", a.page(member, a.commitView))
 	mux.Handle("GET /{repo}/commits", a.page(member, a.commits))
 	mux.Handle("GET /{repo}/activity", a.page(member, a.activityView))
-	mux.Handle("GET /{repo}/archive/{ref...}", a.page(member, a.archive))
+	mux.Handle("GET /{repo}/archive/{ref...}", a.stream(member, a.archive))
 	mux.Handle("GET /{repo}/runs", a.page(member, a.runs))
 	mux.Handle("POST /{repo}/runs", a.page(member, a.runRef))
 	mux.Handle("GET /{repo}/runs/{n}", a.page(member, a.runView))
-	mux.Handle("GET /{repo}/runs/{n}/log", a.page(member, a.runLog))
+	mux.Handle("GET /{repo}/runs/{n}/log", a.stream(member, a.runLog))
 	mux.Handle("POST /{repo}/runs/{n}/cancel", a.page(member, a.runCancel))
 	mux.Handle("POST /{repo}/runs/{n}/again", a.page(member, a.runAgain))
 	mux.Handle("GET /{repo}/compare", a.page(member, a.compareRedirect))
@@ -105,7 +105,7 @@ func filesAtRef(r *http.Request) bool {
 // path would collide with every page under a repository: a directory
 // named "runs" or "settings" would open that page, not the directory.
 func (a *App) routeFilesAtRef(next http.Handler) http.Handler {
-	files := a.page(member, func(w http.ResponseWriter, r *http.Request) error {
+	files := a.stream(member, func(w http.ResponseWriter, r *http.Request) error {
 		first, rest, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/")
 		name, refAndPath, _ := splitRepoRef(first)
 		if rest = strings.Trim(rest, "/"); rest != "" {
