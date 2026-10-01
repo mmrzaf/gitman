@@ -49,7 +49,7 @@ func TestInstallWritesExecutableScripts(t *testing.T) {
 	if err := Install(dir, exe); err != nil {
 		t.Fatalf("reinstall: %v", err)
 	}
-	for _, name := range []string{PreReceive, PostReceive} {
+	for _, name := range []string{ProcReceive} {
 		out, err := exec.Command(filepath.Join(dir, name)).Output()
 		if err != nil {
 			t.Fatalf("run %s: %v", name, err)
@@ -59,8 +59,8 @@ func TestInstallWritesExecutableScripts(t *testing.T) {
 		}
 	}
 	entries, _ := os.ReadDir(dir)
-	if len(entries) != 2 {
-		t.Errorf("expected only the two scripts, found %d entries", len(entries))
+	if len(entries) != 1 {
+		t.Errorf("expected only the proc-receive script, found %d entries", len(entries))
 	}
 	if err := Install(dir, "relative/gitman"); err == nil {
 		t.Error("expected a relative executable path to be rejected")
