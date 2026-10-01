@@ -54,7 +54,13 @@ image)
 		[ "$image" = "$wanted" ] && { echo sha256:abc; exit 0; }
 	done
 	echo "Error: No such image: $wanted" >&2; exit 1 ;;
-ps) printf '%s' "$FAKE_DOCKER_PS"; exit 0 ;;
+ps)
+ full=0
+ for arg in "$@"; do [ "$arg" != --no-trunc ] || full=1; done
+ if [ "$full" = 1 ]; then printf '%s' "$FAKE_DOCKER_PS"
+ else printf '%s' "$FAKE_DOCKER_PS" | awk '{ if (length($1) == 64) $1=substr($1,1,12); print }'
+ fi
+ exit 0 ;;
 kill)
  if [ -f "$dir/pid-$2" ]; then
   pid=$(cat "$dir/pid-$2")

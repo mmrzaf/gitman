@@ -270,7 +270,7 @@ func (d *Docker) stopContainer(name string) error {
 func (d *Docker) runContainers(ctx context.Context) (map[string]string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	out, err := d.command(ctx, "ps", "--all",
+	out, err := d.command(ctx, "ps", "--all", "--no-trunc",
 		"--filter", "label="+runLabel,
 		"--filter", "label="+instanceLabel+"="+d.Instance,
 		"--format", "{{.ID}} {{.Label \""+runLabel+"\"}}").Output()
