@@ -15,9 +15,17 @@ Logs and screenshots remain in the printed temporary artifacts directory.
   keyboard interactions, axe accessibility checks, mobile layouts, both themes,
   JavaScript and plain HTML fallbacks. Default port: 18081.
 - `browser-smoke.sh` and `browser-smoke.mjs`: rendered page, accessibility and
-  interaction checks without Docker. Runs remain queued. Default port: 18081.
+  interaction checks without Docker. Exercises long refs, commit subjects and
+  paths at 320, 390, 768, 1024 and 1440px, checking mobile card content and
+  controls for clipping and dialogs for overflow. Runs remain queued.
+  Default port: 18081.
 - `backup-test.sh`: PostgreSQL/Git snapshot and restore checks, without Docker.
-  Requires compatible `pg_dump` and `pg_restore` clients.
+  Requires compatible `pg_dump` and `pg_restore` clients. Checks restricted
+  reader grants and revocation, token scope, decrypted secret fingerprints,
+  completed run/step output, summaries, deployments and pinned historical source.
+  Completed history is seeded directly; execution is covered by `e2e.sh`.
+  `backup-check` compares secret fingerprints through the repository service
+  before and after restore without printing plaintext.
 - `verify.sh`: combined project checks; see `Makefile` for individual targets.
 
 Install browser dependencies once:

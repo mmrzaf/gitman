@@ -58,3 +58,9 @@ real Docker execution and browser checks and uploads their evidence. Set
 Use `npm ci --prefix scripts` and `scripts/node_modules/.bin/playwright install chromium`
 for the pinned browser dependencies. The in-app Browser is preferred when its
 runtime is available; these repository scripts are the reproducible CI fallback.
+
+The backup round trip seeds completed run history without Docker, replaces the
+public branch history, and verifies that retained source, logs, summaries,
+deployments, reader grants and secret values survive restoration. It also checks
+reader revocation and repository-scoped token denial after restore. Pipeline
+execution and container recovery are covered separately by the Docker checks.
