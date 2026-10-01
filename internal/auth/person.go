@@ -1,7 +1,5 @@
-// Package auth is Gitman's identity model: named individuals, not
-// per-repository accounts. Everyone who exists can read every
-// repository; a repository's ref rules (internal/repo) are the only
-// permission system for writing to it.
+// Package auth manages people, sessions, and repository-scoped Git credentials.
+// Repository visibility and ref rules govern what an authenticated person can do.
 //
 // service.go holds the package's rules and orchestration; store.go
 // holds every SQL statement it runs.
@@ -16,12 +14,14 @@ import (
 
 // Person is a named individual who can sign in to Gitman.
 type Person struct {
-	ID           string
-	Username     string
-	PasswordHash string
-	IsAdmin      bool
-	DisabledAt   *time.Time
-	CreatedAt    time.Time
+	ID                 string
+	Username           string
+	PasswordHash       string
+	IsAdmin            bool
+	DisabledAt         *time.Time
+	CreatedAt          time.Time
+	Generation         int64
+	BootstrapExpiresAt *time.Time
 }
 
 // Disabled reports whether the person has been disabled. A disabled

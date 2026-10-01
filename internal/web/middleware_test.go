@@ -10,7 +10,7 @@ import (
 )
 
 func TestResolveClientIP(t *testing.T) {
-	a := &App{cfg: &config.Config{TrustedProxies: []netip.Prefix{
+	a := &App{cfg: &config.Config{Retention: config.DefaultRetention(), TrustedProxies: []netip.Prefix{
 		netip.MustParsePrefix("172.16.0.0/12"), netip.MustParsePrefix("10.0.0.1/32"),
 	}}}
 	cases := []struct {

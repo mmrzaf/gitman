@@ -317,7 +317,7 @@ func handlerName(e ast.Expr) string {
 	case *ast.SelectorExpr:
 		return v.Sel.Name
 	case *ast.CallExpr:
-		if sel, ok := v.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "page" && len(v.Args) == 2 {
+		if sel, ok := v.Fun.(*ast.SelectorExpr); ok && (sel.Sel.Name == "page" || sel.Sel.Name == "stream") && len(v.Args) == 2 {
 			return handlerName(v.Args[1])
 		}
 	}

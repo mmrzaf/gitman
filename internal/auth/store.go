@@ -9,11 +9,11 @@ import (
 	"github.com/mmrzaf/gitman/internal/postgres"
 )
 
-const personColumns = `people.id, people.username, people.password_hash, people.is_admin, people.disabled_at, people.created_at`
+const personColumns = `people.id, people.username, people.password_hash, people.is_admin, people.disabled_at, people.created_at, people.auth_generation, people.bootstrap_expires_at`
 
 func scanPerson(row interface{ Scan(...any) error }, extra ...any) (*Person, error) {
 	p := &Person{}
-	dest := append([]any{&p.ID, &p.Username, &p.PasswordHash, &p.IsAdmin, &p.DisabledAt, &p.CreatedAt}, extra...)
+	dest := append([]any{&p.ID, &p.Username, &p.PasswordHash, &p.IsAdmin, &p.DisabledAt, &p.CreatedAt, &p.Generation, &p.BootstrapExpiresAt}, extra...)
 	if err := row.Scan(dest...); err != nil {
 		return nil, err
 	}
@@ -22,15 +22,15 @@ func scanPerson(row interface{ Scan(...any) error }, extra ...any) (*Person, err
 
 func insertPerson(ctx context.Context, q postgres.Querier, p *Person) error {
 	err := q.QueryRow(ctx, `
-		INSERT INTO people (id, username, password_hash, is_admin)
-		VALUES ($1, $2, $3, $4)
-		RETURNING created_at
-	`, p.ID, p.Username, p.PasswordHash, p.IsAdmin).Scan(&p.CreatedAt)
+		INSERT INTO people (id, username, password_hash, is_admin, bootstrap_expires_at)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING created_at, auth_generation
+	`, p.ID, p.Username, p.PasswordHash, p.IsAdmin, p.BootstrapExpiresAt).Scan(&p.CreatedAt, &p.Generation)
 	return postgres.NormalizeWrite(err)
 }
 
 func selectPersonByUsername(ctx context.Context, q postgres.Querier, username string) (*Person, error) {
-	p, err := scanPerson(q.QueryRow(ctx, `SELECT `+personColumns+` FROM people WHERE username = $1`, username))
+	p, err := scanPerson(q.QueryRow(ctx, `SELECT `+personColumns+` FROM people WHERE username = lower($1)`, username))
 	return p, postgres.NormalizeNotFound(err)
 }
 
@@ -79,7 +79,7 @@ func lockEnabledAdmins(ctx context.Context, tx postgres.Tx) ([]string, error) {
 
 func setDisabled(ctx context.Context, q postgres.Querier, personID string, disabled bool) error {
 	tag, err := q.Exec(ctx, `
-		UPDATE people SET disabled_at = CASE WHEN $2 THEN COALESCE(disabled_at, now()) END
+		UPDATE people SET auth_generation = auth_generation + 1, disabled_at = CASE WHEN $2 THEN COALESCE(disabled_at, now()) END
 		WHERE id = $1
 	`, personID, disabled)
 	if err != nil {
@@ -103,7 +103,7 @@ func setAdminRow(ctx context.Context, q postgres.Querier, personID string, isAdm
 }
 
 func setPasswordHash(ctx context.Context, q postgres.Querier, personID, hash string) error {
-	tag, err := q.Exec(ctx, `UPDATE people SET password_hash = $2 WHERE id = $1`, personID, hash)
+	tag, err := q.Exec(ctx, `UPDATE people SET password_hash = $2, auth_generation = auth_generation + 1, bootstrap_expires_at = NULL WHERE id = $1`, personID, hash)
 	if err != nil {
 		return fmt.Errorf("set password: %w", err)
 	}
@@ -120,11 +120,17 @@ func deleteSessionsOf(ctx context.Context, q postgres.Querier, personID string) 
 	return nil
 }
 
-func insertSession(ctx context.Context, q postgres.Querier, tokenHash, personID string, expiresAt time.Time) error {
-	if _, err := q.Exec(ctx, `
-		INSERT INTO sessions (token_hash, person_id, expires_at) VALUES ($1, $2, $3)
-	`, tokenHash, personID, expiresAt); err != nil {
+func insertSession(ctx context.Context, q postgres.Querier, tokenHash string, person *Person, expiresAt time.Time) error {
+	tag, err := q.Exec(ctx, `
+		INSERT INTO sessions (token_hash, person_id, expires_at, auth_generation)
+        SELECT $1, id, $3, auth_generation FROM people
+        WHERE id = $2 AND auth_generation = $4 AND disabled_at IS NULL AND (bootstrap_expires_at IS NULL OR bootstrap_expires_at > now())
+	`, tokenHash, person.ID, expiresAt, person.Generation)
+	if err != nil {
 		return fmt.Errorf("create session: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrInvalidCredentials
 	}
 	return nil
 }
@@ -133,22 +139,9 @@ func selectSessionPerson(ctx context.Context, q postgres.Querier, tokenHash stri
 	p, err := scanPerson(q.QueryRow(ctx, `
 		SELECT `+personColumns+`
 		FROM sessions JOIN people ON people.id = sessions.person_id
-		WHERE sessions.token_hash = $1 AND sessions.expires_at > now()
+		WHERE sessions.token_hash = $1 AND sessions.expires_at > now() AND sessions.auth_generation = people.auth_generation AND (people.bootstrap_expires_at IS NULL OR people.bootstrap_expires_at > now())
 	`, tokenHash))
 	return p, postgres.NormalizeNotFound(err)
-}
-
-// extendSessionRow moves a session's expiry to expiresAt, but only when
-// it currently expires within extendWithin, and reports whether it did.
-func extendSessionRow(ctx context.Context, q postgres.Querier, tokenHash string, expiresAt time.Time, extendWithin time.Duration) (bool, error) {
-	tag, err := q.Exec(ctx, `
-		UPDATE sessions SET expires_at = $2
-		WHERE token_hash = $1 AND expires_at > now() AND expires_at < now() + $3
-	`, tokenHash, expiresAt, extendWithin)
-	if err != nil {
-		return false, fmt.Errorf("extend session: %w", err)
-	}
-	return tag.RowsAffected() > 0, nil
 }
 
 func deleteSession(ctx context.Context, q postgres.Querier, tokenHash string) error {
@@ -158,7 +151,7 @@ func deleteSession(ctx context.Context, q postgres.Querier, tokenHash string) er
 	return nil
 }
 
-const tokenColumns = `id, person_id, name, scope, created_at, expires_at, last_used_at`
+const tokenColumns = `id, person_id, name, scope, created_at, expires_at, last_used_at, all_repositories, ARRAY(SELECT r.name FROM token_repos tr JOIN repos r ON r.id = tr.repo_id WHERE tr.token_id = tokens.id ORDER BY r.name)`
 
 func scanToken(row interface{ Scan(...any) error }) (*AccessToken, error) {
 	t := &AccessToken{}
@@ -240,4 +233,12 @@ func deleteExpiredSessions(ctx context.Context, q postgres.Querier) (int64, erro
 		return 0, fmt.Errorf("delete expired sessions: %w", err)
 	}
 	return tag.RowsAffected(), nil
+}
+
+func revokeCredentials(ctx context.Context, q postgres.Querier, personID string) error {
+	if err := deleteSessionsOf(ctx, q, personID); err != nil {
+		return err
+	}
+	_, err := q.Exec(ctx, `DELETE FROM tokens WHERE person_id = $1`, personID)
+	return err
 }

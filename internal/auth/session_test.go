@@ -19,7 +19,7 @@ func TestSessionLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	token, expiresAt, err := svc.CreateSession(ctx, p.ID, time.Hour)
+	token, expiresAt, err := svc.CreateSession(ctx, p, time.Hour)
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -75,46 +75,11 @@ func TestSessionExpires(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, _, err := svc.CreateSession(ctx, p.ID, -time.Second)
+	token, _, err := svc.CreateSession(ctx, p, -time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.SessionPerson(ctx, token); !errors.Is(err, ErrInvalidSession) {
 		t.Fatalf("SessionPerson(already expired) = %v, want ErrInvalidSession", err)
-	}
-}
-
-func TestExtendSessionOnlyNearExpiry(t *testing.T) {
-	ctx := context.Background()
-	database := pgtest.Open(t)
-	svc := NewService(database)
-
-	p, err := svc.Create(ctx, "darius", "correct-horse-battery", false, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	freshToken, _, err := svc.CreateSession(ctx, p.ID, 24*time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	extended, err := svc.ExtendSession(ctx, freshToken, 24*time.Hour, 12*time.Hour)
-	if err != nil {
-		t.Fatalf("ExtendSession: %v", err)
-	}
-	if extended {
-		t.Fatal("expected a freshly created session not to be extended yet")
-	}
-
-	soonToken, _, err := svc.CreateSession(ctx, p.ID, time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	extended, err = svc.ExtendSession(ctx, soonToken, 24*time.Hour, 12*time.Hour)
-	if err != nil {
-		t.Fatalf("ExtendSession: %v", err)
-	}
-	if !extended {
-		t.Fatal("expected a soon-to-expire session to be extended")
 	}
 }
