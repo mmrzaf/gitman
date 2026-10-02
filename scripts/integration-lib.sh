@@ -6,6 +6,12 @@ export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 export PGHOST=${PGHOST:-127.0.0.1} PGPORT=${PGPORT:-5432} PGUSER=${PGUSER:-postgres}
 fail() { echo "FAILED: $*" >&2; exit 1; }
 step() { printf '\n=== %s\n' "$*"; }
+conninfo_value() {
+  local value=$1
+  value=${value//\\/\\\\}
+  value=${value//\'/\\\'}
+  printf "'%s'" "$value"
+}
 wait_for() {
   local end=$((SECONDS + $1)); shift
   until "$@"; do
@@ -20,7 +26,14 @@ integration_init() {
   [[ "$DATABASE" =~ ^gitman_[a-z0-9_]+_test$ ]] || fail 'invalid test database name'
   DATA="$RUN/data"; W="$RUN/work"; BIN="$RUN/gitman"; PORT=$port; BASE="http://127.0.0.1:$PORT"
   mkdir -p "$DATA" "$W"
-  export GITMAN_DATABASE_URL="postgresql:///$DATABASE?host=$PGHOST&port=$PGPORT&user=$PGUSER&sslmode=disable"
+  local conninfo
+  printf -v conninfo 'host=%s port=%s user=%s dbname=%s sslmode=disable' \
+    "$(conninfo_value "$PGHOST")" "$(conninfo_value "$PGPORT")" \
+    "$(conninfo_value "$PGUSER")" "$(conninfo_value "$DATABASE")"
+  if [[ -n ${PGPASSWORD:-} ]]; then
+    conninfo+=" password=$(conninfo_value "$PGPASSWORD")"
+  fi
+  export GITMAN_DATABASE_URL="$conninfo"
   export GITMAN_DATA_DIR="$DATA" GITMAN_PUBLIC_URL="$BASE" GITMAN_PORT="$PORT"
   export GITMAN_SECRET_KEY="$(openssl rand -base64 32)"
   trap integration_cleanup EXIT
