@@ -314,11 +314,10 @@ func (s *Service) StopReason(ctx context.Context, runID string) (string, error) 
 	return "", nil
 }
 
-// Finish records how a running run ended: its status and reason, the
-// summary it wrote, and — for a passing run with a target — the
-// deployment it made, all in one transaction. Steps that never finished
-// are settled to match. A run that is no longer running (the lost-worker
-// reaper got to it first) is left as it is.
+// Finish records how a running run ended: its status, reason, and summary,
+// and settles steps that never finished, all in one transaction. Deployment
+// receipts are recorded by the deploy-step ownership path. A run that is no
+// longer running (the lost-worker reaper got to it first) is left as it is.
 func (s *Service) Finish(ctx context.Context, runID string, o Outcome) error {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
