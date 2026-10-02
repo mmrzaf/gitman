@@ -438,7 +438,7 @@ func validate(raw *rawConfig) (*Config, error) {
 		case r == "":
 			v.errorf("requires[%d]: must not be empty", i)
 		case !imageRefPattern.MatchString(r):
-			v.errorf("requires[%d]: %q is not an image reference, such as postgres:16-alpine", i, r)
+			v.errorf("requires[%d]: %q is not an image reference, such as postgres:18-alpine", i, r)
 		case seenRequires[r]:
 			v.errorf("requires[%d]: %q is listed more than once", i, r)
 		default:
