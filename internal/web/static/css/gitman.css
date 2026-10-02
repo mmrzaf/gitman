@@ -1399,6 +1399,10 @@ h1.path { font-size: var(--text-xl); letter-spacing: -0.01em; }
   .fit .feed-scroll { max-height: none; }
   .fit .panel-scroll .table-scroll { overflow: visible; }
   .fit .panel-scroll .table thead th { position: sticky; top: 0; z-index: 2; }
+  /* Repository overview tables can have divergence, run, deployment and
+     action columns at once. Let the ref-name column yield enough width for
+     the complete row to stay inside the fitted panel. */
+  .page-repository .fit .table .cell-truncate { min-width: 8rem; }
 }
 
 /* Small windows use page scrolling for dashboard feeds. */
