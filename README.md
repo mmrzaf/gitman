@@ -334,7 +334,7 @@ go test ./...        # tests that need PostgreSQL skip themselves
 To run them all:
 
 ```sh
-GITMAN_TEST_DATABASE_URL='postgres://postgres@localhost/gitman_test?sslmode=disable' go test -p 1 ./...
+GITMAN_TEST_DATABASE_URL='postgres://postgres@localhost/gitman_test?sslmode=disable' go test ./...
 ```
 
 ## Not added, on purpose

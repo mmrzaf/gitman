@@ -17,7 +17,7 @@ To run every test, including the DB-dependent ones:
 
 ```sh
 export GITMAN_TEST_DATABASE_URL='postgres://postgres@localhost/gitman_test?sslmode=disable'
-go test -p 1 -count=1 ./...     # isolated schemas; limits CPU use
+go test -count=1 ./...     # each test gets its own schema
 ```
 
 `make verify` runs the same local checks the release pipeline does:

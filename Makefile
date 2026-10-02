@@ -24,12 +24,13 @@ build-all: ## Build supported Linux binaries
 	test -s $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64
 	test "$$($(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 version)" = "gitman $(VERSION)"
 
-# Database-backed tests own isolated schemas; -p 1 bounds bcrypt/build CPU use.
+# Database-backed tests each own an isolated schema, so packages run
+# concurrently and no -p limit is needed.
 test: ## Run the test suite with the race detector
-	$(GO) test -race -p 1 -count=1 ./...
+	$(GO) test -race -count=1 ./...
 
 test-coverage: ## Run tests and write an HTML coverage report
-	$(GO) test -race -p 1 -count=1 -coverprofile=coverage.out ./...
+	$(GO) test -race -count=1 -coverprofile=coverage.out ./...
 	$(GO) tool cover -html=coverage.out -o coverage.html
 
 verify: ## Run the shared CI and release checks
