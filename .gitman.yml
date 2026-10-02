@@ -17,6 +17,7 @@ steps:
     when: tag
     run: |
       set -eu
+      image="gitman:${GITMAN_VERSION#v}"
       docker build --pull=false \
         --build-arg GOPROXY="$GOPROXY" \
         --build-arg DEBIAN_MIRROR="$DEBIAN_MIRROR" \
@@ -25,7 +26,8 @@ steps:
         --label "org.opencontainers.image.revision=$GITMAN_COMMIT" \
         --label "org.opencontainers.image.ref.name=$GITMAN_REF" \
         --label "org.opencontainers.image.version=$GITMAN_VERSION" \
-        --tag "gitman:${GITMAN_VERSION#v}" \
+        --tag "$image" \
         .
-      echo "image=gitman:${GITMAN_VERSION#v}" >> "$GITMAN_SUMMARY"
+      test "$(docker run --rm "$image" gitman version)" = "gitman $GITMAN_VERSION"
+      echo "image=$image" >> "$GITMAN_SUMMARY"
       echo "version=$GITMAN_VERSION" >> "$GITMAN_SUMMARY"
