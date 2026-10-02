@@ -192,6 +192,7 @@ func expectRejected(t *testing.T, out string, ok bool, want string) {
 }
 
 func TestPushRecordsAndIndexes(t *testing.T) {
+	t.Parallel()
 	e := setupGitHTTP(t)
 	_, cred := e.person("darius", false, auth.ScopeWrite)
 	e.initWork(cred)
@@ -222,6 +223,7 @@ func TestPushRecordsAndIndexes(t *testing.T) {
 }
 
 func TestCloneWithReadToken(t *testing.T) {
+	t.Parallel()
 	e := setupGitHTTP(t)
 	_, writer := e.person("darius", false, auth.ScopeWrite)
 	_, reader := e.person("bob", false, auth.ScopeRead)
@@ -240,6 +242,7 @@ func TestCloneWithReadToken(t *testing.T) {
 }
 
 func TestAuthentication(t *testing.T) {
+	t.Parallel()
 	e := setupGitHTTP(t)
 	_, reader := e.person("bob", false, auth.ScopeRead)
 
@@ -272,6 +275,7 @@ func TestAuthentication(t *testing.T) {
 }
 
 func TestNamingRules(t *testing.T) {
+	t.Parallel()
 	e := setupGitHTTP(t)
 	_, cred := e.person("darius", false, auth.ScopeWrite)
 	e.initWork(cred)
@@ -300,6 +304,7 @@ func TestNamingRules(t *testing.T) {
 }
 
 func TestRuleEnforcement(t *testing.T) {
+	t.Parallel()
 	e := setupGitHTTP(t)
 	_, adminCred := e.person("lead", true, auth.ScopeWrite)
 	_, cred := e.person("darius", false, auth.ScopeWrite)
@@ -339,6 +344,7 @@ func TestRuleEnforcement(t *testing.T) {
 }
 
 func TestPushCreatesRuns(t *testing.T) {
+	t.Parallel()
 	e := setupGitHTTP(t)
 	_, cred := e.person("darius", false, auth.ScopeWrite)
 	e.saveRule(reposvc.Rule{Kind: git.KindBranch, Pattern: "main", PushPolicy: reposvc.PushEveryone, RunOnPush: true, AllowDeploy: true})
@@ -402,6 +408,7 @@ steps:
 }
 
 func TestRunFetchToken(t *testing.T) {
+	t.Parallel()
 	e := setupGitHTTP(t)
 	ctx := context.Background()
 	_, cred := e.person("darius", false, auth.ScopeWrite)
@@ -464,6 +471,7 @@ func TestRunFetchToken(t *testing.T) {
 // unreachable over Git — clone, fetch, and push alike — as a name that
 // does not exist, for anyone who is not one of its readers or an admin.
 func TestRestrictedRepositoryOverGitHTTP(t *testing.T) {
+	t.Parallel()
 	e := setupGitHTTP(t)
 	ctx := context.Background()
 	repos := reposvc.NewService(e.db, nil, "")
@@ -536,6 +544,7 @@ func TestGitConcurrencyLimitAnswersBusyWithRetryAfter(t *testing.T) {
 // missing page, and once an admin moves the default to develop, a clone
 // checks it out.
 func TestDefaultBranchNotPushedYet(t *testing.T) {
+	t.Parallel()
 	e := setupGitHTTP(t)
 	admin := newBrowser(t, e.server)
 	signIn(t, e.db, admin, "lead", true)
@@ -588,6 +597,7 @@ func TestDefaultBranchNotPushedYet(t *testing.T) {
 // a push to it would: with its rule's target. Only people who may push
 // to a ref are offered it, and may run it.
 func TestRunABranchByHand(t *testing.T) {
+	t.Parallel()
 	e := setupGitHTTP(t)
 	lead := newBrowser(t, e.server)
 	signIn(t, e.db, lead, "lead", true)
@@ -649,6 +659,7 @@ func TestRunABranchByHand(t *testing.T) {
 // the push, the run's page and Home each say why it waits, and stop
 // saying so once a worker is online.
 func TestQueuedRunSaysNoWorkerIsOnline(t *testing.T) {
+	t.Parallel()
 	e := setupGitHTTP(t)
 	b := newBrowser(t, e.server)
 	signIn(t, e.db, b, "lead", true)
@@ -687,6 +698,7 @@ func TestQueuedRunSaysNoWorkerIsOnline(t *testing.T) {
 }
 
 func TestAllRepositoryTokenStillEnforcesReadAccess(t *testing.T) {
+	t.Parallel()
 	e := setupGitHTTP(t)
 	ctx := t.Context()
 	people := auth.NewService(e.db)

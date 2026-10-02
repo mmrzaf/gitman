@@ -46,6 +46,7 @@ func (e *gitHTTPEnv) refExists(full string) bool {
 // and requires the two to agree with each other and with what the rules
 // say, reason included.
 func TestWebDeleteIsAllowedExactlyWhenAPushWouldBe(t *testing.T) {
+	t.Parallel()
 	e := setupGitHTTP(t)
 	_, rootCred := e.person("root", true, auth.ScopeWrite)
 	alice, aliceCred := e.person("alice", false, auth.ScopeWrite)
@@ -151,6 +152,7 @@ func TestWebDeleteIsAllowedExactlyWhenAPushWouldBe(t *testing.T) {
 // TestWebDeleteIsRecordedLikeAPush deletes one branch from the web and
 // another by pushing, and compares everything Gitman keeps about them.
 func TestWebDeleteIsRecordedLikeAPush(t *testing.T) {
+	t.Parallel()
 	e := setupGitHTTP(t)
 	_, cred := e.person("alice", false, auth.ScopeWrite)
 	e.saveRule(reposvc.Rule{Kind: git.KindBranch, Pattern: "feature-*", PushPolicy: reposvc.PushEveryone, AllowDelete: true, RunOnPush: true})
@@ -218,6 +220,7 @@ func TestWebDeleteIsRecordedLikeAPush(t *testing.T) {
 }
 
 func TestWebDeleteOffersTheButtonOnlyWhereItWouldBeAllowed(t *testing.T) {
+	t.Parallel()
 	e := setupGitHTTP(t)
 	_, rootCred := e.person("root", true, auth.ScopeWrite)
 	e.person("alice", false, auth.ScopeWrite)

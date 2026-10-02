@@ -51,6 +51,7 @@ func archiveFiles(t *testing.T, body, format string) map[string]string {
 }
 
 func TestArchiveOfABranchTagOrCommit(t *testing.T) {
+	t.Parallel()
 	database, store, b := setupWithStore(t)
 	signIn(t, database, b, "darius", false)
 	repo := seedFilesRepo(t, database, store, b)
@@ -163,6 +164,7 @@ func TestArchiveTakesAGitSlotAndAnswersBusyWhenFull(t *testing.T) {
 }
 
 func TestFilesOffersDownloadsNextToTheRefPicker(t *testing.T) {
+	t.Parallel()
 	database, store, b := setupWithStore(t)
 	signIn(t, database, b, "darius", false)
 	seedFilesRepo(t, database, store, b)

@@ -187,6 +187,7 @@ func TestCompareListsWhatOneSideHasThatTheOtherLacks(t *testing.T) {
 }
 
 func TestActivityFromRealPushes(t *testing.T) {
+	t.Parallel()
 	e := setupGitHTTP(t)
 	_, cred := e.person("darius", false, auth.ScopeWrite)
 	e.saveRule(reposvc.Rule{Kind: git.KindBranch, Pattern: "main", PushPolicy: reposvc.PushEveryone, AllowForce: true, RunOnPush: true})
@@ -235,6 +236,7 @@ func TestActivityFromRealPushes(t *testing.T) {
 }
 
 func TestActivityShowsRefusedPushes(t *testing.T) {
+	t.Parallel()
 	e := setupGitHTTP(t)
 	_, cred := e.person("darius", false, auth.ScopeWrite)
 	e.saveRule(reposvc.Rule{Kind: git.KindBranch, Pattern: "main", PushPolicy: reposvc.PushEveryone})
@@ -529,6 +531,7 @@ func TestTagsAreNewestVersionFirst(t *testing.T) {
 // Pushing many tags at once is one line of activity, which names the newest
 // and counts the rest, not a feed of its own.
 func TestABulkPushIsOneLineOfActivity(t *testing.T) {
+	t.Parallel()
 	e := setupGitHTTP(t)
 	_, cred := e.person("darius", false, auth.ScopeWrite)
 	e.initWork(cred)
