@@ -389,7 +389,14 @@ const query = (page) => new URL(page.url()).searchParams;
   await page.goto(`${base}/demo`);
   await page.click("button[aria-label='Copy Git URL']");
   check("a copy button copies", (await page.evaluate(() => navigator.clipboard.readText())) === `${base}/demo.git`);
-  check("hovering a time shows it in the reader's time zone", !/UTC$/.test(await page.locator("time").first().getAttribute("title")));
+  const displayedTime = await page.locator("time").first().evaluate((node) => {
+    const date = new Date(node.getAttribute("datetime"));
+    const expected = new Intl.DateTimeFormat(undefined, {
+      year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", timeZoneName: "short",
+    }).format(date);
+    return { title: node.getAttribute("title"), expected };
+  });
+  check("hovering a time shows it in the reader's time zone", displayedTime.title === displayedTime.expected, JSON.stringify(displayedTime));
   await page.goto(`${base}/demo/settings`);
   await page.click("[data-inline-start][aria-label='Edit the description']");
   check("Edit turns the description into its form, focused", (await focused(page))?.id === "f-description");
