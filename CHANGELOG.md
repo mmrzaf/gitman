@@ -5,33 +5,7 @@ Each release's section is also its GitHub release notes.
 
 ## [Unreleased]
 
-### Fixed
-
-- Use PostgreSQL 18 and matching client tools in CI and release integration checks.
-- Reject stale ref updates and unreadable commit metadata before recording push
-  intent. Recovery closes unapplied ref conflicts so later mutations can proceed.
-- Index nested annotated tags by their fully resolved commit, and normalize NUL
-  and invalid UTF-8 in metadata stored in PostgreSQL.
-- Preserve full Docker container IDs during receipt recovery and cleanup.
-- Allow build output to disappear during disk monitoring without cancelling the
-  run or reporting a false budget violation.
-- Keep integration evidence separate from release downloads and checksums.
-
-### Changed
-
-- Let mobile metadata cards wrap their full content and controls, keep panel
-  headings and toolbars within narrow screens, and make dialog forms scroll
-  within the available height. Desktop dashboard sizes and compact rows remain.
-- Keep the self-hosted tag pipeline focused on building the image and reporting
-  its image and version. Verification runs in GitHub Actions.
-- Remove bundled PostgreSQL tools and the PostgreSQL image build dependency.
-  Backup and restore use tools installed on the host.
-- Backup integration checks restored reader grants and revocation, token scope,
-  secret values, completed logs and deployments, and pinned historical source.
-- Check theme radio states and accessibility with the account menu open.
-- Remove the session-specific implementation checklist from the documentation.
-
-## [1.0.0-beta.22] - 2026-09-30
+## [1.0.0-beta.22] - 2026-10-02
 
 Refs and history: managing branches, tags and revisions from the web.
 
@@ -78,6 +52,19 @@ automatically upgrade an existing beta 21 database.
 
 ### Changed
 
+- Let mobile metadata cards wrap their full content and controls, keep panel
+  headings and toolbars within narrow screens, and make dialog forms scroll
+  within the available height. Desktop dashboard sizes and compact rows remain.
+- Keep the self-hosted tag pipeline focused on building the image, smoke-checking
+  its embedded version, and reporting its image and version. Full verification runs
+  in GitHub Actions.
+- Remove bundled PostgreSQL tools and the PostgreSQL image build dependency.
+  Backup and restore use tools installed on the host.
+- Backup integration checks restored reader grants and revocation, token scope,
+  secret values, completed logs and deployments, and pinned historical source.
+- Check theme radio states and accessibility with the account menu open.
+- Remove the session-specific implementation checklist from the documentation.
+
 - A theme switch in the account menu: the system's theme, light or dark,
   kept in the browser.
 - Files is no longer in the repository's nav, and has no Code and History
@@ -107,6 +94,23 @@ automatically upgrade an existing beta 21 database.
   deploy no longer shows the same commit twice on the Overview and Home.
 
 ### Fixed
+
+- Give repository recovery a full execution budget after acquiring its mutation
+  lock, so a recoverable push cannot be wedged by the short lock-wait timeout.
+- Retry recording a run's end without rewriting its valid summary after transient
+  database failures.
+- Give the serialized race-test suite enough time for production-cost password
+  hashing and integration-heavy web tests.
+- Use PostgreSQL 18 consistently in the default Compose setup, CI and release
+  integration checks.
+- Reject stale ref updates and unreadable commit metadata before recording push
+  intent. Recovery closes unapplied ref conflicts so later mutations can proceed.
+- Index nested annotated tags by their fully resolved commit, and normalize NUL
+  and invalid UTF-8 in metadata stored in PostgreSQL.
+- Preserve full Docker container IDs during receipt recovery and cleanup.
+- Allow build output to disappear during disk monitoring without cancelling the
+  run or reporting a false budget violation.
+- Keep integration evidence separate from release downloads and checksums.
 
 - A repository's clone address (`/<repo>.git`), opened in a browser, goes
   to the repository instead of a 404.
