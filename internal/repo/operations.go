@@ -25,6 +25,11 @@ type Operation struct {
 
 type repositoryIntent struct{ Name, Description, Branch string }
 
+const (
+	recoveryLockTimeout    = 15 * time.Second
+	recoveryAttemptTimeout = 5 * time.Minute
+)
+
 // WithMutation serializes filesystem changes and refuses further changes until an
 // earlier intent has been reconciled. The filesystem lock also survives DB failure.
 func (s *Service) WithMutation(ctx context.Context, repoID string, fn func() error) error {
@@ -179,9 +184,11 @@ func (s *Service) RecoverOperations(ctx context.Context, recoverPush func(contex
 	}
 	var errs []error
 	for _, op := range ops {
-		attempt, cancel := context.WithTimeout(ctx, 15*time.Second)
-		unlock, err := s.git.MutationLock(attempt, op.RepoID)
+		lockCtx, stopLock := context.WithTimeout(ctx, recoveryLockTimeout)
+		unlock, err := s.git.MutationLock(lockCtx, op.RepoID)
+		stopLock()
 		if err == nil {
+			attempt, stopAttempt := context.WithTimeout(ctx, recoveryAttemptTimeout)
 			// A live operation may have finished while recovery waited for its lock.
 			var pending bool
 			err = s.db.Q.QueryRow(attempt, `SELECT completed_at IS NULL FROM repository_operations WHERE id=$1`, op.ID).Scan(&pending)
@@ -196,9 +203,9 @@ func (s *Service) RecoverOperations(ctx context.Context, recoverPush func(contex
 					err = s.applyRepositoryOperation(attempt, op)
 				}
 			}
+			stopAttempt()
 			unlock()
 		}
-		cancel()
 		if err != nil {
 			note, stop := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 			_, _ = s.db.Q.Exec(note, `UPDATE repository_operations SET error=$2 WHERE id=$1 AND completed_at IS NULL`, op.ID, err.Error())
