@@ -14,8 +14,10 @@ import (
 	"github.com/mmrzaf/gitman/internal/id"
 )
 
-// DSN creates a schema and registers its removal. Register application pool
-// cleanup after this call so its connections close before the schema is removed.
+// DSN creates a schema and registers its removal. Every returned DSN also gets
+// a unique application_name so tests can identify and administer only the
+// connections they own. Register application pool cleanup after this call so
+// its connections close before the schema is removed.
 func DSN(t *testing.T) string {
 	t.Helper()
 	dsn := os.Getenv("GITMAN_TEST_DATABASE_URL")
@@ -36,7 +38,9 @@ func DSN(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	schema := pgx.Identifier{"test_" + strings.ReplaceAll(id.New(), "-", "_")}.Sanitize()
+	testID := strings.ReplaceAll(id.New(), "-", "_")
+	schema := pgx.Identifier{"test_" + testID}.Sanitize()
+	applicationName := "gitman_test_" + testID
 	if _, err := control.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
 		control.Close()
 		t.Fatal(err)
@@ -57,8 +61,9 @@ func DSN(t *testing.T) string {
 		}
 		q := u.Query()
 		q.Set("search_path", name)
+		q.Set("application_name", applicationName)
 		u.RawQuery = q.Encode()
 		return u.String()
 	}
-	return dsn + " search_path=" + name
+	return dsn + " search_path=" + name + " application_name=" + applicationName
 }

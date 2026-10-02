@@ -75,11 +75,35 @@ func TestListenReconnects(t *testing.T) {
 	}
 	wait([2]string{"", ""})
 
-	if _, err := database.Pool.Exec(ctx, `
-		SELECT pg_terminate_backend(pid) FROM pg_stat_activity
-		WHERE query LIKE 'LISTEN %' AND pid <> pg_backend_pid()
-	`); err != nil {
+	// Keep an unrelated LISTEN connection open under a different test DSN.
+	// The forced disconnect below must be scoped to this test's application_name
+	// and must not terminate listeners owned by another test.
+	unrelated := testDB(t)
+	pooled, err := unrelated.Pool.Acquire(ctx)
+	if err != nil {
 		t.Fatal(err)
+	}
+	unrelatedConn := pooled.Hijack()
+	t.Cleanup(func() { _ = unrelatedConn.Close(context.Background()) })
+	if _, err := unrelatedConn.Exec(ctx, `LISTEN gitman_test_unrelated`); err != nil {
+		t.Fatal(err)
+	}
+
+	tag, err := database.Pool.Exec(ctx, `
+		SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+		WHERE datname = current_database()
+		  AND application_name = current_setting('application_name')
+		  AND query LIKE 'LISTEN %'
+		  AND pid <> pg_backend_pid()
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := tag.RowsAffected(); got != 1 {
+		t.Fatalf("terminated %d listening connections, want 1", got)
+	}
+	if _, err := unrelatedConn.Exec(ctx, `SELECT 1`); err != nil {
+		t.Fatalf("unrelated listener was terminated: %v", err)
 	}
 	wait([2]string{"", ""})
 	select {
