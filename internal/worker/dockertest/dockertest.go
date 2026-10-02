@@ -33,10 +33,10 @@ import (
 // client blocks on a daemon that has stopped responding.
 const script = `#!/bin/sh
 dir="$FAKE_DOCKER_DIR"
-while ! mkdir "$dir/call-lock" 2>/dev/null; do sleep 0.01; done
+while ! mkdir "$dir/lock" 2>/dev/null; do sleep 0.01; done
 n=$(find "$dir" -maxdepth 1 -type f -name "call-*" | wc -l)
 printf '%s\n' "$@" > "$dir/call-$(printf %03d "$n")"
-rmdir "$dir/call-lock"
+rmdir "$dir/lock"
 if [ "$FAKE_DOCKER_HANG" = "$1" ] || [ "$FAKE_DOCKER_HANG" = all ]; then
 	exec sleep 300
 fi
