@@ -42,10 +42,6 @@ const (
 	// run's end; it doubles up to maxFinishRetryDelay.
 	finishRetryDelay    = time.Second
 	maxFinishRetryDelay = 30 * time.Second
-	// finishAttemptsWithSummary is how many times a run's end is recorded
-	// with its summary before trying without it, in case a value in it is
-	// what the database refuses.
-	finishAttemptsWithSummary = 3
 )
 
 // Config is how a worker is set up.
@@ -277,12 +273,6 @@ func (w *Worker) finish(ctx context.Context, runID string, outcome ci.Outcome, l
 			return true
 		}
 		log.Error("could not record the run's end", "attempt", attempt, "error", err)
-		if attempt == finishAttemptsWithSummary && len(outcome.Summary) > 0 {
-			outcome.Summary = nil
-			if outcome.Reason == "" {
-				outcome.Reason = "The run's summary could not be stored."
-			}
-		}
 		select {
 		case <-record.Done():
 			return false

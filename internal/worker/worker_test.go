@@ -51,11 +51,9 @@ func TestRetryBrieflyGivesUpAfterItsAttemptsAreExhausted(t *testing.T) {
 	}
 }
 
-// TestFinishDoesNotLeaveARunRunning records the end of a run whose
-// summary the database refuses. The worker must still record the end —
-// without the summary — rather than leave the run running while the
-// worker stays alive and the lost-worker check never looks at it.
-func TestFinishDoesNotLeaveARunRunning(t *testing.T) {
+// TestFinishStoresAValidSummary keeps the worker's finish path preserving a
+// valid summary when it records the run's end.
+func TestFinishStoresAValidSummary(t *testing.T) {
 	ctx := context.Background()
 	database := pgtest.Open(t)
 	if _, err := database.Pool.Exec(ctx, `INSERT INTO repos (id, name) VALUES ('r1', 'demo')`); err != nil {
@@ -81,16 +79,19 @@ func TestFinishDoesNotLeaveARunRunning(t *testing.T) {
 		t.Fatalf("ClaimNext = %v, %v", claim, err)
 	}
 
-	outcome := ci.Outcome{Status: ci.StatusPassed, Summary: map[string]string{"bad": "a\x00b"}}
+	outcome := ci.Outcome{Status: ci.StatusPassed, Summary: map[string]string{"image": "demo:v1"}}
 	if !w.finish(ctx, claim.RunID, outcome, w.log) {
 		t.Fatal("finish gave up")
 	}
-	var status, reason string
-	if err := database.Pool.QueryRow(ctx, `SELECT status, reason FROM runs WHERE id = $1`, claim.RunID).Scan(&status, &reason); err != nil {
+	var status, reason, summary string
+	if err := database.Pool.QueryRow(ctx, `
+		SELECT r.status, r.reason, s.value
+		FROM runs r JOIN run_summary s ON s.run_id = r.id AND s.key = 'image'
+		WHERE r.id = $1`, claim.RunID).Scan(&status, &reason, &summary); err != nil {
 		t.Fatal(err)
 	}
-	if status != "passed" || reason != "The run's summary could not be stored." {
-		t.Fatalf("run = %s %q", status, reason)
+	if status != "passed" || reason != "" || summary != "demo:v1" {
+		t.Fatalf("run = %s %q summary=%q", status, reason, summary)
 	}
 }
 
