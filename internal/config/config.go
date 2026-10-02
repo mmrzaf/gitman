@@ -23,7 +23,7 @@ type Retention struct{ Logs, Runs, Audit, Deployments int }
 // Config holds every setting Gitman reads from its environment.
 type Config struct {
 	Resources Resources
-	// DatabaseURL is a PostgreSQL connection string, as accepted by pgx.
+	// DatabaseURL is a postgres:// or postgresql:// connection URL.
 	// PostgreSQL is Gitman's only store.
 	DatabaseURL string
 
@@ -178,6 +178,14 @@ func (c *Config) Validate() error {
 	}
 	if c.DatabaseURL == "" {
 		return fmt.Errorf("%s is required", EnvDatabaseURL)
+	}
+	// pgx recognises a URL only by this literal, case-sensitive prefix, so
+	// accept exactly what it will accept rather than deferring the rejection
+	// to a parse error with no hint of what was wrong.
+	databaseURL, err := url.Parse(c.DatabaseURL)
+	if err != nil || databaseURL.Scheme != "postgres" && databaseURL.Scheme != "postgresql" ||
+		!strings.HasPrefix(c.DatabaseURL, databaseURL.Scheme+"://") {
+		return fmt.Errorf("%s must be a postgres:// or postgresql:// URL", EnvDatabaseURL)
 	}
 	if strings.TrimSpace(c.DataDir) == "" {
 		return fmt.Errorf("%s must not be empty", EnvDataDir)

@@ -94,7 +94,7 @@ Everything is set through the environment.
 
 | Variable | Default | |
 |---|---|---|
-| `GITMAN_DATABASE_URL` | — | PostgreSQL connection URL. Required. |
+| `GITMAN_DATABASE_URL` | — | PostgreSQL `postgres://` or `postgresql://` connection URL. Required. |
 | `GITMAN_DATA_DIR` | `.data` | Repositories, hooks and run workspaces. |
 | `GITMAN_PUBLIC_URL` | `http://localhost:8080` | The address people use; shown in clone URLs and push output. |
 | `GITMAN_WEB_URL` | the public URL | Where workers reach web to fetch run checkouts. |

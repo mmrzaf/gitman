@@ -7,7 +7,7 @@ config file. `web` and `worker` read the same settings.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `GITMAN_DATABASE_URL` | — (required) | PostgreSQL connection URL. Gitman's only data store. |
+| `GITMAN_DATABASE_URL` | — (required) | PostgreSQL connection URL (`postgres://` or `postgresql://`). Keyword-form libpq/pgx connection strings are not accepted. Gitman's only data store. |
 | `GITMAN_DATA_DIR` | `.data` | Root for repositories, hooks and run workspaces (`<DATA_DIR>/repos`, `/hooks`, `/workspaces`). |
 | `GITMAN_PUBLIC_URL` | `http://localhost:8080` | The address people use; shown in clone URLs and push output. Must be an absolute `http`/`https` URL at the origin root, with no path prefix, user info, query or fragment. |
 | `GITMAN_WEB_URL` | the public URL | Where a worker reaches `web` to fetch a run's commit. Usually an internal address (e.g. `http://web:8080` in Compose), not the public one. |
@@ -26,6 +26,11 @@ config file. `web` and `worker` read the same settings.
 | `GITMAN_DISK_RESERVE_GIB` | `5` | Minimum free space for pushes and worker execution, in GiB. |
 | `GITMAN_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. |
 | `GITMAN_LOG_FORMAT` | `text` | `text` or `json`. |
+
+`GITMAN_DATABASE_URL` is the database connection contract passed to every
+Gitman process, including Git hook subprocesses. Put every connection
+parameter those subprocesses need in the URL itself; hooks deliberately do not
+inherit ambient `PG*` variables such as `PGPASSWORD`.
 
 Secure cookies aren't a separate setting: the session cookie's `Secure`
 flag is derived from `GITMAN_PUBLIC_URL`'s scheme (set automatically when

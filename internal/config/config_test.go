@@ -28,6 +28,7 @@ func setBase(t *testing.T) string {
 
 func TestLoadValid(t *testing.T) {
 	setBase(t)
+	t.Setenv(EnvDatabaseURL, "postgresql:///gitman?host=/run/postgresql&user=gitman")
 	t.Setenv(EnvPublicURL, "https://git.example.com/")
 	t.Setenv(EnvPort, "8090")
 
@@ -86,6 +87,11 @@ func TestLoadMakesDataDirAbsolute(t *testing.T) {
 func TestLoadRejects(t *testing.T) {
 	cases := map[string]map[string]string{
 		"missing database URL":   {EnvDatabaseURL: ""},
+		"database keyword DSN":   {EnvDatabaseURL: "host=localhost user=gitman dbname=gitman"},
+		"wrong database scheme":  {EnvDatabaseURL: "mysql://gitman:secret@localhost/gitman"},
+		"uppercase scheme":       {EnvDatabaseURL: "POSTGRES://localhost/gitman"},
+		"opaque database URL":    {EnvDatabaseURL: "postgres:localhost/gitman"},
+		"malformed database URL": {EnvDatabaseURL: "postgres://%zz"},
 		"invalid public URL":     {EnvPublicURL: "not-a-url"},
 		"public URL with user":   {EnvPublicURL: "https://user@git.example.com"},
 		"public URL with query":  {EnvPublicURL: "https://git.example.com/?x=1"},

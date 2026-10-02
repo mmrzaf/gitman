@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -108,5 +109,26 @@ func TestDatabaseToolUsesURLParametersAndInheritedPassword(t *testing.T) {
 	want := "/socket/path\n5544\nfixture_test\nfixture\ntest-only-password\ndisable\nunset\n"
 	if string(got) != want {
 		t.Fatal("database client connection does not match application connection")
+	}
+}
+
+func TestDatabaseToolPrefersPasswordFromURL(t *testing.T) {
+	root := t.TempDir()
+	capture := filepath.Join(root, "password")
+	binary := filepath.Join(root, "pg-client")
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\nprintf '%s\n' \"$PGPASSWORD\" > \"$CAPTURE_PASSWORD\"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CAPTURE_PASSWORD", capture)
+	t.Setenv("PGPASSWORD", "ambient-password")
+	if err := databaseTool(t.Context(), binary, "postgresql://fixture:url%20password@/fixture_test?host=/socket/path&port=5544&sslmode=disable"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(capture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "url password\n" {
+		t.Fatalf("PGPASSWORD = %q, want password from GITMAN_DATABASE_URL", strings.TrimSpace(string(got)))
 	}
 }
