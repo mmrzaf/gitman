@@ -16,9 +16,11 @@ import (
 	"github.com/mmrzaf/gitman/internal/repo"
 )
 
+const zeroHash = "0000000000000000000000000000000000000000"
+
 // receiveFixture is a repository Gitman knows about, whose bare Git
 // repository a test moves refs in directly, and a hook serving pushes to
-// it the way post-receive does.
+// it through the proc-receive recorder.
 type receiveFixture struct {
 	db   *postgres.DB
 	hook *Hook
@@ -84,8 +86,8 @@ func runGit(t *testing.T, dir string, args ...string) string {
 }
 
 // commit makes a commit carrying a pipeline and pushes it straight into
-// the bare repository as ref, the way Git has already moved a ref by the
-// time post-receive runs. It returns the commit.
+// the bare repository as ref to prepare objects and ref states for tests.
+// It returns the commit.
 func (f *receiveFixture) commit(t *testing.T, message, ref string) string {
 	t.Helper()
 	pipeline := "image: alpine:3.20\nsteps:\n  - name: test\n    run: echo " + message + "\n"
@@ -98,27 +100,7 @@ func (f *receiveFixture) commit(t *testing.T, message, ref string) string {
 	return runGit(t, f.work, "rev-parse", "HEAD")
 }
 
-func (f *receiveFixture) runs(t *testing.T) map[string]string {
-	t.Helper()
-	rows, err := f.db.Pool.Query(context.Background(), `SELECT commit_hash, status FROM runs`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	runs := map[string]string{}
-	for rows.Next() {
-		var commit, status string
-		if err := rows.Scan(&commit, &status); err != nil {
-			t.Fatal(err)
-		}
-		runs[commit] = status
-	}
-	return runs
-}
-
-var zeroHash = strings.Repeat("0", 40)
-
-// prFixture is a repository for testing PreReceive directly: unlike
+// prFixture is a repository for testing ValidatePush directly: unlike
 // receiveFixture, its rules, visibility and pushing person all start
 // empty, so each test sets exactly what it needs.
 type prFixture struct {
@@ -177,9 +159,8 @@ func (f *prFixture) asPerson(t *testing.T, username string) {
 	f.hook.Ctx.PersonID = p.ID
 }
 
-// commitFile pushes a real commit carrying a trivial pipeline directly
-// into the bare repository, the way Git has already moved a ref by the
-// time pre-receive/post-receive run, and returns its hash.
+// commitFile loads a commit carrying a trivial pipeline into the bare
+// repository and sets the ref state used by validation tests.
 func (f *prFixture) commitFile(t *testing.T, message, ref string) string {
 	t.Helper()
 	pipeline := "image: alpine:3.20\nsteps:\n  - name: test\n    run: echo " + message + "\n"
@@ -194,10 +175,10 @@ func (f *prFixture) commitFile(t *testing.T, message, ref string) string {
 
 func (f *prFixture) preReceive(t *testing.T, updates []Update) error {
 	t.Helper()
-	return f.hook.PreReceive(context.Background(), updates)
+	return f.hook.ValidatePush(context.Background(), updates)
 }
 
-func TestPreReceiveRejectsADisabledPerson(t *testing.T) {
+func TestValidatePushRejectsADisabledPerson(t *testing.T) {
 	f := newPRFixture(t)
 	f.asPerson(t, "alice")
 	if err := f.people.Disable(context.Background(), f.hook.Ctx.PersonID, ""); err != nil {
@@ -205,14 +186,14 @@ func TestPreReceiveRejectsADisabledPerson(t *testing.T) {
 	}
 	commit := f.commitFile(t, "one", "refs/heads/feature")
 	if err := f.preReceive(t, []Update{{Old: zeroHash, New: commit, Ref: "refs/heads/feature", Kind: git.KindBranch, Name: "feature"}}); err != ErrRejected {
-		t.Fatalf("PreReceive = %v, want ErrRejected", err)
+		t.Fatalf("ValidatePush = %v, want ErrRejected", err)
 	}
 	if !strings.Contains(f.out.String(), "alice is disabled and cannot push") {
 		t.Errorf("output = %q", f.out.String())
 	}
 }
 
-func TestPreReceiveRejectsAPushToARepositoryThePersonCannotRead(t *testing.T) {
+func TestValidatePushRejectsAPushToARepositoryThePersonCannotRead(t *testing.T) {
 	f := newPRFixture(t)
 	if err := f.repos.SetVisibility(context.Background(), f.repo.ID, repo.VisibilityRestricted, ""); err != nil {
 		t.Fatal(err)
@@ -220,7 +201,7 @@ func TestPreReceiveRejectsAPushToARepositoryThePersonCannotRead(t *testing.T) {
 	f.asPerson(t, "alice") // not on the reader list
 	commit := f.commitFile(t, "one", "refs/heads/feature")
 	if err := f.preReceive(t, []Update{{Old: zeroHash, New: commit, Ref: "refs/heads/feature", Kind: git.KindBranch, Name: "feature"}}); err != ErrRejected {
-		t.Fatalf("PreReceive = %v, want ErrRejected", err)
+		t.Fatalf("ValidatePush = %v, want ErrRejected", err)
 	}
 	if !strings.Contains(f.out.String(), "alice cannot push to a repository they cannot read") {
 		t.Errorf("output = %q", f.out.String())
@@ -233,48 +214,48 @@ func TestPreReceiveRejectsAPushToARepositoryThePersonCannotRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := f.preReceive(t, []Update{{Old: zeroHash, New: commit, Ref: "refs/heads/feature", Kind: git.KindBranch, Name: "feature"}}); err != nil {
-		t.Fatalf("PreReceive (reader) = %v", err)
+		t.Fatalf("ValidatePush (reader) = %v", err)
 	}
 }
 
-func TestPreReceiveRejectsAnUnrecognizedRefKind(t *testing.T) {
+func TestValidatePushRejectsAnUnrecognizedRefKind(t *testing.T) {
 	f := newPRFixture(t)
 	commit := f.commitFile(t, "one", "refs/notes/commits")
 	if err := f.preReceive(t, []Update{{Old: zeroHash, New: commit, Ref: "refs/notes/commits"}}); err != ErrRejected {
-		t.Fatalf("PreReceive = %v, want ErrRejected", err)
+		t.Fatalf("ValidatePush = %v, want ErrRejected", err)
 	}
 	if !strings.Contains(f.out.String(), "only branches") {
 		t.Errorf("output = %q", f.out.String())
 	}
 }
 
-func TestPreReceiveRejectsAnInvalidNewRefName(t *testing.T) {
+func TestValidatePushRejectsAnInvalidNewRefName(t *testing.T) {
 	f := newPRFixture(t)
 	commit := f.commitFile(t, "one", "refs/heads/tmp")
 	if err := f.preReceive(t, []Update{{Old: zeroHash, New: commit, Ref: "refs/heads/a..b", Kind: git.KindBranch, Name: "a..b"}}); err != ErrRejected {
-		t.Fatalf("PreReceive = %v, want ErrRejected", err)
+		t.Fatalf("ValidatePush = %v, want ErrRejected", err)
 	}
 }
 
-func TestPreReceiveRejectsANewRefNameLookingLikeACommitHash(t *testing.T) {
+func TestValidatePushRejectsANewRefNameLookingLikeACommitHash(t *testing.T) {
 	f := newPRFixture(t)
 	commit := f.commitFile(t, "one", "refs/heads/tmp")
 	hashLike := strings.Repeat("a", 40)
 	if err := f.preReceive(t, []Update{{Old: zeroHash, New: commit, Ref: "refs/heads/" + hashLike, Kind: git.KindBranch, Name: hashLike}}); err != ErrRejected {
-		t.Fatalf("PreReceive = %v, want ErrRejected", err)
+		t.Fatalf("ValidatePush = %v, want ErrRejected", err)
 	}
 }
 
-func TestPreReceiveRejectsABranchAndTagSharingAName(t *testing.T) {
+func TestValidatePushRejectsABranchAndTagSharingAName(t *testing.T) {
 	f := newPRFixture(t)
 	f.commitFile(t, "one", "refs/tags/shared")
 	commit := f.commitFile(t, "two", "refs/heads/tmp")
 	if err := f.preReceive(t, []Update{{Old: zeroHash, New: commit, Ref: "refs/heads/shared", Kind: git.KindBranch, Name: "shared"}}); err != ErrRejected {
-		t.Fatalf("PreReceive = %v, want ErrRejected", err)
+		t.Fatalf("ValidatePush = %v, want ErrRejected", err)
 	}
 }
 
-func TestPreReceivePushPolicy(t *testing.T) {
+func TestValidatePushPushPolicy(t *testing.T) {
 	cases := []struct {
 		name    string
 		policy  repo.PushPolicy
@@ -310,16 +291,16 @@ func TestPreReceivePushPolicy(t *testing.T) {
 			commit := f.commitFile(t, "one", "refs/heads/feature")
 			err := f.preReceive(t, []Update{{Old: zeroHash, New: commit, Ref: "refs/heads/feature", Kind: git.KindBranch, Name: "feature"}})
 			if c.allowed && err != nil {
-				t.Errorf("PreReceive = %v, want allowed", err)
+				t.Errorf("ValidatePush = %v, want allowed", err)
 			}
 			if !c.allowed && err != ErrRejected {
-				t.Errorf("PreReceive = %v, want ErrRejected", err)
+				t.Errorf("ValidatePush = %v, want ErrRejected", err)
 			}
 		})
 	}
 }
 
-func TestPreReceiveFollowsTheRepositoryDefaultPushWhenNoRuleMatches(t *testing.T) {
+func TestValidatePushFollowsTheRepositoryDefaultPushWhenNoRuleMatches(t *testing.T) {
 	f := newPRFixture(t)
 	if err := f.repos.SetDefaultPush(context.Background(), f.repo.ID, repo.PushAdmins, nil, ""); err != nil {
 		t.Fatal(err)
@@ -327,7 +308,7 @@ func TestPreReceiveFollowsTheRepositoryDefaultPushWhenNoRuleMatches(t *testing.T
 	f.asPerson(t, "alice")
 	commit := f.commitFile(t, "one", "refs/heads/unmatched")
 	if err := f.preReceive(t, []Update{{Old: zeroHash, New: commit, Ref: "refs/heads/unmatched", Kind: git.KindBranch, Name: "unmatched"}}); err != ErrRejected {
-		t.Fatalf("PreReceive (member, default admins) = %v, want ErrRejected", err)
+		t.Fatalf("ValidatePush (member, default admins) = %v, want ErrRejected", err)
 	}
 
 	// Force and delete stay allowed on an unmatched ref regardless of the
@@ -340,11 +321,11 @@ func TestPreReceiveFollowsTheRepositoryDefaultPushWhenNoRuleMatches(t *testing.T
 	}
 	f.hook.Ctx.PersonID = admin.ID
 	if err := f.preReceive(t, []Update{{Old: zeroHash, New: commit, Ref: "refs/heads/unmatched", Kind: git.KindBranch, Name: "unmatched"}}); err != nil {
-		t.Fatalf("PreReceive (admin, default admins) = %v", err)
+		t.Fatalf("ValidatePush (admin, default admins) = %v", err)
 	}
 }
 
-func TestPreReceiveProtectsTheDefaultBranchFromDeletion(t *testing.T) {
+func TestValidatePushProtectsTheDefaultBranchFromDeletion(t *testing.T) {
 	f := newPRFixture(t)
 	if err := f.repos.SaveRule(context.Background(), f.repo.ID, repo.Rule{
 		Kind: git.KindBranch, Pattern: "main", PushPolicy: repo.PushEveryone, AllowDelete: true,
@@ -353,14 +334,14 @@ func TestPreReceiveProtectsTheDefaultBranchFromDeletion(t *testing.T) {
 	}
 	commit := f.commitFile(t, "one", "refs/heads/main")
 	if err := f.preReceive(t, []Update{{Old: commit, New: zeroHash, Ref: "refs/heads/main", Kind: git.KindBranch, Name: "main"}}); err != ErrRejected {
-		t.Fatalf("PreReceive = %v, want ErrRejected: the default branch must never be deletable, even with AllowDelete", err)
+		t.Fatalf("ValidatePush = %v, want ErrRejected: the default branch must never be deletable, even with AllowDelete", err)
 	}
 	if !strings.Contains(f.out.String(), "default branch cannot be deleted") {
 		t.Errorf("output = %q", f.out.String())
 	}
 }
 
-func TestPreReceiveDeleteRequiresAllowDelete(t *testing.T) {
+func TestValidatePushDeleteRequiresAllowDelete(t *testing.T) {
 	f := newPRFixture(t)
 	if err := f.repos.SaveRule(context.Background(), f.repo.ID, repo.Rule{
 		Kind: git.KindBranch, Pattern: "feature", PushPolicy: repo.PushEveryone,
@@ -369,7 +350,7 @@ func TestPreReceiveDeleteRequiresAllowDelete(t *testing.T) {
 	}
 	commit := f.commitFile(t, "one", "refs/heads/feature")
 	if err := f.preReceive(t, []Update{{Old: commit, New: zeroHash, Ref: "refs/heads/feature", Kind: git.KindBranch, Name: "feature"}}); err != ErrRejected {
-		t.Fatalf("PreReceive = %v, want ErrRejected", err)
+		t.Fatalf("ValidatePush = %v, want ErrRejected", err)
 	}
 
 	if err := f.repos.SaveRule(context.Background(), f.repo.ID, repo.Rule{
@@ -378,11 +359,11 @@ func TestPreReceiveDeleteRequiresAllowDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := f.preReceive(t, []Update{{Old: commit, New: zeroHash, Ref: "refs/heads/feature", Kind: git.KindBranch, Name: "feature"}}); err != nil {
-		t.Fatalf("PreReceive (AllowDelete) = %v", err)
+		t.Fatalf("ValidatePush (AllowDelete) = %v", err)
 	}
 }
 
-func TestPreReceiveForcePushRequiresAllowForce(t *testing.T) {
+func TestValidatePushForcePushRequiresAllowForce(t *testing.T) {
 	f := newPRFixture(t)
 	if err := f.repos.SaveRule(context.Background(), f.repo.ID, repo.Rule{
 		Kind: git.KindBranch, Pattern: "feature", PushPolicy: repo.PushEveryone,
@@ -398,7 +379,7 @@ func TestPreReceiveForcePushRequiresAllowForce(t *testing.T) {
 	runGit(t, f.work, "push", "--quiet", "--force", f.bare, "HEAD:refs/heads/feature")
 
 	if err := f.preReceive(t, []Update{{Old: first, New: rewritten, Ref: "refs/heads/feature", Kind: git.KindBranch, Name: "feature"}}); err != ErrRejected {
-		t.Fatalf("PreReceive = %v, want ErrRejected: a non-fast-forward update needs AllowForce", err)
+		t.Fatalf("ValidatePush = %v, want ErrRejected: a non-fast-forward update needs AllowForce", err)
 	}
 
 	if err := f.repos.SaveRule(context.Background(), f.repo.ID, repo.Rule{
@@ -407,11 +388,11 @@ func TestPreReceiveForcePushRequiresAllowForce(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := f.preReceive(t, []Update{{Old: first, New: rewritten, Ref: "refs/heads/feature", Kind: git.KindBranch, Name: "feature"}}); err != nil {
-		t.Fatalf("PreReceive (AllowForce) = %v", err)
+		t.Fatalf("ValidatePush (AllowForce) = %v", err)
 	}
 }
 
-func TestPreReceiveMovingATagRequiresAllowForce(t *testing.T) {
+func TestValidatePushMovingATagRequiresAllowForce(t *testing.T) {
 	f := newPRFixture(t)
 	if err := f.repos.SaveRule(context.Background(), f.repo.ID, repo.Rule{
 		Kind: git.KindTag, Pattern: "v1", PushPolicy: repo.PushEveryone,
@@ -422,7 +403,7 @@ func TestPreReceiveMovingATagRequiresAllowForce(t *testing.T) {
 	second := f.commitFile(t, "two", "refs/tags/v1")
 
 	if err := f.preReceive(t, []Update{{Old: first, New: second, Ref: "refs/tags/v1", Kind: git.KindTag, Name: "v1"}}); err != ErrRejected {
-		t.Fatalf("PreReceive = %v, want ErrRejected: moving an existing tag needs AllowForce", err)
+		t.Fatalf("ValidatePush = %v, want ErrRejected: moving an existing tag needs AllowForce", err)
 	}
 
 	if err := f.repos.SaveRule(context.Background(), f.repo.ID, repo.Rule{
@@ -431,18 +412,18 @@ func TestPreReceiveMovingATagRequiresAllowForce(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := f.preReceive(t, []Update{{Old: first, New: second, Ref: "refs/tags/v1", Kind: git.KindTag, Name: "v1"}}); err != nil {
-		t.Fatalf("PreReceive (AllowForce) = %v", err)
+		t.Fatalf("ValidatePush (AllowForce) = %v", err)
 	}
 }
 
-func TestPreReceiveReportsEveryRejectionNotJustTheFirst(t *testing.T) {
+func TestValidatePushReportsEveryRejectionNotJustTheFirst(t *testing.T) {
 	f := newPRFixture(t)
 	badName := f.commitFile(t, "one", "refs/heads/tmp")
 	if err := f.preReceive(t, []Update{
 		{Old: zeroHash, New: badName, Ref: "refs/heads/a..b", Kind: git.KindBranch, Name: "a..b"},
 		{Old: zeroHash, New: badName, Ref: "refs/notes/x"},
 	}); err != ErrRejected {
-		t.Fatalf("PreReceive = %v, want ErrRejected", err)
+		t.Fatalf("ValidatePush = %v, want ErrRejected", err)
 	}
 	out := f.out.String()
 	if strings.Count(out, "refs/heads/a..b") == 0 || strings.Count(out, "refs/notes/x") == 0 {
@@ -450,44 +431,46 @@ func TestPreReceiveReportsEveryRejectionNotJustTheFirst(t *testing.T) {
 	}
 }
 
-// TestPostReceiveOfAnOvertakenPushQueuesNothing is two pushes to main
-// landing back to back, whose hooks finish in the opposite order: the
-// newer commit's run is queued first, then the older push's hook runs.
-// It must not queue its now-stale commit — which would supersede, and
-// cancel, the newer commit's run.
-func TestPostReceiveOfAnOvertakenPushQueuesNothing(t *testing.T) {
-	ctx := context.Background()
+// Stale CAS input must never overwrite a newer accepted ref.
+func TestApplyPushRejectsStaleReference(t *testing.T) {
 	f := newReceiveFixture(t)
 	older := f.commit(t, "older", "refs/heads/main")
 	newer := f.commit(t, "newer", "refs/heads/main")
-
-	if err := f.hook.PostReceive(ctx, []Update{{Old: older, New: newer, Ref: "refs/heads/main", Kind: git.KindBranch, Name: "main"}}); err != nil {
+	err := f.hook.ApplyPush(context.Background(), []Update{{Old: zeroHash, New: older, Ref: "refs/heads/main", Kind: git.KindBranch, Name: "main"}})
+	if err == nil {
+		t.Fatal("stale create overwrote a newer ref")
+	}
+	got, err := f.hook.Git.ResolveCommit(context.Background(), "main")
+	if err != nil || got != newer {
+		t.Fatalf("head=%s err=%v", got, err)
+	}
+	pending, err := f.hook.Repos.PendingOperations(context.Background())
+	if err != nil || len(pending) != 0 {
+		t.Fatalf("stale push left pending operations: %v, %v", pending, err)
+	}
+	if err := f.hook.Repos.RecoverOperations(context.Background(), f.hook.RecoverPush); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.hook.PostReceive(ctx, []Update{{Old: zeroHash, New: older, Ref: "refs/heads/main", Kind: git.KindBranch, Name: "main"}}); err != nil {
-		t.Fatal(err)
+	if err := f.hook.ApplyPush(context.Background(), []Update{{Old: newer, New: older, Ref: "refs/heads/restored", Kind: git.KindBranch, Name: "restored"}}); err == nil {
+		t.Fatal("accepted an update to an absent ref with a nonzero old value")
 	}
-	runs := f.runs(t)
-	if len(runs) != 1 || runs[newer] != "queued" {
-		t.Fatalf("runs = %v; want only the newer commit's, still queued", runs)
-	}
-	if !strings.Contains(f.out.String(), "branch main moved again before this push was recorded") {
-		t.Fatalf("output = %q", f.out.String())
+	if err := f.hook.ApplyPush(context.Background(), []Update{{Old: zeroHash, New: newer, Ref: "refs/heads/restored", Kind: git.KindBranch, Name: "restored"}}); err != nil {
+		t.Fatalf("valid push after stale rejection: %v", err)
 	}
 }
 
-// TestPostReceiveOfADeletedTagCancelsItsQueuedRun is a tag deleted while
+// TestApplyPushOfADeletedTagCancelsItsQueuedRun is a tag deleted while
 // its run waits for a worker: the run must not go on to run, and ship, a
 // tag that no longer exists.
-func TestPostReceiveOfADeletedTagCancelsItsQueuedRun(t *testing.T) {
+func TestApplyPushOfADeletedTagCancelsItsQueuedRun(t *testing.T) {
 	ctx := context.Background()
 	f := newReceiveFixture(t)
 	tagged := f.commit(t, "release", "refs/tags/v1")
-	if err := f.hook.PostReceive(ctx, []Update{{Old: zeroHash, New: tagged, Ref: "refs/tags/v1", Kind: git.KindTag, Name: "v1"}}); err != nil {
+	runGit(t, f.bare, "update-ref", "-d", "refs/tags/v1")
+	if err := f.hook.ApplyPush(ctx, []Update{{Old: zeroHash, New: tagged, Ref: "refs/tags/v1", Kind: git.KindTag, Name: "v1"}}); err != nil {
 		t.Fatal(err)
 	}
-	runGit(t, f.work, "push", "--quiet", f.bare, ":refs/tags/v1")
-	if err := f.hook.PostReceive(ctx, []Update{{Old: tagged, New: zeroHash, Ref: "refs/tags/v1", Kind: git.KindTag, Name: "v1"}}); err != nil {
+	if err := f.hook.ApplyPush(ctx, []Update{{Old: tagged, New: zeroHash, Ref: "refs/tags/v1", Kind: git.KindTag, Name: "v1"}}); err != nil {
 		t.Fatal(err)
 	}
 	var status, reason string
@@ -499,19 +482,19 @@ func TestPostReceiveOfADeletedTagCancelsItsQueuedRun(t *testing.T) {
 	}
 }
 
-// TestPostReceiveSaysWhyARefStartedNoRun is a push to refs that start no
+// TestApplyPushSaysWhyARefStartedNoRun is a push to refs that start no
 // run: one no rule matches, and one whose rule does not have "run" on.
 // Each gets a line saying so; a ref that does run gets none.
-func TestPostReceiveSaysWhyARefStartedNoRun(t *testing.T) {
+func TestApplyPushSaysWhyARefStartedNoRun(t *testing.T) {
 	ctx := context.Background()
 	f := newReceiveFixture(t)
 	if err := f.hook.Repos.SaveRule(ctx, f.hook.Ctx.RepoID, repo.Rule{Kind: git.KindBranch, Pattern: "release/*", PushPolicy: repo.PushEveryone}, ""); err != nil {
 		t.Fatal(err)
 	}
 	head := f.commit(t, "one", "refs/heads/main")
-	runGit(t, f.work, "push", "--quiet", f.bare, "HEAD:refs/heads/develop", "HEAD:refs/heads/release/1")
+	runGit(t, f.bare, "update-ref", "-d", "refs/heads/main")
 
-	if err := f.hook.PostReceive(ctx, []Update{
+	if err := f.hook.ApplyPush(ctx, []Update{
 		{Old: zeroHash, New: head, Ref: "refs/heads/main", Kind: git.KindBranch, Name: "main"},
 		{Old: zeroHash, New: head, Ref: "refs/heads/develop", Kind: git.KindBranch, Name: "develop"},
 		{Old: zeroHash, New: head, Ref: "refs/heads/release/1", Kind: git.KindBranch, Name: "release/1"},
@@ -530,5 +513,107 @@ func TestPostReceiveSaysWhyARefStartedNoRun(t *testing.T) {
 	}
 	if strings.Contains(out, "no run for branch main") {
 		t.Errorf("a ref that ran was reported as not running:\n%s", out)
+	}
+}
+
+// refusalRows reads back what ValidatePush recorded about refused pushes:
+// each refused ref and its reason, in the order reported.
+func (f *prFixture) refusalRows(t *testing.T) (pushes int, refs []refusal) {
+	t.Helper()
+	ctx := context.Background()
+	if err := f.hook.DB.Pool.QueryRow(ctx, `SELECT count(*) FROM push_refusals`).Scan(&pushes); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := f.hook.DB.Pool.Query(ctx, `SELECT ref, reason FROM push_refusal_refs ORDER BY refusal_id, position`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var r refusal
+		if err := rows.Scan(&r.ref, &r.reason); err != nil {
+			t.Fatal(err)
+		}
+		refs = append(refs, r)
+	}
+	return pushes, refs
+}
+
+func TestValidatePushRecordsWhyAPushWasRefused(t *testing.T) {
+	f := newPRFixture(t)
+	ctx := context.Background()
+	if err := f.repos.SaveRule(ctx, f.repo.ID, repo.Rule{Kind: git.KindBranch, Pattern: "main", PushPolicy: repo.PushAdmins}, ""); err != nil {
+		t.Fatal(err)
+	}
+	f.asPerson(t, "alice")
+	f.hook.Ctx.RemoteAddr = "203.0.113.9"
+	commit := f.commitFile(t, "one", "refs/heads/tmp")
+
+	err := f.preReceive(t, []Update{
+		{Old: zeroHash, New: commit, Ref: "refs/heads/main", Kind: git.KindBranch, Name: "main"},
+		{Old: zeroHash, New: commit, Ref: "refs/heads/fine", Kind: git.KindBranch, Name: "fine"},
+		{Old: zeroHash, New: commit, Ref: "refs/heads/a..b", Kind: git.KindBranch, Name: "a..b"},
+		{Old: zeroHash, New: commit, Ref: "refs/notes/x"},
+	})
+	if err != ErrRejected {
+		t.Fatalf("ValidatePush = %v, want ErrRejected", err)
+	}
+
+	// What the pusher is told is unchanged: every reason, ref by ref.
+	want := "Gitman refused this push:\n" +
+		"  refs/heads/main: the rule for branch \"main\" does not allow alice to push here\n" +
+		"  refs/heads/a..b: ref name must not contain '..'\n" +
+		"  refs/notes/x: only branches (refs/heads/) and tags (refs/tags/) can be pushed\n"
+	if f.out.String() != want {
+		t.Fatalf("output =\n%s\nwant\n%s", f.out.String(), want)
+	}
+
+	// And it is kept: one refused push, with the same reasons in the same
+	// order. The ref that was fine has none.
+	pushes, refs := f.refusalRows(t)
+	if pushes != 1 || len(refs) != 3 {
+		t.Fatalf("recorded %d pushes and %d refs, want 1 and 3: %+v", pushes, len(refs), refs)
+	}
+	for i, r := range refs {
+		if line := "  " + r.ref + ": " + r.reason + "\n"; !strings.Contains(f.out.String(), line) {
+			t.Errorf("ref %d recorded as %q, which the pusher was not told", i, line)
+		}
+	}
+	if refs[0].ref != "refs/heads/main" || refs[2].ref != "refs/notes/x" {
+		t.Errorf("refs are out of order: %+v", refs)
+	}
+	var person, ip string
+	if err := f.hook.DB.Pool.QueryRow(ctx, `SELECT p.username, f.source_ip FROM push_refusals f JOIN people p ON p.id = f.person_id`).Scan(&person, &ip); err != nil {
+		t.Fatal(err)
+	}
+	if person != "alice" || ip != "203.0.113.9" {
+		t.Errorf("recorded for %q from %q", person, ip)
+	}
+}
+
+func TestValidatePushRecordsAPushRefusedAsAWhole(t *testing.T) {
+	f := newPRFixture(t)
+	f.asPerson(t, "alice")
+	if err := f.people.Disable(context.Background(), f.hook.Ctx.PersonID, ""); err != nil {
+		t.Fatal(err)
+	}
+	commit := f.commitFile(t, "one", "refs/heads/tmp")
+	if err := f.preReceive(t, []Update{{Old: zeroHash, New: commit, Ref: "refs/heads/feature", Kind: git.KindBranch, Name: "feature"}}); err != ErrRejected {
+		t.Fatalf("ValidatePush = %v, want ErrRejected", err)
+	}
+	pushes, refs := f.refusalRows(t)
+	if pushes != 1 || len(refs) != 1 || refs[0].ref != "" || refs[0].reason != "alice is disabled and cannot push" {
+		t.Fatalf("recorded %d pushes: %+v", pushes, refs)
+	}
+}
+
+func TestValidatePushRecordsNothingForAnAcceptedPush(t *testing.T) {
+	f := newPRFixture(t)
+	commit := f.commitFile(t, "one", "refs/heads/tmp")
+	if err := f.preReceive(t, []Update{{Old: zeroHash, New: commit, Ref: "refs/heads/feature", Kind: git.KindBranch, Name: "feature"}}); err != nil {
+		t.Fatalf("ValidatePush = %v", err)
+	}
+	if pushes, refs := f.refusalRows(t); pushes != 0 || len(refs) != 0 {
+		t.Fatalf("an accepted push left %d refusals: %+v", pushes, refs)
 	}
 }

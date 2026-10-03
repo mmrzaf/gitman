@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 //go:embed migrations/*.sql
@@ -89,7 +90,11 @@ func (d *DB) Migrate(ctx context.Context) error {
 		return fmt.Errorf("take migration lock: %w", err)
 	}
 	defer func() {
-		_, _ = conn.Exec(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock($1)`, migrationLockKey)
+		cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := conn.Exec(cleanup, `SELECT pg_advisory_unlock($1)`, migrationLockKey); err != nil {
+			_ = conn.Conn().Close(cleanup)
+		}
 	}()
 
 	if _, err := conn.Exec(ctx, `

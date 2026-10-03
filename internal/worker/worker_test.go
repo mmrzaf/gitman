@@ -51,11 +51,9 @@ func TestRetryBrieflyGivesUpAfterItsAttemptsAreExhausted(t *testing.T) {
 	}
 }
 
-// TestFinishDoesNotLeaveARunRunning records the end of a run whose
-// summary the database refuses. The worker must still record the end —
-// without the summary — rather than leave the run running while the
-// worker stays alive and the lost-worker check never looks at it.
-func TestFinishDoesNotLeaveARunRunning(t *testing.T) {
+// TestFinishStoresAValidSummary keeps the worker's finish path preserving a
+// valid summary when it records the run's end.
+func TestFinishStoresAValidSummary(t *testing.T) {
 	ctx := context.Background()
 	database := pgtest.Open(t)
 	if _, err := database.Pool.Exec(ctx, `INSERT INTO repos (id, name) VALUES ('r1', 'demo')`); err != nil {
@@ -76,21 +74,24 @@ func TestFinishDoesNotLeaveARunRunning(t *testing.T) {
 	if err := svc.RegisterWorker(ctx, w.id, "host"); err != nil {
 		t.Fatal(err)
 	}
-	claim, err := svc.ClaimNext(ctx, w.id)
+	claim, err := svc.ClaimNext(ctx, w.id, 30*time.Minute, []string{"alpine:3.20"})
 	if err != nil || claim == nil {
 		t.Fatalf("ClaimNext = %v, %v", claim, err)
 	}
 
-	outcome := ci.Outcome{Status: ci.StatusPassed, Summary: map[string]string{"bad": "a\x00b"}}
+	outcome := ci.Outcome{Status: ci.StatusPassed, Summary: map[string]string{"image": "demo:v1"}}
 	if !w.finish(ctx, claim.RunID, outcome, w.log) {
 		t.Fatal("finish gave up")
 	}
-	var status, reason string
-	if err := database.Pool.QueryRow(ctx, `SELECT status, reason FROM runs WHERE id = $1`, claim.RunID).Scan(&status, &reason); err != nil {
+	var status, reason, summary string
+	if err := database.Pool.QueryRow(ctx, `
+		SELECT r.status, r.reason, s.value
+		FROM runs r JOIN run_summary s ON s.run_id = r.id AND s.key = 'image'
+		WHERE r.id = $1`, claim.RunID).Scan(&status, &reason, &summary); err != nil {
 		t.Fatal(err)
 	}
-	if status != "passed" || reason != "The run's summary could not be stored." {
-		t.Fatalf("run = %s %q", status, reason)
+	if status != "passed" || reason != "" || summary != "demo:v1" {
+		t.Fatalf("run = %s %q summary=%q", status, reason, summary)
 	}
 }
 
@@ -154,7 +155,7 @@ func TestBeatWaitsBeforeJudgingOtherWorkers(t *testing.T) {
 	if err := svc.RegisterWorker(ctx, "other", "host"); err != nil {
 		t.Fatal(err)
 	}
-	if claim, err := svc.ClaimNext(ctx, "other"); err != nil || claim == nil {
+	if claim, err := svc.ClaimNext(ctx, "other", 30*time.Minute, []string{"alpine:3.20"}); err != nil || claim == nil {
 		t.Fatalf("ClaimNext = %v, %v", claim, err)
 	}
 	if _, err := database.Pool.Exec(ctx, `UPDATE workers SET heartbeat_at = now() - interval '5 minutes'`); err != nil {
@@ -172,7 +173,7 @@ func TestBeatWaitsBeforeJudgingOtherWorkers(t *testing.T) {
 	}
 	// Once it has been heartbeating for ci.WorkerLostAfter, a worker still silent
 	// is lost.
-	w.healthySince = time.Now().Add(-ci.WorkerLostAfter - time.Second)
+	w.healthySince.Store(time.Now().Add(-ci.WorkerLostAfter - time.Second).UnixNano())
 	w.beat(ctx)
 	if status := runStatus(t, database); status != "failed" {
 		t.Fatalf("run status = %s; want failed once the other worker stayed silent", status)

@@ -2,8 +2,11 @@ package ci
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mmrzaf/gitman/internal/git"
 	"github.com/mmrzaf/gitman/internal/id"
@@ -20,24 +23,29 @@ func allocateRunNumber(ctx context.Context, tx postgres.Querier, repoID string) 
 	return number, nil
 }
 
-func insertRun(ctx context.Context, tx postgres.Querier, run *Created, p CreateParams, number int64, finished bool) error {
+func insertRun(ctx context.Context, tx postgres.Querier, run *Created, p CreateParams, number int64, finished bool, timeout time.Duration) error {
+	images := []string{}
+	if cfg, err := Parse(p.Pipeline); err == nil {
+		images = append(images, cfg.Image)
+		images = append(images, cfg.Requires...)
+	}
 	_, err := tx.Exec(ctx, `
 		INSERT INTO runs (id, repo_id, number, commit_hash, ref_kind, ref_name, trigger, triggered_by, push_id,
-		                  status, reason, target, version, allow_secrets, pipeline, finished_at)
+		                  status, reason, target, version, allow_secrets, pipeline, finished_at, timeout_ns, required_images)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, ''), NULLIF($9, ''), $10, $11, $12, $13, $14,
-		        CASE WHEN $15 THEN NULL ELSE $16::bytea END, CASE WHEN $15 THEN now() END)
+		        CASE WHEN $15 THEN NULL ELSE $16::bytea END, CASE WHEN $15 THEN now() END, $17, $18)
 	`, run.ID, p.RepoID, number, p.Commit, string(p.RefKind), p.RefName, p.Trigger, p.PersonID, p.PushID,
-		run.Status, run.Reason, run.Target, run.Version, p.Decision.AllowSecrets, finished, p.Pipeline)
+		run.Status, run.Reason, run.Target, run.Version, p.Decision.AllowSecrets, finished, p.Pipeline, int64(timeout), normalizeImages(images))
 	if err != nil {
 		return fmt.Errorf("insert run: %w", err)
 	}
 	return nil
 }
 
-func insertStep(ctx context.Context, tx postgres.Querier, runID string, index int, name string, status StepStatus) error {
+func insertStep(ctx context.Context, tx postgres.Querier, runID string, index int, name string, kind StepKind, status StepStatus) error {
 	_, err := tx.Exec(ctx, `
-		INSERT INTO steps (id, run_id, index, name, status) VALUES ($1, $2, $3, $4, $5)
-	`, id.New(), runID, index, name, status)
+		INSERT INTO steps (id, run_id, index, name, status, type) VALUES ($1, $2, $3, $4, $5, $6)
+	`, id.New(), runID, index, name, status, kind)
 	if err != nil {
 		return fmt.Errorf("insert step: %w", err)
 	}
@@ -87,40 +95,15 @@ func supersedeQueued(ctx context.Context, tx postgres.Querier, repoID string, re
 }
 
 const summaryColumns = `
-	r.id, repos.name, r.number, r.ref_kind, r.ref_name, r.trigger, r.status, r.reason,
-	COALESCE(p.username, ''), r.queued_at, r.started_at, r.finished_at
+	r.id, repos.name, r.number, r.ref_kind, r.ref_name, r.commit_hash, r.trigger, r.status, r.reason, r.target,
+	COALESCE(p.username, ''), r.queued_at, r.started_at, r.finished_at, EXISTS(SELECT 1 FROM deployments WHERE run_id = r.id)
 `
 
 func scanSummary(row interface{ Scan(...any) error }) (Summary, error) {
 	var s Summary
-	err := row.Scan(&s.ID, &s.RepoName, &s.Number, &s.RefKind, &s.RefName, &s.Trigger, &s.Status, &s.Reason,
-		&s.Actor, &s.QueuedAt, &s.StartedAt, &s.FinishedAt)
+	err := row.Scan(&s.ID, &s.RepoName, &s.Number, &s.RefKind, &s.RefName, &s.Commit, &s.Trigger, &s.Status, &s.Reason, &s.Target,
+		&s.Actor, &s.QueuedAt, &s.StartedAt, &s.FinishedAt, &s.Deployed)
 	return s, err
-}
-
-func selectInProgress(ctx context.Context, q postgres.Querier, limit int) ([]Summary, error) {
-	rows, err := q.Query(ctx, `
-		SELECT `+summaryColumns+`
-		FROM runs r
-		JOIN repos ON repos.id = r.repo_id
-		LEFT JOIN people p ON p.id = r.triggered_by
-		WHERE r.status IN ('queued', 'running')
-		ORDER BY COALESCE(r.started_at, r.queued_at) DESC
-		LIMIT $1
-	`, limit)
-	if err != nil {
-		return nil, fmt.Errorf("list in-progress runs: %w", err)
-	}
-	defer rows.Close()
-	var result []Summary
-	for rows.Next() {
-		s, err := scanSummary(rows)
-		if err != nil {
-			return nil, fmt.Errorf("scan run: %w", err)
-		}
-		result = append(result, s)
-	}
-	return result, rows.Err()
 }
 
 func selectInProgressForRepos(ctx context.Context, q postgres.Querier, repoIDs []string, limit int) ([]Summary, error) {
@@ -177,13 +160,13 @@ func selectRunsForRepo(ctx context.Context, q postgres.Querier, repoID string, b
 // map of per-ref results.
 func refKey(kind git.Kind, name string) string { return string(kind) + "/" + name }
 
-func selectLatestRunPerRef(ctx context.Context, q postgres.Querier, repoID string) (map[string]Summary, error) {
+func selectLatestHeadRunPerRef(ctx context.Context, q postgres.Querier, repoID string) (map[string]Summary, error) {
 	rows, err := q.Query(ctx, `
 		SELECT DISTINCT ON (r.ref_kind, r.ref_name) `+summaryColumns+`
 		FROM runs r
 		JOIN repos ON repos.id = r.repo_id
 		LEFT JOIN people p ON p.id = r.triggered_by
-		WHERE r.repo_id = $1 AND r.ref_kind <> ''
+		WHERE r.repo_id = $1 AND EXISTS (SELECT 1 FROM refs head WHERE head.repo_id = r.repo_id AND head.kind = r.ref_kind AND head.name = r.ref_name AND head.commit_hash = r.commit_hash)
 		ORDER BY r.ref_kind, r.ref_name, r.number DESC
 	`, repoID)
 	if err != nil {
@@ -201,9 +184,90 @@ func selectLatestRunPerRef(ctx context.Context, q postgres.Querier, repoID strin
 	return result, rows.Err()
 }
 
+// selectRunsOfRef returns the newest limit runs of one branch or tag,
+// newest first.
+func selectRunsOfRef(ctx context.Context, q postgres.Querier, repoID string, kind git.Kind, name string, limit int) ([]Summary, error) {
+	rows, err := q.Query(ctx, `
+		SELECT `+summaryColumns+`
+		FROM runs r
+		JOIN repos ON repos.id = r.repo_id
+		LEFT JOIN people p ON p.id = r.triggered_by
+		WHERE r.repo_id = $1 AND r.ref_kind = $2 AND r.ref_name = $3
+		ORDER BY r.number DESC
+		LIMIT $4
+	`, repoID, string(kind), name, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list runs of %s %s: %w", kind, name, err)
+	}
+	defer rows.Close()
+	var result []Summary
+	for rows.Next() {
+		s, err := scanSummary(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan run: %w", err)
+		}
+		result = append(result, s)
+	}
+	return result, rows.Err()
+}
+
+// selectLatestDefaultHeadRuns returns the newest run of each repository's
+// default branch, keyed by repository ID.
+func selectLatestDefaultHeadRuns(ctx context.Context, q postgres.Querier, repoIDs []string) (map[string]Summary, error) {
+	rows, err := q.Query(ctx, `
+		SELECT DISTINCT ON (r.repo_id) r.repo_id, `+summaryColumns+`
+		FROM runs r
+		JOIN repos ON repos.id = r.repo_id
+		LEFT JOIN people p ON p.id = r.triggered_by
+		WHERE r.repo_id = ANY($1) AND r.ref_kind = 'branch' AND r.ref_name = repos.default_branch AND EXISTS(SELECT 1 FROM refs head WHERE head.repo_id = r.repo_id AND head.kind = 'branch' AND head.name = repos.default_branch AND head.commit_hash = r.commit_hash)
+		ORDER BY r.repo_id, r.number DESC
+	`, repoIDs)
+	if err != nil {
+		return nil, fmt.Errorf("list latest default branch runs: %w", err)
+	}
+	defer rows.Close()
+	result := map[string]Summary{}
+	for rows.Next() {
+		var repoID string
+		var s Summary
+		if err := rows.Scan(&repoID, &s.ID, &s.RepoName, &s.Number, &s.RefKind, &s.RefName, &s.Commit, &s.Trigger, &s.Status, &s.Reason, &s.Target,
+			&s.Actor, &s.QueuedAt, &s.StartedAt, &s.FinishedAt, &s.Deployed); err != nil {
+			return nil, fmt.Errorf("scan run: %w", err)
+		}
+		result[repoID] = s
+	}
+	return result, rows.Err()
+}
+
+// selectLatestRunPerCommit returns the newest run of each of commits,
+// keyed by commit; a commit no run was made for is left out.
+func selectLatestRunPerCommit(ctx context.Context, q postgres.Querier, repoID string, commits []string) (map[string]Summary, error) {
+	rows, err := q.Query(ctx, `
+		SELECT DISTINCT ON (r.commit_hash) `+summaryColumns+`
+		FROM runs r
+		JOIN repos ON repos.id = r.repo_id
+		LEFT JOIN people p ON p.id = r.triggered_by
+		WHERE r.repo_id = $1 AND r.commit_hash = ANY($2)
+		ORDER BY r.commit_hash, r.number DESC
+	`, repoID, commits)
+	if err != nil {
+		return nil, fmt.Errorf("list latest runs per commit: %w", err)
+	}
+	defer rows.Close()
+	result := map[string]Summary{}
+	for rows.Next() {
+		s, err := scanSummary(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan run: %w", err)
+		}
+		result[s.Commit] = s
+	}
+	return result, rows.Err()
+}
+
 // selectLiveDeployments returns the latest deployment for every
 // repository and target, or, with repoID, for one repository's targets.
-func selectLiveDeployments(ctx context.Context, q postgres.Querier, repoID *string) ([]Deployment, error) {
+func selectLiveDeployments(ctx context.Context, q postgres.Querier, repoID string) ([]Deployment, error) {
 	rows, err := q.Query(ctx, `
 		SELECT DISTINCT ON (d.repo_id, d.target)
 		       d.repo_id, d.target, d.version, d.commit_hash,
@@ -211,8 +275,8 @@ func selectLiveDeployments(ctx context.Context, q postgres.Querier, repoID *stri
 		FROM deployments d
 		LEFT JOIN runs r ON r.id = d.run_id
 		LEFT JOIN people p ON p.id = d.person_id
-		WHERE $1::text IS NULL OR d.repo_id = $1
-		ORDER BY d.repo_id, d.target, d.created_at DESC
+		WHERE d.repo_id = $1
+		ORDER BY d.repo_id, d.target, d.created_at DESC, d.id DESC
 	`, repoID)
 	if err != nil {
 		return nil, fmt.Errorf("list live deployments: %w", err)
@@ -241,7 +305,7 @@ func selectLiveDeploymentsForRepos(ctx context.Context, q postgres.Querier, repo
 		LEFT JOIN runs r ON r.id = d.run_id
 		LEFT JOIN people p ON p.id = d.person_id
 		WHERE d.repo_id = ANY($1)
-		ORDER BY d.repo_id, d.target, d.created_at DESC
+		ORDER BY d.repo_id, d.target, d.created_at DESC, d.id DESC
 	`, repoIDs)
 	if err != nil {
 		return nil, fmt.Errorf("list live deployments: %w", err)
@@ -267,7 +331,7 @@ func selectLatestDeploymentPerRef(ctx context.Context, q postgres.Querier, repoI
 		JOIN runs r ON r.id = d.run_id
 		LEFT JOIN people p ON p.id = d.person_id
 		WHERE d.repo_id = $1 AND r.repo_id = $1 AND r.ref_kind <> ''
-		ORDER BY r.ref_kind, r.ref_name, d.created_at DESC
+		ORDER BY r.ref_kind, r.ref_name, d.created_at DESC, d.id DESC
 	`, repoID)
 	if err != nil {
 		return nil, fmt.Errorf("list latest deployments per ref: %w", err)
@@ -289,30 +353,69 @@ func selectLatestDeploymentPerRef(ctx context.Context, q postgres.Querier, repoI
 // returns it. SKIP LOCKED lets any number of workers claim concurrently
 // without ever taking the same run. It returns postgres.ErrNotFound when
 // nothing is queued.
-func claimNextRun(ctx context.Context, tx postgres.Tx, workerID, fetchTokenHash string) (*Claim, error) {
+func claimNextRun(ctx context.Context, tx postgres.Tx, workerID, fetchTokenHash string, timeout time.Duration, images []string) (*Claim, error) {
+	rows, err := tx.Query(ctx, `SELECT repo_id FROM runs WHERE NOT (SELECT maintenance FROM instance) AND status='queued' AND required_images <@ $1::text[] AND NOT EXISTS(SELECT 1 FROM repository_operations o WHERE o.repo_id=runs.repo_id AND o.completed_at IS NULL) GROUP BY repo_id ORDER BY min(queued_at),min(id) LIMIT 256`, images)
+	if err != nil {
+		return nil, err
+	}
+	var candidates []string
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		candidates = append(candidates, v)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	// Lock order is execution gate, then run. Deletion holds the exclusive gate
+	// while installing its durable intent, so no claim can slip past admission.
+	for _, repoID := range candidates {
+		var acquired bool
+		if err := tx.QueryRow(ctx, `SELECT pg_try_advisory_xact_lock_shared(hashtextextended('gitman.execution.' || $1,0))`, repoID).Scan(&acquired); err != nil {
+			return nil, err
+		}
+		if !acquired {
+			continue
+		}
+		claim, err := claimNextRunForRepo(ctx, tx, workerID, fetchTokenHash, timeout, images, repoID)
+		if errors.Is(err, postgres.ErrNotFound) {
+			continue
+		}
+		return claim, err
+	}
+	return nil, postgres.ErrNotFound
+}
+
+func claimNextRunForRepo(ctx context.Context, tx postgres.Tx, workerID, fetchTokenHash string, timeout time.Duration, images []string, repoID string) (*Claim, error) {
 	c := &Claim{}
 	err := tx.QueryRow(ctx, `
-		UPDATE runs SET status = 'running', started_at = now(), worker_id = $1, fetch_token_hash = $2
+		UPDATE runs SET status = 'running', started_at = now(), worker_id = $1, fetch_token_hash = $2,
+ deadline_at = now() + (COALESCE(NULLIF(timeout_ns, 0), $3)::double precision / 1000000000) * interval '1 second'
 		FROM repos
 		WHERE runs.id = (
-			SELECT id FROM runs WHERE status = 'queued' ORDER BY queued_at, id
+			SELECT id FROM runs WHERE NOT (SELECT maintenance FROM instance) AND status = 'queued' AND repo_id=$5 AND required_images <@ $4::text[] AND NOT EXISTS(SELECT 1 FROM repository_operations o WHERE o.repo_id=runs.repo_id AND o.completed_at IS NULL) ORDER BY queued_at, id
 			FOR UPDATE SKIP LOCKED LIMIT 1
 		) AND repos.id = runs.repo_id
 		RETURNING runs.id, runs.repo_id, repos.name, runs.number, runs.commit_hash, runs.ref_kind,
-		          runs.ref_name, runs.target, runs.version, runs.allow_secrets, runs.pipeline
-	`, workerID, fetchTokenHash).Scan(&c.RunID, &c.RepoID, &c.RepoName, &c.Number, &c.Commit, &c.RefKind,
-		&c.RefName, &c.Target, &c.Version, &c.AllowSecrets, &c.Pipeline)
+		          runs.ref_name, runs.target, runs.version, runs.allow_secrets, runs.pipeline, runs.deadline_at
+	`, workerID, fetchTokenHash, int64(timeout), images, repoID).Scan(&c.RunID, &c.RepoID, &c.RepoName, &c.Number, &c.Commit, &c.RefKind,
+		&c.RefName, &c.Target, &c.Version, &c.AllowSecrets, &c.Pipeline, &c.Deadline)
 	if err != nil {
 		return nil, postgres.NormalizeNotFound(err)
 	}
-	rows, err := tx.Query(ctx, `SELECT id, index, name, status = 'skipped' FROM steps WHERE run_id = $1 ORDER BY index`, c.RunID)
+	rows, err := tx.Query(ctx, `SELECT id, index, name, type, status = 'skipped' FROM steps WHERE run_id = $1 ORDER BY index`, c.RunID)
 	if err != nil {
 		return nil, fmt.Errorf("list steps: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var st ClaimedStep
-		if err := rows.Scan(&st.ID, &st.Index, &st.Name, &st.Skipped); err != nil {
+		if err := rows.Scan(&st.ID, &st.Index, &st.Name, &st.Type, &st.Skipped); err != nil {
 			return nil, fmt.Errorf("scan step: %w", err)
 		}
 		c.Steps = append(c.Steps, st)
@@ -326,10 +429,10 @@ func selectRunningRepoByFetchToken(ctx context.Context, q postgres.Querier, toke
 	return repoID, postgres.NormalizeNotFound(err)
 }
 
-// setStepRunning and setStepFinished change a step only while its run is
-// running: a run that has ended — failed as lost while its worker was
-// cut off, say — keeps the step statuses it ended with. setStepRunning
-// returns ErrRunEnded for such a run, so its worker starts nothing more.
+// setStepRunning changes a step only while its run is running: a run that
+// has ended — failed as lost while its worker was cut off, say — keeps the
+// step statuses it ended with. It returns ErrRunEnded for such a run, so
+// its worker starts nothing more.
 func setStepRunning(ctx context.Context, q postgres.Querier, stepID string) error {
 	tag, err := q.Exec(ctx, `
 		UPDATE steps SET status = 'running', started_at = now()
@@ -342,17 +445,6 @@ func setStepRunning(ctx context.Context, q postgres.Querier, stepID string) erro
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrRunEnded
-	}
-	return nil
-}
-
-func setStepFinished(ctx context.Context, q postgres.Querier, stepID string, status StepStatus, exitCode *int) error {
-	if _, err := q.Exec(ctx, `
-		UPDATE steps SET status = $2, exit_code = $3, finished_at = now()
-		WHERE id = $1 AND status IN ('pending', 'running')
-		  AND EXISTS (SELECT 1 FROM runs WHERE runs.id = steps.run_id AND runs.status = 'running')
-	`, stepID, status, exitCode); err != nil {
-		return fmt.Errorf("finish step: %w", err)
 	}
 	return nil
 }
@@ -376,16 +468,16 @@ func settleOpenSteps(ctx context.Context, q postgres.Querier, runID string, runn
 // error: a worker that timed out waiting for the answer retries it
 // without knowing whether the first attempt was stored. It silently does
 // nothing once its run has ended — failed as lost while its worker kept
-// writing, say — the same way setStepFinished leaves an ended run's
-// steps alone.
+// writing, say, so an ended run's steps keep the statuses they ended with.
 func insertLogChunk(ctx context.Context, q postgres.Querier, stepID string, sequence int, content string) error {
 	if _, err := q.Exec(ctx, `
-		INSERT INTO step_logs (step_id, sequence, content, byte_len)
-		SELECT $1, $2, $3, $4
+		WITH inserted AS (INSERT INTO step_logs (step_id, sequence, content, byte_len, line_count)
+		SELECT $1, $2, $3, $4, $5
 		WHERE EXISTS (SELECT 1 FROM steps JOIN runs ON runs.id = steps.run_id
 		              WHERE steps.id = $1 AND runs.status = 'running')
-		ON CONFLICT (step_id, sequence) DO NOTHING
-	`, stepID, sequence, content, len(content)); err != nil {
+		ON CONFLICT (step_id, sequence) DO NOTHING RETURNING byte_len, line_count)
+		UPDATE steps SET log_bytes = log_bytes + i.byte_len, log_lines = log_lines + i.line_count FROM inserted i WHERE steps.id = $1
+	`, stepID, sequence, content, len(content), strings.Count(content, "\n")); err != nil {
 		return fmt.Errorf("append log: %w", err)
 	}
 	return nil
@@ -469,11 +561,11 @@ func insertSummary(ctx context.Context, tx postgres.Tx, runID, key, value string
 	return nil
 }
 
-func insertDeployment(ctx context.Context, tx postgres.Tx, runID string, f *finishedRun) error {
+func insertDeployment(ctx context.Context, tx postgres.Tx, runID, stepID string, f *finishedRun) error {
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO deployments (id, repo_id, target, version, commit_hash, run_id, person_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-	`, id.New(), f.repoID, f.target, f.version, f.commit, runID, f.triggeredBy); err != nil {
+		INSERT INTO deployments (id, repo_id, target, version, commit_hash, run_id, person_id, step_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (step_id) DO NOTHING
+	`, id.New(), f.repoID, f.target, f.version, f.commit, runID, f.triggeredBy, stepID); err != nil {
 		return fmt.Errorf("record deployment: %w", err)
 	}
 	return nil
@@ -537,15 +629,15 @@ func markWorkerStopped(ctx context.Context, q postgres.Querier, workerID string)
 	return nil
 }
 
-// selectAnyWorkerOnline reports whether a worker has not stopped and has
+// selectAnyWorkerReady reports whether a worker has not stopped and has
 // heartbeated within staleAfter, judged by the database's clock, as
 // selectLostRuns does.
-func selectAnyWorkerOnline(ctx context.Context, q postgres.Querier, staleAfter time.Duration) (bool, error) {
+func selectAnyWorkerReady(ctx context.Context, q postgres.Querier, staleAfter time.Duration) (bool, error) {
 	var online bool
 	if err := q.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM workers
-			WHERE stopped_at IS NULL AND heartbeat_at >= now() - make_interval(secs => $1)
+			WHERE stopped_at IS NULL AND ready AND readiness_at >= now() - make_interval(secs => $1) AND heartbeat_at >= now() - make_interval(secs => $1)
 		)
 	`, staleAfter.Seconds()).Scan(&online); err != nil {
 		return false, fmt.Errorf("check for online workers: %w", err)
@@ -603,21 +695,21 @@ func selectRunningRunIDs(ctx context.Context, q postgres.Querier) (map[string]bo
 func selectRunDetail(ctx context.Context, q postgres.Querier, repoID string, number int64) (*RunDetail, error) {
 	d := &RunDetail{}
 	err := q.QueryRow(ctx, `
-		SELECT `+summaryColumns+`, r.repo_id, r.commit_hash, r.target, r.version, r.allow_secrets, r.cancel_requested
+		SELECT `+summaryColumns+`, r.repo_id, r.version, r.allow_secrets, r.cancel_requested
 		FROM runs r
 		JOIN repos ON repos.id = r.repo_id
 		LEFT JOIN people p ON p.id = r.triggered_by
 		WHERE r.repo_id = $1 AND r.number = $2
-	`, repoID, number).Scan(&d.ID, &d.RepoName, &d.Number, &d.RefKind, &d.RefName, &d.Trigger, &d.Status, &d.Reason,
-		&d.Actor, &d.QueuedAt, &d.StartedAt, &d.FinishedAt,
-		&d.RepoID, &d.Commit, &d.Target, &d.Version, &d.AllowSecrets, &d.CancelRequested)
+	`, repoID, number).Scan(&d.ID, &d.RepoName, &d.Number, &d.RefKind, &d.RefName, &d.Commit, &d.Trigger, &d.Status, &d.Reason, &d.Target,
+		&d.Actor, &d.QueuedAt, &d.StartedAt, &d.FinishedAt, &d.Deployed,
+		&d.RepoID, &d.Version, &d.AllowSecrets, &d.CancelRequested)
 	if err != nil {
 		return nil, postgres.NormalizeNotFound(err)
 	}
 
 	rows, err := q.Query(ctx, `
-		SELECT s.id, s.index, s.name, s.status, s.exit_code, s.started_at, s.finished_at,
-		       COALESCE((SELECT sum(byte_len) FROM step_logs WHERE step_id = s.id), 0)
+		SELECT s.id, s.index, s.name, s.type, s.status, s.exit_code, s.started_at, s.finished_at,
+		       s.log_bytes,s.logs_expired_at,s.log_recording_error
 		FROM steps s WHERE s.run_id = $1 ORDER BY s.index
 	`, d.ID)
 	if err != nil {
@@ -625,7 +717,7 @@ func selectRunDetail(ctx context.Context, q postgres.Querier, repoID string, num
 	}
 	for rows.Next() {
 		var st StepDetail
-		if err := rows.Scan(&st.ID, &st.Index, &st.Name, &st.Status, &st.ExitCode, &st.StartedAt, &st.FinishedAt, &st.LogBytes); err != nil {
+		if err := rows.Scan(&st.ID, &st.Index, &st.Name, &st.Type, &st.Status, &st.ExitCode, &st.StartedAt, &st.FinishedAt, &st.LogBytes, &st.LogsExpiredAt, &st.LogRecordingError); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("scan step: %w", err)
 		}
@@ -680,11 +772,11 @@ func deleteOldRuns(ctx context.Context, q postgres.Querier, before time.Time, li
 		DELETE FROM runs WHERE id IN (
 			SELECT r.id FROM runs r
 			WHERE r.finished_at < $1
-			  AND r.id <> (
-				SELECT latest.id FROM runs latest
-				WHERE latest.repo_id = r.repo_id AND latest.ref_kind = r.ref_kind AND latest.ref_name = r.ref_name
-				  AND latest.finished_at IS NOT NULL
-				ORDER BY latest.number DESC LIMIT 1
+			  AND NOT EXISTS(SELECT 1 FROM steps s WHERE s.run_id=r.id AND s.container_name IS NOT NULL AND s.container_removed_at IS NULL)
+			  AND NOT EXISTS(SELECT 1 FROM deployment_targets WHERE owner_run_id=r.id)
+			  AND r.id NOT IN (
+				SELECT DISTINCT ON (head.repo_id,head.kind,head.name) latest.id FROM refs head JOIN runs latest ON latest.repo_id=head.repo_id AND latest.ref_kind=head.kind AND latest.ref_name=head.name AND latest.commit_hash=head.commit_hash
+				WHERE latest.finished_at IS NOT NULL ORDER BY head.repo_id,head.kind,head.name,latest.number DESC
 			  )
 			LIMIT $2
 		)
@@ -699,7 +791,7 @@ func deleteGoneWorkers(ctx context.Context, q postgres.Querier, before time.Time
 	tag, err := q.Exec(ctx, `
 		DELETE FROM workers
 		WHERE COALESCE(stopped_at, heartbeat_at) < $1
-		  AND NOT EXISTS (SELECT 1 FROM runs WHERE runs.worker_id = workers.id AND runs.status = 'running')
+		  AND NOT EXISTS (SELECT 1 FROM runs WHERE runs.worker_id = workers.id AND (runs.status = 'running' OR EXISTS(SELECT 1 FROM steps WHERE run_id=runs.id AND container_name IS NOT NULL AND container_removed_at IS NULL)))
 	`, before)
 	if err != nil {
 		return 0, fmt.Errorf("delete gone workers: %w", err)
@@ -714,4 +806,60 @@ func selectInstanceID(ctx context.Context, q postgres.Querier) (string, error) {
 		return "", fmt.Errorf("read instance ID: %w", postgres.NormalizeNotFound(err))
 	}
 	return instanceID, nil
+}
+
+// selectLogTail reads at most 256 recent chunks, retaining only chunks within
+// the byte/line window. Content transferred is bounded by the window plus
+// one chunk; line accounting comes from metadata rather than old content.
+func selectLogTail(ctx context.Context, q postgres.Querier, stepID string) (*LogTail, error) {
+	tail := &LogTail{After: -1, First: 1}
+	var totalBytes, totalLines int64
+	rows, err := q.Query(ctx, `WITH recent AS (
+ SELECT sequence, content, byte_len, line_count FROM step_logs WHERE step_id = $1 ORDER BY sequence DESC LIMIT 256
+ ), counted AS (
+ SELECT *, COALESCE(SUM(byte_len) OVER (ORDER BY sequence DESC ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING),0) AS prior_bytes,
+ COALESCE(SUM(line_count) OVER (ORDER BY sequence DESC ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING),0) AS prior_lines FROM recent
+ ) SELECT COALESCE(c.sequence,-1), COALESCE(c.content,''), s.log_bytes, s.log_lines FROM steps s LEFT JOIN counted c ON c.prior_bytes < 1048576 AND c.prior_lines < 20000 WHERE s.id = $1 ORDER BY c.sequence`, stepID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var text strings.Builder
+	for rows.Next() {
+		var content string
+		if err := rows.Scan(&tail.After, &content, &totalBytes, &totalLines); err != nil {
+			return nil, err
+		}
+		text.WriteString(content)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	tail.Text = text.String()
+	tail.First = int(totalLines) - strings.Count(tail.Text, "\n") + 1
+	cut := max(0, len(tail.Text)-(1<<20))
+	if cut > 0 {
+		for cut < len(tail.Text) && !utf8.RuneStart(tail.Text[cut]) {
+			cut++
+		}
+		if n := strings.IndexByte(tail.Text[cut:], '\n'); n >= 0 {
+			cut += n + 1
+		}
+	}
+	lines := strings.Count(tail.Text[cut:], "\n")
+	if !strings.HasSuffix(tail.Text, "\n") && len(tail.Text) > cut {
+		lines++
+	}
+	for lines > 20000 {
+		n := strings.IndexByte(tail.Text[cut:], '\n')
+		if n < 0 {
+			break
+		}
+		cut += n + 1
+		lines--
+	}
+	tail.First += strings.Count(tail.Text[:cut], "\n")
+	tail.Text = tail.Text[cut:]
+	tail.Cut = int64(len(tail.Text)) < totalBytes
+	return tail, nil
 }

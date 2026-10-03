@@ -1,0 +1,20 @@
+{{define "content"}}
+<div class="page">
+<header class="page-header"><div class="page-header-text">
+  <h1 class="page-title" id="workers-title">Workers</h1>
+  <p class="page-subtitle">A heartbeat shows that the process is alive. Ready workers have Docker, disk capacity and current image inventories.</p>
+</div></header>
+<section class="panel" aria-labelledby="workers-title">
+{{if .Data.Workers}}
+<div class="table-scroll"><table class="table table-cards table-rich">
+<thead><tr><th scope="col">Host</th><th scope="col">Readiness</th><th scope="col">Heartbeat</th><th scope="col">Active runs</th><th scope="col">Images</th></tr></thead>
+<tbody>{{range .Data.Workers}}<tr>
+<th scope="row" class="table-rowheader"><div class="table-cell">{{.Hostname}}<br><span class="muted mono">{{.ID}}</span></div></th>
+<td data-label="Readiness"><div class="table-cell">{{if .Ready}}<span class="status is-passed">{{template "icon" "passed"}}Ready</span>{{else}}<span class="status is-queued">{{template "icon" "queued"}}Unavailable</span>{{end}}<p class="muted">{{.Reason}}</p></div></td>
+<td data-label="Heartbeat"><div class="table-cell">{{template "time" .Heartbeat}}{{if .Stopped}}<p>Stopped {{template "time" .Stopped}}</p>{{end}}</div></td>
+<td data-label="Active runs"><div class="table-cell">{{.ActiveRuns}}</div></td>
+<td data-label="Images"><div class="table-cell">{{range .Images}}<code>{{.}}</code><br>{{else}}<span class="muted">No images advertised</span>{{end}}</div></td>
+</tr>{{end}}</tbody></table></div>
+{{else}}<div class="empty"><p class="empty-title">No workers registered</p><p>Start a worker to execute queued pipelines.</p></div>{{end}}
+</section></div>
+{{end}}

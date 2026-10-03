@@ -18,6 +18,7 @@ import (
 	"github.com/mmrzaf/gitman/internal/ci"
 	"github.com/mmrzaf/gitman/internal/config"
 	"github.com/mmrzaf/gitman/internal/postgres"
+	"github.com/mmrzaf/gitman/internal/push"
 	reposvc "github.com/mmrzaf/gitman/internal/repo"
 )
 
@@ -29,6 +30,7 @@ type App struct {
 	people   *auth.Service
 	repos    *reposvc.Service
 	ci       *ci.Service
+	refs     *push.Refs
 	activity *activity.Service
 	ping     func(context.Context) error
 	listen   ListenFunc
@@ -64,6 +66,7 @@ type Services struct {
 	People   *auth.Service
 	Repos    *reposvc.Service
 	CI       *ci.Service
+	Refs     *push.Refs
 	Activity *activity.Service
 	// Ping reports whether the database is reachable, for /readyz.
 	Ping func(context.Context) error
@@ -89,6 +92,7 @@ func New(cfg *config.Config, services Services, log *slog.Logger) (*App, error) 
 		people:   services.People,
 		repos:    services.Repos,
 		ci:       services.CI,
+		refs:     services.Refs,
 		activity: services.Activity,
 		ping:     services.Ping,
 		listen:   services.Listen,
@@ -112,7 +116,7 @@ func New(cfg *config.Config, services Services, log *slog.Logger) (*App, error) 
 
 	mux := http.NewServeMux()
 	a.register(mux)
-	a.handler = a.recoverPanics(a.clientIPMiddleware(a.logRequests(a.routeFilesAtRef(mux))))
+	a.handler = a.recoverPanics(a.clientIPMiddleware(a.logRequests(canonicalNames(a.routeFilesAtRef(mux)))))
 	return a, nil
 }
 
@@ -136,7 +140,20 @@ type handler func(w http.ResponseWriter, r *http.Request) error
 // headers, the cross-origin check for state-changing requests, the
 // signed-in person, the pending flash message, and the access check.
 func (a *App) page(level access, h handler) http.Handler {
+	return a.pageWithBudget(level, h, 15*time.Second)
+}
+
+func (a *App) stream(level access, h handler) http.Handler {
+	return a.pageWithBudget(level, h, 0)
+}
+
+func (a *App) pageWithBudget(level access, h handler, budget time.Duration) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if budget > 0 {
+			ctx, cancel := context.WithTimeout(r.Context(), budget)
+			defer cancel()
+			r = r.WithContext(ctx)
+		}
 		rc := http.NewResponseController(w)
 		_ = rc.SetReadDeadline(time.Now().Add(a.pageReadTimeout))
 		_ = rc.SetWriteDeadline(time.Now().Add(a.pageWriteTimeout))
@@ -169,6 +186,20 @@ func (a *App) page(level access, h handler) http.Handler {
 			return
 		}
 
+		if person != nil && person.BootstrapExpiresAt != nil && r.URL.Path != "/me" && r.URL.Path != "/me/password" && r.URL.Path != "/logout" {
+			http.Redirect(w, r, "/me?tab=password", http.StatusSeeOther)
+			return
+		}
+
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && a.repos != nil {
+			ctx, release, err := a.repos.AdmitMutation(r.Context())
+			if err != nil {
+				a.renderError(w, r, err)
+				return
+			}
+			defer release()
+			r = r.WithContext(ctx)
+		}
 		if err := h(w, r); err != nil {
 			a.renderError(w, r, err)
 		}

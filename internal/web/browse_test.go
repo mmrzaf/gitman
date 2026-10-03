@@ -140,7 +140,7 @@ func writeFile(t *testing.T, dir, name string, content []byte) {
 // seedFilesRepo creates a repository through the web app, pushes real
 // commits and branches directly into its bare directory (bypassing the
 // HTTP Git transport, which git_http_test.go already covers end to end),
-// and syncs the ref index the way post-receive normally would.
+// and syncs the ref index through the push recorder.
 func seedFilesRepo(t *testing.T, database *postgres.DB, store *git.Store, b *browser) *reposvc.Repo {
 	t.Helper()
 	resp, body := b.do(http.MethodPost, "/repos", url.Values{"name": {"waiotech"}}, nil)
@@ -201,7 +201,7 @@ func seedFilesRepo(t *testing.T, database *postgres.DB, store *git.Store, b *bro
 }
 
 // syncRepoRefs brings the ref index up to date from the repository's
-// actual Git state, the way post-receive does after a real push.
+// actual Git state, as push recording does after applying Git updates.
 func syncRepoRefs(t *testing.T, database *postgres.DB, store *git.Store, repoID string) {
 	t.Helper()
 	svc := reposvc.NewService(database, store, "")
@@ -283,10 +283,9 @@ func TestFilesRaw(t *testing.T) {
 	if resp.StatusCode != http.StatusOK || body != "print('hi')\n" {
 		t.Fatalf("raw file: %d %q", resp.StatusCode, body)
 	}
-	// The extension gives a more precise type (text/x-python) than a
-	// flat text/plain would; what matters is that it's text, not octets.
-	if !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/") {
-		t.Errorf("raw Content-Type = %q, want a text/* type", resp.Header.Get("Content-Type"))
+	// Raw files are downloads, with exact bytes and no browser execution.
+	if resp.Header.Get("Content-Type") != "text/plain; charset=utf-8" {
+		t.Errorf("raw Content-Type = %q, want safe plain text", resp.Header.Get("Content-Type"))
 	}
 	if got := resp.Header.Get("Content-Disposition"); !strings.Contains(got, "app.py") {
 		t.Errorf("Content-Disposition = %q", got)
@@ -295,6 +294,11 @@ func TestFilesRaw(t *testing.T) {
 	resp, _ = b.do(http.MethodGet, "/waiotech@main/binary.bin?raw", nil, nil)
 	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "application/octet-stream" {
 		t.Fatalf("raw binary: %d %q", resp.StatusCode, resp.Header.Get("Content-Type"))
+	}
+
+	resp, body = b.do(http.MethodGet, "/waiotech@main/big.bin?raw", nil, nil)
+	if resp.StatusCode != http.StatusOK || body != strings.Repeat("x", maxFileDisplayBytes+1) {
+		t.Fatalf("large raw download: status %d, size %d", resp.StatusCode, len(body))
 	}
 
 	resp, body = b.do(http.MethodGet, "/waiotech@main?raw", nil, nil)
@@ -405,31 +409,20 @@ func TestPathHistoryAndLastChanged(t *testing.T) {
 	seedFilesRepo(t, database, store, b)
 
 	resp, body := b.do(http.MethodGet, "/waiotech@main/README.md", nil, nil)
-	expect(t, resp, body, http.StatusOK, "Last changed in", "Update README", `data-tab="history"`)
-	// The history is a tab with its own address, shown by the server
-	// without scripting.
+	expect(t, resp, body, http.StatusOK, "Last changed in", "Update README", `href="/waiotech/commits?path=README.md&amp;ref=main"`)
+	if strings.Contains(body, "data-tab-panel") {
+		t.Error("Files still has tabs")
+	}
+	// The old History tab's address leads to the commits, filtered to the path.
 	resp, body = b.do(http.MethodGet, "/waiotech@main/README.md?tab=history", nil, nil)
-	expect(t, resp, body, http.StatusOK, `data-tab="history" aria-current="page"`, `id="panel-history" data-tab-panel="history">`,
-		`id="panel-code" data-tab-panel="code" hidden>`)
-}
-
-// TestDirectoryHistory is the commit list of a branch: the History tab at
-// its root. A directory's History lists only the commits that touched it.
-func TestDirectoryHistory(t *testing.T) {
-	database, store, b := setupWithStore(t)
-	signIn(t, database, b, "darius", false)
-	seedFilesRepo(t, database, store, b)
-
-	resp, body := b.do(http.MethodGet, "/waiotech@main", nil, nil)
-	expect(t, resp, body, http.StatusOK, "Last changed in", "Update README", `data-tab="history"`)
-
-	resp, body = b.do(http.MethodGet, "/waiotech@main?tab=history", nil, nil)
-	expect(t, resp, body, http.StatusOK, `id="panel-history" data-tab-panel="history">`, "Update README", "Initial commit")
-
-	resp, body = b.do(http.MethodGet, "/waiotech@main/server?tab=history", nil, nil)
-	expect(t, resp, body, http.StatusOK, `id="panel-history" data-tab-panel="history">`, "Initial commit")
-	if strings.Contains(body, "Update README") {
-		t.Error("a directory's history lists a commit that did not touch it")
+	expect(t, resp, body, http.StatusMovedPermanently)
+	if got := resp.Header.Get("Location"); got != "/waiotech/commits?path=README.md&ref=main" {
+		t.Errorf("old history address redirects to %q", got)
+	}
+	resp, body = b.do(http.MethodGet, "/waiotech@main?tab=history&skip=20", nil, nil)
+	expect(t, resp, body, http.StatusMovedPermanently)
+	if got := resp.Header.Get("Location"); got != "/waiotech/commits?ref=main&skip=20" {
+		t.Errorf("old history address with skip redirects to %q", got)
 	}
 }
 
@@ -465,19 +458,27 @@ func TestCommitView(t *testing.T) {
 	}
 }
 
-func TestCompareView(t *testing.T) {
+// TestCompareAddressesStillWork: beta 21 compared two refs at
+// /compare/{base}...{head}, and links to it outlive the release.
+func TestCompareAddressesStillWork(t *testing.T) {
 	database, store, b := setupWithStore(t)
 	signIn(t, database, b, "darius", false)
 	seedFilesRepo(t, database, store, b)
 
 	resp, body := b.do(http.MethodGet, "/waiotech/compare/release...release/1.2", nil, nil)
-	expect(t, resp, body, http.StatusOK, "which.txt", "On release/1.2")
-
-	resp, body = b.do(http.MethodGet, "/waiotech/compare/main...main", nil, nil)
-	expect(t, resp, body, http.StatusOK, "No commits")
-
-	resp, body = b.do(http.MethodGet, "/waiotech/compare/nonsense", nil, nil)
-	expect(t, resp, body, http.StatusNotFound, "needs two refs")
+	expect(t, resp, body, http.StatusMovedPermanently)
+	if got := resp.Header.Get("Location"); got != "/waiotech/commits?base=release&ref=release%2F1.2" {
+		t.Errorf("redirects to %q", got)
+	}
+	resp, body = b.do(http.MethodGet, "/waiotech/compare", nil, nil)
+	expect(t, resp, body, http.StatusMovedPermanently)
+	if got := resp.Header.Get("Location"); got != "/waiotech/commits" {
+		t.Errorf("redirects to %q", got)
+	}
+	for _, path := range []string{"/waiotech/compare/nonsense", "/waiotech/compare/...main", "/waiotech/compare/main..."} {
+		resp, body = b.do(http.MethodGet, path, nil, nil)
+		expect(t, resp, body, http.StatusNotFound, "needs")
+	}
 }
 
 func TestTreePaths(t *testing.T) {

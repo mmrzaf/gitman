@@ -18,10 +18,11 @@ import (
 	"github.com/mmrzaf/gitman/internal/git"
 	"github.com/mmrzaf/gitman/internal/postgres"
 	"github.com/mmrzaf/gitman/internal/postgres/pgtest"
+	"github.com/mmrzaf/gitman/internal/push"
 	reposvc "github.com/mmrzaf/gitman/internal/repo"
 )
 
-const testSecretKey = "a very secret passphrase, at least 32 bytes long"
+const testSecretKey = "STsEYlF+KWuLHwa+R+yP7w5HqEwoKF2zUqpbukDA9PE="
 
 type browser struct {
 	t       *testing.T
@@ -81,7 +82,7 @@ func setup(t *testing.T) (*postgres.DB, *browser) {
 	database := pgtest.Open(t)
 	store := git.NewStore(t.TempDir())
 	t.Cleanup(store.Close)
-	cfg := &config.Config{DataDir: t.TempDir(), PublicURL: "http://gitman.test", Port: 8080, SecretKey: testSecretKey}
+	cfg := &config.Config{Retention: config.DefaultRetention(), DataDir: t.TempDir(), PublicURL: "http://gitman.test", Port: 8080, SecretKey: testSecretKey}
 	app, err := New(cfg, testServices(database, store, cfg.SecretKey), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
@@ -267,6 +268,7 @@ func TestHomeBoard(t *testing.T) {
 	}
 	for _, q := range []string{
 		`INSERT INTO repos (id, name, description) VALUES ('r1', 'waiotech', ''), ('r2', 'cerv', '')`,
+		`INSERT INTO refs (repo_id, kind, name, commit_hash) VALUES ('r1', 'branch', 'main', 'aaaaaaaaaaaa')`,
 		`INSERT INTO runs (id, repo_id, number, commit_hash, trigger, status, finished_at, ref_kind, ref_name) VALUES ('run1', 'r1', 7, 'aaaaaaaaaaaa', 'push', 'passed', now(), 'branch', 'main')`,
 		`INSERT INTO deployments (id, repo_id, target, version, commit_hash, run_id, person_id, created_at)
 		 VALUES ('d1', 'r1', 'staging', '3f2a91cb1de0', 'aaaaaaaaaaaa', 'run1', '` + p.ID + `', now() - interval '2 hours'),
@@ -280,23 +282,22 @@ func TestHomeBoard(t *testing.T) {
 	resp, body := b.do(http.MethodGet, "/", nil, nil)
 	// One column per target anything has shipped to; a repository that
 	// has shipped nothing there says so.
-	expect(t, resp, body, http.StatusOK, "waiotech", "3f2a91cb1de0", ">#7</a>", "2 h ago", "cerv", `<th scope="col">staging</th>`,
-		`<span class="board-none">—<span class="visually-hidden">nothing shipped</span></span>`)
+	expect(t, resp, body, http.StatusOK, "waiotech", "3f2a91cb1de0", "<span>#7</span>", "2 h ago", "cerv", `>staging</div></td>`)
 	if !strings.Contains(body, `class="brand" href="/" aria-label="Gitman home"`) ||
 		!strings.Contains(body, `class="menu-item" href="/people"`) || strings.Contains(body, `class="topbar-link"`) {
 		t.Error("the logo must link home and People must be in the admin account menu")
 	}
 
-	// The board (what's live now) must not show a superseded deployment,
-	// even though the timeline below it legitimately does — that older
+	// The list of what is live must not show a superseded deployment, even
+	// though the timeline beside it legitimately does — that older
 	// deployment really happened.
-	boardStart := strings.Index(body, `id="board-title"`)
-	boardEnd := strings.Index(body, `id="timeline-title"`)
-	if boardStart < 0 || boardEnd < 0 || boardEnd < boardStart {
-		t.Fatal("could not locate the board section in the page")
+	listStart := strings.Index(body, `id="deployments-title"`)
+	listEnd := strings.Index(body, `id="timeline-title"`)
+	if listStart < 0 || listEnd < 0 || listEnd < listStart {
+		t.Fatal("could not locate the list of deployments in the page")
 	}
-	if strings.Contains(body[boardStart:boardEnd], ">old<") {
-		t.Error("the board shows a superseded deployment")
+	if strings.Contains(body[listStart:listEnd], ">old<") {
+		t.Error("the list of deployments shows a superseded deployment")
 	}
 }
 
@@ -306,29 +307,39 @@ func TestHomeBoard(t *testing.T) {
 // already covers end to end).
 func setupWithStore(t *testing.T) (*postgres.DB, *git.Store, *browser) {
 	t.Helper()
+	_, database, store, b := setupApp(t)
+	return database, store, b
+}
+
+// setupApp is setupWithStore that also returns the App, for tests that
+// reach into it.
+func setupApp(t *testing.T) (*App, *postgres.DB, *git.Store, *browser) {
+	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git binary not available")
 	}
 	database := pgtest.Open(t)
 	store := git.NewStore(t.TempDir())
 	t.Cleanup(store.Close)
-	cfg := &config.Config{DataDir: t.TempDir(), PublicURL: "http://gitman.test", Port: 8080, SecretKey: testSecretKey}
+	cfg := &config.Config{Retention: config.DefaultRetention(), DataDir: t.TempDir(), PublicURL: "http://gitman.test", Port: 8080, SecretKey: testSecretKey}
 	app, err := New(cfg, testServices(database, store, cfg.SecretKey), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(app.handler)
 	t.Cleanup(server.Close)
-	return database, store, newBrowser(t, server)
+	return app, database, store, newBrowser(t, server)
 }
 
 // testServices builds the services an App works with from a database and
 // a repository store, the same way the gitman binary does.
 func testServices(database *postgres.DB, store *git.Store, secretKey string) Services {
+	people, repos, runs := auth.NewService(database), reposvc.NewService(database, store, secretKey), ci.NewService(database)
 	return Services{
-		People:   auth.NewService(database),
-		Repos:    reposvc.NewService(database, store, secretKey),
-		CI:       ci.NewService(database),
+		People:   people,
+		Repos:    repos,
+		CI:       runs,
+		Refs:     push.NewRefs(database, people, repos, runs),
 		Activity: activity.NewService(database),
 		Ping:     database.Ping,
 		Listen:   database.Listen,

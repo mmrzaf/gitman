@@ -1,4 +1,4 @@
-// Package push implements the Git pre-receive and post-receive hooks.
+// Package push implements durable Git proc-receive operations.
 //
 // Git runs hooks as separate processes. Gitman passes each push's
 // context to them through environment variables set on the receive-pack
@@ -28,12 +28,11 @@ const (
 
 // Names of the hooks Gitman installs.
 const (
-	PreReceive  = "pre-receive"
-	PostReceive = "post-receive"
+	ProcReceive = "proc-receive"
 )
 
 // gitHookEnv lists the variables Git sets for a hook that the hook's own
-// Git commands must see. During pre-receive, pushed objects sit in a
+// Git commands must see. During receive-pack, incoming objects may sit in a
 // quarantine directory named by these variables until the push is
 // accepted.
 var gitHookEnv = []string{
@@ -96,7 +95,7 @@ func Install(dir, executable string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create hooks directory: %w", err)
 	}
-	for _, name := range []string{PreReceive, PostReceive} {
+	for _, name := range []string{ProcReceive} {
 		script := "#!/bin/sh\nexec " + shellQuote(executable) + " hook " + name + "\n"
 		tmp, err := os.CreateTemp(dir, "."+name+"-*")
 		if err != nil {

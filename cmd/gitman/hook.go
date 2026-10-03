@@ -24,17 +24,16 @@ var errHookFailed = errors.New("hook failed")
 // process installs, with the push's context in the environment; what it
 // writes to standard error, Git shows the pusher.
 func runHook(args []string) error {
-	if len(args) != 1 || (args[0] != push.PreReceive && args[0] != push.PostReceive) {
-		return fmt.Errorf("usage: gitman hook %s|%s", push.PreReceive, push.PostReceive)
+	if len(args) != 1 || args[0] != push.ProcReceive {
+		return fmt.Errorf("usage: gitman hook %s", push.ProcReceive)
 	}
-	name := args[0]
-	if err := push.Explain(os.Stderr, name, serveHook(name, os.Stdin, os.Stderr)); err != nil {
+	if err := push.Explain(os.Stderr, serveHook(os.Stdin, os.Stdout, os.Stderr)); err != nil {
 		return errHookFailed
 	}
 	return nil
 }
 
-func serveHook(name string, stdin io.Reader, out io.Writer) error {
+func serveHook(stdin io.Reader, protocol, out io.Writer) error {
 	hctx, err := push.ContextFromEnv()
 	if err != nil {
 		return err
@@ -43,7 +42,7 @@ func serveHook(name string, stdin io.Reader, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), push.Timeout(name))
+	ctx, cancel := context.WithTimeout(context.Background(), push.Timeout)
 	defer cancel()
 
 	// Git runs a bare repository's hooks inside the repository directory.
@@ -75,5 +74,5 @@ func serveHook(name string, stdin io.Reader, out io.Writer) error {
 		PublicURL: cfg.PublicURL,
 		Out:       out,
 	}
-	return h.Serve(ctx, name, stdin)
+	return h.ProcReceive(ctx, stdin, protocol)
 }

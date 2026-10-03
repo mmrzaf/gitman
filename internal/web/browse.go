@@ -6,14 +6,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"mime"
 	"net/http"
 	"net/url"
 	"path"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mmrzaf/gitman/internal/apperr"
 	"github.com/mmrzaf/gitman/internal/git"
@@ -57,11 +58,6 @@ type resolved struct {
 	Path   string
 }
 
-// commitPrefixPattern matches a plausible abbreviated or full commit
-// hash: hex digits, at least 7 of them (Git's shortest useful
-// abbreviation), at most 64 (a full SHA-256 hash).
-var commitPrefixPattern = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
-
 // notFound is a not-found error with a message meant for the page.
 func notFound(format string, args ...any) error {
 	return apperr.New(apperr.KindNotFound, fmt.Sprintf(format, args...))
@@ -96,7 +92,7 @@ func (a *App) resolveRefAndPath(ctx context.Context, gitRepo *git.Repo, repoID, 
 	}
 
 	candidate, path, _ := strings.Cut(refAndPath, "/")
-	if !commitPrefixPattern.MatchString(candidate) {
+	if !git.LooksLikeCommitHash(candidate) {
 		return nil, notFound("%q is not a branch, tag, or commit of this repository.", candidate)
 	}
 	commit, err := gitRepo.ResolveCommit(ctx, candidate)
@@ -125,19 +121,11 @@ func refURL(repoName, ref, path string) string {
 	return (&url.URL{Path: refPath(repoName, ref, path)}).EscapedPath()
 }
 
-// compareURL is the address of the comparison of base with head.
-func compareURL(repoName, base, head string) string {
-	return (&url.URL{Path: "/" + repoName + "/compare/" + base + "..." + head}).EscapedPath()
-}
-
 // maxFileDisplayBytes bounds how much of a file Gitman will read to show
 // it, either rendered or raw. Files are shown exactly as they are, with
 // no rendering or highlighting, so there is no reason to read more of a
 // file than a person could reasonably look at.
 const maxFileDisplayBytes = 1 << 20
-
-// historyPageSize is how many commits the path history shows per page.
-const historyPageSize = 20
 
 // breadcrumbPart is one segment of the path breadcrumb.
 type breadcrumbPart struct {
@@ -178,22 +166,14 @@ type filesPage struct {
 	IsBinary    bool
 	TooLarge    bool
 	// Lines is a text file's content, a line at a time.
-	Lines           []string
-	LastChanged     *git.Commit
-	History         []*git.Commit
-	HistoryMore     bool
-	HistorySkip     int
-	HistoryPageSize int
-	RawURL          string
-	PermalinkURL    string
-	// Tab is what a file's page shows: "code", or its "history".
-	Tab string
+	Lines        []string
+	LastChanged  *git.Commit
+	RawURL       string
+	PermalinkURL string
+	// ArchiveRef is what an archive of this page's ref is asked for by: its
+	// name, or for a commit its full hash.
+	ArchiveRef string
 }
-
-// NewerSkip and OlderSkip are the ?skip= of the history pages before and
-// after this one.
-func (p filesPage) NewerSkip() int { return max(p.HistorySkip-p.HistoryPageSize, 0) }
-func (p filesPage) OlderSkip() int { return p.HistorySkip + p.HistoryPageSize }
 
 // breadcrumb splits a path into its parts, each carrying the path up to
 // and including itself.
@@ -224,7 +204,13 @@ func (a *App) files(w http.ResponseWriter, r *http.Request, name, refAndPath str
 	if err != nil {
 		return err
 	}
-	ctx := r.Context()
+	budget := 15 * time.Second
+	if r.URL.Query().Has("raw") {
+		budget = 15 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), budget)
+	defer cancel()
+	r = r.WithContext(ctx)
 	gitRepo, err := a.repos.Open(repo)
 	if err != nil {
 		return err
@@ -258,20 +244,38 @@ func (a *App) files(w http.ResponseWriter, r *http.Request, name, refAndPath str
 		return nil
 	}
 
+	// A file's history lives in History, filtered to its path; this is
+	// where the old History tab's addresses lead.
+	if r.URL.Query().Get("tab") == "history" {
+		target := commitsURL(repo.Name, res.Name, res.Path)
+		if skip := historySkip(r); skip > 0 {
+			target += "&skip=" + strconv.Itoa(skip)
+		}
+		http.Redirect(w, r, target, http.StatusMovedPermanently)
+		return nil
+	}
+
 	page := filesPage{
 		repoFrame: repoFrame{Repo: repo, Section: "files"},
 		Ref:       res.Name, Commit: res.Commit, Path: res.Path,
-		Tab:          tabFrom(r, "code", "history"),
 		Breadcrumb:   breadcrumb(res.Path),
 		RawURL:       refURL(repo.Name, res.Name, res.Path) + "?raw",
 		PermalinkURL: refURL(repo.Name, res.Commit, res.Path),
 		RefIsBranch:  res.Kind == git.KindBranch,
 		RefIsTag:     res.Kind == git.KindTag,
+		ArchiveRef:   res.Name,
+	}
+	if entry.Kind != git.EntryFile {
+		page.RawURL = ""
+	}
+	if res.Kind == "" {
+		page.ArchiveRef = res.Commit
 	}
 
 	if page.Refs, err = a.repos.ListRefs(ctx, repo.ID); err != nil {
 		return err
 	}
+	page.Refs = orderedRefs(page.Refs, repo.DefaultBranch)
 
 	switch entry.Kind {
 	case git.EntryDir:
@@ -318,25 +322,13 @@ func (a *App) files(w http.ResponseWriter, r *http.Request, name, refAndPath str
 		}
 	}
 
-	// Every entry has a history: a file's commits, a directory's, and at
-	// the root the whole ref's.
-	skip := historySkip(r)
-	history, more, err := gitRepo.Log(ctx, res.Commit, res.Path, skip, historyPageSize)
+	// The commit that last changed this file or directory.
+	last, _, err := gitRepo.Log(ctx, res.Commit, res.Path, 0, 1)
 	if err != nil {
 		return tooLargeToShow(err)
 	}
-	page.History, page.HistoryMore, page.HistorySkip, page.HistoryPageSize = history, more, skip, historyPageSize
-	switch {
-	case skip == 0 && len(history) > 0:
-		page.LastChanged = history[0]
-	case skip > 0:
-		last, _, err := gitRepo.Log(ctx, res.Commit, res.Path, 0, 1)
-		if err != nil {
-			return tooLargeToShow(err)
-		}
-		if len(last) > 0 {
-			page.LastChanged = last[0]
-		}
+	if len(last) > 0 {
+		page.LastChanged = last[0]
 	}
 
 	title := repo.Name + "@" + res.Name
@@ -379,8 +371,8 @@ func pathOrRoot(p string) string {
 	return "\u201c" + p + "\u201d"
 }
 
-// historySkip is how many of a file's newest commits the history page
-// skips: ?skip=, for "Older commits".
+// historySkip is how many of the newest entries a History page skips:
+// ?skip=, for "Older".
 func historySkip(r *http.Request) int {
 	n, err := strconv.Atoi(r.URL.Query().Get("skip"))
 	if err != nil || n < 0 {
@@ -391,21 +383,26 @@ func historySkip(r *http.Request) int {
 
 // fileRaw serves a file's exact bytes, with no page around them. What a
 // repository holds is written by any member, so it is never served as
-// something a browser runs: see rawContentType and setRawHeaders.
+// something a browser runs: see setRawHeaders.
 func (a *App) fileRaw(w http.ResponseWriter, r *http.Request, gitRepo *git.Repo, entry git.TreeEntry, entryPath string) error {
 	if entry.Kind != git.EntryFile {
 		return notFound("Only files have a raw view.")
 	}
-	data, err := gitRepo.Blob(r.Context(), entry.Hash, maxFileDisplayBytes)
+	size, err := gitRepo.BlobSize(r.Context(), entry.Hash)
 	if err != nil {
-		var tooLarge *git.TooLargeError
-		if errors.As(err, &tooLarge) {
-			return apperr.New(apperr.KindTooLarge, "This file is too large to view raw.")
-		}
 		return err
 	}
-	setRawHeaders(w.Header(), rawContentType(entryPath, data), path.Base(entryPath))
-	_, _ = w.Write(data)
+	sniff := &rawWriter{dst: &deadlineWriter{dst: w, controller: http.NewResponseController(w)}, header: w.Header(), filename: path.Base(entryPath)}
+	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Minute)
+	defer cancel()
+	if err := gitRepo.StreamBlob(ctx, entry.Hash, sniff); err != nil {
+		// Streaming may already have committed headers. Do not append HTML
+		// to downloaded bytes after a client disconnect or command failure.
+		a.log.Warn("raw download ended", "path", entryPath, "error", err)
+	} else if err := sniff.flush(); err != nil {
+		a.log.Warn("raw download ended", "path", entryPath, "error", err)
+	}
 	return nil
 }
 
@@ -542,7 +539,7 @@ func (a *App) commitView(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	a.render(w, r, http.StatusOK, "commit", commit.ShortHash()+" \u00b7 "+repo.Name,
-		commitPage{repoFrame: repoFrame{Repo: repo}, Commit: commit, Diff: diff})
+		commitPage{repoFrame: repoFrame{Repo: repo, Section: "commits"}, Commit: commit, Diff: diff})
 	return nil
 }
 
@@ -551,7 +548,7 @@ func (a *App) commitView(w http.ResponseWriter, r *http.Request) error {
 // which searches every commit message, is not part of a commit's address.
 func (a *App) commitNamed(r *http.Request, gitRepo *git.Repo, repo *reposvc.Repo) (string, error) {
 	sha := r.PathValue("sha")
-	if !commitPrefixPattern.MatchString(sha) {
+	if !git.LooksLikeCommitHash(sha) {
 		return "", notFound("%q is not a commit of %s.", sha, repo.Name)
 	}
 	hash, err := gitRepo.ResolveCommit(r.Context(), sha)
@@ -559,91 +556,6 @@ func (a *App) commitNamed(r *http.Request, gitRepo *git.Repo, repo *reposvc.Repo
 		return "", notFound("%q is not a commit of %s.", sha, repo.Name)
 	}
 	return hash, err
-}
-
-// maxCompareCommits bounds how many commits a compare view lists; beyond
-// it, MoreCommits says so rather than the page growing without limit.
-const maxCompareCommits = 250
-
-type comparePage struct {
-	repoFrame
-	BaseRef    string
-	HeadRef    string
-	Comparison *git.Comparison
-	// Tab is "changes", the combined diff, or "commits".
-	Tab string
-}
-
-func (a *App) compareView(w http.ResponseWriter, r *http.Request) error {
-	repo, err := a.repoByName(r)
-	if err != nil {
-		return err
-	}
-	crange := r.PathValue("crange")
-	// "..." can never appear inside a real ref name — ValidateName
-	// rejects ".." outright — so splitting on it is always unambiguous,
-	// even when a ref on either side itself contains a slash.
-	sep := strings.Index(crange, "...")
-	if sep < 0 {
-		return notFound("A comparison needs two refs, separated by \"...\", e.g. main...develop.")
-	}
-	baseRef, headRef := crange[:sep], crange[sep+3:]
-	if baseRef == "" || headRef == "" {
-		return notFound("A comparison needs a ref on each side of \"...\".")
-	}
-
-	ctx := r.Context()
-	gitRepo, err := a.repos.Open(repo)
-	if err != nil {
-		return err
-	}
-	base, err := a.resolveRefAndPath(ctx, gitRepo, repo.ID, baseRef)
-	if err != nil {
-		return err
-	}
-	head, err := a.resolveRefAndPath(ctx, gitRepo, repo.ID, headRef)
-	if err != nil {
-		return err
-	}
-
-	cmp, err := gitRepo.Compare(ctx, base.Commit, head.Commit, maxCompareCommits, git.DefaultDiffLimits)
-	if err != nil {
-		if errors.Is(err, git.ErrNotFound) {
-			return notFound("%s and %s share no history.", baseRef, headRef)
-		}
-		return tooLargeToShow(err)
-	}
-
-	a.render(w, r, http.StatusOK, "compare", baseRef+"...\u200b"+headRef+" \u00b7 "+repo.Name,
-		comparePage{repoFrame: repoFrame{Repo: repo}, BaseRef: baseRef, HeadRef: headRef, Comparison: cmp,
-			Tab: tabFrom(r, "changes", "commits")})
-	return nil
-}
-
-// rawImageTypes are the file types a raw view serves as themselves:
-// raster images, which a browser displays but cannot execute. SVG is
-// not among them — it can carry script — and is served as text.
-var rawImageTypes = map[string]string{
-	".png":  "image/png",
-	".jpg":  "image/jpeg",
-	".jpeg": "image/jpeg",
-	".gif":  "image/gif",
-	".webp": "image/webp",
-	".ico":  "image/x-icon",
-}
-
-// rawContentType decides how a raw file is served: a raster image as
-// itself, any other binary as a download, and all text — HTML,
-// JavaScript and SVG included — as plain text, so a file pushed to a
-// repository can never run as a page of Gitman's own origin.
-func rawContentType(name string, data []byte) string {
-	if t, ok := rawImageTypes[strings.ToLower(path.Ext(name))]; ok && looksBinary(data) {
-		return t
-	}
-	if looksBinary(data) {
-		return "application/octet-stream"
-	}
-	return "text/plain; charset=utf-8"
 }
 
 // setRawHeaders sets the headers of any response that carries repository
@@ -660,4 +572,61 @@ func setRawHeaders(h http.Header, contentType, filename string) {
 	h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Cache-Control", "no-cache")
+}
+
+// deadlineWriter renews the write budget for each download block.
+type deadlineWriter struct {
+	dst        http.ResponseWriter
+	controller *http.ResponseController
+}
+
+func (w *deadlineWriter) Write(p []byte) (int, error) {
+	_ = w.controller.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	return w.dst.Write(p)
+}
+
+// rawWriter sniffs only the first 512 bytes and streams the rest. Active formats
+// are shown as plain text; only raster images are allowed their native type.
+type rawWriter struct {
+	dst      io.Writer
+	header   http.Header
+	filename string
+	prefix   []byte
+	started  bool
+}
+
+func (w *rawWriter) flush() error {
+	if w.started {
+		return nil
+	}
+	kind := http.DetectContentType(w.prefix)
+	switch kind {
+	case "image/png", "image/jpeg", "image/gif", "image/webp":
+	default:
+		if strings.HasPrefix(kind, "text/") {
+			kind = "text/plain; charset=utf-8"
+		} else {
+			kind = "application/octet-stream"
+		}
+	}
+	setRawHeaders(w.header, kind, w.filename)
+	w.started = true
+	_, err := w.dst.Write(w.prefix)
+	w.prefix = nil
+	return err
+}
+func (w *rawWriter) Write(p []byte) (int, error) {
+	if w.started {
+		return w.dst.Write(p)
+	}
+	n := min(512-len(w.prefix), len(p))
+	w.prefix = append(w.prefix, p[:n]...)
+	if len(w.prefix) < 512 {
+		return n, nil
+	}
+	if err := w.flush(); err != nil {
+		return n, err
+	}
+	rest, err := w.dst.Write(p[n:])
+	return n + rest, err
 }

@@ -33,7 +33,7 @@ func TestDiffTotalsCountEveryChangedFile(t *testing.T) {
 }
 
 func TestCompareURLEscapesRefs(t *testing.T) {
-	if got := compareURL("w", "main", "feat#1"); got != "/w/compare/main...feat%231" {
+	if got := compareURL("w", "main", "feat#1"); got != "/w/commits?base=main&ref=feat%231" {
 		t.Fatalf("compareURL = %q", got)
 	}
 }

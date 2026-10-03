@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mmrzaf/gitman/internal/auth"
 	"github.com/mmrzaf/gitman/internal/ci"
@@ -66,8 +67,8 @@ func setupGitHTTP(t *testing.T) *gitHTTPEnv {
 	}
 	database := pgtest.Open(t)
 	dataDir := t.TempDir()
-	cfg := &config.Config{
-		DatabaseURL: os.Getenv("GITMAN_TEST_DATABASE_URL"),
+	cfg := &config.Config{Retention: config.DefaultRetention(),
+		DatabaseURL: database.Pool.Config().ConnString(),
 		DataDir:     dataDir,
 		PublicURL:   "https://git.example.com",
 		Port:        8080,
@@ -107,7 +108,7 @@ func (e *gitHTTPEnv) person(username string, admin bool, scope auth.Scope) (*aut
 			e.t.Fatal(err)
 		}
 	}
-	plain, _, err := auth.NewService(e.db).CreateToken(ctx, p.ID, string(scope)+" token", scope, nil)
+	plain, _, err := auth.NewService(e.db).CreateToken(ctx, p.ID, string(scope)+" token", scope, nil, []string{e.repo.ID})
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -191,6 +192,7 @@ func expectRejected(t *testing.T, out string, ok bool, want string) {
 }
 
 func TestPushRecordsAndIndexes(t *testing.T) {
+	t.Parallel()
 	e := setupGitHTTP(t)
 	_, cred := e.person("darius", false, auth.ScopeWrite)
 	e.initWork(cred)
@@ -221,6 +223,7 @@ func TestPushRecordsAndIndexes(t *testing.T) {
 }
 
 func TestCloneWithReadToken(t *testing.T) {
+	t.Parallel()
 	e := setupGitHTTP(t)
 	_, writer := e.person("darius", false, auth.ScopeWrite)
 	_, reader := e.person("bob", false, auth.ScopeRead)
@@ -239,6 +242,7 @@ func TestCloneWithReadToken(t *testing.T) {
 }
 
 func TestAuthentication(t *testing.T) {
+	t.Parallel()
 	e := setupGitHTTP(t)
 	_, reader := e.person("bob", false, auth.ScopeRead)
 
@@ -251,7 +255,7 @@ func TestAuthentication(t *testing.T) {
 		t.Fatalf("mismatched username: ok=%v\n%s", ok, out)
 	}
 	out, ok = e.git(".", "ls-remote", strings.Replace(e.url(reader), "demo.git", "missing.git", 1))
-	if ok || !strings.Contains(out, "Repository not found") {
+	if ok || !strings.Contains(out, "Authentication failed") {
 		t.Fatalf("missing repository: ok=%v\n%s", ok, out)
 	}
 
@@ -271,6 +275,7 @@ func TestAuthentication(t *testing.T) {
 }
 
 func TestNamingRules(t *testing.T) {
+	t.Parallel()
 	e := setupGitHTTP(t)
 	_, cred := e.person("darius", false, auth.ScopeWrite)
 	e.initWork(cred)
@@ -299,6 +304,7 @@ func TestNamingRules(t *testing.T) {
 }
 
 func TestRuleEnforcement(t *testing.T) {
+	t.Parallel()
 	e := setupGitHTTP(t)
 	_, adminCred := e.person("lead", true, auth.ScopeWrite)
 	_, cred := e.person("darius", false, auth.ScopeWrite)
@@ -338,9 +344,10 @@ func TestRuleEnforcement(t *testing.T) {
 }
 
 func TestPushCreatesRuns(t *testing.T) {
+	t.Parallel()
 	e := setupGitHTTP(t)
 	_, cred := e.person("darius", false, auth.ScopeWrite)
-	e.saveRule(reposvc.Rule{Kind: git.KindBranch, Pattern: "main", PushPolicy: reposvc.PushEveryone, RunOnPush: true, AllowShip: true})
+	e.saveRule(reposvc.Rule{Kind: git.KindBranch, Pattern: "main", PushPolicy: reposvc.PushEveryone, RunOnPush: true, AllowDeploy: true})
 	e.saveRule(reposvc.Rule{Kind: git.KindBranch, Pattern: "docker/*", PushPolicy: reposvc.PushEveryone, RunOnPush: true})
 
 	e.initWork(cred)
@@ -356,7 +363,7 @@ steps:
     run: echo deploy
 `)
 	out := e.mustGit(e.work, "push", "origin", "main")
-	if !strings.Contains(out, "run #1 queued for branch main, shipping to staging") ||
+	if !strings.Contains(out, "run #1 queued for branch main, target context staging") ||
 		!strings.Contains(out, "https://git.example.com/demo/runs/1") {
 		t.Fatalf("push output does not announce the run:\n%s", out)
 	}
@@ -401,6 +408,7 @@ steps:
 }
 
 func TestRunFetchToken(t *testing.T) {
+	t.Parallel()
 	e := setupGitHTTP(t)
 	ctx := context.Background()
 	_, cred := e.person("darius", false, auth.ScopeWrite)
@@ -421,7 +429,7 @@ func TestRunFetchToken(t *testing.T) {
 	if err := ciService.RegisterWorker(ctx, "w1", "host"); err != nil {
 		t.Fatal(err)
 	}
-	claim, err := ciService.ClaimNext(ctx, "w1")
+	claim, err := ciService.ClaimNext(ctx, "w1", 30*time.Minute, []string{"alpine:3.20"})
 	if err != nil || claim == nil {
 		t.Fatalf("ClaimNext = %+v, %v", claim, err)
 	}
@@ -463,15 +471,16 @@ func TestRunFetchToken(t *testing.T) {
 // unreachable over Git — clone, fetch, and push alike — as a name that
 // does not exist, for anyone who is not one of its readers or an admin.
 func TestRestrictedRepositoryOverGitHTTP(t *testing.T) {
+	t.Parallel()
 	e := setupGitHTTP(t)
 	ctx := context.Background()
 	repos := reposvc.NewService(e.db, nil, "")
-	if err := repos.SetVisibility(ctx, e.repo.ID, reposvc.VisibilityRestricted, ""); err != nil {
-		t.Fatal(err)
-	}
 	reader, readerCred := e.person("bea", false, auth.ScopeWrite)
 	_, outsiderCred := e.person("oscar", false, auth.ScopeWrite)
 	_, adminCred := e.person("lead", true, auth.ScopeWrite)
+	if err := repos.SetVisibility(ctx, e.repo.ID, reposvc.VisibilityRestricted, ""); err != nil {
+		t.Fatal(err)
+	}
 	if err := repos.AddReader(ctx, e.repo.ID, reader.ID, reader.Username, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -495,7 +504,7 @@ func TestRestrictedRepositoryOverGitHTTP(t *testing.T) {
 // behind requests that could each run for as long as a large clone or
 // push takes; freeing a slot lets the next request through again.
 func TestGitConcurrencyLimitAnswersBusyWithRetryAfter(t *testing.T) {
-	app, err := New(&config.Config{PublicURL: "http://gitman.test", Port: 8080}, Services{},
+	app, err := New(&config.Config{Retention: config.DefaultRetention(), PublicURL: "http://gitman.test", Port: 8080}, Services{},
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
@@ -535,6 +544,7 @@ func TestGitConcurrencyLimitAnswersBusyWithRetryAfter(t *testing.T) {
 // missing page, and once an admin moves the default to develop, a clone
 // checks it out.
 func TestDefaultBranchNotPushedYet(t *testing.T) {
+	t.Parallel()
 	e := setupGitHTTP(t)
 	admin := newBrowser(t, e.server)
 	signIn(t, e.db, admin, "lead", true)
@@ -550,8 +560,12 @@ func TestDefaultBranchNotPushedYet(t *testing.T) {
 
 	resp, body = admin.do(http.MethodGet, "/demo", nil, nil)
 	expect(t, resp, body, http.StatusOK, "has not been pushed yet")
-	if strings.Contains(body, "/demo/compare/") {
+	if strings.Contains(body, "/demo/commits?base=") {
 		t.Error("the overview links to a comparison with a default branch that does not exist")
+	}
+	resp, _ = admin.do(http.MethodGet, "/demo.git", nil, nil)
+	if resp.StatusCode != http.StatusMovedPermanently || resp.Header.Get("Location") != "/demo" {
+		t.Fatalf("clone URL in a browser: %d %q", resp.StatusCode, resp.Header.Get("Location"))
 	}
 
 	resp, body = admin.do(http.MethodPost, "/demo/settings/default-branch", url.Values{"default_branch": {"nope"}}, nil)
@@ -562,7 +576,7 @@ func TestDefaultBranchNotPushedYet(t *testing.T) {
 	}
 
 	resp, body = admin.do(http.MethodGet, "/demo", nil, nil)
-	expect(t, resp, body, http.StatusOK, "/demo/compare/develop...feature", "changed the default branch")
+	expect(t, resp, body, http.StatusOK, "/demo/commits?base=develop&amp;ref=feature", "changed the default branch")
 	if strings.Contains(body, "has not been pushed yet") {
 		t.Error("the overview still says the default branch has not been pushed")
 	}
@@ -583,13 +597,14 @@ func TestDefaultBranchNotPushedYet(t *testing.T) {
 // a push to it would: with its rule's target. Only people who may push
 // to a ref are offered it, and may run it.
 func TestRunABranchByHand(t *testing.T) {
+	t.Parallel()
 	e := setupGitHTTP(t)
 	lead := newBrowser(t, e.server)
 	signIn(t, e.db, lead, "lead", true)
 	member := newBrowser(t, e.server)
 	signIn(t, e.db, member, "darius", false)
 	_, cred := e.person("lead", true, auth.ScopeWrite)
-	e.saveRule(reposvc.Rule{Kind: git.KindBranch, Pattern: "main", PushPolicy: reposvc.PushAdmins, AllowShip: true})
+	e.saveRule(reposvc.Rule{Kind: git.KindBranch, Pattern: "main", PushPolicy: reposvc.PushAdmins, AllowDeploy: true})
 
 	resp, body := lead.do(http.MethodGet, "/demo/runs", nil, nil)
 	expect(t, resp, body, http.StatusOK, "No runs yet", ".gitman.yml", `href="/demo/settings?tab=rules"`)
@@ -636,7 +651,7 @@ func TestRunABranchByHand(t *testing.T) {
 		t.Fatal(err)
 	}
 	if commit != head || kind != "branch" || name != "main" || target != "staging" || trigger != "manual" {
-		t.Fatalf("run 1 = %s %s %s target %q trigger %s; want main's commit, shipping to staging, started by hand", commit, kind, name, target, trigger)
+		t.Fatalf("run 1 = %s %s %s target %q trigger %s; want main's commit, target context staging, started by hand", commit, kind, name, target, trigger)
 	}
 }
 
@@ -644,36 +659,65 @@ func TestRunABranchByHand(t *testing.T) {
 // the push, the run's page and Home each say why it waits, and stop
 // saying so once a worker is online.
 func TestQueuedRunSaysNoWorkerIsOnline(t *testing.T) {
+	t.Parallel()
 	e := setupGitHTTP(t)
 	b := newBrowser(t, e.server)
 	signIn(t, e.db, b, "lead", true)
 	_, cred := e.person("lead", true, auth.ScopeWrite)
 	e.saveRule(reposvc.Rule{Kind: git.KindBranch, Pattern: "main", PushPolicy: reposvc.PushEveryone, RunOnPush: true})
-	const notice = "No worker is online"
+	const notice = "No ready worker"
 
 	e.initWork(cred)
 	e.commit(".gitman.yml", "image: alpine:3.20\nsteps:\n  - name: test\n    run: echo test\n")
 	out := e.mustGit(e.work, "push", "origin", "main")
-	if !strings.Contains(out, "run #1 queued for branch main") || !strings.Contains(out, "no worker is online, so queued runs wait until one starts") {
+	if !strings.Contains(out, "run #1 queued for branch main") || !strings.Contains(out, "no worker is ready, so queued runs wait until one is available") {
 		t.Fatalf("push output does not say the run waits for a worker:\n%s", out)
 	}
 	resp, body := b.do(http.MethodGet, "/demo/runs/1", nil, nil)
 	expect(t, resp, body, http.StatusOK, notice)
 	resp, body = b.do(http.MethodGet, "/", nil, nil)
-	expect(t, resp, body, http.StatusOK, notice)
+	expect(t, resp, body, http.StatusOK, "Needs attention", "Runs are waiting for a ready worker.")
 
 	if err := ci.NewService(e.db).RegisterWorker(context.Background(), "w1", "host"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ci.NewService(e.db).SetWorkerReadiness(context.Background(), "w1", true, "Ready", []string{"alpine:3.20"}); err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{"/demo/runs/1", "/"} {
 		resp, body = b.do(http.MethodGet, path, nil, nil)
 		expect(t, resp, body, http.StatusOK)
-		if strings.Contains(body, notice) {
+		if strings.Contains(body, notice) || strings.Contains(body, "Runs are waiting for a ready worker.") {
 			t.Errorf("%s still says no worker is online while one is", path)
 		}
 	}
 	e.commit("a.txt", "a\n")
-	if out := e.mustGit(e.work, "push", "origin", "main"); strings.Contains(out, "no worker is online") {
+	if out := e.mustGit(e.work, "push", "origin", "main"); strings.Contains(out, "no worker is ready") {
 		t.Errorf("push says no worker is online while one is:\n%s", out)
+	}
+}
+
+func TestAllRepositoryTokenStillEnforcesReadAccess(t *testing.T) {
+	t.Parallel()
+	e := setupGitHTTP(t)
+	ctx := t.Context()
+	people := auth.NewService(e.db)
+	person, err := people.Create(ctx, "member", "correct-horse-battery", false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, _, err := people.CreateToken(ctx, person.ID, "laptop", auth.ScopeRead, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	credential := gitCredential{person.Username, plain}
+	if _, ok := e.git(".", "ls-remote", e.url(credential)); !ok {
+		t.Fatal("all-repository token could not read accessible repository")
+	}
+	if err := reposvc.NewService(e.db, nil, "").SetVisibility(ctx, e.repo.ID, reposvc.VisibilityRestricted, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := e.git(".", "ls-remote", e.url(credential)); ok {
+		t.Fatal("all-repository token bypassed repository permissions")
 	}
 }

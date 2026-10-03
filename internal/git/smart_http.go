@@ -82,13 +82,14 @@ func (o TransportOptions) usesProtocolV2() bool {
 }
 
 func (o TransportOptions) args(repoPath string, extra ...string) []string {
-	var args []string
+	args := []string{"-c", "transfer.hideRefs=" + InternalRefs}
 	switch o.Service {
 	case ReceivePack:
 		args = append(args,
 			"-c", "core.hooksPath="+o.HooksPath,
 			"-c", fmt.Sprintf("receive.maxInputSize=%d", MaxPushBytes),
 			"-c", "receive.advertisePushOptions=false",
+			"-c", "receive.procReceiveRefs=refs/",
 		)
 	case UploadPack:
 		// Filters allow partial clones; reachable-object requests let a

@@ -3,6 +3,7 @@ package activity
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/mmrzaf/gitman/internal/git"
@@ -208,6 +209,240 @@ func recentEvents(ctx context.Context, q postgres.Querier, f filter) ([]Entry, e
 		e := Entry{Kind: KindEvent}
 		if err := rows.Scan(&e.RepoName, &e.At, &e.Actor, &e.Action, &e.Detail); err != nil {
 			return nil, fmt.Errorf("scan event: %w", err)
+		}
+		entries = append(entries, e)
+	}
+	return entries, rows.Err()
+}
+
+// bulkUpdates is how many updates of one kind in one push make a line of
+// their own, instead of a line each: a push that creates twenty tags would
+// otherwise be all a feed shows.
+const bulkUpdates = 4
+
+// repoRefChanges lists a repository's ref updates newest first, each with
+// the run it started: one row per push_updates row, except that a push's
+// updates of the same kind and change, when there are bulkUpdates or more,
+// are one row that counts and names them.
+func repoRefChanges(ctx context.Context, q postgres.Querier, repoID string, limit int, cursor *feedCursor) ([]RepoEntry, error) {
+	rows, err := q.Query(ctx, `
+		WITH changes AS (
+			SELECT u.id, u.push_id, p.created_at, COALESCE(pe.username, '') AS actor, u.kind, u.name,
+			       u.old_commit, u.new_commit, u.is_create, u.is_delete, u.is_force,
+			       count(*) OVER (PARTITION BY u.push_id, u.kind, u.is_create, u.is_delete, u.is_force) AS n
+			FROM push_updates u
+			JOIN pushes p ON p.id = u.push_id
+			LEFT JOIN people pe ON pe.id = p.person_id
+			WHERE p.repo_id = $1
+		)
+		SELECT * FROM (SELECT c.id, c.created_at, c.actor, c.kind, c.name, c.old_commit, c.new_commit,
+		       c.is_create, c.is_delete, c.is_force, COALESCE(r.number, 0), COALESCE(r.status, ''),
+		       1 AS total, ARRAY[]::text[] AS names
+		FROM changes c
+		LEFT JOIN runs r ON r.push_id = c.push_id AND r.ref_kind = c.kind AND r.ref_name = c.name
+		WHERE c.n < $3
+		UNION ALL
+		SELECT min(c.id), c.created_at, c.actor, c.kind, '', '', '',
+		       c.is_create, c.is_delete, c.is_force, 0, '',
+		       count(*)::int, array_agg(c.name)
+		FROM changes c
+		WHERE c.n >= $3
+		GROUP BY c.push_id, c.created_at, c.actor, c.kind, c.is_create, c.is_delete, c.is_force
+		) feed WHERE ($4::timestamptz IS NULL OR (created_at,'push'::text,id)<($4,$5::text,$6::text))
+		ORDER BY created_at DESC, id DESC
+		LIMIT $2
+	`, append([]any{repoID, limit, bulkUpdates}, cursorArgs(cursor)...)...)
+	if err != nil {
+		return nil, fmt.Errorf("list ref changes: %w", err)
+	}
+	defer rows.Close()
+	var entries []RepoEntry
+	for rows.Next() {
+		e := RepoEntry{Kind: KindPush}
+		var kind string
+		var isCreate, isDelete, isForce bool
+		if err := rows.Scan(&e.id, &e.At, &e.Actor, &kind, &e.RefName, &e.OldCommit, &e.NewCommit,
+			&isCreate, &isDelete, &isForce, &e.RunNumber, &e.RunStatus, &e.Count, &e.Names); err != nil {
+			return nil, fmt.Errorf("scan ref change: %w", err)
+		}
+		e.RefKind = git.Kind(kind)
+		e.Change = changeOf(e.RefKind, isCreate, isDelete, isForce)
+		if e.Count > 1 {
+			// The newest versions lead, and the rest are counted.
+			sort.Slice(e.Names, func(i, j int) bool { return git.VersionLess(e.Names[j], e.Names[i]) })
+			if len(e.Names) > bulkNamed {
+				e.Names = e.Names[:bulkNamed]
+			}
+		}
+		entries = append(entries, e)
+	}
+	return entries, rows.Err()
+}
+
+// refusedSince lists the pushes refused in any of repoIDs since a time,
+// newest first, each with its first reason.
+func refusedSince(ctx context.Context, q postgres.Querier, repoIDs []string, since time.Time, limit int) ([]RefusedPush, error) {
+	rows, err := q.Query(ctx, `
+		SELECT repos.name, f.created_at, COALESCE(p.username, ''), COALESCE(first.ref, ''), COALESCE(first.reason, '')
+		FROM push_refusals f
+		JOIN repos ON repos.id = f.repo_id
+		LEFT JOIN people p ON p.id = f.person_id
+		LEFT JOIN LATERAL (
+			SELECT ref, reason FROM push_refusal_refs WHERE refusal_id = f.id ORDER BY position LIMIT 1
+		) first ON true
+		WHERE f.repo_id = ANY($1) AND f.created_at >= $2
+		ORDER BY f.created_at DESC
+		LIMIT $3
+	`, repoIDs, since, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list refused pushes: %w", err)
+	}
+	defer rows.Close()
+	var pushes []RefusedPush
+	for rows.Next() {
+		var r RefusedPush
+		if err := rows.Scan(&r.RepoName, &r.At, &r.Actor, &r.Ref, &r.Reason); err != nil {
+			return nil, fmt.Errorf("scan refused push: %w", err)
+		}
+		pushes = append(pushes, r)
+	}
+	return pushes, rows.Err()
+}
+
+// repoEvents lists a repository's settings changes newest first.
+func repoEvents(ctx context.Context, q postgres.Querier, repoID string, limit int, cursor *feedCursor) ([]RepoEntry, error) {
+	rows, err := q.Query(ctx, `
+		SELECT e.id, e.created_at, COALESCE(p.username, ''), e.action, e.detail
+		FROM events e
+		LEFT JOIN people p ON p.id = e.person_id
+		WHERE e.repo_id = $1 AND ($3::timestamptz IS NULL OR (e.created_at,'event'::text,e.id)<($3,$4::text,$5::text))
+		ORDER BY e.created_at DESC, e.id DESC
+		LIMIT $2
+	`, append([]any{repoID, limit}, cursorArgs(cursor)...)...)
+	if err != nil {
+		return nil, fmt.Errorf("list repository events: %w", err)
+	}
+	defer rows.Close()
+	var entries []RepoEntry
+	for rows.Next() {
+		e := RepoEntry{Kind: KindEvent}
+		if err := rows.Scan(&e.id, &e.At, &e.Actor, &e.Action, &e.Detail); err != nil {
+			return nil, fmt.Errorf("scan repository event: %w", err)
+		}
+		entries = append(entries, e)
+	}
+	return entries, rows.Err()
+}
+
+// repoRefusals lists a repository's refused pushes newest first, each with
+// the reasons it was refused for.
+func repoRefusals(ctx context.Context, q postgres.Querier, repoID string, limit int, cursor *feedCursor) ([]RepoEntry, error) {
+	rows, err := q.Query(ctx, `
+		SELECT f.id, f.created_at, COALESCE(p.username, '')
+		FROM push_refusals f
+		LEFT JOIN people p ON p.id = f.person_id
+		WHERE f.repo_id = $1 AND ($3::timestamptz IS NULL OR (f.created_at,'refusal'::text,f.id)<($3,$4::text,$5::text))
+		ORDER BY f.created_at DESC, f.id DESC
+		LIMIT $2
+	`, append([]any{repoID, limit}, cursorArgs(cursor)...)...)
+	if err != nil {
+		return nil, fmt.Errorf("list refused pushes: %w", err)
+	}
+	var entries []RepoEntry
+	var ids []string
+	for rows.Next() {
+		e := RepoEntry{Kind: KindRefusal}
+		if err := rows.Scan(&e.id, &e.At, &e.Actor); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("scan refused push: %w", err)
+		}
+		entries = append(entries, e)
+		ids = append(ids, e.id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list refused pushes: %w", err)
+	}
+	if len(entries) == 0 {
+		return nil, nil
+	}
+
+	// The reasons of every listed refusal, in one query.
+	reasons, err := q.Query(ctx, `
+		SELECT refusal_id, ref, reason FROM push_refusal_refs
+		WHERE refusal_id = ANY($1) ORDER BY refusal_id, position
+	`, ids)
+	if err != nil {
+		return nil, fmt.Errorf("list why pushes were refused: %w", err)
+	}
+	defer reasons.Close()
+	byID := map[string][]Refusal{}
+	for reasons.Next() {
+		var refusalID string
+		var r Refusal
+		if err := reasons.Scan(&refusalID, &r.Ref, &r.Reason); err != nil {
+			return nil, fmt.Errorf("scan why a push was refused: %w", err)
+		}
+		r.RefKind, r.RefName, _ = git.SplitFullName(r.Ref)
+		byID[refusalID] = append(byID[refusalID], r)
+	}
+	if err := reasons.Err(); err != nil {
+		return nil, fmt.Errorf("list why pushes were refused: %w", err)
+	}
+	for i := range entries {
+		entries[i].Refused = byID[entries[i].id]
+	}
+	return entries, nil
+}
+
+// repoRuns lists a repository's finished runs newest first.
+func repoRuns(ctx context.Context, q postgres.Querier, repoID string, limit int, cursor *feedCursor) ([]RepoEntry, error) {
+	rows, err := q.Query(ctx, `
+		SELECT r.id, r.finished_at, COALESCE(p.username, ''), r.number, r.status, r.ref_kind, r.ref_name
+		FROM runs r
+		LEFT JOIN people p ON p.id = r.triggered_by
+		WHERE r.repo_id = $1 AND r.finished_at IS NOT NULL AND ($3::timestamptz IS NULL OR (r.finished_at,'run'::text,r.id)<($3,$4::text,$5::text))
+		ORDER BY r.finished_at DESC, r.id DESC
+		LIMIT $2
+	`, append([]any{repoID, limit}, cursorArgs(cursor)...)...)
+	if err != nil {
+		return nil, fmt.Errorf("list repository runs: %w", err)
+	}
+	defer rows.Close()
+	var entries []RepoEntry
+	for rows.Next() {
+		e := RepoEntry{Kind: KindRun}
+		var kind string
+		if err := rows.Scan(&e.id, &e.At, &e.Actor, &e.RunNumber, &e.RunStatus, &kind, &e.RefName); err != nil {
+			return nil, fmt.Errorf("scan repository run: %w", err)
+		}
+		e.RefKind = git.Kind(kind)
+		entries = append(entries, e)
+	}
+	return entries, rows.Err()
+}
+
+// repoDeployments lists what has been shipped from a repository, newest
+// first.
+func repoDeployments(ctx context.Context, q postgres.Querier, repoID string, limit int, cursor *feedCursor) ([]RepoEntry, error) {
+	rows, err := q.Query(ctx, `
+		SELECT d.id, d.created_at, COALESCE(p.username, ''), d.target, d.version, d.commit_hash, COALESCE(r.number, 0)
+		FROM deployments d
+		LEFT JOIN people p ON p.id = d.person_id
+		LEFT JOIN runs r ON r.id = d.run_id
+		WHERE d.repo_id = $1 AND ($3::timestamptz IS NULL OR (d.created_at,'deployment'::text,d.id)<($3,$4::text,$5::text))
+		ORDER BY d.created_at DESC, d.id DESC
+		LIMIT $2
+	`, append([]any{repoID, limit}, cursorArgs(cursor)...)...)
+	if err != nil {
+		return nil, fmt.Errorf("list repository deployments: %w", err)
+	}
+	defer rows.Close()
+	var entries []RepoEntry
+	for rows.Next() {
+		e := RepoEntry{Kind: KindDeployment}
+		if err := rows.Scan(&e.id, &e.At, &e.Actor, &e.Target, &e.Version, &e.Commit, &e.RunNumber); err != nil {
+			return nil, fmt.Errorf("scan repository deployment: %w", err)
 		}
 		entries = append(entries, e)
 	}

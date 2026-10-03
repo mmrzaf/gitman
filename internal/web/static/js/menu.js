@@ -17,7 +17,7 @@ function upgrade(menu) {
   list.setAttribute("role", "menu");
   for (const child of list.querySelectorAll("form, .menu-heading")) child.setAttribute("role", "none");
   for (const item of itemsOf(menu)) {
-    item.setAttribute("role", "menuitem");
+    item.setAttribute("role", item.matches("[data-theme-choice]") ? "menuitemradio" : "menuitem");
     item.tabIndex = -1;
   }
 }

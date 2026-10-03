@@ -24,21 +24,17 @@ build-all: ## Build supported Linux binaries
 	test -s $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64
 	test "$$($(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 version)" = "gitman $(VERSION)"
 
-# Database-backed tests share one database, so packages run one at a time.
+# Database-backed tests each own an isolated schema, so packages run
+# concurrently and no -p limit is needed.
 test: ## Run the test suite with the race detector
-	$(GO) test -race -p 1 -count=1 ./...
+	$(GO) test -race -count=1 ./...
 
 test-coverage: ## Run tests and write an HTML coverage report
-	$(GO) test -race -p 1 -count=1 -coverprofile=coverage.out ./...
+	$(GO) test -race -count=1 -coverprofile=coverage.out ./...
 	$(GO) tool cover -html=coverage.out -o coverage.html
 
-verify: ## Run the local release verification set
-	$(GO) test -race -p 1 -count=1 ./...
-	$(GO) vet ./...
-	golangci-lint run
-	@mkdir -p $(BUILD_DIR)
-	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/gitman
-	test "$$($(BUILD_DIR)/$(BINARY_NAME) version)" = "gitman $(VERSION)"
+verify: ## Run the shared CI and release checks
+	VERSION=$(VERSION) scripts/verify.sh
 
 clean: ## Remove local build/test artifacts
 	rm -rf $(BUILD_DIR)
@@ -53,8 +49,8 @@ run-web: ## Run the web process
 run-worker: ## Run the worker process
 	$(GO) run ./cmd/gitman worker
 
-fmt: ## Format tracked Go files
-	gofmt -w $$(git ls-files '*.go')
+fmt: ## Format Go files
+	gofmt -w cmd internal
 
 lint: ## Run golangci-lint
 	golangci-lint run

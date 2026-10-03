@@ -34,7 +34,7 @@ func newAdminEnv(t *testing.T) (*adminEnv, *postgres.DB, *git.Store) {
 	t.Cleanup(store.Close)
 	var out bytes.Buffer
 	env := &adminEnv{
-		cfg:    &config.Config{PublicURL: "http://gitman.test"},
+		cfg:    &config.Config{Retention: config.DefaultRetention(), PublicURL: "http://gitman.test"},
 		people: auth.NewService(database),
 		repos:  reposvc.NewService(database, store, "a very secret passphrase, at least 32 bytes long"),
 		ci:     ci.NewService(database),
@@ -83,7 +83,7 @@ func TestAdminWorkerCleanupFailsLostRunsBeforeRemovingLeftovers(t *testing.T) {
 	}
 	fake := dockertest.New(t)
 	t.Setenv("FAKE_DOCKER_PS", "c1 run1\n")
-	cfg := &config.Config{DataDir: t.TempDir()}
+	cfg := &config.Config{Retention: config.DefaultRetention(), DataDir: t.TempDir()}
 	if err := os.MkdirAll(filepath.Join(cfg.WorkspacesPath(), "run1", "src"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -381,11 +381,14 @@ func TestAdminPersonResetPassword(t *testing.T) {
 func TestAdminTokenCreate(t *testing.T) {
 	ctx := t.Context()
 	env, _, _ := newAdminEnv(t)
-	if err := adminPersonAdd(ctx, env, []string{"alice"}); err != nil {
+	if _, err := env.people.Create(ctx, "alice", "correct-horse-battery", false, ""); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := adminTokenCreate(ctx, env, []string{"--write", "--days", "30", "alice", "laptop"}); err != nil {
+	if _, err := env.repos.Create(ctx, "token-repo", "", "main", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := adminTokenCreate(ctx, env, []string{"--repos", "token-repo", "--write", "--days", "30", "alice", "laptop"}); err != nil {
 		t.Fatalf("adminTokenCreate: %v", err)
 	}
 	got := outputOf(env)

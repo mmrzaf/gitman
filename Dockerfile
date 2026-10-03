@@ -3,8 +3,8 @@
 #   docker run gitman:1.0.0 gitman web
 #   docker run gitman:1.0.0 gitman worker
 #
-# Every source the build downloads from is a build argument, so the image
-# builds behind registry, package and module mirrors:
+# Base images, Debian mirrors and the Go module proxy are build arguments
+# so the image can build behind mirrors:
 #
 #   docker build \
 #     --build-arg GO_IMAGE=registry.example.com/library/golang:1.27-bookworm \
@@ -51,8 +51,9 @@ RUN set -eu; \
     useradd --uid 1000 --user-group --create-home --home-dir /home/gitman --shell /usr/sbin/nologin gitman
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=build /out/gitman /usr/local/bin/gitman
+COPY LICENSE THIRD_PARTY_NOTICES.md /usr/share/doc/gitman/
 USER gitman
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
-  CMD curl -fsS -o /dev/null "http://127.0.0.1:${GITMAN_PORT:-8080}/healthz" || exit 1
+  CMD curl -fsS -o /dev/null "http://127.0.0.1:${GITMAN_PORT:-8080}/readyz" || exit 1
 CMD ["gitman", "web"]

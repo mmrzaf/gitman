@@ -63,11 +63,13 @@ type Repo struct {
 // IndexedRef is one row of the ref index: where a branch or tag points,
 // and who last moved it.
 type IndexedRef struct {
-	Kind      git.Kind
-	Name      string
-	Commit    string
-	UpdatedAt time.Time
-	UpdatedBy *string
+	UpdatedByUsername string
+	Head              *git.Commit
+	Kind              git.Kind
+	Name              string
+	Commit            string
+	UpdatedAt         time.Time
+	UpdatedBy         *string
 }
 
 // Secret is one repository secret's metadata: its key and who set it,

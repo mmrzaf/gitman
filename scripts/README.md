@@ -1,65 +1,42 @@
-# Scripts
+# Integration checks
 
-Two scripts exercise a built Gitman against real dependencies — nothing
-here is mocked. Both are safe to run repeatedly; each drops and recreates
-its own database and working directory first.
+These scripts build a temporary binary and create a unique disposable PostgreSQL
+database and working directory per invocation. They never drop an existing
+database or reuse an installation's data directory. PostgreSQL connection
+settings use `PGHOST`, `PGPORT` and `PGUSER` (defaults: localhost, 5432, postgres).
+Logs and screenshots remain in the printed temporary artifacts directory.
+`GITMAN_INTEGRATION_ARTIFACTS` optionally receives a copy of published evidence.
 
-## `e2e.sh`
+- `e2e.sh`: real Git pushes, Docker pipelines, cancellation, malicious input,
+  raw-file security headers and recovery after a killed worker. The lost-worker
+  fixture is deliberately aged past the five-minute threshold to avoid a long
+  sleep; assertions check the resulting run state and container cleanup.
+- `browser.sh` and `browser.mjs`: real Docker execution with live page updates,
+  keyboard interactions, axe accessibility checks, mobile layouts, both themes,
+  JavaScript and plain HTML fallbacks. Default port: 18081.
+- `browser-smoke.sh` and `browser-smoke.mjs`: rendered page, accessibility and
+  interaction checks without Docker. Exercises long refs, commit subjects and
+  paths at 320, 390, 768, 1024 and 1440px, checking mobile card content and
+  controls for clipping and dialogs for overflow. Runs remain queued.
+  Default port: 18081.
+- `backup-test.sh`: PostgreSQL/Git snapshot and restore checks, without Docker.
+  Requires compatible `pg_dump` and `pg_restore` clients. Checks restricted
+  reader grants and revocation, token scope, decrypted secret fingerprints,
+  completed run/step output, summaries, deployments and pinned historical source.
+  Completed history is seeded directly; execution is covered by `e2e.sh`.
+  `backup-check` compares secret fingerprints through the repository service
+  before and after restore without printing plaintext.
+- `verify.sh`: combined project checks; see `Makefile` for individual targets.
 
-Builds the binary, runs web and a worker against real PostgreSQL and
-real Docker, and pushes real Git commits over HTTP to drive real
-pipeline runs: a normal pipeline that passes and ships, `?raw` file
-serving, a run cancelled mid-step, three deliberately malicious
-pipelines (a symlinked summary file, NUL bytes in step output, an
-image name shaped like a Docker flag), and a worker killed mid-step
-followed by `gitman admin worker cleanup`.
+Install browser dependencies once:
 
-Requires Go, git, curl, psql, and a Docker daemon with `alpine:3.20`
-already pulled — Gitman never pulls images itself, and neither does
-this script. PostgreSQL is expected at `127.0.0.1:5432` as `postgres`;
-override with `PGHOST`, `PGPORT` and `PGUSER`. Creates and drops a
-database named `gitman_e2e`, and listens on `GITMAN_E2E_PORT` (18080 by
-default). It checks only the step containers of the instance it starts,
-so it can run on a Docker host shared with another Gitman.
-
-```
-scripts/e2e.sh
-```
-
-## `browser.sh` + `browser.mjs`
-
-Starts the same kind of server, seeds it with what a small team's
-instance holds — people, four repositories, rules, secrets, tokens, and
-runs that passed, failed and shipped to two targets — and drives it with
-a real, headless Chromium:
-
-- live pages: Home and a repository updating by themselves, a Run page
-  that streams output, follows the run from step to step and follows new
-  output, keyboard focus kept across a live update, and cancelling
-  through the confirmation dialog;
-- every interactive component, by keyboard: tabs and the address they
-  keep (Back included), menus, dialogs, confirmations, toasts, the
-  command palette, the file finder, copy buttons, inline editing, and
-  the log view;
-- an accessibility scan with axe-core (WCAG 2.1 A and AA) of every screen,
-  and of its open dialogs and menus, in the light and the dark theme;
-- no screen scrolling sideways at phone width;
-- every page with JavaScript disabled, and the plain-HTML fallbacks: ref
-  switching, tab and dialog addresses, and saving a form.
-
-It then takes a screenshot of every screen in both themes, and of the
-busiest ones at phone width, into `.data/browser/screenshots`.
-
-Requires everything `e2e.sh` does, plus Node with Playwright, axe-core
-and a Chromium:
-
-```
-cd scripts && npm install && npx playwright install chromium
-scripts/browser.sh
+```sh
+(cd scripts && npm ci && npx playwright install chromium)
+scripts/browser-smoke.sh
 ```
 
-To use a Chromium already on the machine instead, set
-`PLAYWRIGHT_EXECUTABLE_PATH` to it. The server listens on
-`GITMAN_BROWSER_PORT` (18081 by default), with its own database,
-`gitman_browser`, so the two scripts can run one after another without
-clearing state by hand.
+Use `PLAYWRIGHT_EXECUTABLE_PATH` for an existing Chromium.
+`GITMAN_BROWSER_PORT` and `GITMAN_E2E_PORT` choose unused HTTP ports.
+Execution checks require a Docker daemon with `alpine:3.20` already available;
+neither Gitman nor these scripts pull it automatically. Docker checks only touch
+step containers labelled with the disposable instance's identity.

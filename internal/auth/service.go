@@ -39,6 +39,15 @@ func GeneratePassword() (string, error) {
 
 // Create adds a person.
 func (s *Service) Create(ctx context.Context, username, password string, isAdmin bool, actorID string) (*Person, error) {
+	return s.create(ctx, username, password, isAdmin, actorID, false)
+}
+
+// CreateBootstrap creates an account with a temporary password that must be changed.
+func (s *Service) CreateBootstrap(ctx context.Context, username, password string, isAdmin bool, actorID string) (*Person, error) {
+	return s.create(ctx, username, password, isAdmin, actorID, true)
+}
+
+func (s *Service) create(ctx context.Context, username, password string, isAdmin bool, actorID string, bootstrap bool) (*Person, error) {
 	if err := names.ValidateUsername(username); err != nil {
 		return nil, err
 	}
@@ -49,7 +58,11 @@ func (s *Service) Create(ctx context.Context, username, password string, isAdmin
 	if err != nil {
 		return nil, err
 	}
-	p := &Person{ID: id.New(), Username: username, PasswordHash: hash, IsAdmin: isAdmin}
+	p := &Person{ID: id.New(), Username: strings.ToLower(username), PasswordHash: hash, IsAdmin: isAdmin}
+	if bootstrap {
+		expires := time.Now().Add(24 * time.Hour)
+		p.BootstrapExpiresAt = &expires
+	}
 	err = s.db.Tx(ctx, func(tx postgres.Tx) error {
 		if err := insertPerson(ctx, tx, p); err != nil {
 			return err
@@ -110,28 +123,45 @@ func (s *Service) Disable(ctx context.Context, personID, actorID string) error {
 		if err := setDisabled(ctx, tx, personID, true); err != nil {
 			return err
 		}
-		if err := deleteSessionsOf(ctx, tx, personID); err != nil {
+		if err := revokeCredentials(ctx, tx, personID); err != nil {
 			return err
 		}
 		return activity.Record(ctx, tx, "", actorID, activity.PersonDisabled, p.Username)
 	})
 }
 
-// Enable clears a person's disabled state.
-func (s *Service) Enable(ctx context.Context, personID, actorID string) error {
-	return s.db.Tx(ctx, func(tx postgres.Tx) error {
+// Enable replaces the disabled account's password and revokes credentials.
+// The returned bootstrap password is shown once and expires in 24 hours.
+func (s *Service) Enable(ctx context.Context, personID, actorID string) (string, error) {
+	password, err := GeneratePassword()
+	if err != nil {
+		return "", err
+	}
+	hash, err := validatedHash(password)
+	if err != nil {
+		return "", err
+	}
+	err = s.db.Tx(ctx, func(tx postgres.Tx) error {
 		p, err := selectPersonByID(ctx, tx, personID)
 		if err != nil {
 			return err
 		}
-		if !p.Disabled() {
-			return nil
+		tag, err := tx.Exec(ctx, `UPDATE people SET disabled_at = NULL, password_hash = $2, auth_generation = auth_generation + 1, bootstrap_expires_at = now() + interval '24 hours' WHERE id = $1 AND disabled_at IS NOT NULL`, personID, hash)
+		if err != nil {
+			return err
 		}
-		if err := setDisabled(ctx, tx, personID, false); err != nil {
+		if tag.RowsAffected() == 0 {
+			return apperr.New(apperr.KindConflict, "person is already enabled")
+		}
+		if err := revokeCredentials(ctx, tx, personID); err != nil {
 			return err
 		}
 		return activity.Record(ctx, tx, "", actorID, activity.PersonEnabled, p.Username)
 	})
+	if err != nil {
+		return "", err
+	}
+	return password, nil
 }
 
 // SetAdmin changes a person's role. Removing the admin role from the
@@ -181,7 +211,10 @@ func (s *Service) ResetPassword(ctx context.Context, personID, newPassword, acto
 		if err := setPasswordHash(ctx, tx, personID, hash); err != nil {
 			return err
 		}
-		if err := deleteSessionsOf(ctx, tx, personID); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE people SET bootstrap_expires_at = now() + interval '24 hours' WHERE id = $1`, personID); err != nil {
+			return err
+		}
+		if err := revokeCredentials(ctx, tx, personID); err != nil {
 			return err
 		}
 		return activity.Record(ctx, tx, "", actorID, activity.PasswordReset, p.Username)
@@ -192,24 +225,35 @@ func (s *Service) ResetPassword(ctx context.Context, personID, newPassword, acto
 // current one, returning ErrInvalidCredentials if it is wrong. Every
 // session of theirs ends, including the one making the change; the
 // caller issues a fresh session for it.
-func (s *Service) ChangePassword(ctx context.Context, personID, currentPassword, newPassword string) error {
+func (s *Service) ChangePassword(ctx context.Context, personID, currentPassword, newPassword string) (*Person, error) {
 	p, err := s.GetByID(ctx, personID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(p.PasswordHash), []byte(currentPassword)); err != nil {
-		return ErrInvalidCredentials
+		return nil, ErrInvalidCredentials
 	}
 	hash, err := validatedHash(newPassword)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return s.db.Tx(ctx, func(tx postgres.Tx) error {
-		if err := setPasswordHash(ctx, tx, personID, hash); err != nil {
+	err = s.db.Tx(ctx, func(tx postgres.Tx) error {
+		tag, err := tx.Exec(ctx, `UPDATE people SET password_hash = $2, auth_generation = auth_generation + 1, bootstrap_expires_at = NULL WHERE id = $1 AND auth_generation = $3 AND disabled_at IS NULL`, personID, hash, p.Generation)
+		if err != nil {
 			return err
 		}
-		return deleteSessionsOf(ctx, tx, personID)
+		if tag.RowsAffected() != 1 {
+			return ErrInvalidCredentials
+		}
+		return revokeCredentials(ctx, tx, personID)
 	})
+	if err != nil {
+		return nil, err
+	}
+	p.Generation++
+	p.PasswordHash = hash
+	p.BootstrapExpiresAt = nil
+	return p, nil
 }
 
 func validatedHash(password string) (string, error) {
@@ -240,18 +284,21 @@ func (s *Service) VerifyLogin(ctx context.Context, username, password string) (*
 	if p.Disabled() {
 		return nil, ErrDisabled
 	}
+	if p.BootstrapExpiresAt != nil && !p.BootstrapExpiresAt.After(time.Now()) {
+		return nil, ErrInvalidCredentials
+	}
 	return p, nil
 }
 
-// CreateSession starts a session for personID and returns the plain
+// CreateSession starts a session for the verified person snapshot and returns the plain
 // token to set as a cookie. Only the token's hash is stored.
-func (s *Service) CreateSession(ctx context.Context, personID string, ttl time.Duration) (plain string, expiresAt time.Time, err error) {
+func (s *Service) CreateSession(ctx context.Context, person *Person, ttl time.Duration) (plain string, expiresAt time.Time, err error) {
 	plain, err = token.New(sessionTokenBytes)
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("generate session token: %w", err)
 	}
 	expiresAt = time.Now().Add(ttl)
-	if err := insertSession(ctx, s.db.Q, token.Hash(plain), personID, expiresAt); err != nil {
+	if err := insertSession(ctx, s.db.Q, token.Hash(plain), person, expiresAt); err != nil {
 		return "", time.Time{}, err
 	}
 	return plain, expiresAt, nil
@@ -275,13 +322,6 @@ func (s *Service) SessionPerson(ctx context.Context, sessionToken string) (*Pers
 	return p, nil
 }
 
-// ExtendSession moves a session's expiry to ttl from now, but only once
-// it is within extendWithin of expiring, so an active browser does not
-// write to the database on every request. It reports whether it did.
-func (s *Service) ExtendSession(ctx context.Context, sessionToken string, ttl, extendWithin time.Duration) (bool, error) {
-	return extendSessionRow(ctx, s.db.Q, token.Hash(sessionToken), time.Now().Add(ttl), extendWithin)
-}
-
 // DeleteSession ends one session. Deleting a session that does not exist
 // is not an error: the end state the caller wants is already true.
 func (s *Service) DeleteSession(ctx context.Context, sessionToken string) error {
@@ -289,8 +329,10 @@ func (s *Service) DeleteSession(ctx context.Context, sessionToken string) error 
 }
 
 // CreateToken generates an access token and returns its plain value,
-// shown to the person exactly once. A nil ttl never expires.
-func (s *Service) CreateToken(ctx context.Context, personID, name string, scope Scope, ttl *time.Duration) (plain string, created *AccessToken, err error) {
+// shown to the person exactly once. A nil ttl uses the 30-day default.
+// An empty repository list grants access to all current and future repositories,
+// subject to the owner's repository and ref permissions.
+func (s *Service) CreateToken(ctx context.Context, personID, name string, scope Scope, ttl *time.Duration, repositories []string) (plain string, created *AccessToken, err error) {
 	name = strings.TrimSpace(name)
 	if name == "" || utf8.RuneCountInString(name) > 100 {
 		return "", nil, apperr.New(apperr.KindInvalid, "token name must be between 1 and 100 characters")
@@ -302,12 +344,43 @@ func (s *Service) CreateToken(ctx context.Context, personID, name string, scope 
 	if err != nil {
 		return "", nil, fmt.Errorf("generate access token: %w", err)
 	}
-	created = &AccessToken{ID: id.New(), PersonID: personID, Name: name, Scope: scope}
-	if ttl != nil {
-		expiresAt := time.Now().Add(*ttl)
-		created.ExpiresAt = &expiresAt
+	p, err := s.GetByID(ctx, personID)
+	if err != nil {
+		return "", nil, err
 	}
-	if err := insertToken(ctx, s.db.Q, created, token.Hash(plain)); err != nil {
+	if p.Disabled() || p.BootstrapExpiresAt != nil {
+		return "", nil, apperr.New(apperr.KindForbidden, "change your password before creating access tokens")
+	}
+	duration := 30 * 24 * time.Hour
+	if ttl != nil {
+		duration = *ttl
+	}
+	if duration <= 0 || duration > 365*24*time.Hour {
+		return "", nil, apperr.New(apperr.KindInvalid, "token expiry must be positive and at most 365 days")
+	}
+	expiresAt := time.Now().Add(duration)
+	created = &AccessToken{ID: id.New(), PersonID: personID, Name: name, Scope: scope, ExpiresAt: &expiresAt, AllRepositories: len(repositories) == 0, Repositories: repositories}
+	err = s.db.Tx(ctx, func(tx postgres.Tx) error {
+		if err := insertToken(ctx, tx, created, token.Hash(plain), p.Generation); err != nil {
+			return err
+		}
+		seen := map[string]bool{}
+		for _, repoID := range repositories {
+			if seen[repoID] {
+				continue
+			}
+			seen[repoID] = true
+			tag, err := tx.Exec(ctx, `INSERT INTO token_repos (token_id, repo_id) SELECT $1, r.id FROM repos r JOIN people p ON p.id = $3 WHERE r.id = $2 AND (p.is_admin OR r.visibility = 'everyone' OR EXISTS (SELECT 1 FROM repo_readers rr WHERE rr.repo_id = r.id AND rr.person_id = p.id))`, created.ID, repoID, personID)
+			if err != nil {
+				return err
+			}
+			if tag.RowsAffected() != 1 {
+				return apperr.New(apperr.KindInvalid, "select repositories you can read")
+			}
+		}
+		return nil
+	})
+	if err != nil {
 		return "", nil, err
 	}
 	return plain, created, nil
@@ -343,11 +416,11 @@ func (s *Service) RevokeToken(ctx context.Context, personID, tokenID string) (*A
 // token's scope. Whether the scope is sufficient is the caller's
 // decision, so it can say "this token can only read" instead of
 // "authentication failed".
-func (s *Service) Authenticate(ctx context.Context, plain string) (*Person, Scope, error) {
+func (s *Service) Authenticate(ctx context.Context, plain, repositoryName string) (*Person, Scope, error) {
 	if plain == "" {
 		return nil, "", ErrInvalidToken
 	}
-	return useToken(ctx, s.db.Q, token.Hash(plain))
+	return useToken(ctx, s.db.Q, token.Hash(plain), repositoryName)
 }
 
 // PruneExpiredSessions deletes sessions past their expiry and returns
@@ -355,4 +428,19 @@ func (s *Service) Authenticate(ctx context.Context, plain string) (*Person, Scop
 // keeps the table from growing.
 func (s *Service) PruneExpiredSessions(ctx context.Context) (int64, error) {
 	return deleteExpiredSessions(ctx, s.db.Q)
+}
+
+// RevokeAll invalidates every credential, including login snapshots verified
+// before this transaction. The password is preserved; the caller must sign in.
+func (s *Service) RevokeAll(ctx context.Context, personID, actorID string) error {
+	return s.db.Tx(ctx, func(tx postgres.Tx) error {
+		var username string
+		if err := tx.QueryRow(ctx, `UPDATE people SET auth_generation = auth_generation + 1 WHERE id = $1 RETURNING username`, personID).Scan(&username); err != nil {
+			return postgres.NormalizeNotFound(err)
+		}
+		if err := revokeCredentials(ctx, tx, personID); err != nil {
+			return err
+		}
+		return activity.Record(ctx, tx, "", actorID, activity.CredentialsRevoked, username)
+	})
 }

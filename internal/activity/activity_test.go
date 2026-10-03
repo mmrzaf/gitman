@@ -2,6 +2,7 @@ package activity
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -226,5 +227,317 @@ func TestFeedQueriesCanUseAnIndex(t *testing.T) {
 		if !strings.Contains(plan.String(), "Index") || strings.Contains(plan.String(), "Sort") {
 			t.Errorf("%s: the feed query sorts instead of reading an index:\n%s", table, plan.String())
 		}
+	}
+}
+
+func TestForRepoListsRefChangesAndEventsNewestFirst(t *testing.T) {
+	database := pgtest.Open(t)
+	repoID, _, _ := seed(t, database)
+	ctx := context.Background()
+	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := database.Pool.Exec(ctx, q, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// One push moving three refs at the same moment: each is its own entry.
+	exec(`INSERT INTO pushes (id, repo_id, person_id, created_at) VALUES ('push3', $1, 'p1', $2)`, repoID, base.Add(10*time.Minute))
+	exec(`INSERT INTO push_updates (id, push_id, kind, name, old_commit, new_commit, is_create, is_delete, is_force) VALUES
+	      ('pu3a', 'push3', 'branch', 'new', repeat('0',40), repeat('d',40), true, false, false),
+	      ('pu3b', 'push3', 'branch', 'main', repeat('a',40), repeat('e',40), false, false, true),
+	      ('pu3c', 'push3', 'tag', 'v1', repeat('a',40), repeat('f',40), false, false, false),
+	      ('pu3d', 'push3', 'branch', 'old', repeat('9',40), repeat('0',40), false, true, false)`)
+	exec(`INSERT INTO runs (id, repo_id, number, commit_hash, ref_kind, ref_name, trigger, push_id, status, finished_at)
+	      VALUES ('run3', $1, 3, repeat('d',40), 'branch', 'new', 'push', 'push3', 'failed', now())`, repoID)
+
+	entries, more, err := NewService(database).ForRepo(ctx, repoID, "", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// What seed gave this repository (a push update, a finished run, a
+	// deployment and an event), the four updates above and the run they
+	// started; the other repository's push is not part of it, and neither is
+	// the run still running.
+	if more || len(entries) != 9 {
+		t.Fatalf("got %d entries (more=%v), want 9: %+v", len(entries), more, entries)
+	}
+	for i := 1; i < len(entries); i++ {
+		if entries[i-1].At.Before(entries[i].At) {
+			t.Fatalf("entries are not newest first at index %d", i)
+		}
+	}
+	// The run that just finished is the newest thing, then the four updates.
+	if e := entries[0]; e.Kind != KindRun || e.RunNumber != 3 || e.RunStatus != "failed" || e.RefName != "new" {
+		t.Errorf("the finished run is out of place: %+v", e)
+	}
+	changes := map[string]RepoEntry{}
+	for _, e := range entries[1:5] {
+		if e.Kind != KindPush || e.Actor != "darius" {
+			t.Fatalf("entry = %+v", e)
+		}
+		changes[e.RefName] = e
+	}
+	for name, want := range map[string]Change{"new": Created, "main": ForcePushed, "v1": Moved, "old": Deleted} {
+		if got := changes[name].Change; got != want {
+			t.Errorf("%s: change = %q, want %q", name, got, want)
+		}
+	}
+	if e := changes["new"]; e.RunNumber != 3 || e.RunStatus != "failed" {
+		t.Errorf("the run a push started is missing: %+v", e)
+	}
+	if e := changes["main"]; e.RunNumber != 0 {
+		t.Errorf("a ref that started no run has one: %+v", e)
+	}
+	rest := entries[5:]
+	if rest[0].Kind != KindEvent || rest[0].Action != RuleSaved ||
+		rest[1].Kind != KindDeployment || rest[1].Target != "staging" || rest[1].Version != "v1" || rest[1].RunNumber != 1 ||
+		rest[2].Kind != KindRun || rest[2].RunStatus != "passed" || rest[2].RefName != "main" ||
+		rest[3].Kind != KindPush || rest[3].Change != Pushed {
+		t.Errorf("the settings change, deployment, run and older push are out of place: %+v", rest)
+	}
+}
+
+func TestForRepoPages(t *testing.T) {
+	database := pgtest.Open(t)
+	repoID, _, _ := seed(t, database)
+	ctx := context.Background()
+	// Every update of one push shares its moment, so paging must stay exact
+	// inside it.
+	if _, err := database.Pool.Exec(ctx, `INSERT INTO pushes (id, repo_id, person_id) VALUES ('big', $1, 'p1')`, repoID); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		if _, err := database.Pool.Exec(ctx, `
+			INSERT INTO push_updates (id, push_id, kind, name, old_commit, new_commit, is_create)
+			VALUES ($1, 'big', 'branch', $2, repeat('0',40), repeat('a',40), true)
+		`, "big-"+string(rune('a'+i)), "b"+string(rune('a'+i))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	svc := NewService(database)
+	seen := map[string]bool{}
+	cursor := ""
+	for pages := 0; ; pages++ {
+		if pages > 10 {
+			t.Fatal("paging does not end")
+		}
+		entries, more, err := svc.ForRepo(ctx, repoID, cursor, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range entries {
+			key := string(e.Kind) + e.RefName + e.Action
+			if seen[key] {
+				t.Fatalf("%s appears on two pages", key)
+			}
+			seen[key] = true
+		}
+		if !more {
+			break
+		}
+		cursor = entries[len(entries)-1].Cursor()
+	}
+	if len(seen) != 7 {
+		t.Fatalf("paging listed %d entries, want 7: %v", len(seen), seen)
+	}
+	if entries, more, err := svc.ForRepo(ctx, repoID, (RepoEntry{Kind: KindEvent, At: time.Unix(1, 0), id: "past"}).Cursor(), 2); err != nil || more || len(entries) != 0 {
+		t.Fatalf("past the end = %v, %v, %v", entries, more, err)
+	}
+}
+
+func TestForRepoListsRefusedPushesWithTheirReasons(t *testing.T) {
+	database := pgtest.Open(t)
+	repoID, otherRepoID, _ := seed(t, database)
+	ctx := context.Background()
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := database.Pool.Exec(ctx, q, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	exec(`INSERT INTO push_refusals (id, repo_id, person_id, created_at) VALUES ('f1', $1, 'p1', $2), ('f2', $3, 'p1', $2)`,
+		repoID, base.Add(30*time.Minute), otherRepoID)
+	exec(`INSERT INTO push_refusal_refs (refusal_id, position, ref, reason) VALUES
+	      ('f1', 1, 'refs/tags/v1', 'moving an existing tag is a force-push'),
+	      ('f1', 0, 'refs/heads/main', 'the default branch cannot be deleted'),
+	      ('f1', 2, 'refs/notes/x', 'only branches and tags can be pushed'),
+	      ('f2', 0, 'refs/heads/other', 'not this repository''s')`)
+
+	entries, _, err := NewService(database).ForRepo(ctx, repoID, "", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The refusal, then what seed gave the repository: an event, a
+	// deployment, a run and a push.
+	if len(entries) != 5 || entries[0].Kind != KindRefusal || entries[0].Actor != "darius" {
+		t.Fatalf("entries = %+v", entries)
+	}
+	got := entries[0].Refused
+	if len(got) != 3 || got[0].Ref != "refs/heads/main" || got[1].Ref != "refs/tags/v1" || got[2].Ref != "refs/notes/x" {
+		t.Fatalf("reasons are missing or out of the order they were reported: %+v", got)
+	}
+	if got[0].RefKind != git.KindBranch || got[0].RefName != "main" || got[1].RefKind != git.KindTag || got[2].RefName != "" {
+		t.Errorf("refs are not told apart: %+v", got)
+	}
+}
+
+// A push that makes many of the same change is one line, not a feed's worth.
+func TestForRepoGroupsABulkPush(t *testing.T) {
+	database := pgtest.Open(t)
+	ctx := context.Background()
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := database.Pool.Exec(ctx, q, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec(`INSERT INTO repos (id, name) VALUES ('r1', 'demo')`)
+	exec(`INSERT INTO people (id, username, password_hash) VALUES ('p1', 'darius', 'x')`)
+	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	// Twelve tags created at once, three branches created at once (fewer
+	// than a bulk), and one tag moved in the same push.
+	exec(`INSERT INTO pushes (id, repo_id, person_id, created_at) VALUES ('big', 'r1', 'p1', $1)`, base)
+	for i := 1; i <= 12; i++ {
+		exec(`INSERT INTO push_updates (id, push_id, kind, name, old_commit, new_commit, is_create)
+		      VALUES ($1, 'big', 'tag', $2, repeat('0',40), repeat('a',40), true)`, fmt.Sprintf("t%02d", i), fmt.Sprintf("v1.0.0-beta.%d", i))
+	}
+	for _, name := range []string{"a", "b", "c"} {
+		exec(`INSERT INTO push_updates (id, push_id, kind, name, old_commit, new_commit, is_create)
+		      VALUES ($1, 'big', 'branch', $2, repeat('0',40), repeat('b',40), true)`, "b-"+name, name)
+	}
+	exec(`INSERT INTO push_updates (id, push_id, kind, name, old_commit, new_commit)
+	      VALUES ('mv', 'big', 'tag', 'latest', repeat('c',40), repeat('d',40))`)
+	// An older push with one update is unaffected.
+	exec(`INSERT INTO pushes (id, repo_id, person_id, created_at) VALUES ('old', 'r1', 'p1', $1)`, base.Add(-time.Hour))
+	exec(`INSERT INTO push_updates (id, push_id, kind, name, old_commit, new_commit, is_create)
+	      VALUES ('o1', 'old', 'branch', 'main', repeat('0',40), repeat('e',40), true)`)
+
+	svc := NewService(database)
+	entries, more, err := svc.ForRepo(ctx, "r1", "", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// One line for the twelve tags, one each for the three branches, the moved
+	// tag and the older push: six, not seventeen.
+	if more || len(entries) != 6 {
+		t.Fatalf("got %d entries (more=%v), want 6: %+v", len(entries), more, entries)
+	}
+	var bulk *RepoEntry
+	for i := range entries {
+		if entries[i].Count > 1 {
+			if bulk != nil {
+				t.Fatal("two bulk lines")
+			}
+			bulk = &entries[i]
+		}
+	}
+	if bulk == nil || bulk.Count != 12 || bulk.Change != Created || bulk.RefKind != git.KindTag || bulk.Actor != "darius" {
+		t.Fatalf("the bulk line = %+v", bulk)
+	}
+	if strings.Join(bulk.Names, " ") != "v1.0.0-beta.12 v1.0.0-beta.11 v1.0.0-beta.10" {
+		t.Errorf("the bulk line names %v, want the newest three versions", bulk.Names)
+	}
+	for _, e := range entries {
+		if e.Count != 1 && e.Count != 12 {
+			t.Errorf("a line counts %d refs: %+v", e.Count, e)
+		}
+	}
+
+	// Paging counts lines, so a page never splits or repeats a bulk.
+	first, more, err := svc.ForRepo(ctx, "r1", "", 3)
+	if err != nil || !more || len(first) != 3 {
+		t.Fatalf("first page = %d, more=%v, %v", len(first), more, err)
+	}
+	rest, more, err := svc.ForRepo(ctx, "r1", first[len(first)-1].Cursor(), 3)
+	if err != nil || more || len(rest) != 3 {
+		t.Fatalf("second page = %d, more=%v, %v", len(rest), more, err)
+	}
+}
+
+func TestRefusedSinceListsRecentRefusalsOfTheGivenRepositories(t *testing.T) {
+	database := pgtest.Open(t)
+	repoID, otherRepoID, _ := seed(t, database)
+	ctx := context.Background()
+	now := time.Now()
+	insert := func(q string, args ...any) {
+		t.Helper()
+		if _, err := database.Pool.Exec(ctx, q, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insert(`INSERT INTO push_refusals (id, repo_id, person_id, created_at) VALUES
+	        ('new', $1, 'p1', $3), ('old', $1, 'p1', $4), ('other', $2, 'p1', $3)`, repoID, otherRepoID, now.Add(-time.Hour), now.Add(-30*24*time.Hour))
+	insert(`INSERT INTO push_refusal_refs (refusal_id, position, ref, reason) VALUES
+	        ('new', 1, 'refs/tags/v1', 'second'), ('new', 0, 'refs/heads/main', 'first'), ('old', 0, 'refs/heads/x', 'long ago'),
+	        ('other', 0, 'refs/heads/y', 'elsewhere')`)
+	svc := NewService(database)
+
+	got, err := svc.RefusedSince(ctx, []string{repoID}, now.Add(-7*24*time.Hour), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].RepoName != "waiotech" || got[0].Actor != "darius" || got[0].Ref != "refs/heads/main" || got[0].Reason != "first" {
+		t.Fatalf("refused = %+v", got)
+	}
+	both, err := svc.RefusedSince(ctx, []string{repoID, otherRepoID}, now.Add(-7*24*time.Hour), 10)
+	if err != nil || len(both) != 2 {
+		t.Fatalf("for two repositories: %+v, %v", both, err)
+	}
+	if none, err := svc.RefusedSince(ctx, nil, now.Add(-7*24*time.Hour), 10); err != nil || len(none) != 0 {
+		t.Fatalf("for no repositories: %+v, %v", none, err)
+	}
+	if capped, err := svc.RefusedSince(ctx, []string{repoID, otherRepoID}, now.Add(-7*24*time.Hour), 1); err != nil || len(capped) != 1 {
+		t.Fatalf("with a limit: %+v, %v", capped, err)
+	}
+}
+
+func TestActivityCursorSurvivesNewEntriesAndSourceIDTies(t *testing.T) {
+	db := pgtest.Open(t)
+	ctx := context.Background()
+	repoID, _, _ := seed(t, db)
+	moment := time.Now().UTC().Truncate(time.Microsecond)
+	for _, query := range []string{
+		`INSERT INTO events(id,repo_id,created_at,action) VALUES('tie',$1,$2,'rule.saved')`,
+		`INSERT INTO pushes(id,repo_id,created_at) VALUES('tie',$1,$2)`,
+		`INSERT INTO push_updates(id,push_id,kind,name,old_commit,new_commit) VALUES('tie','tie','branch','tied',repeat('a',40),repeat('b',40))`,
+	} {
+		var err error
+		if strings.Contains(query, "$2") {
+			_, err = db.Pool.Exec(ctx, query, repoID, moment)
+		} else {
+			_, err = db.Pool.Exec(ctx, query)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	svc := NewService(db)
+	page, more, err := svc.ForRepo(ctx, repoID, "", 1)
+	if err != nil || !more || len(page) != 1 {
+		t.Fatalf("first=%v more=%v error=%v", page, more, err)
+	}
+	first := page[0]
+	cursor := first.Cursor()
+	if _, err := db.Pool.Exec(ctx, `INSERT INTO events(id,repo_id,created_at,action) VALUES('new',$1,$2,'rule.saved')`, repoID, moment.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	next, _, err := svc.ForRepo(ctx, repoID, cursor, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundOtherTie := false
+	for _, e := range next {
+		if e.id == "new" || e.Kind == first.Kind && e.id == first.id {
+			t.Fatalf("cursor repeated or admitted newer entry: %+v", e)
+		}
+		if e.id == "tie" {
+			foundOtherTie = true
+		}
+	}
+	if !foundOtherTie {
+		t.Fatal("cursor lost same-time, same-ID entry from a different source")
 	}
 }

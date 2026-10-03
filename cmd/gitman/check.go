@@ -8,7 +8,7 @@ import (
 )
 
 // runCheck validates a pipeline file without needing a Gitman server, a
-// database, or a push: the same check post-receive runs against the
+// database, or a push: the same check push preparation runs against the
 // pushed commit, run locally against a working tree instead.
 func runCheck(args []string) error {
 	path := ci.FileName

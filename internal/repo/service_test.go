@@ -191,7 +191,7 @@ func TestSyncRefs(t *testing.T) {
 	}
 }
 
-const testSecretKey = "a very secret passphrase, at least 32 bytes long"
+const testSecretKey = "STsEYlF+KWuLHwa+R+yP7w5HqEwoKF2zUqpbukDA9PE="
 
 func TestSecretsNeverExposeValue(t *testing.T) {
 	ctx := context.Background()
@@ -485,6 +485,9 @@ func TestSetDefaultPush(t *testing.T) {
 		t.Fatalf("Create: DefaultPushPolicy = %q, want %q", r.DefaultPushPolicy, PushEveryone)
 	}
 
+	if _, err := database.Q.Exec(ctx, `INSERT INTO people (id, username, password_hash) VALUES ('person-1', 'person-one', 'unused')`); err != nil {
+		t.Fatal(err)
+	}
 	if err := svc.SetDefaultPush(ctx, r.ID, PushPeople, []string{"person-1"}, ""); err != nil {
 		t.Fatalf("SetDefaultPush: %v", err)
 	}
@@ -599,5 +602,32 @@ func TestRunSecrets(t *testing.T) {
 	}
 	if _, err := NewService(database, store, "a different key, also at least 32 bytes").RunSecrets(ctx, r.ID); err == nil {
 		t.Fatal("expected secrets sealed under another key to fail to decrypt")
+	}
+}
+
+func TestDefaultHeadsListsWhereEachDefaultBranchPoints(t *testing.T) {
+	database := pgtest.Open(t)
+	ctx := context.Background()
+	insert := func(q string, args ...any) {
+		t.Helper()
+		if _, err := database.Pool.Exec(ctx, q, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insert(`INSERT INTO repos (id, name, default_branch) VALUES ('r1', 'one', 'main'), ('r2', 'two', 'develop'), ('r3', 'three', 'main')`)
+	insert(`INSERT INTO refs (repo_id, kind, name, commit_hash) VALUES
+	      ('r1', 'branch', 'main', repeat('a',40)), ('r1', 'branch', 'develop', repeat('b',40)), ('r1', 'tag', 'main', repeat('c',40)),
+	      ('r2', 'branch', 'main', repeat('d',40)), ('r2', 'branch', 'develop', repeat('e',40))`)
+	// Repository three has pushed nothing.
+	heads, err := NewService(database, nil, "").DefaultHeads(ctx, []string{"r1", "r2", "r3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(heads) != 2 || heads["r1"].Commit != strings.Repeat("a", 40) || heads["r1"].Name != "main" ||
+		heads["r2"].Commit != strings.Repeat("e", 40) || heads["r2"].Name != "develop" {
+		t.Fatalf("heads = %+v", heads)
+	}
+	if only, err := NewService(database, nil, "").DefaultHeads(ctx, []string{"r2"}); err != nil || len(only) != 1 {
+		t.Fatalf("for one repository: %+v, %v", only, err)
 	}
 }

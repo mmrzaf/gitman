@@ -17,7 +17,9 @@ func setBase(t *testing.T) string {
 	t.Setenv(EnvTrustedProxies, "")
 	t.Setenv(EnvSecretKey, "")
 	t.Setenv(EnvWebURL, "")
-	t.Setenv(EnvRetentionDays, "")
+	for _, name := range []string{EnvLogRetentionDays, EnvRunRetentionDays, EnvAuditRetentionDays, EnvDeploymentRetentionDays} {
+		t.Setenv(name, "")
+	}
 	t.Setenv(EnvDatabaseMaxConns, "")
 	t.Setenv(EnvLogLevel, "")
 	t.Setenv(EnvLogFormat, "")
@@ -26,6 +28,7 @@ func setBase(t *testing.T) string {
 
 func TestLoadValid(t *testing.T) {
 	setBase(t)
+	t.Setenv(EnvDatabaseURL, "postgresql:///gitman?host=/run/postgresql&user=gitman")
 	t.Setenv(EnvPublicURL, "https://git.example.com/")
 	t.Setenv(EnvPort, "8090")
 
@@ -84,6 +87,11 @@ func TestLoadMakesDataDirAbsolute(t *testing.T) {
 func TestLoadRejects(t *testing.T) {
 	cases := map[string]map[string]string{
 		"missing database URL":   {EnvDatabaseURL: ""},
+		"database keyword DSN":   {EnvDatabaseURL: "host=localhost user=gitman dbname=gitman"},
+		"wrong database scheme":  {EnvDatabaseURL: "mysql://gitman:secret@localhost/gitman"},
+		"uppercase scheme":       {EnvDatabaseURL: "POSTGRES://localhost/gitman"},
+		"opaque database URL":    {EnvDatabaseURL: "postgres:localhost/gitman"},
+		"malformed database URL": {EnvDatabaseURL: "postgres://%zz"},
 		"invalid public URL":     {EnvPublicURL: "not-a-url"},
 		"public URL with user":   {EnvPublicURL: "https://user@git.example.com"},
 		"public URL with query":  {EnvPublicURL: "https://git.example.com/?x=1"},
@@ -152,15 +160,23 @@ func TestWebURLDefaultsToPublicURL(t *testing.T) {
 	}
 }
 
-func TestRetentionDays(t *testing.T) {
+func TestIndependentRetention(t *testing.T) {
 	setBase(t)
 	cfg, err := Load()
-	if err != nil || cfg.RetentionDays != 90 {
-		t.Fatalf("default RetentionDays = %d, %v", cfg.RetentionDays, err)
+	if err != nil {
+		t.Fatal(err)
 	}
-	t.Setenv(EnvRetentionDays, "0")
-	if cfg, err = Load(); err != nil || cfg.RetentionDays != 0 {
-		t.Fatalf("RetentionDays=0 (keep forever) = %d, %v", cfg.RetentionDays, err)
+	if cfg.Retention != (Retention{Logs: 30, Runs: 90, Audit: 365, Deployments: 365}) {
+		t.Fatalf("defaults=%+v", cfg.Retention)
+	}
+	t.Setenv(EnvLogRetentionDays, "7")
+	cfg, err = Load()
+	if err != nil || cfg.Retention.Logs != 7 || cfg.Retention.Runs != 90 {
+		t.Fatalf("independent retention=%+v error=%v", cfg.Retention, err)
+	}
+	t.Setenv(EnvRunRetentionDays, "0")
+	if _, err := Load(); err == nil {
+		t.Fatal("accepted unbounded run retention")
 	}
 }
 
@@ -183,5 +199,25 @@ func TestNewLogger(t *testing.T) {
 	cfg.NewLogger(&buf).Info("hello", "key", "value")
 	if out := buf.String(); !strings.Contains(out, "msg=hello") || !strings.Contains(out, "key=value") {
 		t.Errorf("expected a text-formatted info line, got: %s", out)
+	}
+}
+
+func TestResourceProfile(t *testing.T) {
+	setBase(t)
+	t.Setenv(EnvStepMemoryMiB, "8192")
+	t.Setenv(EnvStepCPUs, "8")
+	t.Setenv(EnvStepPIDs, "1024")
+	t.Setenv(EnvWorkspaceGiB, "100")
+	t.Setenv(EnvDiskReserveGiB, "20")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Resources != (Resources{8192, 8, 1024, 100, 20}) {
+		t.Fatalf("resources=%+v", cfg.Resources)
+	}
+	t.Setenv(EnvStepMemoryMiB, "0")
+	if _, err := Load(); err == nil {
+		t.Fatal("zero memory limit accepted")
 	}
 }

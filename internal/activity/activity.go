@@ -25,6 +25,7 @@ const (
 	RepoCreated              = "repo.created"
 	RepoDeleted              = "repo.deleted"
 	RepoDescribed            = "repo.description_changed"
+	RepoAccessChanged        = "repo.access_changed"
 	RepoVisibilityChanged    = "repo.visibility_changed"
 	RepoReaderAdded          = "repo.reader_added"
 	RepoReaderRemoved        = "repo.reader_removed"
@@ -39,6 +40,7 @@ const (
 	PersonEnabled            = "person.enabled"
 	PersonRole               = "person.role"
 	PasswordReset            = "person.password_reset"
+	CredentialsRevoked       = "person.credentials_revoked"
 )
 
 // NotifyChannel is the PostgreSQL channel that carries a repository's ID
@@ -73,6 +75,9 @@ const (
 	KindRun        Kind = "run"
 	KindDeployment Kind = "deployment"
 	KindEvent      Kind = "event"
+	// KindRefusal is a push Gitman refused; only a repository's History
+	// lists it.
+	KindRefusal Kind = "refusal"
 )
 
 // Entry is one line of the feed. Only the fields for its Kind are set;

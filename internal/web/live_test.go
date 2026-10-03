@@ -46,8 +46,9 @@ func sampleRun(status ci.Status) *ci.RunDetail {
 	code, fail := 0, 2
 	run := &ci.RunDetail{
 		Summary: ci.Summary{ID: "run-1", RepoName: "waiotech", Number: 42, RefKind: git.KindBranch, RefName: "develop",
-			Trigger: ci.TriggerPush, Status: status, Actor: "darius", QueuedAt: started, StartedAt: &started},
-		Commit: strings.Repeat("a", 40), Target: "staging", Version: "3f2a91c",
+			Commit: strings.Repeat("a", 40), Trigger: ci.TriggerPush, Status: status, Target: "staging", Actor: "darius",
+			QueuedAt: started, StartedAt: &started},
+		Version: "3f2a91c",
 		Steps: []ci.StepDetail{
 			{ID: "s0", Index: 0, Name: "test", Status: ci.StepPassed, ExitCode: &code, StartedAt: &started, FinishedAt: &finished},
 			{ID: "s1", Index: 1, Name: "deploy", Status: ci.StepFailed, ExitCode: &fail, StartedAt: &started, FinishedAt: &finished},
@@ -68,7 +69,7 @@ func TestRunPageRenders(t *testing.T) {
 		t.Run(string(status), func(t *testing.T) {
 			run := sampleRun(status)
 			req := httptest.NewRequest(http.MethodGet, "/waiotech/runs/42", nil)
-			page := runPage{repoFrame: repoFrame{Repo: &reposvc.Repo{Name: "waiotech"}}, Run: run, Selected: selectedStep(req, run),
+			page := runPage{CanRun: true, repoFrame: repoFrame{Repo: &reposvc.Repo{Name: "waiotech"}}, Run: run, Selected: selectedStep(req, run),
 				Log: splitLog("building\n<script>alert(1)</script>\n", 1), LogAfter: 3, Now: time.Now(), Duration: 80 * time.Second}
 			rec := httptest.NewRecorder()
 			a.render(rec, signedIn(req), http.StatusOK, "run", "#42 · waiotech", page)
@@ -182,7 +183,7 @@ func eventStreamFixture(t *testing.T) (a *App, handler http.HandlerFunc) {
 	t.Cleanup(store.Close)
 	repos := reposvc.NewService(database, store, "")
 	people := auth.NewService(database)
-	a = &App{repos: repos, ci: ci.NewService(database), hub: newHub(), now: time.Now,
+	a = &App{people: people, repos: repos, ci: ci.NewService(database), hub: newHub(), now: time.Now,
 		log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 
 	r, err := repos.Create(context.Background(), "demo", "", "main", "")
@@ -199,8 +200,13 @@ func eventStreamFixture(t *testing.T) (a *App, handler http.HandlerFunc) {
 	`, r.ID); err != nil {
 		t.Fatal(err)
 	}
+	session, _, err := people.CreateSession(context.Background(), person, sessionTTL)
+	if err != nil {
+		t.Fatal(err)
+	}
 	handler = func(w http.ResponseWriter, req *http.Request) {
 		req = req.WithContext(context.WithValue(req.Context(), personKey{}, person))
+		req = req.WithContext(context.WithValue(req.Context(), sessionTokenKey{}, session))
 		if err := a.events(w, req); err != nil {
 			t.Error(err)
 		}
@@ -288,19 +294,19 @@ func TestLivePagesRender(t *testing.T) {
 	run := ci.Summary{ID: "run-1", RepoName: "waiotech", Number: 42, RefKind: git.KindBranch, RefName: "develop",
 		Status: ci.StatusRunning, Actor: "darius", QueuedAt: now}
 	feed := []activity.Entry{{Kind: activity.KindRun, RepoName: "waiotech", At: now, RunNumber: 41, Status: "passed"}}
-	repo := &reposvc.Repo{Name: "waiotech", DefaultBranch: "main"}
+	repo := &reposvc.Repo{ID: "r1", Name: "waiotech", DefaultBranch: "main"}
 
 	pages := []struct {
 		name string
 		data any
 		want []string
 	}{
-		{"home", homePage{InProgress: []ci.Summary{run}, Timeline: feed, CreateForm: newForm(nil)},
-			[]string{`data-live-events="/events"`, `href="/waiotech/runs/42"`, `href="/waiotech/runs/41"`, `data-live-region="progress"`}},
-		{"repository", repositoryPage{repoFrame: repoFrame{Repo: repo, Section: "overview"}, CloneURL: "waiotech.git", Timeline: feed, Tab: "branches", DefaultExists: true,
+		{"home", homePage{Repos: []homeRepo{{Name: "waiotech", Running: []ci.Summary{run}}}, Timeline: feed, CreateForm: newForm(nil)},
+			[]string{`data-live-events="/events"`, `href="/waiotech/runs/42"`, `data-live-region="repos"`}},
+		{"repository", repositoryPage{repoFrame: repoFrame{Repo: repo, Section: "overview"}, CloneURL: "waiotech.git", DefaultExists: true,
 			Branches: []refRow{{IndexedRef: reposvc.IndexedRef{Kind: git.KindBranch, Name: "develop", Commit: strings.Repeat("b", 40), UpdatedAt: now}, LatestRun: &run}}},
-			[]string{`data-live-events="/events"`, `href="/waiotech/runs/42"`, `data-live-region="branches"`, `data-live-region="tags"`,
-				`href="/waiotech/compare/main...develop"`, `aria-current="page">`}},
+			[]string{`data-live-events="/events?repo=r1"`, `href="/waiotech/runs/42"`, `data-live-region="branches"`, `data-live-region="tags"`,
+				`href="/waiotech/commits?base=main&amp;ref=develop"`, `aria-current="page">`}},
 		{"commit", commitPage{repoFrame: repoFrame{Repo: repo}, Commit: &git.Commit{Hash: strings.Repeat("c", 40), Subject: "Fix it"}, Diff: &git.Diff{}},
 			[]string{"Fix it", "Browse files"}},
 	}
@@ -376,7 +382,7 @@ func TestShutdownEndsOpenEventStreams(t *testing.T) {
 	}
 	port := probe.Addr().(*net.TCPAddr).Port
 	probe.Close()
-	a.cfg = &config.Config{Port: port}
+	a.cfg = &config.Config{Retention: config.DefaultRetention(), Port: port}
 	a.handler = handler
 	a.listen = func(ctx context.Context, _ []string, _ func(string, string), _ func(error)) { <-ctx.Done() }
 
@@ -412,5 +418,97 @@ func TestShutdownEndsOpenEventStreams(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("shutdown waited on an open event stream")
+	}
+}
+
+func TestEventStreamStopsAfterSessionRevocation(t *testing.T) {
+	a, handler := eventStreamFixture(t)
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/events?run=run-1", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	person, err := a.people.GetByUsername(ctx, "darius")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.people.Disable(ctx, person.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	a.hub.publish(notice{channel: ci.NotifyChannel, payload: "run-1"})
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("stream did not close after revocation: %v", err)
+	}
+	if strings.Contains(string(body), "event: change") {
+		t.Fatalf("revoked stream sent data: %s", body)
+	}
+}
+
+func TestEventStreamStopsAfterRepositoryAccessRevocation(t *testing.T) {
+	a, handler := eventStreamFixture(t)
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/events?run=run-1", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	repo, err := a.repos.GetByName(ctx, "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.repos.SetAccess(ctx, repo.ID, reposvc.VisibilityRestricted, reposvc.PushAdmins, nil, nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	a.hub.publish(notice{channel: ci.NotifyChannel, payload: "run-1"})
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("stream did not close after access revocation: %v", err)
+	}
+	if strings.Contains(string(body), "event: change") {
+		t.Fatalf("unauthorized stream sent data: %s", body)
+	}
+}
+
+func TestLiveAdmissionLimitsAndRelease(t *testing.T) {
+	h := newHub()
+	var releases []func()
+	for i := 0; i < livePerPerson; i++ {
+		release, ok := h.admit("person")
+		if !ok {
+			t.Fatal("refused stream below person limit")
+		}
+		releases = append(releases, release)
+	}
+	if _, ok := h.admit("person"); ok {
+		t.Fatal("exceeded person limit")
+	}
+	releases[0]()
+	release, ok := h.admit("person")
+	if !ok {
+		t.Fatal("released stream retained its slot")
+	}
+	release()
+	for _, release := range releases[1:] {
+		release()
+	}
+	for i := 0; i < liveGlobal; i++ {
+		release, ok := h.admit(fmt.Sprint(i))
+		if !ok {
+			t.Fatal("refused stream below global limit")
+		}
+		defer release()
+	}
+	if _, ok := h.admit("overflow"); ok {
+		t.Fatal("exceeded global limit")
 	}
 }

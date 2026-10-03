@@ -13,7 +13,6 @@ import (
 	"github.com/mmrzaf/gitman/internal/auth"
 	"github.com/mmrzaf/gitman/internal/ci"
 	"github.com/mmrzaf/gitman/internal/git"
-	"github.com/mmrzaf/gitman/internal/id"
 	"github.com/mmrzaf/gitman/internal/postgres"
 	"github.com/mmrzaf/gitman/internal/repo"
 )
@@ -25,9 +24,15 @@ const maxUpdates = 1000
 // the cap as "1000+".
 const commitCountCap = 1000
 
-// ErrRejected is returned by PreReceive when at least one update was
+// ErrRejected is returned by ValidatePush when at least one update was
 // refused; the reasons have already been written to the hook's output.
 var ErrRejected = errors.New("push rejected")
+
+// refusal is why one ref of a push was refused; ref is empty when the
+// whole push was.
+type refusal struct {
+	ref, reason string
+}
 
 // Update is one line of a hook's input: a ref moving from Old to New.
 type Update struct {
@@ -44,8 +49,7 @@ func (u Update) IsCreate() bool { return git.IsZeroHash(u.Old) }
 // IsDelete reports whether the update deletes the ref.
 func (u Update) IsDelete() bool { return git.IsZeroHash(u.New) }
 
-// ParseUpdates reads the "<old> <new> <ref>" lines Git gives pre-receive
-// and post-receive on standard input.
+// ParseUpdates reads the "<old> <new> <ref>" commands from proc-receive.
 func ParseUpdates(r io.Reader) ([]Update, error) {
 	var updates []Update
 	scanner := bufio.NewScanner(r)
@@ -74,7 +78,7 @@ func ParseUpdates(r io.Reader) ([]Update, error) {
 
 // Hook serves one push's hooks.
 type Hook struct {
-	// DB runs the post-receive transaction, which spans the repo and ci
+	// DB runs the push-recording transaction, which spans the repo and ci
 	// services so a push's record, ref index and runs commit together.
 	DB     *postgres.DB
 	People *auth.Service
@@ -125,27 +129,23 @@ func (pc *pushContext) decide(u Update) repo.Decision {
 	return repo.Evaluate(pc.rules, u.Kind, u.Name, pc.person.ID, pc.person.IsAdmin, pc.repo.DefaultPushPolicy, pc.repo.DefaultPushPeople)
 }
 
-// ruleLabel names the rule behind a decision in a rejection message.
-func ruleLabel(d repo.Decision) string {
-	if d.MatchedRule == nil {
-		return "no rule"
-	}
-	return fmt.Sprintf("the rule for %s %q", d.MatchedRule.Kind, d.MatchedRule.Pattern)
+func (pc *pushContext) who() repo.Who {
+	return repo.Who{ID: pc.person.ID, Username: pc.person.Username, IsAdmin: pc.person.IsAdmin}
 }
 
-// PreReceive checks every update against Gitman's ref naming rules and
+// ValidatePush checks every update against Gitman's ref naming rules and
 // the repository's ref rules. It refuses the whole push if any update is
-// refused — Git applies a push atomically when pre-receive fails — and
+// refused; ApplyPush changes refs only after validation succeeds. It
 // explains every refusal, not just the first, so one retry fixes them
 // all.
-func (h *Hook) PreReceive(ctx context.Context, updates []Update) error {
+func (h *Hook) ValidatePush(ctx context.Context, updates []Update) error {
 	pc, err := h.load(ctx)
 	if err != nil {
 		return err
 	}
 	if pc.person.Disabled() {
 		h.say("Gitman: %s is disabled and cannot push.", pc.person.Username)
-		return ErrRejected
+		return h.refused(ctx, pc, refusal{reason: pc.person.Username + " is disabled and cannot push"})
 	}
 	readable, err := h.Repos.CanRead(ctx, pc.repo, pc.person.ID, pc.person.IsAdmin)
 	if err != nil {
@@ -153,7 +153,7 @@ func (h *Hook) PreReceive(ctx context.Context, updates []Update) error {
 	}
 	if !readable {
 		h.say("Gitman: %s cannot push to a repository they cannot read.", pc.person.Username)
-		return ErrRejected
+		return h.refused(ctx, pc, refusal{reason: pc.person.Username + " cannot push to a repository they cannot read"})
 	}
 
 	existing, err := h.Git.Refs(ctx)
@@ -179,9 +179,9 @@ func (h *Hook) PreReceive(ctx context.Context, updates []Update) error {
 		}
 	}
 
-	var rejections []string
+	var rejections []refusal
 	reject := func(u Update, format string, args ...any) {
-		rejections = append(rejections, fmt.Sprintf("%s: %s", u.Ref, fmt.Sprintf(format, args...)))
+		rejections = append(rejections, refusal{ref: u.Ref, reason: fmt.Sprintf(format, args...)})
 	}
 
 	for _, u := range updates {
@@ -204,24 +204,21 @@ func (h *Hook) PreReceive(ctx context.Context, updates []Update) error {
 			}
 		}
 
-		d := pc.decide(u)
-		if !d.CanPush {
-			reject(u, "%s does not allow %s to push here", ruleLabel(d), pc.person.Username)
+		if u.IsDelete() {
+			if _, reason := repo.CheckDelete(pc.repo, pc.rules, u.Kind, u.Name, pc.who()); reason != "" {
+				reject(u, "%s", reason)
+			}
 			continue
 		}
 
-		switch {
-		case u.IsDelete():
-			if u.Kind == git.KindBranch && u.Name == pc.repo.DefaultBranch {
-				reject(u, "the default branch cannot be deleted")
-				continue
-			}
-			if !d.AllowDelete {
-				reject(u, "%s does not allow deleting it", ruleLabel(d))
-				continue
-			}
+		d := pc.decide(u)
+		if !d.CanPush {
+			reject(u, "%s does not allow %s to push here", d.RuleLabel(), pc.person.Username)
+			continue
+		}
 
-		case u.Kind == git.KindBranch:
+		switch u.Kind {
+		case git.KindBranch:
 			typ, err := h.Git.ObjectType(ctx, u.New)
 			if err != nil {
 				return fmt.Errorf("inspect %s: %w", u.New, err)
@@ -236,12 +233,12 @@ func (h *Hook) PreReceive(ctx context.Context, updates []Update) error {
 					return fmt.Errorf("check fast-forward for %s: %w", u.Ref, err)
 				}
 				if !ff && !d.AllowForce {
-					reject(u, "this rewrites history (a force-push), which %s does not allow", ruleLabel(d))
+					reject(u, "this rewrites history (a force-push), which %s does not allow", d.RuleLabel())
 					continue
 				}
 			}
 
-		case u.Kind == git.KindTag:
+		case git.KindTag:
 			if _, err := h.Git.ResolveCommit(ctx, u.New); err != nil {
 				if errors.Is(err, git.ErrNotFound) {
 					reject(u, "a tag must point at a commit")
@@ -250,7 +247,7 @@ func (h *Hook) PreReceive(ctx context.Context, updates []Update) error {
 				return fmt.Errorf("inspect %s: %w", u.New, err)
 			}
 			if !u.IsCreate() && !d.AllowForce {
-				reject(u, "moving an existing tag is a force-push, which %s does not allow", ruleLabel(d))
+				reject(u, "moving an existing tag is a force-push, which %s does not allow", d.RuleLabel())
 				continue
 			}
 		}
@@ -261,33 +258,44 @@ func (h *Hook) PreReceive(ctx context.Context, updates []Update) error {
 	}
 	h.say("Gitman refused this push:")
 	for _, r := range rejections {
-		h.say("  %s", r)
+		h.say("  %s: %s", r.ref, r.reason)
+	}
+	return h.refused(ctx, pc, rejections...)
+}
+
+// refused records a refused push, for History's Activity, and returns
+// ErrRejected. The pusher already has the reasons; a failure to keep them
+// is said, and never changes the refusal.
+func (h *Hook) refused(ctx context.Context, pc *pushContext, refusals ...refusal) error {
+	err := h.DB.Tx(ctx, func(tx postgres.Tx) error {
+		if err := insertRefusal(ctx, tx, pc.repo.ID, pc.person.ID, h.Ctx.RemoteAddr, refusals); err != nil {
+			return err
+		}
+		return activity.Changed(ctx, tx, pc.repo.ID)
+	})
+	if err != nil {
+		h.say("Gitman could not record this refusal: %v", err)
 	}
 	return ErrRejected
 }
 
-// updateRecord is what post-receive learns about one update before
+// updateRecord captures one authorized update before
 // writing anything.
 type updateRecord struct {
 	Update
-	commits  int
-	capped   bool
-	decision repo.Decision
-	commit   string // the commit the ref now resolves to
-	pipeline []byte
-	problem  string
+	Commits  int
+	Capped   bool
+	Decision repo.Decision
+	Commit   string // the commit the ref now resolves to
+	Pipeline []byte
+	Problem  string
+	// force reports a branch moved to a commit that does not descend from
+	// the old one: a rewrite of its history.
+	Force bool
 }
 
-// PostReceive records the push, brings the ref index up to date, and
-// creates a run for every updated ref whose rule runs pipelines on push.
-// Git has already accepted the push when this runs; a failure here is
-// reported to the pusher but cannot undo the push.
-func (h *Hook) PostReceive(ctx context.Context, updates []Update) error {
-	pc, err := h.load(ctx)
-	if err != nil {
-		return err
-	}
-
+func (h *Hook) prepareRecords(ctx context.Context, pc *pushContext, updates []Update) ([]updateRecord, error) {
+	var err error
 	// Everything that reads Git happens before the transaction, which
 	// then holds its locks only for the writes.
 	records := make([]updateRecord, 0, len(updates))
@@ -295,33 +303,57 @@ func (h *Hook) PostReceive(ctx context.Context, updates []Update) error {
 		if u.Kind == "" {
 			continue
 		}
-		rec := updateRecord{Update: u, decision: pc.decide(u)}
+		rec := updateRecord{Update: u, Decision: pc.decide(u)}
 		switch {
 		case u.IsDelete():
 		case u.IsCreate():
-			rec.commits, rec.capped, err = h.Git.CountNewCommits(ctx, u.New, u.Kind, u.Name, commitCountCap)
+			rec.Commits, rec.Capped, err = h.Git.CountNewCommits(ctx, u.New, u.Kind, u.Name, commitCountCap)
 		default:
-			rec.commits, rec.capped, err = h.Git.CountCommits(ctx, u.New, []string{u.Old}, commitCountCap)
+			rec.Commits, rec.Capped, err = h.Git.CountCommits(ctx, u.New, []string{u.Old}, commitCountCap)
 		}
 		if err != nil {
-			return fmt.Errorf("count commits for %s: %w", u.Ref, err)
+			return nil, fmt.Errorf("count commits for %s: %w", u.Ref, err)
 		}
 		if !u.IsDelete() {
-			if rec.commit, err = h.Git.ResolveCommit(ctx, u.New); err != nil {
-				return fmt.Errorf("resolve %s: %w", u.Ref, err)
+			if rec.Commit, err = h.Git.ResolveCommit(ctx, u.New); err != nil {
+				return nil, fmt.Errorf("resolve %s: %w", u.Ref, err)
 			}
-			if rec.decision.RunOnPush {
-				rec.pipeline, rec.problem, err = ci.LoadPipeline(ctx, h.Git, rec.commit)
+			// Metadata is required to record the push, so unreadable commits
+			// must be rejected before any ref or durable intent is changed.
+			if _, err := h.Git.Commit(ctx, rec.Commit); err != nil {
+				return nil, fmt.Errorf("read commit for %s: %w", u.Ref, err)
+			}
+			if u.Kind == git.KindBranch && !u.IsCreate() {
+				ff, err := h.Git.IsAncestor(ctx, u.Old, u.New)
 				if err != nil {
-					return err
+					return nil, fmt.Errorf("check fast-forward for %s: %w", u.Ref, err)
+				}
+				rec.Force = !ff
+			}
+			if rec.Decision.RunOnPush {
+				rec.Pipeline, rec.Problem, err = ci.LoadPipeline(ctx, h.Git, rec.Commit)
+				if err != nil {
+					return nil, err
 				}
 			}
 		}
 		records = append(records, rec)
 	}
+	return records, nil
+}
+
+func (h *Hook) recordPush(ctx context.Context, pc *pushContext, records []updateRecord, operationID string) error {
+	pushID := operationID
 	var created []*ci.Created
-	var createdFor, moved, notRun []updateRecord
-	err = h.DB.Tx(ctx, func(tx postgres.Tx) error {
+	var createdFor, notRun []updateRecord
+	err := h.DB.Tx(ctx, func(tx postgres.Tx) error {
+		var pending bool
+		if err := tx.QueryRow(ctx, `SELECT completed_at IS NULL FROM repository_operations WHERE id=$1 FOR UPDATE`, operationID).Scan(&pending); err != nil {
+			return err
+		}
+		if !pending {
+			return nil
+		}
 		// The ref index lock comes first, before any row that refers to
 		// the repository: deleting a repository takes the same lock
 		// before its row, so the two never wait on each other.
@@ -329,13 +361,12 @@ func (h *Hook) PostReceive(ctx context.Context, updates []Update) error {
 		if err != nil {
 			return err
 		}
-		pushID := id.New()
 		if err := insertPush(ctx, tx, pushID, pc.repo.ID, pc.person.ID, h.Ctx.RemoteAddr); err != nil {
 			return err
 		}
 		for _, rec := range records {
 			if err := insertPushUpdate(ctx, tx, pushID, rec.Kind, rec.Name, rec.Old, rec.New,
-				rec.IsCreate(), rec.IsDelete(), rec.commits, rec.capped); err != nil {
+				rec.IsCreate(), rec.IsDelete(), rec.Force, rec.Commits, rec.Capped); err != nil {
 				return err
 			}
 		}
@@ -355,35 +386,33 @@ func (h *Hook) PostReceive(ctx context.Context, updates []Update) error {
 				}
 				continue
 			}
-			if !rec.decision.RunOnPush {
+			if !rec.Decision.RunOnPush {
 				notRun = append(notRun, rec)
 				continue
 			}
-			// Hooks of pushes that land back to back can finish in
-			// either order. A ref a later push has already moved on is
-			// that push's to run: a run of this commit would be queued
-			// after, and supersede, the newer one.
-			if now != rec.commit {
-				moved = append(moved, rec)
-				continue
+			if now != rec.Commit {
+				return fmt.Errorf("git refs diverge from operation receipt for %s", rec.Ref)
 			}
 			run, err := h.CI.CreateTx(ctx, tx, ci.CreateParams{
 				RepoID:          pc.repo.ID,
-				Commit:          rec.commit,
+				Commit:          rec.Commit,
 				RefKind:         rec.Kind,
 				RefName:         rec.Name,
 				Trigger:         ci.TriggerPush,
 				PersonID:        pc.person.ID,
 				PushID:          pushID,
-				Pipeline:        rec.pipeline,
-				PipelineProblem: rec.problem,
-				Decision:        rec.decision,
+				Pipeline:        rec.Pipeline,
+				PipelineProblem: rec.Problem,
+				Decision:        rec.Decision,
 			})
 			if err != nil {
 				return fmt.Errorf("create run for %s: %w", rec.Ref, err)
 			}
 			created = append(created, run)
 			createdFor = append(createdFor, rec)
+		}
+		if err := repo.CompleteOperationTx(ctx, tx, operationID); err != nil {
+			return err
 		}
 		return activity.Changed(ctx, tx, pc.repo.ID)
 	})
@@ -398,20 +427,15 @@ func (h *Hook) PostReceive(ctx context.Context, updates []Update) error {
 		// Only advice: the push and its runs are already recorded, so a
 		// failed check leaves the notice out rather than failing a push
 		// that succeeded.
-		if online, err := h.CI.AnyWorkerOnline(ctx); err == nil && !online {
-			h.say("Gitman: no worker is online, so queued runs wait until one starts.")
+		if online, err := h.CI.AnyWorkerReady(ctx); err == nil && !online {
+			h.say("Gitman: no worker is ready, so queued runs wait until one is available.")
 		}
 	}
-	for _, rec := range moved {
-		h.say("Gitman: %s %s moved again before this push was recorded; the later push runs its pipeline.", rec.Kind, rec.Name)
-	}
-	// A push that starts no run says so, so the pusher never has to
-	// wonder whether a pipeline is broken or was never asked for.
 	for _, rec := range notRun {
-		if rec.decision.MatchedRule == nil {
+		if rec.Decision.MatchedRule == nil {
 			h.say("Gitman: no run for %s %s: no ref rule matches it, and only a rule with \"run\" on starts one.", rec.Kind, rec.Name)
 		} else {
-			h.say("Gitman: no run for %s %s: %s does not have \"run\" on.", rec.Kind, rec.Name, ruleLabel(rec.decision))
+			h.say("Gitman: no run for %s %s: %s does not have \"run\" on.", rec.Kind, rec.Name, rec.Decision.RuleLabel())
 		}
 	}
 	return nil
@@ -423,7 +447,7 @@ func (h *Hook) reportRun(repoName string, rec updateRecord, run *ci.Created) {
 	switch run.Status {
 	case ci.StatusQueued:
 		if run.Target != "" {
-			h.say("Gitman: run #%d queued for %s, shipping to %s", run.Number, label, run.Target)
+			h.say("Gitman: run #%d queued for %s, target context %s", run.Number, label, run.Target)
 		} else {
 			h.say("Gitman: run #%d queued for %s", run.Number, label)
 		}

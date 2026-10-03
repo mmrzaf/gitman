@@ -20,6 +20,7 @@ import (
 // repeating it.
 type DB struct {
 	Pool           *pgxpool.Pool
+	admissionPool  *pgxpool.Pool
 	Q              Querier
 	acquireTimeout time.Duration
 }
@@ -57,7 +58,16 @@ func Connect(ctx context.Context, databaseURL string, opts Options) (*DB, error)
 		pool.Close()
 		return nil, fmt.Errorf("connect to database: %w", err)
 	}
-	d := &DB{Pool: pool, acquireTimeout: opts.AcquireTimeout}
+	// Admission locks must never consume connections needed by domain work.
+	admissionConfig := poolConfig.Copy()
+	admissionConfig.MaxConns = 4
+	admissionConfig.MinConns = 0
+	admissionPool, err := pgxpool.NewWithConfig(ctx, admissionConfig)
+	if err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("open admission pool: %w", err)
+	}
+	d := &DB{Pool: pool, admissionPool: admissionPool, acquireTimeout: opts.AcquireTimeout}
 	d.Q = boundedQuerier{db: d}
 	return d, nil
 }
@@ -167,6 +177,7 @@ func (r erroredRow) Scan(dest ...any) error { return r.err }
 
 // Close releases the connection pool.
 func (d *DB) Close() {
+	d.admissionPool.Close()
 	d.Pool.Close()
 }
 

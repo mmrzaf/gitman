@@ -27,7 +27,7 @@ type Rule struct {
 	RunOnPush    bool
 	AllowDocker  bool
 	AllowSecrets bool
-	AllowShip    bool
+	AllowDeploy  bool
 }
 
 // Decision is what a rule set resolves to for one ref and one person. When
@@ -43,8 +43,43 @@ type Decision struct {
 	RunOnPush    bool
 	AllowDocker  bool
 	AllowSecrets bool
-	AllowShip    bool
+	AllowDeploy  bool
 	MatchedRule  *Rule
+}
+
+// RuleLabel names the rule behind a decision, for a message that says why
+// something was refused.
+func (d Decision) RuleLabel() string {
+	if d.MatchedRule == nil {
+		return "no rule"
+	}
+	return fmt.Sprintf("the rule for %s %q", d.MatchedRule.Kind, d.MatchedRule.Pattern)
+}
+
+// Who is the person a decision is made for.
+type Who struct {
+	ID       string
+	Username string
+	IsAdmin  bool
+}
+
+// CheckDelete decides whether who may delete a branch or tag, for a push
+// that deletes it and for the web's Delete button alike, so the two can
+// never disagree. It returns the decision for the ref and, when the
+// deletion is refused, why; the reason is empty when it is allowed. A
+// person who may not push to the ref is refused first, then the default
+// branch, which is never deleted, then a rule that does not allow deleting.
+func CheckDelete(r *Repo, rules []Rule, kind git.Kind, name string, who Who) (Decision, string) {
+	d := Evaluate(rules, kind, name, who.ID, who.IsAdmin, r.DefaultPushPolicy, r.DefaultPushPeople)
+	switch {
+	case !d.CanPush:
+		return d, fmt.Sprintf("%s does not allow %s to push here", d.RuleLabel(), who.Username)
+	case kind == git.KindBranch && name == r.DefaultBranch:
+		return d, "the default branch cannot be deleted"
+	case !d.AllowDelete:
+		return d, fmt.Sprintf("%s does not allow deleting it", d.RuleLabel())
+	}
+	return d, ""
 }
 
 // Evaluate resolves the rule that applies to kind/name for one person.
@@ -73,7 +108,7 @@ func Evaluate(rules []Rule, kind git.Kind, name string, personID string, isAdmin
 		RunOnPush:    matched.RunOnPush,
 		AllowDocker:  matched.AllowDocker,
 		AllowSecrets: matched.AllowSecrets,
-		AllowShip:    matched.AllowShip,
+		AllowDeploy:  matched.AllowDeploy,
 		MatchedRule:  matched,
 	}
 	switch matched.PushPolicy {

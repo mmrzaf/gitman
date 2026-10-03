@@ -1,0 +1,99 @@
+{{define "content"}}
+{{$d := .Data}}{{$repo := $d.Repo}}{{$cmp := $d.Comparison}}
+<div class="page" data-swap-region>
+<h1 class="visually-hidden" id="commits-title">Commits</h1>
+
+<div class="stack">
+{{- if $d.Unpushed}}
+<section class="panel" aria-labelledby="commits-title">
+  <div class="empty">
+    {{template "icon" "commit"}}
+    <p class="empty-title">Nothing pushed yet</p>
+    <p>The default branch, {{template "ref" (refModel "branch" $repo.DefaultBranch "")}}, has not been pushed.</p>
+    {{- if $d.Branches}}
+    <p class="cluster">Commits of
+      {{- range $d.Branches}} {{template "ref" (refModel "branch" . (commitsURL $repo.Name . ""))}}{{end}}</p>
+    {{- end}}
+  </div>
+</section>
+
+{{- else}}
+<section class="panel" aria-label="Choose what to show">
+  <form class="toolbar commit-picker" method="get" action="/{{$repo.Name}}/commits" data-swap>
+    {{template "ref-field" (refFieldModel "commits-ref" "ref" "Commits of" $d.Head.Name true "")}}
+    {{template "ref-field" (refFieldModel "commits-base" "base" "Compared with" $d.Base.Name false "No comparison")}}
+    {{- with $d.Path}}<input type="hidden" name="path" value="{{.}}">{{end}}
+    <button type="submit" class="btn btn-primary no-js-only">Show</button>
+    {{- if $cmp}}<a class="btn" href="{{$d.SwapURL}}" data-swap>{{template "icon" "compare"}}Swap sides</a>{{end}}
+    {{- if $d.Head.Name}}<a class="btn" href="{{refURL $repo.Name $d.Head.Name ""}}" data-command="Browse the files of {{$d.Head.Name}}">{{template "icon" "code"}}Browse files</a>{{end}}
+    <datalist id="commit-refs">
+      {{- range $d.Refs}}<option value="{{.Name}}">{{.Kind}}</option>{{end}}
+    </datalist>
+  </form>
+  {{- with $d.Path}}
+  <p class="panel-footer cluster"><span class="chip">{{template "icon" "file"}}<span class="mono">{{.}}</span></span>
+    <a class="btn btn-ghost btn-sm" href="{{commitsURL $repo.Name $d.Head.Name ""}}" data-swap>{{template "icon" "close"}}All paths</a></p>
+  {{- end}}
+  {{- if $cmp}}
+  <p class="panel-footer compare-summary">
+    {{- if or $d.Ahead $d.Behind}}
+    <strong class="mono">{{$d.Head.Name}}</strong> is {{$d.Ahead}} commit{{if ne $d.Ahead 1}}s{{end}} ahead of and {{$d.Behind}} behind <strong class="mono">{{$d.Base.Name}}</strong>.
+    {{- if $d.Behind}} <a href="{{$d.SwapURL}}" data-swap>See the {{$d.Behind}} commit{{if ne $d.Behind 1}}s{{end}} {{$d.Base.Name}} has</a>.{{end}}
+    {{- else}}
+    <strong class="mono">{{$d.Head.Name}}</strong> and <strong class="mono">{{$d.Base.Name}}</strong> are at the same commit.
+    {{- end}}
+    <span class="muted">Common ancestor {{template "commit" (commitModel $repo.Name $cmp.MergeBase)}}.</span>
+  </p>
+  {{- end}}
+</section>
+
+{{- if $cmp}}
+{{- if $d.Commits}}
+<nav class="tabs tabs-page" data-tabs aria-label="Comparison">
+  <a class="tab" id="tab-commits" href="{{$d.TabURL "commits"}}" data-tab="commits"{{if eq $d.Tab "commits"}} aria-current="page"{{end}}>{{template "icon" "commit"}}Commits <span class="count">{{len $d.Commits}}{{if $cmp.MoreCommits}}+{{end}}</span></a>
+  <a class="tab" id="tab-changes" href="{{$d.TabURL "changes"}}" data-tab="changes"{{if eq $d.Tab "changes"}} aria-current="page"{{end}}>{{template "icon" "code"}}Changes <span class="count">{{(diffTotals $cmp.Diff).Files}}</span><span class="diffstat tab-diffstat"><span class="diffstat-add">+{{(diffTotals $cmp.Diff).Additions}}</span><span class="diffstat-del">−{{(diffTotals $cmp.Diff).Deletions}}</span></span></a>
+</nav>
+<div id="panel-commits" data-tab-panel="commits"{{if ne $d.Tab "commits"}} hidden{{end}}>
+  <section class="panel" aria-label="Commits">
+    {{template "commit-table" (commitTableModel $d.Commits $repo)}}
+    {{- if $cmp.MoreCommits}}<p class="panel-footer">There are more commits than are listed here.</p>{{end}}
+  </section>
+</div>
+<div class="stack" id="panel-changes" data-tab-panel="changes"{{if ne $d.Tab "changes"}} hidden{{end}}>
+  {{template "diff" (diffModel $cmp.Diff true)}}
+</div>
+{{- end}}
+{{- else}}
+<section class="panel" aria-labelledby="list-title">
+  <header class="panel-header"><h2 class="panel-title" id="list-title">{{template "icon" "commit"}}{{$d.Head.Name}}</h2></header>
+  <div>
+  {{- if $d.Commits}}
+  {{template "commit-table" (commitTableModel $d.Commits $repo)}}
+  {{- else}}
+  {{template "empty" (emptyModel "commit" "No commits" "None changed this path." false)}}
+  {{- end}}
+  </div>
+  {{- if or $d.Skip $d.More}}
+  <nav class="panel-footer cluster" aria-label="Pages of commits">
+    {{- if $d.Skip}}<a class="btn btn-sm" href="{{$d.PageURL $d.NewerSkip}}" data-swap>Newer</a>{{end}}
+    {{- if $d.More}}<a class="btn btn-sm" href="{{$d.PageURL $d.OlderSkip}}" data-swap>Older</a>{{end}}
+  </nav>
+  {{- end}}
+</section>
+{{- end}}
+{{- end}}
+</div>
+</div>
+{{end}}
+
+{{/* ref-field: choose a branch, tag or commit. Without scripting it is a
+     text box with the repository's refs to pick from; ref-field.js makes
+     it a button that opens a searchable list. Takes (typed view: "ID" "Name"
+     "Label" "Value" "Required" and, if it can be left empty, "Clear": what
+     leaving it empty is called). */}}
+{{define "ref-field"}}
+<div class="field ref-field" data-ref-field data-ref-submit{{with .Clear}} data-ref-clear="{{.}}"{{end}}>
+  <label class="field-label" for="{{.ID}}">{{.Label}}</label>
+  <input class="input" id="{{.ID}}" name="{{.Name}}" value="{{.Value}}" list="commit-refs" placeholder="Branch, tag or commit" autocomplete="off" spellcheck="false"{{if .Required}} required{{end}}>
+</div>
+{{end}}

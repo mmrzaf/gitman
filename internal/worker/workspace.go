@@ -90,6 +90,7 @@ func (ws workspace) checkout(ctx context.Context, repoURL, username, password, c
 		cmd := exec.CommandContext(ctx, "git", args...)
 		cmd.Dir = ws.source()
 		cmd.Env = env
+		cmd.WaitDelay = 10 * time.Second
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("git %s: %s", args[0], strings.TrimSpace(lastLines(string(out), 5)))
 		}
@@ -208,7 +209,7 @@ func workspaceRuns(root string) ([]string, error) {
 	}
 	var runs []string
 	for _, e := range entries {
-		if e.IsDir() {
+		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
 			runs = append(runs, e.Name())
 		}
 	}

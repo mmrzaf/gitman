@@ -1,76 +1,18 @@
 #!/usr/bin/env bash
-# A real end-to-end run of Gitman: builds the binary, starts web and a
-# worker against a real PostgreSQL database, and pushes real Git commits
-# over HTTP to drive real pipeline runs in real Docker containers.
-#
-# Requires, all reachable from this shell: Go, git, curl, psql, and a
-# Docker daemon with alpine:3.20 already pulled (Gitman never pulls
-# images itself, and neither does this script). PostgreSQL is reached as
-# PGUSER at PGHOST:PGPORT (postgres at 127.0.0.1:5432 by default). The
-# script creates and drops a database named gitman_e2e, and serves on
-# GITMAN_E2E_PORT (18080 by default). It looks only at the step
-# containers of the instance it starts, so it can share a Docker host.
-#
-# Run from anywhere; it always operates on the repository this script
-# lives in:
-#   scripts/e2e.sh
-set -euo pipefail
-
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT"
-
-export PGHOST=${PGHOST:-127.0.0.1} PGPORT=${PGPORT:-5432} PGUSER=${PGUSER:-postgres}
-BIN="$ROOT/bin/gitman"
-RUN="$ROOT/.data/e2e"
-DATA="$RUN/data"
-W="$RUN/work"
-PORT=${GITMAN_E2E_PORT:-18080}
-BASE=http://127.0.0.1:$PORT
-export GITMAN_DATABASE_URL="postgres://$PGUSER@$PGHOST:$PGPORT/gitman_e2e?sslmode=disable"
-export GITMAN_DATA_DIR=$DATA
-export GITMAN_PUBLIC_URL=$BASE
-export GITMAN_PORT=$PORT
-export GITMAN_SECRET_KEY='an end-to-end secret key, at least 32 bytes'
-export GITMAN_RETENTION_DAYS=90
-
-step() { printf '\n=== %s\n' "$*"; }
-fail() { echo "FAILED: $*" >&2; exit 1; }
-# cleanup stops what the script started. A process may be gone already —
-# the worker is killed on purpose — so a failed kill is not a failure.
-cleanup() {
-  for pid in "$RUN/web.pid" "$RUN/worker.pid"; do
-    [ -f "$pid" ] && kill "$(cat "$pid")" 2>/dev/null || true
-  done
-}
-trap cleanup EXIT
-
-step "build"
-go build -o "$BIN" ./cmd/gitman
-
-step "fresh database and data directory"
-psql -qc 'DROP DATABASE IF EXISTS gitman_e2e' -c 'CREATE DATABASE gitman_e2e'
-rm -rf "$RUN" && mkdir -p "$DATA" "$W"
-
-step "start web and worker"
-curl -s -o /dev/null "$BASE/" && fail "something is already serving $BASE; set GITMAN_E2E_PORT"
-"$BIN" web > "$RUN/web.log" 2>&1 &
-echo $! > "$RUN/web.pid"
-for i in $(seq 1 50); do curl -sf "$BASE/readyz" >/dev/null && break; sleep 0.2; done
-curl -sf "$BASE/readyz" >/dev/null || fail "web did not become ready"
-"$BIN" worker > "$RUN/worker.log" 2>&1 &
-echo $! > "$RUN/worker.pid"
-sleep 1
-INSTANCE=$(psql -d gitman_e2e -tAc 'SELECT id FROM instance')
+# Real Git HTTP, Docker execution, cancellation, lost-worker cleanup and output safety.
+source "$(dirname "${BASH_SOURCE[0]}")/integration-lib.sh"
+integration_init e2e "${GITMAN_E2E_PORT:-18080}"
+start_worker
+INSTANCE=$(psql -d "$DATABASE" -tAc 'SELECT id FROM instance')
 # steps lists this instance's running step containers.
 steps() { docker ps -q --filter "label=gitman.instance=$INSTANCE" "$@"; }
 
 step "admin, repository, write token"
-"$BIN" admin person add --admin darius | tee "$RUN/admin.txt"
-PASSWORD=$(awk '/^Password:/ {print $2}' "$RUN/admin.txt")
+bootstrap_admin
 "$BIN" admin repo create --description "End-to-end" demo
-TOKEN=$("$BIN" admin token create --write darius laptop | awk '/^Token:/ {print $2}')
+TOKEN=$("$BIN" admin token create --write --repos demo darius laptop | awk '/^Token:/ {print $2}')
 [ -n "$TOKEN" ] || fail "no token"
-"$BIN" admin rule set --run --ship demo branch main
+"$BIN" admin rule set --run --deploy demo branch main
 "$BIN" admin rule set --run demo branch 'slow/*'
 "$BIN" admin rule set --run demo branch 'malicious'
 "$BIN" admin rule set --run demo branch 'flag-image'
@@ -102,7 +44,8 @@ steps:
         for i in $(seq 1 120); do echo "tick $i"; sleep 1; done
       fi
       echo slow step done
-  - name: ship
+  - name: deploy
+    type: deploy
     when: staging
     run: echo "shipping $GITMAN_VERSION to $GITMAN_TARGET"
 EOF
@@ -110,7 +53,7 @@ printf '<html><script>alert(document.cookie)</script></html>\n' > "$W/index.html
 git -C "$W" add -A && git -C "$W" commit -qm "Pipeline and a page"
 REMOTE="http://darius:$TOKEN@127.0.0.1:$PORT/demo.git"
 git -C "$W" push "$REMOTE" main 2>&1 | tee "$RUN/push-main.txt"
-grep -q "run #1 queued for branch main, shipping to staging" "$RUN/push-main.txt" || fail "push did not report run #1"
+grep -q "run #1 queued for branch main, target context staging" "$RUN/push-main.txt" || fail "push did not report run #1"
 
 step "watch run #1 pass and ship"
 for i in $(seq 1 120); do
@@ -122,8 +65,8 @@ echo "$page" | grep -q 'status-lg is-passed' || { echo "$page" | sed -n '/run-he
 curl -s -b "$JAR" "$BASE/demo/runs/1/log?step=2" | tee "$RUN/ship.log"
 grep -q "shipping .* to staging" "$RUN/ship.log" || fail "ship step output missing"
 repo_page=$(curl -s -b "$JAR" "$BASE/demo")
-echo "$repo_page" | grep -q '<p class="target-name">staging</p>' || fail "deployment not shown on the repository page"
-curl -s -b "$JAR" "$BASE/" | grep -q '<th scope="col">staging</th>' || fail "deployment not shown on Home"
+echo "$repo_page" | grep -q '<th scope="row" class="table-rowheader"><div class="table-cell">staging</div></th>' || fail "deployment not shown on the repository page"
+curl -s -b "$JAR" "$BASE/" | grep -q '<td data-label="Target"><div class="table-cell">staging</div></td>' || fail "deployment not shown on Home"
 curl -s -b "$JAR" "$BASE/demo/runs/1" | grep -q '<dt>version</dt>' || fail "summary missing"
 
 step "raw HTML is served as plain text in a sandbox"
@@ -217,9 +160,9 @@ curl -s -b "$JAR" "$BASE/demo/runs/$RUN_NUM/log?step=1" | grep -q 'tick 3' || fa
 [ -n "$(steps)" ] || fail "no step container found running before the worker is killed"
 kill -9 "$(cat "$RUN/worker.pid")"
 wait "$(cat "$RUN/worker.pid")" 2>/dev/null || true
-sleep 65
+psql -d "$DATABASE" -v ON_ERROR_STOP=1 -c "UPDATE workers SET heartbeat_at=now()-interval '6 minutes' WHERE id=(SELECT worker_id FROM runs WHERE number=$RUN_NUM AND repo_id=(SELECT id FROM repos WHERE name='demo'))"
 "$BIN" admin worker cleanup | tee "$RUN/worker-cleanup.txt"
-grep -qE 'Failed [1-9][0-9]* runs' "$RUN/worker-cleanup.txt" || fail "admin worker cleanup did not fail the killed worker's run"
+# The web reaper may settle the run before the cleanup command; assert the final state below.
 page=$(curl -s -b "$JAR" "$BASE/demo/runs/$RUN_NUM")
 echo "$page" | grep -q 'status-lg is-failed' || fail "run #$RUN_NUM was not failed after its worker was killed"
 echo "$page" | grep -q 'stopped responding' || fail "run #$RUN_NUM's failure reason does not explain that its worker was lost"

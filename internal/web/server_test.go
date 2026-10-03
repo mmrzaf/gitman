@@ -16,7 +16,7 @@ func TestHealthAndReadiness(t *testing.T) {
 	database := pgtest.Open(t)
 	store := git.NewStore(t.TempDir())
 	defer store.Close()
-	cfg := &config.Config{DataDir: t.TempDir(), PublicURL: "http://localhost:8080", Port: 8080}
+	cfg := &config.Config{Retention: config.DefaultRetention(), DataDir: t.TempDir(), PublicURL: "http://localhost:8080", Port: 8080}
 	app, err := New(cfg, testServices(database, store, cfg.SecretKey), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)

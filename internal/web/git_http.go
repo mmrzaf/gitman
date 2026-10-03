@@ -5,12 +5,13 @@
 // an access token as the password. There is no anonymous access. A read
 // token can clone and fetch; pushing needs a write token, and then each
 // ref the push updates is checked against the repository's ref rules by
-// the pre-receive hook.
+// the proc-receive hook.
 
 package web
 
 import (
 	"compress/gzip"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -53,20 +54,31 @@ func (a *App) registerGitRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /{repo}/git-receive-pack", a.limitGitConcurrency(a.gitRPC(git.ReceivePack)))
 }
 
+// acquireGitSlot takes one of the slots that bound Git work, without
+// waiting, and reports false when every slot is taken. The caller releases
+// the slot when its work is done.
+func (a *App) acquireGitSlot() (release func(), ok bool) {
+	select {
+	case a.gitSlots <- struct{}{}:
+		return func() { <-a.gitSlots }, true
+	default:
+		return nil, false
+	}
+}
+
 // limitGitConcurrency wraps a Git HTTP handler with the shared limit on
 // how many may run at once, answering 503 with Retry-After the instant
 // it is full rather than queuing behind whichever ones already hold a
 // slot — those can each run for as long as a large clone or push takes.
 func (a *App) limitGitConcurrency(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		select {
-		case a.gitSlots <- struct{}{}:
-		default:
+		release, ok := a.acquireGitSlot()
+		if !ok {
 			w.Header().Set("Retry-After", "5")
 			http.Error(w, "Gitman is handling too many Git requests right now. Try again shortly.", http.StatusServiceUnavailable)
 			return
 		}
-		defer func() { <-a.gitSlots }()
+		defer release()
 		next(w, r)
 	}
 }
@@ -130,10 +142,10 @@ func (a *App) resolveGit(w http.ResponseWriter, r *http.Request, svc git.Service
 		}
 		runRepoID = repoID
 	} else {
-		p, scope, err := a.people.Authenticate(r.Context(), secret)
+		p, scope, err := a.people.Authenticate(r.Context(), secret, strings.TrimSuffix(r.PathValue("repo"), ".git"))
 		switch {
 		case errors.Is(err, auth.ErrInvalidToken):
-			challenge(w, "Authentication failed: the access token is invalid, expired, or belongs to a disabled person.")
+			challenge(w, "Authentication failed: the access token is invalid, expired, not scoped to this repository, or belongs to a disabled person.")
 			return nil, false
 		case err != nil:
 			a.log.Error("git auth failed", "error", err)
@@ -176,6 +188,19 @@ func (a *App) resolveGit(w http.ResponseWriter, r *http.Request, svc git.Service
 		}
 		if !readable {
 			refuse("Repository not found.", http.StatusNotFound)
+			return nil, false
+		}
+	}
+	if svc == git.ReceivePack {
+		expected := int64(0)
+		if r.Method == http.MethodPost {
+			expected = r.ContentLength
+			if r.Header.Get("Content-Encoding") != "" {
+				expected = -1
+			}
+		}
+		if err := a.repos.CheckPushCapacity(expected); err != nil {
+			refuse("Repository disk reserve is low; pushes are paused until the disk reserve is available.", http.StatusServiceUnavailable)
 			return nil, false
 		}
 	}
@@ -271,7 +296,30 @@ func (a *App) gitRPC(svc git.Service) http.HandlerFunc {
 		noCache(w)
 		w.Header().Set("Content-Type", "application/x-"+string(svc)+"-result")
 		start := time.Now()
-		err := req.git.ServeRPC(r.Context(), opts, body, w)
+		transfer, stopTransfer := context.WithCancelCause(r.Context())
+		monitorDone := make(chan struct{})
+		go func() {
+			defer close(monitorDone)
+			if svc != git.ReceivePack {
+				return
+			}
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-transfer.Done():
+					return
+				case <-ticker.C:
+					if err := a.repos.CheckPushCapacity(0); err != nil {
+						stopTransfer(err)
+						return
+					}
+				}
+			}
+		}()
+		err := req.git.ServeRPC(transfer, opts, body, w)
+		stopTransfer(nil)
+		<-monitorDone
 		attrs := []any{"repo", req.repo.Name, "service", svc, "actor", req.actor(), "duration", time.Since(start).Round(time.Millisecond)}
 		if err != nil {
 			a.log.Warn("git request failed", append(attrs, "error", err)...)

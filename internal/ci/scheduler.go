@@ -3,6 +3,7 @@ package ci
 import (
 	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/mmrzaf/gitman/internal/git"
@@ -14,6 +15,7 @@ const maxReasonLen = 4000
 
 // plan is what a run's pipeline resolves to before it is written down.
 type plan struct {
+	timeout time.Duration
 	status  Status
 	reason  string
 	target  string
@@ -22,6 +24,7 @@ type plan struct {
 }
 
 type plannedStep struct {
+	kind StepKind
 	name string
 	run  bool
 }
@@ -53,6 +56,7 @@ func planRun(p CreateParams) plan {
 		return pl
 	}
 
+	pl.timeout = cfg.Timeout
 	if target, ok := cfg.ResolveTarget(p.RefKind, p.RefName); ok {
 		pl.target = target
 	}
@@ -62,9 +66,13 @@ func planRun(p CreateParams) plan {
 		pl.reason = fmt.Sprintf("The pipeline uses Docker, but no rule allows Docker for %s.", label)
 		return pl
 	}
-	if pl.target != "" && !p.Decision.AllowShip {
+	deploys := false
+	for _, step := range cfg.Steps {
+		deploys = deploys || step.Type == StepDeploy && step.When.ShouldRun(p.RefKind, pl.target)
+	}
+	if deploys && !p.Decision.AllowDeploy {
 		pl.status = StatusFailed
-		pl.reason = fmt.Sprintf("%s resolves to target %q, but no rule allows shipping from it.", capitalize(label), pl.target)
+		pl.reason = fmt.Sprintf("%s resolves to target %q, but no rule allows deployment from it.", capitalize(label), pl.target)
 		return pl
 	}
 
@@ -72,7 +80,7 @@ func planRun(p CreateParams) plan {
 	for _, step := range cfg.Steps {
 		runs := step.When.ShouldRun(p.RefKind, pl.target)
 		anyRuns = anyRuns || runs
-		pl.steps = append(pl.steps, plannedStep{name: step.Name, run: runs})
+		pl.steps = append(pl.steps, plannedStep{name: step.Name, kind: step.Type, run: runs})
 	}
 	if !anyRuns {
 		pl.status = StatusPassed

@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/jackc/pgx/v5/pgconn"
 	"math"
 	"time"
 
+	"github.com/mmrzaf/gitman/internal/apperr"
 	"github.com/mmrzaf/gitman/internal/git"
 	"github.com/mmrzaf/gitman/internal/id"
 	"github.com/mmrzaf/gitman/internal/postgres"
@@ -24,12 +26,6 @@ func NewService(db *postgres.DB) *Service {
 	return &Service{db: db}
 }
 
-// InProgress returns queued and running runs across every repository,
-// most recently active first.
-func (s *Service) InProgress(ctx context.Context, limit int) ([]Summary, error) {
-	return selectInProgress(ctx, s.db.Q, limit)
-}
-
 // InProgressForRepos is InProgress, restricted to repoIDs — the
 // instance-wide "running now" list for someone who cannot necessarily
 // see every repository.
@@ -37,10 +33,10 @@ func (s *Service) InProgressForRepos(ctx context.Context, repoIDs []string, limi
 	return selectInProgressForRepos(ctx, s.db.Q, repoIDs, limit)
 }
 
-// LatestRunPerRef returns, for a repository, the most recent run on each
+// LatestHeadRunPerRef returns, for a repository, the most recent run on each
 // of its refs, keyed by "<kind>/<name>".
-func (s *Service) LatestRunPerRef(ctx context.Context, repoID string) (map[string]Summary, error) {
-	return selectLatestRunPerRef(ctx, s.db.Q, repoID)
+func (s *Service) LatestHeadRunPerRef(ctx context.Context, repoID string) (map[string]Summary, error) {
+	return selectLatestHeadRunPerRef(ctx, s.db.Q, repoID)
 }
 
 // RunsForRepo returns a page of a repository's runs, newest first. before,
@@ -50,15 +46,27 @@ func (s *Service) RunsForRepo(ctx context.Context, repoID string, before int64, 
 	return selectRunsForRepo(ctx, s.db.Q, repoID, before, limit)
 }
 
-// Live returns, for every repository and target, the latest deployment:
-// what is live there now, ordered by repository, then target.
-func (s *Service) Live(ctx context.Context) ([]Deployment, error) {
-	return selectLiveDeployments(ctx, s.db.Q, nil)
+// RunsOfRef returns the newest limit runs of one branch or tag, newest
+// first.
+func (s *Service) RunsOfRef(ctx context.Context, repoID string, kind git.Kind, name string, limit int) ([]Summary, error) {
+	return selectRunsOfRef(ctx, s.db.Q, repoID, kind, name, limit)
+}
+
+// LatestDefaultHeadRuns returns the newest run of each of repoIDs' default
+// branch, keyed by repository ID, for the ones that have one.
+func (s *Service) LatestDefaultHeadRuns(ctx context.Context, repoIDs []string) (map[string]Summary, error) {
+	return selectLatestDefaultHeadRuns(ctx, s.db.Q, repoIDs)
+}
+
+// LatestRunPerCommit returns the newest run of each of commits, keyed by
+// commit, for the ones that have a run.
+func (s *Service) LatestRunPerCommit(ctx context.Context, repoID string, commits []string) (map[string]Summary, error) {
+	return selectLatestRunPerCommit(ctx, s.db.Q, repoID, commits)
 }
 
 // LiveForRepo is Live, scoped to one repository.
 func (s *Service) LiveForRepo(ctx context.Context, repoID string) ([]Deployment, error) {
-	return selectLiveDeployments(ctx, s.db.Q, &repoID)
+	return selectLiveDeployments(ctx, s.db.Q, repoID)
 }
 
 // LiveForRepos is Live, restricted to repoIDs.
@@ -86,6 +94,16 @@ func (s *Service) LatestDeploymentPerRef(ctx context.Context, repoID string) (ma
 // handed to a worker to discover the same thing later.
 func (s *Service) CreateTx(ctx context.Context, tx postgres.Tx, p CreateParams) (*Created, error) {
 	pl := planRun(p)
+	if pl.status == StatusQueued {
+		var full bool
+		if err := tx.QueryRow(ctx, `SELECT count(*)>=10000 FROM runs WHERE repo_id=$1 AND status IN ('queued','running')`, p.RepoID).Scan(&full); err != nil {
+			return nil, err
+		}
+		if full {
+			pl.status = StatusFailed
+			pl.reason = "This repository reached its 10,000 pending-run budget. Clear queued work before starting another run."
+		}
+	}
 	pl.reason = truncateReason(pl.reason)
 
 	number, err := allocateRunNumber(ctx, tx, p.RepoID)
@@ -95,7 +113,7 @@ func (s *Service) CreateTx(ctx context.Context, tx postgres.Tx, p CreateParams) 
 
 	run := &Created{ID: id.New(), Number: number, Status: pl.status, Reason: pl.reason, Target: pl.target, Version: pl.version}
 	finished := pl.status != StatusQueued
-	if err := insertRun(ctx, tx, run, p, number, finished); err != nil {
+	if err := insertRun(ctx, tx, run, p, number, finished, pl.timeout); err != nil {
 		return nil, err
 	}
 
@@ -104,7 +122,7 @@ func (s *Service) CreateTx(ctx context.Context, tx postgres.Tx, p CreateParams) 
 		if step.run {
 			status = StepPending
 		}
-		if err := insertStep(ctx, tx, run.ID, i, step.name, status); err != nil {
+		if err := insertStep(ctx, tx, run.ID, i, step.name, step.kind, status); err != nil {
 			return nil, err
 		}
 	}
@@ -180,7 +198,21 @@ const fetchTokenBytes = 32
 // ClaimNext hands the oldest queued run to workerID, or returns nil when
 // nothing is queued. The run gets a fresh fetch token, returned in the
 // Claim and stored only as a hash.
-func (s *Service) ClaimNext(ctx context.Context, workerID string) (*Claim, error) {
+func (s *Service) ClaimNext(ctx context.Context, workerID string, defaultTimeout time.Duration, images []string) (*Claim, error) {
+	images = normalizeImages(images)
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if defaultTimeout <= 0 || defaultTimeout > MaxTimeout {
+		return nil, errors.New("invalid worker default timeout")
+	}
+	ctx, release, err := s.db.AdmitMutation(ctx)
+	if err != nil {
+		if apperr.KindOf(err) == apperr.KindUnavailable {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer release()
 	plain, err := token.New(fetchTokenBytes)
 	if err != nil {
 		return nil, err
@@ -188,7 +220,7 @@ func (s *Service) ClaimNext(ctx context.Context, workerID string) (*Claim, error
 	var claim *Claim
 	err = s.db.Tx(ctx, func(tx postgres.Tx) error {
 		var err error
-		if claim, err = claimNextRun(ctx, tx, workerID, token.Hash(plain)); err != nil {
+		if claim, err = claimNextRun(ctx, tx, workerID, token.Hash(plain), defaultTimeout, images); err != nil {
 			return err
 		}
 		return notify(ctx, tx, NotifyChannel, claim.RunID)
@@ -220,6 +252,8 @@ func (s *Service) AuthenticateFetch(ctx context.Context, fetchToken string) (rep
 // StepStarted marks a step running, or returns ErrRunEnded when its run
 // has ended or is being cancelled.
 func (s *Service) StepStarted(ctx context.Context, runID, stepID string) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	return s.db.Tx(ctx, func(tx postgres.Tx) error {
 		if err := setStepRunning(ctx, tx, stepID); err != nil {
 			return err
@@ -231,8 +265,10 @@ func (s *Service) StepStarted(ctx context.Context, runID, stepID string) error {
 // StepFinished records a step's final status and, when it ran a
 // container, its exit code.
 func (s *Service) StepFinished(ctx context.Context, runID, stepID string, status StepStatus, exitCode *int) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	return s.db.Tx(ctx, func(tx postgres.Tx) error {
-		if err := setStepFinished(ctx, tx, stepID, status, exitCode); err != nil {
+		if err := finishRecordedStep(ctx, tx, runID, stepID, status, exitCode); err != nil {
 			return err
 		}
 		return notify(ctx, tx, NotifyChannel, runID)
@@ -242,12 +278,19 @@ func (s *Service) StepFinished(ctx context.Context, runID, stepID string, status
 // AppendLog stores the next chunk of a step's output. sequence numbers
 // start at 0 and increase by one per chunk.
 func (s *Service) AppendLog(ctx context.Context, runID, stepID string, sequence int, content string) error {
-	return s.db.Tx(ctx, func(tx postgres.Tx) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	err := s.db.Tx(ctx, func(tx postgres.Tx) error {
 		if err := insertLogChunk(ctx, tx, stepID, sequence, content); err != nil {
 			return err
 		}
 		return notify(ctx, tx, LogChannel, runID)
 	})
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.ConstraintName == "repository_log_budget" {
+		_, _ = s.db.Q.Exec(ctx, `UPDATE steps SET log_recording_error='Repository log storage reached its 1 GiB budget. Some output could not be recorded.' WHERE id=$1`, stepID)
+	}
+	return err
 }
 
 // StopReason says why the worker executing a run should stop it, or is
@@ -255,6 +298,8 @@ func (s *Service) AppendLog(ctx context.Context, runID, stepID string, sequence 
 // ended without that worker — failed as lost by another worker — or its
 // repository was deleted.
 func (s *Service) StopReason(ctx context.Context, runID string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	status, cancelRequested, err := selectRunState(ctx, s.db.Q, runID)
 	switch {
 	case errors.Is(err, postgres.ErrNotFound):
@@ -269,12 +314,13 @@ func (s *Service) StopReason(ctx context.Context, runID string) (string, error) 
 	return "", nil
 }
 
-// Finish records how a running run ended: its status and reason, the
-// summary it wrote, and — for a passing run with a target — the
-// deployment it made, all in one transaction. Steps that never finished
-// are settled to match. A run that is no longer running (the lost-worker
-// reaper got to it first) is left as it is.
+// Finish records how a running run ended: its status, reason, and summary,
+// and settles steps that never finished, all in one transaction. Deployment
+// receipts are recorded by the deploy-step ownership path. A run that is no
+// longer running (the lost-worker reaper got to it first) is left as it is.
 func (s *Service) Finish(ctx context.Context, runID string, o Outcome) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	runningBecomes, pendingBecomes := StepFailed, StepSkipped
 	if o.Status == StatusCancelled {
 		runningBecomes, pendingBecomes = StepCancelled, StepCancelled
@@ -283,7 +329,7 @@ func (s *Service) Finish(ctx context.Context, runID string, o Outcome) error {
 		if err := lockRunRepo(ctx, tx, runID); err != nil {
 			return err
 		}
-		f, err := finishRunRow(ctx, tx, runID, o.Status, truncateReason(o.Reason))
+		_, err := finishRunRow(ctx, tx, runID, o.Status, truncateReason(o.Reason))
 		if err != nil {
 			return err
 		}
@@ -295,11 +341,7 @@ func (s *Service) Finish(ctx context.Context, runID string, o Outcome) error {
 				return err
 			}
 		}
-		if o.Status == StatusPassed && f.target != "" {
-			if err := insertDeployment(ctx, tx, runID, f); err != nil {
-				return err
-			}
-		}
+
 		return notify(ctx, tx, NotifyChannel, runID)
 	})
 	if errors.Is(err, postgres.ErrNotFound) {
@@ -331,16 +373,22 @@ func (s *Service) Cancel(ctx context.Context, repoID string, number int64, by st
 
 // RegisterWorker records a worker process starting.
 func (s *Service) RegisterWorker(ctx context.Context, workerID, hostname string) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	return upsertWorker(ctx, s.db.Q, workerID, hostname)
 }
 
 // Heartbeat records that a worker is alive and how many runs it has.
 func (s *Service) Heartbeat(ctx context.Context, workerID string, activeRuns int) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	return touchWorker(ctx, s.db.Q, workerID, activeRuns)
 }
 
 // StopWorker records a worker process shutting down.
 func (s *Service) StopWorker(ctx context.Context, workerID string) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	return markWorkerStopped(ctx, s.db.Q, workerID)
 }
 
@@ -353,11 +401,11 @@ func (s *Service) StopWorker(ctx context.Context, workerID string) error {
 // exactly when a live worker would have.
 const WorkerLostAfter = 5 * time.Minute
 
-// AnyWorkerOnline reports whether any worker is running: one that has
+// AnyWorkerReady reports whether any worker is running: one that has
 // not stopped and has sent a heartbeat within WorkerLostAfter. Without
 // one, a queued run waits until a worker starts.
-func (s *Service) AnyWorkerOnline(ctx context.Context) (bool, error) {
-	return selectAnyWorkerOnline(ctx, s.db.Q, WorkerLostAfter)
+func (s *Service) AnyWorkerReady(ctx context.Context) (bool, error) {
+	return selectAnyWorkerReady(ctx, s.db.Q, WorkerLostAfter)
 }
 
 // FailLostRuns fails every running run whose worker stopped, or has not
@@ -365,6 +413,8 @@ func (s *Service) AnyWorkerOnline(ctx context.Context) (bool, error) {
 // failed. Runs are never retried automatically: a run that shipped
 // half-way must be looked at by a person.
 func (s *Service) FailLostRuns(ctx context.Context, staleAfter time.Duration) (int, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	var lost []string
 	err := s.db.Tx(ctx, func(tx postgres.Tx) error {
 		var err error
@@ -390,23 +440,31 @@ func (s *Service) FailLostRuns(ctx context.Context, staleAfter time.Duration) (i
 // RepoIDForRun returns the repository ID a run belongs to, for a caller
 // that has only the run's ID, such as a notification's payload.
 func (s *Service) RepoIDForRun(ctx context.Context, runID string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	return selectRepoIDForRun(ctx, s.db.Q, runID)
 }
 
 // RepoIDForStep returns the repository ID a step's run belongs to.
 func (s *Service) RepoIDForStep(ctx context.Context, stepID string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	return selectRepoIDForStep(ctx, s.db.Q, stepID)
 }
 
 // InstanceID returns the ID naming this Gitman instance, which workers
 // label their step containers with.
 func (s *Service) InstanceID(ctx context.Context) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	return selectInstanceID(ctx, s.db.Q)
 }
 
 // RunningRunIDs returns the IDs of every running run, for a worker to
 // tell its own leftover containers from those of live runs.
 func (s *Service) RunningRunIDs(ctx context.Context) (map[string]bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	return selectRunningRunIDs(ctx, s.db.Q)
 }
 
@@ -440,6 +498,26 @@ type StartParams struct {
 // created it, except that it runs whether or not the rule runs pipelines
 // on push.
 func (s *Service) Start(ctx context.Context, p StartParams) (*Created, error) {
+	ctx, release, err := s.db.AdmitMutation(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	unlock, err := p.Git.MutationLock(ctx, p.RepoID)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	var pending bool
+	if err := s.db.Q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM repository_operations WHERE repo_id=$1 AND completed_at IS NULL)`, p.RepoID).Scan(&pending); err != nil {
+		return nil, err
+	}
+	if pending {
+		return nil, apperr.New(apperr.KindUnavailable, "This repository has an unfinished operation.")
+	}
+	if err := p.Git.PinCommit(ctx, p.Commit); err != nil {
+		return nil, err
+	}
 	data, problem, err := LoadPipeline(ctx, p.Git, p.Commit)
 	if err != nil {
 		return nil, err
@@ -479,4 +557,166 @@ func (s *Service) PruneRuns(ctx context.Context, before time.Time) (int64, error
 // before `before` and have no running run.
 func (s *Service) PruneWorkers(ctx context.Context, before time.Time) (int64, error) {
 	return deleteGoneWorkers(ctx, s.db.Q, before)
+}
+
+func (s *Service) LogTail(ctx context.Context, stepID string) (*LogTail, error) {
+	return selectLogTail(ctx, s.db.Q, stepID)
+}
+
+// PlanContainer records a deterministic recovery handle before Docker creation.
+func (s *Service) PlanContainer(ctx context.Context, runID, stepID, name string) error {
+	ctx, stop := context.WithTimeout(ctx, 10*time.Second)
+	defer stop()
+	tag, err := s.db.Q.Exec(ctx, `UPDATE steps SET container_name = $3 WHERE id = $2 AND run_id = $1 AND status = 'running' AND EXISTS (SELECT 1 FROM runs WHERE id = $1 AND status = 'running' AND NOT cancel_requested)`, runID, stepID, name)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrRunEnded
+	}
+	return nil
+}
+
+func (s *Service) ContainerCreated(ctx context.Context, runID, stepID, containerID string) error {
+	ctx, stop := context.WithTimeout(ctx, 10*time.Second)
+	defer stop()
+	tag, err := s.db.Q.Exec(ctx, `UPDATE steps SET container_id = $3 WHERE id = $2 AND run_id = $1 AND status = 'running' AND EXISTS (SELECT 1 FROM runs WHERE id = $1 AND status = 'running' AND NOT cancel_requested) AND (type = 'run' OR EXISTS(SELECT 1 FROM deployment_targets WHERE owner_run_id = $1 AND owner_step_id = $2 AND generation = steps.deployment_generation))`, runID, stepID, containerID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrRunEnded
+	}
+	return nil
+}
+
+// RecoveryRun identifies a run interrupted on this worker. Recovery stops its
+// containers and fails the run; it never re-executes pipeline scripts.
+type RecoveryRun struct {
+	ID         string
+	Containers []string
+	Foreign    bool
+}
+
+func (s *Service) RecoveryRuns(ctx context.Context, workerID, engineID string) ([]RecoveryRun, error) {
+	ctx, stop := context.WithTimeout(ctx, 10*time.Second)
+	defer stop()
+	rows, err := s.db.Q.Query(ctx, `SELECT r.id, ARRAY(SELECT container_name FROM steps WHERE run_id = r.id AND container_name IS NOT NULL AND container_removed_at IS NULL), r.worker_id <> $1 FROM runs r JOIN workers w ON w.id=r.worker_id WHERE (r.worker_id = $1 OR ($2<>'' AND w.engine_id=$2 AND (w.stopped_at IS NOT NULL OR w.heartbeat_at < now()-interval '1 minute'))) AND (r.status = 'running' OR EXISTS (SELECT 1 FROM steps WHERE run_id = r.id AND container_name IS NOT NULL AND container_removed_at IS NULL))`, workerID, engineID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var runs []RecoveryRun
+	for rows.Next() {
+		var run RecoveryRun
+		if err := rows.Scan(&run.ID, &run.Containers, &run.Foreign); err != nil {
+			return nil, err
+		}
+		runs = append(runs, run)
+	}
+	return runs, rows.Err()
+}
+
+// SetWorkerReadiness is independent of heartbeat. An alive worker may be unable
+// to execute work because Docker, disk capacity or recovery is unavailable.
+func (s *Service) SetWorkerReadiness(ctx context.Context, workerID string, ready bool, reason string, images []string) error {
+	ctx, stop := context.WithTimeout(ctx, 10*time.Second)
+	defer stop()
+	if images == nil {
+		images = []string{}
+	}
+	_, err := s.db.Q.Exec(ctx, `UPDATE workers SET ready = $2, readiness_reason = $3, images = $4, readiness_at = now() WHERE id = $1`, workerID, ready, reason, normalizeImages(images))
+	return err
+}
+
+type WorkerStatus struct {
+	ID, Hostname, Reason string
+	Ready                bool
+	Heartbeat            time.Time
+	Stopped              *time.Time
+	Images               []string
+	ActiveRuns           int
+}
+
+func (s *Service) Workers(ctx context.Context) ([]WorkerStatus, error) {
+	rows, err := s.db.Q.Query(ctx, `SELECT id, hostname, ready AND stopped_at IS NULL AND heartbeat_at >= now() - interval '1 minute' AND readiness_at >= now() - interval '1 minute', CASE WHEN stopped_at IS NOT NULL THEN 'Stopped' WHEN heartbeat_at < now() - interval '1 minute' THEN 'Heartbeat is stale' WHEN readiness_at IS NULL OR readiness_at < now() - interval '1 minute' THEN 'Readiness has not been checked recently' ELSE readiness_reason END, heartbeat_at, stopped_at, images, active_runs FROM workers ORDER BY started_at DESC LIMIT 100`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var workers []WorkerStatus
+	for rows.Next() {
+		var w WorkerStatus
+		if err := rows.Scan(&w.ID, &w.Hostname, &w.Ready, &w.Reason, &w.Heartbeat, &w.Stopped, &w.Images, &w.ActiveRuns); err != nil {
+			return nil, err
+		}
+		workers = append(workers, w)
+	}
+	return workers, rows.Err()
+}
+
+func (s *Service) AnyWorkerReadyForRun(ctx context.Context, runID string) (bool, error) {
+	var ready bool
+	err := s.db.Q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM workers w JOIN runs r ON r.id = $1 WHERE w.ready AND w.stopped_at IS NULL AND w.heartbeat_at >= now() - interval '1 minute' AND w.readiness_at >= now() - interval '1 minute' AND r.required_images <@ w.images)`, runID).Scan(&ready)
+	return ready, err
+}
+
+// RecoverStepExit stores a retained daemon receipt without starting anything.
+func (s *Service) RecoverStepExit(ctx context.Context, runID, name string, code int) error {
+	ctx, stop := context.WithTimeout(ctx, 10*time.Second)
+	defer stop()
+	return s.db.Tx(ctx, func(tx postgres.Tx) error {
+		var stepID string
+		if err := tx.QueryRow(ctx, `SELECT id FROM steps WHERE run_id=$1 AND (container_name=$2 OR container_id=$2)`, runID, name).Scan(&stepID); err != nil {
+			return postgres.NormalizeNotFound(err)
+		}
+		status := StepFailed
+		if code == 0 {
+			status = StepPassed
+		}
+		return finishExecutionReceipt(ctx, tx, runID, stepID, status, &code, true)
+	})
+}
+
+func (s *Service) ContainerRemoved(ctx context.Context, runID, name string) error {
+	ctx, stop := context.WithTimeout(ctx, 10*time.Second)
+	defer stop()
+	_, err := s.db.Q.Exec(ctx, `UPDATE steps SET container_removed_at = now() WHERE run_id = $1 AND container_name = $2 AND container_removed_at IS NULL`, runID, name)
+	return err
+}
+
+func (s *Service) AdmitMutation(ctx context.Context) (context.Context, func(), error) {
+	return s.db.AdmitMutation(ctx)
+}
+
+func (s *Service) BindWorkerEngine(ctx context.Context, workerID, engineID, root string) error {
+	ctx, stop := context.WithTimeout(ctx, 10*time.Second)
+	defer stop()
+	return s.db.Tx(ctx, func(tx postgres.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('gitman.engine.' || $1,0))`, engineID); err != nil {
+			return err
+		}
+		var incompatible bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM workers WHERE engine_id=$1 AND workspace_root<>$2)`, engineID, root).Scan(&incompatible); err != nil {
+			return err
+		}
+		if incompatible {
+			return errors.New("workers sharing a Docker engine must share the same absolute workspace root")
+		}
+		_, err := tx.Exec(ctx, `UPDATE workers SET engine_id=$2,workspace_root=$3 WHERE id=$1`, workerID, engineID, root)
+		return err
+	})
+}
+func (s *Service) Maintenance(ctx context.Context) (bool, error) { return s.db.Maintenance(ctx) }
+
+// ConfirmContainersRemoved is called only after cleanup removed every labelled
+// container while holding the run's filesystem execution lock.
+func (s *Service) ConfirmContainersRemoved(ctx context.Context, runID string) error {
+	if err := s.ConfirmExecutionStopped(ctx, runID); err != nil {
+		return err
+	}
+	ctx, stop := context.WithTimeout(ctx, 10*time.Second)
+	defer stop()
+	_, err := s.db.Q.Exec(ctx, `UPDATE steps SET container_removed_at=now() WHERE run_id=$1 AND container_name IS NOT NULL AND container_removed_at IS NULL`, runID)
+	return err
 }

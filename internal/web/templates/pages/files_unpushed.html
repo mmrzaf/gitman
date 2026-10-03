@@ -4,7 +4,7 @@
 <header class="page-header">
   <div class="page-header-text">
     <h1 class="page-title" id="files-title">Files</h1>
-    <p class="page-subtitle">The default branch, {{template "ref" (dict "Kind" "branch" "Name" $repo.DefaultBranch)}}, has not been pushed yet.</p>
+    <p class="page-subtitle">The default branch, {{template "ref" (refModel "branch" $repo.DefaultBranch "")}}, has not been pushed yet.</p>
   </div>
 </header>
 <section class="panel" aria-labelledby="files-title">
@@ -13,18 +13,12 @@
     <p>Push {{$repo.DefaultBranch}}{{if .Person.IsAdmin}}, or <a href="/{{$repo.Name}}/settings">choose another default branch</a>{{end}}. Branches that exist:</p>
     <ul class="cluster" aria-label="Branches">
       {{- range $d.Branches}}
-      <li>{{template "ref" (dict "Kind" "branch" "Name" . "Href" (refURL $repo.Name . ""))}}</li>
+      <li>{{template "ref" (refModel "branch" . (refURL $repo.Name . ""))}}</li>
       {{- end}}
     </ul>
   </div>
   {{- else}}
-  <div class="empty">
-    {{template "icon" "push"}}
-    <p class="empty-title">No pushes yet</p>
-    <p>Push an existing repository to start:</p>
-    <pre class="secret-value"><code>git remote add origin {{$d.CloneURL}}
-git push -u origin {{$repo.DefaultBranch}}</code></pre>
-  </div>
+  {{template "first-push" (firstPushModel $d.CloneURL $repo.DefaultBranch)}}
   {{- end}}
 </section>
 </div>

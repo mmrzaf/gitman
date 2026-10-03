@@ -51,11 +51,15 @@ if (!main || !("EventSource" in window)) {
   let source = null;
   let pending = null;
   let latest = 0;
+  let refreshing = false;
+  let dirty = false;
+  let lastRefresh = 0;
   let retryDelay = 3000;
 
   const scheduleRefresh = () => {
-    clearTimeout(pending);
-    pending = setTimeout(refresh, 300);
+    if (refreshing) { dirty = true; return; }
+    if (pending) return;
+    pending = setTimeout(() => { pending = null; refresh(); }, Math.max(300, 1000 - (Date.now() - lastRefresh)));
   };
 
   // An EventSource retries by itself after a dropped connection, but an
@@ -87,10 +91,17 @@ if (!main || !("EventSource" in window)) {
   async function refresh() {
     // Only the newest refresh may change the page: an older one that
     // answers late must not put back what a newer one already replaced.
+    if (refreshing) { dirty = true; return; }
+    refreshing = true;
+    dirty = false;
+    lastRefresh = Date.now();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    try {
     const mine = ++latest;
     let response, text;
     try {
-      response = await fetch(location.href, { headers: { Accept: "text/html" } });
+      response = await fetch(location.href, { headers: { Accept: "text/html", "X-Gitman-Refresh": "regions" }, signal: controller.signal });
       text = await response.text();
     } catch {
       return;
@@ -106,9 +117,9 @@ if (!main || !("EventSource" in window)) {
     // Following the run rather than a step picked by hand: when the run
     // starts its first step, or moves on to the next, show that step's
     // output instead.
-    const freshLog = fresh.querySelector("[data-log]");
+    const freshStep = fresh.querySelector("[data-selected-step]")?.dataset.selectedStep;
     const picked = new URL(location.href).searchParams.has("step");
-    if (freshLog && !picked && (!log || freshLog.dataset.logStep !== log.dataset.logStep)) {
+    if (freshStep && !picked && (!log || freshStep !== log.dataset.logStep)) {
       location.reload();
       return;
     }
@@ -128,6 +139,11 @@ if (!main || !("EventSource" in window)) {
     if (!fresh.querySelector("main[data-live-events]")) {
       source.close();
       setStatus("done");
+    }
+    } finally {
+      clearTimeout(timeout);
+      refreshing = false;
+      if (dirty) scheduleRefresh();
     }
   }
 }

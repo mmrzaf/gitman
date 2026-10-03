@@ -1,57 +1,83 @@
-# Backups and upgrades
+# Backups, recovery and upgrades
 
-## What to back up
+A backup is one maintenance snapshot of PostgreSQL and the bare Git repositories.
+Keep the encryption key separately. A database dump and repository archive taken
+independently are not a recoverable Gitman backup.
 
-- **The database** — `pg_dump`. Everything except repository content
-  lives here: people, tokens, repositories, ref rules, secrets, run
-  history and deployments.
-- **The `repos` directory** under `GITMAN_DATA_DIR` — the bare Git
-  repositories themselves.
+## Create a snapshot
 
-Nothing else needs backing up: Git hook scripts under `hooks/` are
-regenerated at every start of `web`, and run workspaces exist only for
-the duration of a run.
-
-With the supported Compose setup, where PostgreSQL runs in its own
-container named `postgres`:
+Run these commands with the installation's environment and service account:
 
 ```sh
-docker exec postgres pg_dump -U gitman -Fc gitman > gitman.dump
-sudo tar -C /srv/apps/gitman/data -czf gitman-repos.tar.gz repos
+gitman admin maintenance enable
+gitman admin maintenance status
+gitman admin maintenance backup /protected-backups/gitman-2026-10-01
+# Resume only after the snapshot completes:
+gitman admin maintenance disable
 ```
 
-and to restore the database into a fresh, empty one:
+Maintenance stops new mutations and claims while workers finish current runs.
+`status` refuses backup readiness until running executions, unremoved containers,
+deployment owners and repository operations are resolved. Check **Workers** and
+**Operations**, or `admin worker list` and `admin operation list`. Recover pending
+operations with `admin operation recover`. For a lost worker, perform
+`admin worker cleanup` on its Docker host with its original workspace path.
+Never release target ownership by deleting database rows.
+
+`backup` holds an exclusive admission lease, so another process cannot resume
+writes during the snapshot. It requires a new destination outside the data
+directory and writes `database.dump`, `repos.tar.gz` and a final checksummed
+`manifest.json`. Failed attempts do not have a valid final manifest. PostgreSQL's
+`pg_dump` and `pg_restore` must be installed where these commands run, with a
+client version matching or newer than the database server. The Gitman image does
+not include PostgreSQL tools. Run backup and restore using the native Gitman
+binary on a host with those tools and access to the database and repository data.
+
+Keep `GITMAN_SECRET_KEY` in a separate protected store. The manifest records only
+its SHA-256 fingerprint. Losing the key loses the encrypted repository secrets.
+The snapshot contains credential hashes, secret ciphertext, source and logs;
+protect it as production data. Copy it to independent storage and regularly test
+restoration.
+
+
+## Restore
+
+Stop the former installation. Prepare a new **empty database** and **empty data
+directory**, with the same secret key and Gitman version as the backup:
 
 ```sh
-docker exec -i postgres pg_restore -U gitman -d gitman < gitman.dump
+export GITMAN_DATABASE_URL='postgres://gitman:password@localhost/gitman_restore'
+export GITMAN_DATA_DIR=/srv/gitman-restored
+# Supply the separately recovered GITMAN_SECRET_KEY.
+gitman restore /protected-backups/gitman-2026-10-01
+gitman web
 ```
 
-## Restoring
+Restore refuses populated destinations, damaged checksums and a different key.
+It verifies the schema, instance identity, Git object integrity and secret
+decryption. The archived storage marker verifies the database pairing at the
+new path. Restore leaves
+maintenance enabled. Verify sign-in, permissions, clones, retained run commits,
+logs and deployment records before `admin maintenance disable`. Workspaces and
+hooks are recreated; scripts are never rerun as part of recovery.
 
-If you restore the database and `repos/` from different points in time,
-run `gitman admin repo sync <name>` for each affected repository
-afterward, to rebuild its ref index from what's actually on disk.
+## Retention and budgets
 
-## Retention
+Log, run, audit and deployment retention are independent (30, 90, 365 and 365 days
+by default). Only the latest run summary for an indexed **current commit** and
+the latest deployment of each target survive their age limits. Logs expire even
+when a summary survives. Deleted refs do not keep their last run forever.
 
-The web process prunes expired sessions and finished runs older than
-`GITMAN_RETENTION_DAYS` (default 90; `0` keeps everything) once an hour.
-Each ref's latest run and every deployment record are kept regardless of
-age.
+Storage is capped at 16 MiB per step and 1 GiB of retained logs per repository.
+Incomplete output is marked in the UI. Reaching the retained-log cap truncates
+additional output; it does not prevent execution. Run admission is paused at 10,000 pending
+runs per repository. Retained Git objects are pinned until their database records
+expire; collection reconciles pins after database retention. Monitor disk space:
+the configured free reserve pauses pushes and claims (5 GiB by default), and
+active executions enforce a configured workspace budget (10 GiB by default). These are monitored limits, not filesystem quotas.
 
-## Upgrades
+## Schema changes
 
-Database migrations run automatically whenever `web` or `worker` starts —
-there's no separate migration step to remember. Back up first, then
-build the new version's image on the host, set `GITMAN_IMAGE` in `.env`
-to it, and restart:
-
-```sh
-docker build --build-arg VERSION=v1.0.0-beta.22 -t gitman:1.0.0-beta.22 .
-docker compose up -d
-```
-
-There is no data migration path from earlier, SQLite-based versions of
-Gitman: this version's PostgreSQL schema is unrelated to that on-disk
-format. Treat an upgrade from a pre-PostgreSQL install as a fresh
-install.
+The schema has one current baseline and ordinary versioned migrations. There are
+no legacy schema detectors, adapters or compatibility migrations. Test subsequent
+schema changes against a restored snapshot before replacing the running version.

@@ -11,7 +11,7 @@ func TestEvaluateNoMatchingRuleFollowsDefaultPush(t *testing.T) {
 	if !everyone.CanPush || !everyone.AllowForce || !everyone.AllowDelete {
 		t.Errorf("Evaluate = %+v, want push, force and delete allowed under a default of everyone", everyone)
 	}
-	if everyone.AllowDocker || everyone.AllowSecrets || everyone.AllowShip || everyone.RunOnPush {
+	if everyone.AllowDocker || everyone.AllowSecrets || everyone.AllowDeploy || everyone.RunOnPush {
 		t.Error("expected no CI capability to be granted when no rule matches")
 	}
 	if everyone.MatchedRule != nil {
@@ -60,7 +60,7 @@ func TestEvaluateEveryonePolicy(t *testing.T) {
 }
 
 func TestEvaluateAdminsPolicy(t *testing.T) {
-	rules := []Rule{{Kind: git.KindTag, Pattern: "v*", PushPolicy: PushAdmins, AllowShip: true}}
+	rules := []Rule{{Kind: git.KindTag, Pattern: "v*", PushPolicy: PushAdmins, AllowDeploy: true}}
 
 	member := Evaluate(rules, git.KindTag, "v1.4.2", "person-1", false, PushEveryone, nil)
 	if member.CanPush {
@@ -152,5 +152,68 @@ func TestValidateDefaultPush(t *testing.T) {
 		if err := ValidateDefaultPush(c.policy, c.people); err == nil {
 			t.Errorf("ValidateDefaultPush(%q, %v): expected an error", c.policy, c.people)
 		}
+	}
+}
+
+func TestCheckDelete(t *testing.T) {
+	alice := Who{ID: "alice-id", Username: "alice"}
+	admin := Who{ID: "admin-id", Username: "root", IsAdmin: true}
+	repoOf := func(policy PushPolicy, people ...string) *Repo {
+		return &Repo{DefaultBranch: "main", DefaultPushPolicy: policy, DefaultPushPeople: people}
+	}
+	rules := []Rule{
+		{Kind: git.KindBranch, Pattern: "main", PushPolicy: PushEveryone, AllowDelete: true},
+		{Kind: git.KindBranch, Pattern: "release/*", PushPolicy: PushEveryone},
+		{Kind: git.KindBranch, Pattern: "ops/*", PushPolicy: PushAdmins, AllowDelete: true},
+		{Kind: git.KindTag, Pattern: "v*", PushPolicy: PushPeople, PushPeople: []string{"alice-id"}, AllowDelete: true},
+		{Kind: git.KindTag, Pattern: "keep-*", PushPolicy: PushEveryone},
+	}
+
+	for _, tc := range []struct {
+		name string
+		repo *Repo
+		kind git.Kind
+		ref  string
+		who  Who
+		// want is the refusal, or "" when the deletion is allowed.
+		want string
+	}{
+		{"a ref no rule matches, pushed to by everyone", repoOf(PushEveryone), git.KindBranch, "feature", alice, ""},
+		{"a tag no rule matches", repoOf(PushEveryone), git.KindTag, "old", alice, ""},
+		{"the default branch, even when its rule allows deleting", repoOf(PushEveryone), git.KindBranch, "main", alice,
+			"the default branch cannot be deleted"},
+		{"the default branch, for an admin", repoOf(PushEveryone), git.KindBranch, "main", admin,
+			"the default branch cannot be deleted"},
+		{"a tag named like the default branch", repoOf(PushEveryone), git.KindTag, "main", alice, ""},
+		{"a branch whose rule does not allow deleting", repoOf(PushEveryone), git.KindBranch, "release/1.0", alice,
+			`the rule for branch "release/*" does not allow deleting it`},
+		{"a branch whose rule does not allow deleting, for an admin", repoOf(PushEveryone), git.KindBranch, "release/1.0", admin,
+			`the rule for branch "release/*" does not allow deleting it`},
+		{"a tag whose rule does not allow deleting", repoOf(PushEveryone), git.KindTag, "keep-me", alice,
+			`the rule for tag "keep-*" does not allow deleting it`},
+		{"a ref the person may not push to", repoOf(PushEveryone), git.KindBranch, "ops/deploy", alice,
+			`the rule for branch "ops/*" does not allow alice to push here`},
+		{"a ref only admins push to, for an admin", repoOf(PushEveryone), git.KindBranch, "ops/deploy", admin, ""},
+		{"a tag only named people push to, for one of them", repoOf(PushEveryone), git.KindTag, "v1", alice, ""},
+		{"a tag only named people push to, for someone else", repoOf(PushEveryone), git.KindTag, "v1", Who{ID: "bob-id", Username: "bob"},
+			`the rule for tag "v*" does not allow bob to push here`},
+		{"an unmatched ref under a default push policy of admins", repoOf(PushAdmins), git.KindBranch, "feature", alice,
+			"no rule does not allow alice to push here"},
+		{"an unmatched ref under a default push policy of admins, for an admin", repoOf(PushAdmins), git.KindBranch, "feature", admin, ""},
+		{"an unmatched ref under a default push policy naming the person", repoOf(PushPeople, "alice-id"), git.KindBranch, "feature", alice, ""},
+		// Not being allowed to push is said before the default branch is.
+		{"the default branch, for someone who may not push", &Repo{DefaultBranch: "ops/main", DefaultPushPolicy: PushEveryone},
+			git.KindBranch, "ops/main", alice, `the rule for branch "ops/*" does not allow alice to push here`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d, reason := CheckDelete(tc.repo, rules, tc.kind, tc.ref, tc.who)
+			if reason != tc.want {
+				t.Fatalf("reason = %q, want %q", reason, tc.want)
+			}
+			want := Evaluate(rules, tc.kind, tc.ref, tc.who.ID, tc.who.IsAdmin, tc.repo.DefaultPushPolicy, tc.repo.DefaultPushPeople)
+			if d.CanPush != want.CanPush || d.AllowDelete != want.AllowDelete || d.MatchedRule != want.MatchedRule {
+				t.Errorf("decision = %+v, want %+v", d, want)
+			}
+		})
 	}
 }

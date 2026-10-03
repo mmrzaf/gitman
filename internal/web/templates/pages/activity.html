@@ -1,0 +1,25 @@
+{{define "content"}}
+{{$d := .Data}}{{$repo := $d.Repo}}
+<div class="page">
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title" id="activity-title">Activity</h1>
+  </div>
+  <div class="page-actions">
+    <span class="live js-only" data-live-status data-state="connecting" role="status">{{template "icon" "live"}}<span data-live-label>Connecting…</span></span>
+  </div>
+</header>
+<section class="panel" aria-labelledby="activity-title">
+  {{template "region-activity-activity" .}}
+  {{- if or $d.Before $d.More}}
+  <nav class="panel-footer cluster" aria-label="Pages of activity">
+    {{- if $d.Before}}<a class="btn btn-sm" href="{{$d.PageURL ""}}">Newest</a>{{end}}
+    {{- if $d.More}}<a class="btn btn-sm" href="{{$d.PageURL $d.Next}}">Older</a>{{end}}
+  </nav>
+  {{- end}}
+</section>
+</div>
+{{end}}
+
+{{define "region-activity-activity"}}{{$d := .Data}}{{$repo := $d.Repo}}<div data-live-region="activity">{{template "repo-feed" (repoFeedModel $d.Entries $repo)}}</div>{{end}}
+{{define "live"}}<main{{with .EventStream}} data-live-events="{{.}}"{{end}}>{{template "region-activity-activity" .}}</main>{{end}}

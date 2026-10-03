@@ -13,6 +13,22 @@
   access token (Git over HTTPS, and any script using the token). There is
   no SSH transport.
 
+## Credentials
+
+Generated passwords for a new account, reset, or re-enabled account expire
+in 24 hours. The person must change that password before using the rest of
+the interface or creating tokens. Passwords require at least 12 characters
+and at most 72 UTF-8 bytes. Usernames and repository names are lowercase.
+
+Sessions have an absolute seven-day expiry. Password changes, resets, and
+disabling an account revoke sessions and access tokens. **Revoke all credentials**
+on the account page, or `gitman admin person revoke-all <username>`, also ends
+every session and token while preserving the password. Tokens cover all current and future repositories by default, or selected
+repositories, with a read/write scope. They default to 30 days and last
+at most 365 days. Repository permissions still apply on every Git request.
+Live streams recheck credentials and permissions before each batch and
+close after revocation.
+
 ## Repository read access
 
 Each repository has one visibility, set on its Settings page's **Access**
@@ -41,8 +57,12 @@ ref, the most specific pattern wins. A rule decides:
 - **whether force-push and deletion are allowed** (`--force`, `--delete`);
 - **whether a push runs the pipeline** (`--run`);
 - **whether a triggered run may use Docker** (`--docker`), **receive the
-  repository's secrets** (`--secrets`), and **record a deployment when it
-  ships to a target** (`--ship`).
+  repository's secrets** (`--secrets`), and **execute a managed deploy step for a target** (`--deploy`).
+
+Managed deployment permission controls target serialization and deployment
+history. It does not prohibit external changes in other steps. Network access,
+credentials or Docker access can let any script deploy; trust the people who
+can change and execute those scripts.
 
 A ref that no rule matches is otherwise unprotected — force-push and
 deletion are always allowed on it, and pushes to it trigger nothing — but
@@ -76,6 +96,11 @@ Holding the Docker socket makes the worker root-equivalent on the host
 either way. This is a property of how the worker is deployed, not
 something a ref rule changes.
 
+By default, step containers have 2 GiB total memory (including swap), two CPUs,
+and 256 PIDs available. The operator can configure these limits; containers
+never pull images automatically. These limits apply to the step container;
+a Docker socket grant can create other containers outside them.
+
 A step's container has full outbound network access, the same as any
 other container on the host's Docker network: nothing in Gitman isolates
 a pipeline's network access per ref or per repository. This is what lets
@@ -108,3 +133,21 @@ scheme automatically. If Gitman is behind a reverse proxy, set
 `GITMAN_TRUSTED_PROXIES` to the proxy's actual reachable address —
 otherwise the sign-in rate limiter (and anything else keyed on client IP)
 treats every proxied client as the same one.
+
+## Execution and storage limits
+
+A claim persists one deadline before preparation begins. It includes secret
+loading, Git checkout, image checks, and all steps. Worker database operations
+and Docker probes have 10-second budgets; cleanup and final recording have
+30-second budgets. A failed cleanup retains the workspace and pauses claims
+until recovery confirms termination. Gitman does not automatically rerun scripts.
+
+Each run has a monitored workspace budget (10 GiB by default). Checks run every five seconds,
+including during checkout. Workers stop claiming below the configured disk
+reserve (5 GiB by default). See [Configuration](configuration.md).
+These are monitored limits: writes can overshoot between checks. Operators must
+budget image storage and socket-created child containers separately.
+
+Workers advertise current image inventories. Runs stay queued when no worker
+has every required image. The admin **Workers** page distinguishes readiness
+from a heartbeat and shows readiness failures and available images.

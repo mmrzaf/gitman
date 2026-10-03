@@ -5,14 +5,15 @@ import (
 	"crypto/aes"
 	cryptocipher "crypto/cipher"
 	"crypto/rand"
-	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
+	"time"
 
 	"github.com/mmrzaf/gitman/internal/git"
 	"github.com/mmrzaf/gitman/internal/postgres"
 )
 
-const repoColumns = `id, name, description, default_branch, visibility, default_push_policy, default_push_people, created_by, created_at`
+const repoColumns = `id, name, description, default_branch, visibility, default_push_policy, ARRAY(SELECT person_id FROM repo_push_people WHERE repo_id = repos.id ORDER BY person_id), created_by, created_at`
 
 func scanRepo(row interface{ Scan(...any) error }) (*Repo, error) {
 	r := &Repo{}
@@ -37,7 +38,7 @@ func insertRepo(ctx context.Context, tx postgres.Tx, id, name, description, defa
 }
 
 func selectRepoByName(ctx context.Context, q postgres.Querier, name string) (*Repo, error) {
-	repo, err := scanRepo(q.QueryRow(ctx, `SELECT `+repoColumns+` FROM repos WHERE name = $1`, name))
+	repo, err := scanRepo(q.QueryRow(ctx, `SELECT `+repoColumns+` FROM repos WHERE name = lower($1)`, name))
 	if err != nil {
 		return nil, postgres.NormalizeNotFound(err)
 	}
@@ -151,17 +152,20 @@ func selectReaderIDs(ctx context.Context, q postgres.Querier, repoID string) ([]
 }
 
 func updateDefaultPushRow(ctx context.Context, q postgres.Querier, repoID string, policy PushPolicy, people []string) error {
-	if people == nil {
-		people = []string{}
-	}
-	tag, err := q.Exec(ctx, `
-		UPDATE repos SET default_push_policy = $2, default_push_people = $3 WHERE id = $1
-	`, repoID, policy, people)
+	tag, err := q.Exec(ctx, `UPDATE repos SET default_push_policy = $2 WHERE id = $1`, repoID, policy)
 	if err != nil {
-		return fmt.Errorf("update default push: %w", err)
+		return err
 	}
 	if tag.RowsAffected() == 0 {
 		return postgres.ErrNotFound
+	}
+	if _, err := q.Exec(ctx, `DELETE FROM repo_push_people WHERE repo_id = $1`, repoID); err != nil {
+		return err
+	}
+	for _, person := range people {
+		if _, err := q.Exec(ctx, `INSERT INTO repo_push_people (repo_id, person_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, repoID, person); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -199,8 +203,8 @@ func updateDescriptionRow(ctx context.Context, q postgres.Querier, repoID, descr
 
 func selectRules(ctx context.Context, q postgres.Querier, repoID string) ([]Rule, error) {
 	rows, err := q.Query(ctx, `
-		SELECT kind, pattern, push_policy, push_people, allow_force, allow_delete,
-		       run_on_push, allow_docker, allow_secrets, allow_ship
+		SELECT kind, pattern, push_policy, ARRAY(SELECT person_id FROM rule_push_people WHERE rule_id = ref_rules.id ORDER BY person_id), allow_force, allow_delete,
+		       run_on_push, allow_docker, allow_secrets, allow_deploy
 		FROM ref_rules WHERE repo_id = $1 ORDER BY kind, pattern
 	`, repoID)
 	if err != nil {
@@ -211,7 +215,7 @@ func selectRules(ctx context.Context, q postgres.Querier, repoID string) ([]Rule
 	for rows.Next() {
 		var r Rule
 		if err := rows.Scan(&r.Kind, &r.Pattern, &r.PushPolicy, &r.PushPeople, &r.AllowForce, &r.AllowDelete,
-			&r.RunOnPush, &r.AllowDocker, &r.AllowSecrets, &r.AllowShip); err != nil {
+			&r.RunOnPush, &r.AllowDocker, &r.AllowSecrets, &r.AllowDeploy); err != nil {
 			return nil, fmt.Errorf("scan rule: %w", err)
 		}
 		rules = append(rules, r)
@@ -220,23 +224,29 @@ func selectRules(ctx context.Context, q postgres.Querier, repoID string) ([]Rule
 }
 
 func upsertRule(ctx context.Context, tx postgres.Tx, id, repoID string, r Rule, personID string) error {
-	people := r.PushPeople
-	if people == nil {
-		people = []string{}
-	}
-	_, err := tx.Exec(ctx, `
-		INSERT INTO ref_rules (id, repo_id, kind, pattern, push_policy, push_people, allow_force, allow_delete,
-		                       run_on_push, allow_docker, allow_secrets, allow_ship, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NULLIF($13, ''))
+	var ruleID string
+	err := tx.QueryRow(ctx, `
+		INSERT INTO ref_rules (id, repo_id, kind, pattern, push_policy, allow_force, allow_delete,
+		                       run_on_push, allow_docker, allow_secrets, allow_deploy, created_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NULLIF($12, ''))
 		ON CONFLICT (repo_id, kind, pattern) DO UPDATE SET
-			push_policy = EXCLUDED.push_policy, push_people = EXCLUDED.push_people,
+			push_policy = EXCLUDED.push_policy,
 			allow_force = EXCLUDED.allow_force, allow_delete = EXCLUDED.allow_delete,
 			run_on_push = EXCLUDED.run_on_push, allow_docker = EXCLUDED.allow_docker,
-			allow_secrets = EXCLUDED.allow_secrets, allow_ship = EXCLUDED.allow_ship
-	`, id, repoID, r.Kind, r.Pattern, r.PushPolicy, people, r.AllowForce, r.AllowDelete,
-		r.RunOnPush, r.AllowDocker, r.AllowSecrets, r.AllowShip, personID)
+			allow_secrets = EXCLUDED.allow_secrets, allow_deploy = EXCLUDED.allow_deploy
+		RETURNING id
+	`, id, repoID, r.Kind, r.Pattern, r.PushPolicy, r.AllowForce, r.AllowDelete,
+		r.RunOnPush, r.AllowDocker, r.AllowSecrets, r.AllowDeploy, personID).Scan(&ruleID)
 	if err != nil {
-		return fmt.Errorf("save rule: %w", err)
+		return err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM rule_push_people WHERE rule_id = $1`, ruleID); err != nil {
+		return err
+	}
+	for _, person := range r.PushPeople {
+		if _, err := tx.Exec(ctx, `INSERT INTO rule_push_people (rule_id, person_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, ruleID, person); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -254,8 +264,8 @@ func deleteRuleRow(ctx context.Context, tx postgres.Tx, repoID string, kind git.
 
 func selectRefs(ctx context.Context, q postgres.Querier, repoID string) ([]IndexedRef, error) {
 	rows, err := q.Query(ctx, `
-		SELECT kind, name, commit_hash, updated_at, updated_by
-		FROM refs WHERE repo_id = $1 ORDER BY updated_at DESC, kind, name
+		SELECT r.kind,r.name,r.commit_hash,r.updated_at,r.updated_by,COALESCE(p.username,'')
+		FROM refs r LEFT JOIN people p ON p.id=r.updated_by WHERE r.repo_id=$1 ORDER BY r.updated_at DESC,r.kind,r.name
 	`, repoID)
 	if err != nil {
 		return nil, fmt.Errorf("list refs: %w", err)
@@ -264,12 +274,48 @@ func selectRefs(ctx context.Context, q postgres.Querier, repoID string) ([]Index
 	var refs []IndexedRef
 	for rows.Next() {
 		var r IndexedRef
-		if err := rows.Scan(&r.Kind, &r.Name, &r.Commit, &r.UpdatedAt, &r.UpdatedBy); err != nil {
+		if err := rows.Scan(&r.Kind, &r.Name, &r.Commit, &r.UpdatedAt, &r.UpdatedBy, &r.UpdatedByUsername); err != nil {
 			return nil, fmt.Errorf("scan ref: %w", err)
 		}
 		refs = append(refs, r)
 	}
 	return refs, rows.Err()
+}
+
+// selectDefaultHeads returns, for each of repoIDs whose default branch has
+// been pushed, where that branch points, keyed by repository.
+func selectDefaultHeads(ctx context.Context, q postgres.Querier, repoIDs []string) (map[string]IndexedRef, error) {
+	rows, err := q.Query(ctx, `
+		SELECT r.repo_id, r.kind, r.name, r.commit_hash, r.updated_at, r.updated_by,m.subject,m.author_name,m.author_email,m.authored_at
+		FROM refs r
+		JOIN repos p ON p.id = r.repo_id
+		LEFT JOIN commit_metadata m ON m.repo_id=r.repo_id AND m.hash=r.commit_hash
+		WHERE r.repo_id = ANY($1) AND r.kind = 'branch' AND r.name = p.default_branch
+	`, repoIDs)
+	if err != nil {
+		return nil, fmt.Errorf("list default branches: %w", err)
+	}
+	defer rows.Close()
+	heads := make(map[string]IndexedRef, len(repoIDs))
+	for rows.Next() {
+		var repoID string
+		var r IndexedRef
+		var subject, name, email *string
+		var at *time.Time
+		if err := rows.Scan(&repoID, &r.Kind, &r.Name, &r.Commit, &r.UpdatedAt, &r.UpdatedBy, &subject, &name, &email, &at); err != nil {
+			return nil, fmt.Errorf("scan default branch: %w", err)
+		}
+		if subject != nil {
+			r.Head = &git.Commit{Hash: r.Commit, Subject: *subject, Author: git.Signature{Name: *name, Email: *email, When: func() time.Time {
+				if at == nil {
+					return time.Time{}
+				}
+				return *at
+			}()}}
+		}
+		heads[repoID] = r
+	}
+	return heads, rows.Err()
 }
 
 // lockRefIndex takes a lock on one repository's ref index, held until
@@ -386,6 +432,9 @@ func decryptSecret(key string, ciphertext, nonce, boundTo []byte) (string, error
 	if err != nil {
 		return "", err
 	}
+	if len(nonce) != gcm.NonceSize() || len(ciphertext) < gcm.Overhead() {
+		return "", fmt.Errorf("invalid encrypted secret structure")
+	}
 	plaintext, err := gcm.Open(nil, nonce, ciphertext, boundTo)
 	if err != nil {
 		return "", fmt.Errorf("decrypt: wrong key, or the value was altered or moved")
@@ -393,17 +442,16 @@ func decryptSecret(key string, ciphertext, nonce, boundTo []byte) (string, error
 	return string(plaintext), nil
 }
 
-// secretCipher builds an AES-256-GCM instance from key. key is the
-// operator's GITMAN_SECRET_KEY, expected to already be high-entropy
-// (config requires at least 32 characters), so a fast hash is enough to
-// turn it into a fixed-size AES key; there is no low-entropy human
-// passphrase here to defend against with a slow KDF.
+// secretCipher uses the operator's base64-encoded 256-bit key directly.
 func secretCipher(key string) (cryptocipher.AEAD, error) {
 	if key == "" {
 		return nil, fmt.Errorf("GITMAN_SECRET_KEY is not configured")
 	}
-	sum := sha256.Sum256([]byte(key))
-	block, err := aes.NewCipher(sum[:])
+	raw, err := base64.StdEncoding.DecodeString(key)
+	if err != nil || len(raw) != 32 {
+		return nil, fmt.Errorf("GITMAN_SECRET_KEY must be base64 encoding of 32 random bytes")
+	}
+	block, err := aes.NewCipher(raw)
 	if err != nil {
 		return nil, fmt.Errorf("initialize cipher: %w", err)
 	}

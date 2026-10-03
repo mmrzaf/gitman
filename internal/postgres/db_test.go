@@ -4,17 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"testing"
 	"time"
+
+	"github.com/mmrzaf/gitman/internal/postgres/testschema"
 )
 
 func testDB(t *testing.T) *DB {
 	t.Helper()
-	url := os.Getenv("GITMAN_TEST_DATABASE_URL")
-	if url == "" {
-		t.Skip("GITMAN_TEST_DATABASE_URL not set; skipping a test that requires PostgreSQL")
-	}
+	url := testschema.DSN(t)
 	database, err := Connect(context.Background(), url, Options{})
 	if err != nil {
 		t.Fatalf("Connect: %v", err)
@@ -124,10 +122,7 @@ func TestTxRollsBackOnError(t *testing.T) {
 // as long as its own (here, unbounded) context would otherwise allow.
 func TestAcquireTimeoutFailsFastWhenThePoolIsExhausted(t *testing.T) {
 	ctx := context.Background()
-	url := os.Getenv("GITMAN_TEST_DATABASE_URL")
-	if url == "" {
-		t.Skip("GITMAN_TEST_DATABASE_URL not set; skipping a test that requires PostgreSQL")
-	}
+	url := testschema.DSN(t)
 	database, err := Connect(ctx, url, Options{MaxConns: 1, AcquireTimeout: 200 * time.Millisecond})
 	if err != nil {
 		t.Fatalf("Connect: %v", err)
@@ -171,10 +166,7 @@ func TestAcquireTimeoutStaysBoundedUnderSustainedContention(t *testing.T) {
 	const secondsBudget = 2 * time.Second
 
 	ctx := context.Background()
-	url := os.Getenv("GITMAN_TEST_DATABASE_URL")
-	if url == "" {
-		t.Skip("GITMAN_TEST_DATABASE_URL not set; skipping a test that requires PostgreSQL")
-	}
+	url := testschema.DSN(t)
 	database, err := Connect(ctx, url, Options{MaxConns: 2, AcquireTimeout: 200 * time.Millisecond})
 	if err != nil {
 		t.Fatalf("Connect: %v", err)

@@ -7,8 +7,6 @@
 import { on } from "./dom.js";
 import { push } from "./address.js";
 
-const lists = [...document.querySelectorAll("[data-tabs]")];
-
 function tabsOf(list) {
   return [...list.querySelectorAll("[data-tab]")];
 }
@@ -35,20 +33,28 @@ function fromAddress(list) {
   return tabs.find((tab) => tab.dataset.tab === name) || tabs[0];
 }
 
-for (const list of lists) {
-  list.setAttribute("role", "tablist");
-  for (const tab of tabsOf(list)) {
-    tab.setAttribute("role", "tab");
-    tab.removeAttribute("aria-current");
-    const panel = panelOf(tab);
-    if (panel) {
-      panel.setAttribute("role", "tabpanel");
-      panel.setAttribute("aria-labelledby", tab.id);
-      tab.setAttribute("aria-controls", panel.id);
+// Tab lists are set up once each, and again for any that a page swap or a
+// live refresh brings in.
+function setup() {
+  for (const list of document.querySelectorAll("[data-tabs]:not([data-tabs-ready])")) {
+    list.dataset.tabsReady = "";
+    list.setAttribute("role", "tablist");
+    for (const tab of tabsOf(list)) {
+      tab.setAttribute("role", "tab");
+      tab.removeAttribute("aria-current");
+      const panel = panelOf(tab);
+      if (panel) {
+        panel.setAttribute("role", "tabpanel");
+        panel.setAttribute("aria-labelledby", tab.id);
+        tab.setAttribute("aria-controls", panel.id);
+      }
     }
+    select(list, fromAddress(list));
   }
-  select(list, fromAddress(list));
 }
+
+setup();
+document.addEventListener("gitman:refreshed", setup);
 
 function activate(tab) {
   const list = tab.closest("[data-tabs]");
@@ -83,5 +89,5 @@ on("keydown", "[data-tabs] [data-tab]", (event, tab) => {
 });
 
 window.addEventListener("popstate", () => {
-  for (const list of lists) select(list, fromAddress(list));
+  for (const list of document.querySelectorAll("[data-tabs]")) select(list, fromAddress(list));
 });

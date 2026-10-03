@@ -33,8 +33,10 @@ import (
 // client blocks on a daemon that has stopped responding.
 const script = `#!/bin/sh
 dir="$FAKE_DOCKER_DIR"
-n=$(ls "$dir"/call-* 2>/dev/null | wc -l)
+while ! mkdir "$dir/lock" 2>/dev/null; do sleep 0.01; done
+n=$(find "$dir" -maxdepth 1 -type f -name "call-*" | wc -l)
 printf '%s\n' "$@" > "$dir/call-$(printf %03d "$n")"
+rmdir "$dir/lock"
 if [ "$FAKE_DOCKER_HANG" = "$1" ] || [ "$FAKE_DOCKER_HANG" = all ]; then
 	exec sleep 300
 fi
@@ -44,20 +46,47 @@ if [ -n "$FAKE_DOCKER_DOWN" ]; then
 fi
 case "$1" in
 version) echo 29.0.0; exit 0 ;;
+info) echo fake-engine; exit 0 ;;
 image)
+ if [ "$2" = ls ]; then printf "%s\n" $FAKE_DOCKER_IMAGES; exit 0; fi
 	eval "wanted=\${$#}"
 	for image in $FAKE_DOCKER_IMAGES; do
 		[ "$image" = "$wanted" ] && { echo sha256:abc; exit 0; }
 	done
 	echo "Error: No such image: $wanted" >&2; exit 1 ;;
-ps) printf '%s' "$FAKE_DOCKER_PS"; exit 0 ;;
+ps)
+ full=0
+ for arg in "$@"; do [ "$arg" != --no-trunc ] || full=1; done
+ if [ "$full" = 1 ]; then printf '%s' "$FAKE_DOCKER_PS"
+ else printf '%s' "$FAKE_DOCKER_PS" | awk '{ if (length($1) == 64) $1=substr($1,1,12); print }'
+ fi
+ exit 0 ;;
+kill)
+ if [ -f "$dir/pid-$2" ]; then
+  pid=$(cat "$dir/pid-$2")
+  kill -9 $(ps -o pid= --ppid "$pid") "$pid" 2>/dev/null
+ fi
+ echo 137 > "$dir/exit-$2"
+ exit 0 ;;
 rm)
-	if [ -f "$dir/pid-$3" ]; then
-		pid=$(cat "$dir/pid-$3")
-		kill -9 $(ps -o pid= --ppid "$pid") "$pid" 2>/dev/null
-	fi
-	exit 0 ;;
-run)
+ if [ -n "$FAKE_DOCKER_RM_FAIL" ]; then echo "daemon unavailable" >&2; exit 1; fi
+ if [ -f "$dir/pid-$3" ]; then
+  pid=$(cat "$dir/pid-$3")
+  kill -9 $(ps -o pid= --ppid "$pid") "$pid" 2>/dev/null
+ fi
+ rm -f "$dir/config-$3" "$dir/exit-$3" "$dir/pid-$3"
+ exit 0 ;;
+inspect)
+ eval "name=\${$#}"
+ if [ -f "$dir/exit-$name" ]; then
+  printf '{"Running":false,"Status":"exited","ExitCode":%s}\n' "$(cat "$dir/exit-$name")"
+ elif [ -f "$dir/config-$name" ]; then
+  echo '{"Running":true,"Status":"running","ExitCode":0}'
+ else
+  echo "No such container: $name" >&2; exit 1
+ fi
+ exit 0 ;;
+create)
 	shift
 	name=""; src=""; meta=""; script=""
 	envfile="$dir/env-$$"; : > "$envfile"
@@ -80,15 +109,29 @@ run)
 		*) shift ;;
 		esac
 	done
-	cd "$src" || exit 125
-	(
-		. "$envfile"
-		export GITMAN_SUMMARY="$meta/summary"
-		exec /bin/sh -ec "$script"
-	) &
-	echo $! > "$dir/pid-$name"
-	wait $!
-	exit $? ;;
+
+ # Save the creation spec. Secrets arrive through the create client's own
+ # environment, then stay in the container configuration for start.
+ printf "src='%s'\nmeta='%s'\nenvfile='%s'\n" "$src" "$meta" "$envfile" > "$dir/config-$name"
+ printf '%s' "$script" > "$dir/script-$name"
+ echo "$name"
+ exit 0 ;;
+start)
+ eval "name=\${$#}"
+ . "$dir/config-$name" || exit 125
+ script=$(cat "$dir/script-$name")
+ cd "$src" || exit 125
+ (
+  . "$envfile"
+  export GITMAN_SUMMARY="$meta/summary"
+  exec /bin/sh -ec "$script"
+ ) &
+ pid=$!
+ echo "$pid" > "$dir/pid-$name"
+ wait "$pid"
+ code=$?
+ echo "$code" > "$dir/exit-$name"
+ exit "$code" ;;
 esac
 exit 0
 `
@@ -115,6 +158,7 @@ func New(t testing.TB, images ...string) *Fake {
 	t.Setenv("FAKE_DOCKER_PS", "")
 	t.Setenv("FAKE_DOCKER_DOWN", "")
 	t.Setenv("FAKE_DOCKER_HANG", "")
+	t.Setenv("FAKE_DOCKER_RM_FAIL", "")
 	return &Fake{Binary: bin, dir: dir}
 }
 

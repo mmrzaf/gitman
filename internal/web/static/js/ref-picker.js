@@ -1,6 +1,6 @@
-// The Files page's branch and tag picker goes to the chosen ref as soon
-// as it changes, keeping the current path. Without scripting, its Switch
-// button submits the same choice and the server redirects.
+// The branch and tag picker of the Files page goes to the chosen ref as
+// soon as it changes, keeping the current path. Without scripting, its
+// Switch button submits the same choice and the server redirects.
 import { on } from "./dom.js";
 import { filesURL } from "./address.js";
 

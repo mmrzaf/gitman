@@ -37,10 +37,14 @@ func (a *App) register(mux *http.ServeMux) {
 
 	mux.Handle("GET /jump", a.page(member, a.jump))
 	mux.Handle("GET /me", a.page(member, a.meView))
+	mux.Handle("POST /me/revoke-all", a.page(member, a.meRevokeAll))
 	mux.Handle("POST /me/password", a.page(member, a.mePasswordChange))
 	mux.Handle("POST /me/tokens", a.page(member, a.meCreateToken))
 	mux.Handle("POST /me/tokens/{id}/delete", a.page(member, a.meDeleteToken))
 
+	mux.Handle("GET /operations", a.page(admin, a.operationsView))
+	mux.Handle("POST /operations/recover", a.page(admin, a.operationsRecover))
+	mux.Handle("GET /workers", a.page(admin, a.workersView))
 	mux.Handle("GET /people", a.page(admin, a.peopleView))
 	mux.Handle("POST /people", a.page(admin, a.peopleAdd))
 	mux.Handle("POST /people/{username}/disable", a.page(admin, a.peopleDisable))
@@ -49,16 +53,21 @@ func (a *App) register(mux *http.ServeMux) {
 	mux.Handle("POST /people/{username}/reset-password", a.page(admin, a.peopleResetPassword))
 
 	mux.Handle("GET /{repo}", a.page(member, a.repository))
-	mux.Handle("GET /events", a.page(member, a.events))
+	mux.Handle("GET /events", a.stream(member, a.events))
 
+	mux.Handle("POST /{repo}/refs/delete", a.page(member, a.refDelete))
 	mux.Handle("GET /{repo}/commit/{sha}", a.page(member, a.commitView))
+	mux.Handle("GET /{repo}/commits", a.page(member, a.commits))
+	mux.Handle("GET /{repo}/activity", a.page(member, a.activityView))
+	mux.Handle("GET /{repo}/archive/{ref...}", a.stream(member, a.archive))
 	mux.Handle("GET /{repo}/runs", a.page(member, a.runs))
 	mux.Handle("POST /{repo}/runs", a.page(member, a.runRef))
 	mux.Handle("GET /{repo}/runs/{n}", a.page(member, a.runView))
-	mux.Handle("GET /{repo}/runs/{n}/log", a.page(member, a.runLog))
+	mux.Handle("GET /{repo}/runs/{n}/log", a.stream(member, a.runLog))
 	mux.Handle("POST /{repo}/runs/{n}/cancel", a.page(member, a.runCancel))
 	mux.Handle("POST /{repo}/runs/{n}/again", a.page(member, a.runAgain))
-	mux.Handle("GET /{repo}/compare/{crange...}", a.page(member, a.compareView))
+	mux.Handle("GET /{repo}/compare", a.page(member, a.compareRedirect))
+	mux.Handle("GET /{repo}/compare/{crange...}", a.page(member, a.compareRedirect))
 	mux.Handle("GET /{repo}/tree-paths", a.page(member, a.treePaths))
 	// Settings routes are registered at member, not admin, level: the
 	// admin requirement is checked inside each handler, after resolving
@@ -99,7 +108,7 @@ func filesAtRef(r *http.Request) bool {
 // path would collide with every page under a repository: a directory
 // named "runs" or "settings" would open that page, not the directory.
 func (a *App) routeFilesAtRef(next http.Handler) http.Handler {
-	files := a.page(member, func(w http.ResponseWriter, r *http.Request) error {
+	files := a.stream(member, func(w http.ResponseWriter, r *http.Request) error {
 		first, rest, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/")
 		name, refAndPath, _ := splitRepoRef(first)
 		if rest = strings.Trim(rest, "/"); rest != "" {

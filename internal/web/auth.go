@@ -97,7 +97,7 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) error {
 	}
 	a.limiter.success(username, addr)
 
-	token, expires, err := a.people.CreateSession(r.Context(), person.ID, sessionTTL)
+	token, expires, err := a.people.CreateSession(r.Context(), person, sessionTTL)
 	if err != nil {
 		return err
 	}
@@ -124,13 +124,8 @@ func plural(n int) string {
 	return "s"
 }
 
-// Sessions last a month and are renewed whenever a person uses Gitman in
-// their last week, so someone who opens it daily never has to sign in
-// again, and a forgotten browser stops working on its own.
-const (
-	sessionTTL          = 30 * 24 * time.Hour
-	sessionExtendWithin = 7 * 24 * time.Hour
-)
+// Sessions expire after seven days; active use never postpones expiry.
+const sessionTTL = 7 * 24 * time.Hour
 
 // cookieName is the name of one of Gitman's cookies. Over HTTPS the
 // __Host- prefix makes browsers refuse the cookie unless it is Secure,
@@ -180,20 +175,15 @@ func (a *App) withSession(w http.ResponseWriter, r *http.Request) (*http.Request
 	if err != nil || cookie.Value == "" {
 		return r, nil
 	}
-	person, err := a.people.SessionPerson(r.Context(), cookie.Value)
+	check, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	person, err := a.people.SessionPerson(check, cookie.Value)
 	if err != nil {
 		if errors.Is(err, auth.ErrInvalidSession) {
 			a.clearSessionCookie(w)
 			return r, nil
 		}
 		return r, err
-	}
-	extended, err := a.people.ExtendSession(r.Context(), cookie.Value, sessionTTL, sessionExtendWithin)
-	if err != nil {
-		return r, err
-	}
-	if extended {
-		a.setSessionCookie(w, cookie.Value, a.now().Add(sessionTTL))
 	}
 	ctx := context.WithValue(r.Context(), personKey{}, person)
 	ctx = context.WithValue(ctx, sessionTokenKey{}, cookie.Value)

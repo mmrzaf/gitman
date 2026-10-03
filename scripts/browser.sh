@@ -1,69 +1,10 @@
 #!/usr/bin/env bash
-# Starts a fresh Gitman (web + worker) against a real database, seeds it
-# with what a small team's instance holds — people, repositories, rules,
-# secrets, tokens, and runs that passed, failed and shipped to two
-# targets — then hands off to browser.mjs to drive it with a real,
-# headless Chromium: every screen, every interactive component by
-# keyboard, live updates and log streaming, an accessibility scan of
-# every screen in both themes, every page with JavaScript disabled, and
-# a screenshot of every screen in both themes.
-#
-# Requires everything e2e.sh does — including its PGHOST/PGPORT/PGUSER —
-# plus Node with Playwright and a Chromium for it:
-#   cd scripts && npm install && npx playwright install chromium
-# or, to use a Chromium already on the machine, set
-# PLAYWRIGHT_EXECUTABLE_PATH to it. It serves on GITMAN_BROWSER_PORT
-# (18081 by default) and writes its screenshots to .data/browser/screenshots.
-# Run from anywhere; it always operates on the repository this script
-# lives in:
-#   scripts/browser.sh
-set -euo pipefail
-
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT"
-
-export PGHOST=${PGHOST:-127.0.0.1} PGPORT=${PGPORT:-5432} PGUSER=${PGUSER:-postgres}
-BIN="$ROOT/bin/gitman"
-RUN="$ROOT/.data/browser"
-DATA="$RUN/data"
-W="$RUN/work"
-PORT=${GITMAN_BROWSER_PORT:-18081}
-BASE=http://127.0.0.1:$PORT
-export GITMAN_DATABASE_URL="postgres://$PGUSER@$PGHOST:$PGPORT/gitman_browser?sslmode=disable"
-export GITMAN_DATA_DIR=$DATA
-export GITMAN_PUBLIC_URL=$BASE
-export GITMAN_PORT=$PORT
-export GITMAN_SECRET_KEY='a browser-check secret key, at least 32 bytes'
-
-# cleanup stops what the script started. A process may be gone already —
-# the worker is killed on purpose — so a failed kill is not a failure.
-cleanup() {
-  for pid in "$RUN/web.pid" "$RUN/worker.pid"; do
-    [ -f "$pid" ] && kill "$(cat "$pid")" 2>/dev/null || true
-  done
-}
-trap cleanup EXIT
-
-echo "=== build"
-go build -o "$BIN" ./cmd/gitman
-
-echo "=== fresh database and data directory"
-psql -qc 'DROP DATABASE IF EXISTS gitman_browser' -c 'CREATE DATABASE gitman_browser'
-rm -rf "$RUN" && mkdir -p "$DATA" "$W"
-if curl -s -o /dev/null "$BASE/"; then echo "something is already serving $BASE; set GITMAN_BROWSER_PORT"; exit 1; fi
-
-echo "=== start web and worker"
-"$BIN" web > "$RUN/web.log" 2>&1 &
-echo $! > "$RUN/web.pid"
-for i in $(seq 1 50); do curl -sf "$BASE/readyz" >/dev/null && break; sleep 0.2; done
-curl -sf "$BASE/readyz" >/dev/null || { echo "web did not become ready"; exit 1; }
-"$BIN" worker > "$RUN/worker.log" 2>&1 &
-echo $! > "$RUN/worker.pid"
-sleep 1
-
+# Real Chromium with live Docker execution, keyboard, axe, no-JS and mobile checks.
+source "$(dirname "${BASH_SOURCE[0]}")/integration-lib.sh"
+integration_init browser "${GITMAN_BROWSER_PORT:-18081}"
+start_worker
 echo "=== people, repositories, rules, tokens"
-"$BIN" admin person add --admin darius > "$RUN/admin.txt"
-PASSWORD=$(awk '/^Password:/ {print $2}' "$RUN/admin.txt")
+bootstrap_admin
 "$BIN" admin person add mina >/dev/null
 "$BIN" admin person add --admin reza >/dev/null
 "$BIN" admin person add arash >/dev/null
@@ -72,16 +13,16 @@ PASSWORD=$(awk '/^Password:/ {print $2}' "$RUN/admin.txt")
 "$BIN" admin repo create --description "Marketing site, dashboard and admin" waiotech >/dev/null
 "$BIN" admin repo create sms-gateway >/dev/null
 "$BIN" admin repo create --description "Shared Terraform modules for every environment" infrastructure-terraform-modules-shared >/dev/null
-TOKEN=$("$BIN" admin token create --write darius laptop | awk '/^Token:/ {print $2}')
-"$BIN" admin token create --days 90 darius ci-readonly >/dev/null
-"$BIN" admin rule set --run --ship demo branch main >/dev/null
-"$BIN" admin rule set --run --ship waiotech branch main >/dev/null
-"$BIN" admin rule set --run --ship --push admins demo tag 'v*' >/dev/null
+TOKEN=$("$BIN" admin token create --write --repos demo,waiotech darius laptop | awk '/^Token:/ {print $2}')
+"$BIN" admin token create --days 90 --repos demo darius ci-readonly >/dev/null
+"$BIN" admin rule set --run --deploy demo branch main >/dev/null
+"$BIN" admin rule set --run --deploy waiotech branch main >/dev/null
+"$BIN" admin rule set --run --deploy --push admins demo tag 'v*' >/dev/null
 "$BIN" admin rule set --run --force --delete demo branch 'feature/*' >/dev/null
 "$BIN" admin rule set --run demo branch broken >/dev/null
 "$BIN" admin rule set --run --secrets demo branch 'slow/*' >/dev/null
 
-echo "=== push, run and ship"
+echo "=== push, run and deploy"
 git -C "$W" init -q -b main
 git -C "$W" config user.name "Darius Rahimi" && git -C "$W" config user.email darius@example.com
 cat > "$W/.gitman.yml" <<'EOF'
@@ -115,7 +56,8 @@ steps:
         for i in $(seq 1 300); do echo "tick $i: replaying recorded request $i against the sandbox"; sleep 1; done
       fi
       echo slow step done
-  - name: ship
+  - name: deploy
+    type: deploy
     when: target
     run: echo "shipping $GITMAN_VERSION to $GITMAN_TARGET"
 EOF
@@ -131,16 +73,6 @@ printf '# Architecture\n' > "$W/docs/architecture.md"
 git -C "$W" add -A && git -C "$W" commit -qm "Start the payments service"
 REMOTE="http://darius:$TOKEN@127.0.0.1:$PORT/demo.git"
 push() { git -C "$W" push -q "$@" >/dev/null 2>&1; }
-# settled waits for a repository's run to end.
-settled() {
-  for i in $(seq 1 120); do
-    case "$(psql -d gitman_browser -tAc "SELECT r.status FROM runs r JOIN repos p ON p.id = r.repo_id WHERE p.name = '$1' AND r.number = $2")" in
-      passed|failed|cancelled) return 0 ;;
-    esac
-    sleep 0.5
-  done
-  echo "run $1 #$2 did not end"; exit 1
-}
 push "$REMOTE" main; settled demo 1
 git -C "$W" tag v1.4.0 && push "$REMOTE" v1.4.0; settled demo 2
 git -C "$W" checkout -qb broken && git -C "$W" commit -q --allow-empty -m "Retry declined charges once" && push "$REMOTE" broken; settled demo 3

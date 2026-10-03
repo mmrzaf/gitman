@@ -26,7 +26,7 @@ would a personal access token on any other Git host.
 
 A push is rejected before anything is written if a matching ref rule
 forbids it (who may push, whether force-push or deletion is allowed). If
-the ref's rule allows running the pipeline, `web`'s `post-receive` hook
+the ref's rule allows running the pipeline, `web`'s `proc-receive` hook
 queues a run and the push output prints a link to it.
 
 ## Large clones and pushes

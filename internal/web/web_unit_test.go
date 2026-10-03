@@ -168,26 +168,6 @@ func TestAssetsAreFingerprinted(t *testing.T) {
 }
 
 func TestRawContentNeverRunsAsAPage(t *testing.T) {
-	png := []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")
-	cases := []struct {
-		name string
-		data []byte
-		want string
-	}{
-		{"index.html", []byte("<script>alert(1)</script>"), "text/plain; charset=utf-8"},
-		{"evil.js", []byte("fetch('/people', {method: 'POST'})"), "text/plain; charset=utf-8"},
-		{"logo.svg", []byte(`<svg onload="alert(1)"/>`), "text/plain; charset=utf-8"},
-		{"page.xhtml", []byte("<html/>"), "text/plain; charset=utf-8"},
-		{"app.py", []byte("print('hi')\n"), "text/plain; charset=utf-8"},
-		{"logo.png", png, "image/png"},
-		{"fake.png", []byte("<script>alert(1)</script>"), "text/plain; charset=utf-8"},
-		{"tool.bin", []byte("\x00\x01\x02"), "application/octet-stream"},
-	}
-	for _, c := range cases {
-		if got := rawContentType(c.name, c.data); got != c.want {
-			t.Errorf("rawContentType(%s) = %q, want %q", c.name, got, c.want)
-		}
-	}
 
 	h := http.Header{}
 	setRawHeaders(h, "text/plain; charset=utf-8", `we"ird;name.txt`)
@@ -211,7 +191,7 @@ func TestRawContentNeverRunsAsAPage(t *testing.T) {
 // arrives in full, as a client holding connections open would: the page
 // deadline must end the request instead of waiting forever.
 func TestSlowRequestBodiesAreCutOff(t *testing.T) {
-	app, err := New(&config.Config{PublicURL: "http://gitman.test", Port: 8080}, Services{},
+	app, err := New(&config.Config{Retention: config.DefaultRetention(), PublicURL: "http://gitman.test", Port: 8080}, Services{},
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
@@ -241,7 +221,7 @@ func TestSlowRequestBodiesAreCutOff(t *testing.T) {
 
 // TestPartialsRead renders shared pieces of pages as a person reads them:
 // the timeline's wording, a diff whose patch was left out, and Home's
-// in-progress list naming the branch a run is for.
+// runs in progress beside their repository.
 func TestPartialsRead(t *testing.T) {
 	assets, err := loadAssets()
 	if err != nil {
@@ -276,10 +256,13 @@ func TestPartialsRead(t *testing.T) {
 
 	out = render("content", pageData{Person: &auth.Person{Username: "darius"}, Data: homePage{
 		CreateForm: newForm(nil),
-		InProgress: []ci.Summary{{RepoName: "w", Number: 7, RefKind: git.KindBranch, RefName: "develop", Status: ci.StatusQueued, QueuedAt: time.Now()}},
+		Repos:      []homeRepo{{Name: "w", Running: []ci.Summary{{RepoName: "w", Number: 7, RefKind: git.KindBranch, RefName: "develop", Status: ci.StatusQueued, QueuedAt: time.Now()}}}},
 	}})
-	if !strings.Contains(out, `Run #7</a>`) || !strings.Contains(out, `title="branch develop"`) {
+	if !strings.Contains(out, `href="/w/runs/7"`) || !strings.Contains(out, "queued") {
 		t.Errorf("a run in progress reads:\n%s", out)
+	}
+	if strings.Contains(out, "Running now") {
+		t.Errorf("Home still has a Running now panel:\n%s", out)
 	}
 }
 
@@ -330,5 +313,39 @@ func TestRefURLEscapesNamesThatEndAPath(t *testing.T) {
 		if got := refURL(in[0], in[1], in[2]); got != want {
 			t.Errorf("refURL%q = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestRawStreamingTypesAndBytes(t *testing.T) {
+	for _, test := range []struct{ name, data, kind string }{
+		{"html", "<html><script>alert(1)</script></html>", "text/plain; charset=utf-8"},
+		{"text", strings.Repeat("hello\n", 1000), "text/plain; charset=utf-8"},
+		{"png", "\x89PNG\r\n\x1a\n" + strings.Repeat("\x00", 600), "image/png"},
+		{"binary", "\x00\x01\x02", "application/octet-stream"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			writer := &rawWriter{dst: response, header: response.Header(), filename: test.name}
+			// Small writes cross the sniffing boundary independently of stream blocks.
+			for data := test.data; len(data) > 0; {
+				n := min(13, len(data))
+				if _, err := writer.Write([]byte(data[:n])); err != nil {
+					t.Fatal(err)
+				}
+				data = data[n:]
+			}
+			if err := writer.flush(); err != nil {
+				t.Fatal(err)
+			}
+			if response.Body.String() != test.data {
+				t.Fatal("stream changed file bytes")
+			}
+			if got := response.Header().Get("Content-Type"); got != test.kind {
+				t.Fatalf("type=%s want %s", got, test.kind)
+			}
+			if got := response.Header().Get("Content-Security-Policy"); got != "default-src 'none'; sandbox" {
+				t.Fatalf("CSP=%s", got)
+			}
+		})
 	}
 }

@@ -62,7 +62,7 @@ func TestLogWriterMasksSecretsSplitAcrossWrites(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := rec.text()
-	want := "token is *** here\nkey: ***\ntiny ab stays\nlast line"
+	want := "token is *** here\nkey: ***\ntiny *** stays\nlast line"
 	if got != want {
 		t.Fatalf("log = %q, want %q", got, want)
 	}
@@ -326,5 +326,22 @@ func TestLogWriterDropsOnlyWhileStorageIsFailingThenRecovers(t *testing.T) {
 	}
 	if !strings.HasSuffix(got, "after\n") {
 		t.Fatalf("expected output written after recovery to be stored last, got %q", got[max(0, len(got)-50):])
+	}
+}
+
+func TestLogWriterPreservesUTF8AcrossWrites(t *testing.T) {
+	rec := &recordedLog{}
+	w := newLogWriter(t.Context(), rec.textColumnSink, newSecretMasker(map[string]string{"TOKEN": "秘密-value"}))
+	text := []byte("before 日本語 秘密-value after\n")
+	for _, b := range text {
+		if _, err := w.Write([]byte{b}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := rec.text(); got != "before 日本語 *** after\n" {
+		t.Fatalf("split UTF-8: %q", got)
 	}
 }

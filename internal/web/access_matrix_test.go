@@ -113,10 +113,18 @@ func (f *matrixFixture) routes() []struct {
 	}{
 		{"repository page", http.MethodGet, func(r string) string { return "/" + r }},
 		{"files", http.MethodGet, func(r string) string { return "/" + r + "@main/README.md" }},
+		{"commits", http.MethodGet, func(r string) string { return "/" + r + "/commits" }},
+		{"commits at a path", http.MethodGet, func(r string) string { return "/" + r + "/commits?ref=main&path=README.md" }},
+		{"comparison", http.MethodGet, func(r string) string { return "/" + r + "/commits?base=" + f.commit[:10] + "&ref=main" }},
 		{"commit view", http.MethodGet, func(r string) string { return "/" + r + "/commit/" + f.commit[:10] }},
-		{"compare", http.MethodGet, func(r string) string {
+		{"activity", http.MethodGet, func(r string) string { return "/" + r + "/activity" }},
+		{"old history tab address", http.MethodGet, func(r string) string { return "/" + r + "@main/README.md?tab=history" }},
+		{"old compare address", http.MethodGet, func(r string) string {
 			return "/" + r + "/compare/" + f.commit[:10] + "..." + f.commit[:10]
 		}},
+		{"compare", http.MethodGet, func(r string) string { return "/" + r + "/compare" }},
+		{"archive", http.MethodGet, func(r string) string { return "/" + r + "/archive/main.tar.gz" }},
+		{"archive of a commit", http.MethodGet, func(r string) string { return "/" + r + "/archive/" + f.commit + ".zip" }},
 		{"tree-paths", http.MethodGet, func(r string) string { return "/" + r + "/tree-paths?ref=main" }},
 		{"run view", http.MethodGet, func(r string) string { return "/" + r + "/runs/" + strconv.FormatInt(f.runNumber, 10) }},
 		{"run log", http.MethodGet, func(r string) string {
@@ -181,6 +189,7 @@ func TestAccessMatrixMutatingRoutes(t *testing.T) {
 		{"run again", func(r string) string {
 			return "/" + r + "/runs/" + strconv.FormatInt(f.runNumber, 10) + "/again"
 		}, url.Values{}},
+		{"delete a ref", func(r string) string { return "/" + r + "/refs/delete" }, url.Values{"ref": {"refs/heads/main"}}},
 		{"run a ref", func(r string) string { return "/" + r + "/runs" }, url.Values{"ref": {"refs/heads/main"}}},
 		{"settings description", func(r string) string { return "/" + r + "/settings/description" }, url.Values{"description": {"x"}}},
 		{"settings default branch", func(r string) string { return "/" + r + "/settings/default-branch" }, url.Values{"default_branch": {"main"}}},
@@ -308,7 +317,7 @@ func handlerName(e ast.Expr) string {
 	case *ast.SelectorExpr:
 		return v.Sel.Name
 	case *ast.CallExpr:
-		if sel, ok := v.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "page" && len(v.Args) == 2 {
+		if sel, ok := v.Fun.(*ast.SelectorExpr); ok && (sel.Sel.Name == "page" || sel.Sel.Name == "stream") && len(v.Args) == 2 {
 			return handlerName(v.Args[1])
 		}
 	}

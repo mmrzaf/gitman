@@ -9,6 +9,30 @@ import (
 	"github.com/mmrzaf/gitman/internal/git"
 )
 
+func TestRepositoryPipelineBuildsOnlyTags(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", ".gitman.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Parse(data)
+	if err != nil {
+		t.Fatalf("parse repository .gitman.yml: %v", err)
+	}
+	if !cfg.Docker {
+		t.Fatal("repository pipeline must enable Docker")
+	}
+	if len(cfg.Targets) != 0 {
+		t.Fatalf("repository pipeline unexpectedly declares deployment targets: %v", cfg.Targets)
+	}
+	if running := runningSteps(cfg, git.KindBranch, "develop"); len(running) != 0 {
+		t.Fatalf("develop push runs %v, want no self-hosted steps", running)
+	}
+	assertStringSlicesEqual(t, runningSteps(cfg, git.KindTag, "v1.0.0-beta.23"), []string{"build image"})
+	if len(cfg.Steps) != 1 || !strings.Contains(cfg.Steps[0].Run, `docker run --rm "$image" gitman version`) {
+		t.Fatal("repository tag pipeline must smoke-check the built Gitman image")
+	}
+}
+
 func TestWhenShouldRun(t *testing.T) {
 	cases := []struct {
 		name       string
