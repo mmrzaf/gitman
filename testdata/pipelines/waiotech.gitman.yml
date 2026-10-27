@@ -11,6 +11,13 @@ requires:
   - node:22-bookworm-slim
   - cerv:1.0
 
+images:
+  waiotech-server: {keep: 3}
+  waiotech-dashboard: {keep: 3}
+  waiotech-admin: {keep: 3}
+  waiotech-website: {keep: 3}
+  waiotech-deployer: {keep: 3}
+
 env:
   DOCKER_BUILDKIT: "1"
   BUILDKIT_PROGRESS: plain

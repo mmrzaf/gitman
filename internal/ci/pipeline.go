@@ -30,9 +30,19 @@ type Config struct {
 	Docker   bool
 	Timeout  time.Duration // zero means "use the instance's default"
 	Requires []string
-	Env      map[string]string
-	Targets  map[string]Target
-	Steps    []Step
+	// Images is the set of images a pipeline builds. It is keyed by the
+	// normalized Docker repository name (no tag), because retention works
+	// per repository, not per run or step. Each entry says how many of its
+	// newest tags to keep on a worker host.
+	Images  map[string]ImagePolicy
+	Env     map[string]string
+	Targets map[string]Target
+	Steps   []Step
+}
+
+// ImagePolicy is one built-image repository's retention policy.
+type ImagePolicy struct {
+	Keep int
 }
 
 // Target is one entry of the pipeline's targets map: a branch or tag
@@ -219,9 +229,14 @@ type rawConfig struct {
 	Docker   bool                 `yaml:"docker"`
 	Timeout  string               `yaml:"timeout"`
 	Requires []string             `yaml:"requires"`
+	Images   map[string]rawImage  `yaml:"images"`
 	Env      map[string]string    `yaml:"env"`
 	Targets  map[string]rawTarget `yaml:"targets"`
 	Steps    []rawStep            `yaml:"steps"`
+}
+
+type rawImage struct {
+	Keep *int `yaml:"keep"`
 }
 
 type rawTarget struct {
@@ -245,6 +260,9 @@ const (
 	MaxSteps       = 64
 	MaxTargets     = 16
 	MaxRequires    = 32
+	MaxImages      = 32
+	MinImageKeep   = 1
+	MaxImageKeep   = 50
 	MaxEnvVars     = 128
 	MaxRunBytes    = 64 << 10
 	MaxStepNameLen = 100
@@ -328,6 +346,26 @@ func (v *validator) err() error {
 // start with a letter or digit: a value starting with "-" would be read
 // by the docker client as an option.
 var imageRefPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,254}$`)
+
+// validateImageRepository checks a key of a pipeline's images map. Unlike an
+// image reference it names a repository only: a tag or digest would make
+// "which tags are older than keep" ambiguous, and Docker repository names are
+// lowercase.
+func validateImageRepository(repository string) error {
+	if !imageRefPattern.MatchString(repository) {
+		return fmt.Errorf("%q is not a Docker repository name", repository)
+	}
+	if strings.Contains(repository, "@") {
+		return fmt.Errorf("%q must name a repository, not a digest", repository)
+	}
+	if repository != strings.ToLower(repository) {
+		return fmt.Errorf("%q must be lowercase", repository)
+	}
+	if i := strings.LastIndex(repository, ":"); i > strings.LastIndex(repository, "/") {
+		return fmt.Errorf("%q must not include a tag", repository)
+	}
+	return nil
+}
 
 var envKeyPattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 
@@ -447,6 +485,46 @@ func validate(raw *rawConfig) (*Config, error) {
 			seenRequires[r] = true
 			cfg.Requires = append(cfg.Requires, r)
 		}
+	}
+
+	requiredRepositories := make(map[string]string, len(cfg.Requires)+1)
+	if cfg.Image != "" {
+		requiredRepositories[NormalizeImageRepository(cfg.Image)] = "image"
+	}
+	for _, r := range cfg.Requires {
+		requiredRepositories[NormalizeImageRepository(r)] = "requires"
+	}
+
+	if len(raw.Images) > MaxImages {
+		v.errorf("images: %d images; the limit is %d", len(raw.Images), MaxImages)
+		raw.Images = nil
+	}
+	cfg.Images = make(map[string]ImagePolicy, len(raw.Images))
+	for _, rawRepository := range sortedKeys(raw.Images) {
+		image := raw.Images[rawRepository]
+		repository := strings.TrimSpace(rawRepository)
+		if err := validateImageRepository(repository); err != nil {
+			v.errorf("images.%s: %v", repository, err)
+			continue
+		}
+		canonical := NormalizeImageRepository(repository)
+		if _, duplicate := cfg.Images[canonical]; duplicate {
+			v.errorf("images.%s: is the same repository as %s after registry and namespace normalization", repository, canonical)
+			continue
+		}
+		if label, conflict := requiredRepositories[canonical]; conflict {
+			v.errorf("images.%s: also appears in %s; a pipeline cannot both build and require the same image repository", repository, label)
+			continue
+		}
+		if image.Keep == nil {
+			v.errorf("images.%s: keep is required", repository)
+			continue
+		}
+		if *image.Keep < MinImageKeep || *image.Keep > MaxImageKeep {
+			v.errorf("images.%s: keep must be between %d and %d", repository, MinImageKeep, MaxImageKeep)
+			continue
+		}
+		cfg.Images[canonical] = ImagePolicy{Keep: *image.Keep}
 	}
 
 	cfg.Env = validateEnv(v, "env", raw.Env)

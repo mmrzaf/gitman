@@ -1,6 +1,7 @@
 package ci
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -657,6 +658,112 @@ func assertStringSlicesEqual(t *testing.T, got, want []string) {
 			t.Fatalf("got %v, want %v", got, want)
 		}
 	}
+}
+
+func TestParseImages(t *testing.T) {
+	cfg := mustParse(t, `
+image: docker:29-cli
+images:
+  example-app: {keep: 3}
+  docker.io/library/other: {keep: 1}
+  registry.example.com:5000/team/app: {keep: 50}
+steps:
+  - name: build
+    run: echo hi
+`)
+	want := map[string]int{
+		"docker.io/library/example-app":      3,
+		"docker.io/library/other":            1,
+		"registry.example.com:5000/team/app": 50,
+	}
+	for repository, keep := range want {
+		policy, ok := cfg.Images[repository]
+		if !ok || policy.Keep != keep {
+			t.Errorf("Images[%q] = %+v, ok=%v; want keep %d", repository, policy, ok, keep)
+		}
+	}
+}
+
+func TestParseRejectsImagesWithoutKeep(t *testing.T) {
+	wantParseError(t, `
+image: docker:29-cli
+images:
+  example-app: {}
+steps:
+  - name: build
+    run: echo hi
+`, "keep is required")
+}
+
+func TestParseRejectsImagesKeepOutOfRange(t *testing.T) {
+	for _, keep := range []string{"0", "51", "-1"} {
+		wantParseError(t, "image: docker:29-cli\nimages:\n  example-app:\n    keep: "+keep+"\nsteps:\n  - name: build\n    run: echo hi\n", "keep must be between 1 and 50")
+	}
+}
+
+func TestParseRejectsDuplicateImageRepositories(t *testing.T) {
+	wantParseError(t, `
+image: docker:29-cli
+images:
+  example-app: {keep: 1}
+  docker.io/library/example-app: {keep: 2}
+steps:
+  - name: build
+    run: echo hi
+`, "same repository")
+}
+
+func TestParseRejectsImageRepositoryConflictingWithImage(t *testing.T) {
+	wantParseError(t, `
+image: alpine:3.20
+images:
+  alpine: {keep: 2}
+steps:
+  - name: build
+    run: echo hi
+`, "also appears in image")
+}
+
+func TestParseRejectsImageRepositoryConflictingWithRequires(t *testing.T) {
+	wantParseError(t, `
+image: docker:29-cli
+requires:
+  - runtime:1.0
+images:
+  runtime: {keep: 2}
+steps:
+  - name: build
+    run: echo hi
+`, "also appears in requires")
+}
+
+func TestParseRejectsUnknownImageKey(t *testing.T) {
+	wantParseError(t, `
+image: docker:29-cli
+images:
+  example-app:
+    keep: 2
+    prune: true
+steps:
+  - name: build
+    run: echo hi
+`, "prune")
+}
+
+func TestParseRejectsImageTagOrDigest(t *testing.T) {
+	for _, repository := range []string{"example-app:1.0", "example-app@sha256:abc", "Example-App"} {
+		wantParseError(t, "image: docker:29-cli\nimages:\n  \""+repository+"\":\n    keep: 2\nsteps:\n  - name: build\n    run: echo hi\n", "images.")
+	}
+}
+
+func TestParseRejectsTooManyImages(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("image: docker:29-cli\nimages:\n")
+	for i := 0; i <= MaxImages; i++ {
+		fmt.Fprintf(&b, "  app%d: {keep: 1}\n", i)
+	}
+	b.WriteString("steps:\n  - name: build\n    run: echo hi\n")
+	wantParseError(t, b.String(), "images: 33 images")
 }
 
 func TestGoldenSmsGateway(t *testing.T) {
