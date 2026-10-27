@@ -126,7 +126,7 @@ func (s *Service) AbandonOperation(ctx context.Context, opID, actorID, reason st
 		op := &Operation{}
 		err := tx.QueryRow(ctx, `
 			SELECT id, repo_id, kind, name, COALESCE(actor_id,''), payload, created_at, error
-			FROM repository_operations WHERE id = $1 AND completed_at IS NULL FOR UPDATE
+			FROM repository_operations WHERE id = $1 AND completed_at IS NULL AND repo_id IS NOT NULL FOR UPDATE
 		`, opID).Scan(&op.ID, &op.RepoID, &op.Kind, &op.Name, &op.ActorID, &op.Payload, &op.CreatedAt, &op.Error)
 		if err != nil {
 			return postgres.NormalizeNotFound(err)
@@ -171,7 +171,7 @@ func (s *Service) AbandonOperation(ctx context.Context, opID, actorID, reason st
 }
 
 func (s *Service) PendingOperations(ctx context.Context) ([]Operation, error) {
-	rows, err := s.db.Q.Query(ctx, `SELECT id,repo_id,kind,name,COALESCE(actor_id,''),payload,created_at,error FROM repository_operations WHERE completed_at IS NULL ORDER BY created_at,id`)
+	rows, err := s.db.Q.Query(ctx, `SELECT id,repo_id,kind,name,COALESCE(actor_id,''),payload,created_at,error FROM repository_operations WHERE completed_at IS NULL AND repo_id IS NOT NULL ORDER BY created_at,id`)
 	if err != nil {
 		return nil, err
 	}

@@ -26,6 +26,20 @@ column events.action text null=NO default=
 column events.detail text null=NO default=''::text
 column events.created_at timestamp with time zone null=NO default=now()
 column events.admin_only boolean null=NO default=false
+column image_hosts.host_id text null=NO default=
+column image_hosts.worker_id text null=YES default=
+column image_hosts.hostname text null=NO default=''::text
+column image_hosts.collected_at timestamp with time zone null=NO default=now()
+column image_hosts.images jsonb null=NO default='[]'::jsonb
+column image_hosts.cache_size_bytes bigint null=NO default=0
+column image_hosts.cache_reclaimable_bytes bigint null=NO default=0
+column image_hosts.cache_keep_gib integer null=NO default=0
+column image_hosts.cache_older_than_hours integer null=NO default=0
+column image_hosts.cache_disabled boolean null=NO default=false
+column image_hosts.automation_mode text null=NO default='off'::text
+column image_hosts.cache_pruned_at timestamp with time zone null=YES default=
+column image_hosts.cache_reclaimed_bytes bigint null=NO default=0
+column image_hosts.cache_error text null=NO default=''::text
 column instance.maintenance boolean null=NO default=false
 column instance.id text null=NO default=
 column instance.singleton boolean null=NO default=true
@@ -96,7 +110,7 @@ column repos.default_push_policy text null=NO default='everyone'::text
 column repos.created_by text null=YES default=
 column repos.created_at timestamp with time zone null=NO default=now()
 column repository_operations.id text null=NO default=
-column repository_operations.repo_id text null=NO default=
+column repository_operations.repo_id text null=YES default=
 column repository_operations.kind text null=NO default=
 column repository_operations.name text null=NO default=''::text
 column repository_operations.payload jsonb null=NO default=
@@ -104,6 +118,11 @@ column repository_operations.actor_id text null=YES default=
 column repository_operations.created_at timestamp with time zone null=NO default=now()
 column repository_operations.completed_at timestamp with time zone null=YES default=
 column repository_operations.error text null=NO default=''::text
+column repository_operations.engine_id text null=NO default=''::text
+column repository_operations.worker_id text null=YES default=
+column repository_operations.claimed_at timestamp with time zone null=YES default=
+column repository_operations.attempts integer null=NO default=0
+column repository_operations.result jsonb null=YES default=
 column repository_storage.repo_id text null=NO default=
 column repository_storage.log_bytes bigint null=NO default=0
 column rule_push_people.rule_id text null=NO default=
@@ -213,6 +232,7 @@ index deployments idx_deployments_run
 index events events_pkey
 index events idx_events_created
 index events idx_events_repo_created
+index image_hosts image_hosts_pkey
 index instance instance_pkey
 index people people_pkey
 index people people_username_key
@@ -233,6 +253,8 @@ index repo_readers repo_readers_pkey
 index repos repos_name_key
 index repos repos_pkey
 index repository_operations idx_repository_operations_completed
+index repository_operations idx_repository_operations_image_pending
+index repository_operations idx_repository_operations_image_recent
 index repository_operations repository_operations_pending_name
 index repository_operations repository_operations_pending_repo
 index repository_operations repository_operations_pkey
