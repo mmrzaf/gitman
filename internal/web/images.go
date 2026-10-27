@@ -8,8 +8,24 @@ import (
 	"github.com/mmrzaf/gitman/internal/ci"
 )
 
+// imageHostView is one host as the page shows it: its inventory split by
+// class, plus the worker counts that belong in the host summary.
+type imageHostView struct {
+	ci.ImageHost
+
+	ReadyWorkers   int
+	StoppedWorkers int
+	Required       []ci.ClassifiedImage
+	Built          []ci.ClassifiedImage
+	Other          []ci.ClassifiedImage
+}
+
 type imagesPage struct {
-	Hosts []ci.ImageHost
+	Tab           string
+	RequiredCount int
+	BuiltCount    int
+	OtherCount    int
+	Hosts         []imageHostView
 	// Plan is the host whose dry-run plan was asked for by ?plan=.
 	Plan *ci.ImageHost
 }
@@ -19,14 +35,44 @@ func (a *App) imagesView(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	data := imagesPage{Hosts: hosts}
-	if engine := r.URL.Query().Get("plan"); engine != "" {
-		for i := range hosts {
-			if hosts[i].EngineID == engine {
-				data.Plan = &hosts[i]
-				break
+	tab := r.URL.Query().Get("tab")
+	switch tab {
+	case "built", "other":
+	default:
+		tab = "required"
+	}
+	engine := r.URL.Query().Get("plan")
+	data := imagesPage{Tab: tab, Hosts: make([]imageHostView, 0, len(hosts))}
+	planIndex := -1
+	for i := range hosts {
+		view := imageHostView{ImageHost: hosts[i]}
+		for _, worker := range hosts[i].Workers {
+			if worker.Ready {
+				view.ReadyWorkers++
+			} else {
+				view.StoppedWorkers++
 			}
 		}
+		for _, image := range hosts[i].Images {
+			switch {
+			case image.IsRequired():
+				view.Required = append(view.Required, image)
+				data.RequiredCount++
+			case image.IsBuilt():
+				view.Built = append(view.Built, image)
+				data.BuiltCount++
+			case image.IsOther():
+				view.Other = append(view.Other, image)
+				data.OtherCount++
+			}
+		}
+		data.Hosts = append(data.Hosts, view)
+		if engine != "" && hosts[i].EngineID == engine {
+			planIndex = len(data.Hosts) - 1
+		}
+	}
+	if planIndex >= 0 {
+		data.Plan = &data.Hosts[planIndex].ImageHost
 	}
 	a.render(w, r, http.StatusOK, "images", "Images", data)
 	return nil
