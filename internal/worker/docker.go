@@ -248,7 +248,8 @@ func (d *Docker) Run(ctx context.Context, spec containerSpec, out io.Writer) (in
 	case err = <-waited:
 	case <-ctx.Done():
 		code, cleanupErr := cleanup(ctx.Err())
-		<-waited
+		// Wait only to reap the process; cleanup reports the cancellation.
+		<-waited //nolint:errcheck // the wait error is the cancellation cleanup returned
 		return code, cleanupErr
 	}
 	if ctx.Err() != nil {
