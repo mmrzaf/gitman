@@ -6,12 +6,11 @@
 image: docker:29-cli
 docker: true
 requires:
-  - golang:1.27-bookworm
-  - debian:bookworm-slim
+  - golang:1.27-alpine
+  - alpine:3.24
 env:
   GOPROXY: https://proxy.golang.org,direct
-  DEBIAN_MIRROR: http://deb.debian.org/debian
-  DEBIAN_SECURITY_MIRROR: http://security.debian.org/debian-security
+  APK_MIRROR: https://linux-mirror.liara.ir/repository/alpine
 steps:
   - name: build image
     when: tag
@@ -20,8 +19,7 @@ steps:
       image="gitman:${GITMAN_VERSION#v}"
       docker build --pull=false \
         --build-arg GOPROXY="$GOPROXY" \
-        --build-arg DEBIAN_MIRROR="$DEBIAN_MIRROR" \
-        --build-arg DEBIAN_SECURITY_MIRROR="$DEBIAN_SECURITY_MIRROR" \
+        --build-arg APK_MIRROR="$APK_MIRROR" \
         --build-arg VERSION="$GITMAN_VERSION" \
         --label "org.opencontainers.image.revision=$GITMAN_COMMIT" \
         --label "org.opencontainers.image.ref.name=$GITMAN_REF" \
