@@ -8,6 +8,8 @@ docker: true
 requires:
   - golang:1.27-alpine
   - alpine:3.24
+images:
+  gitman: {keep: 2}
 env:
   GOPROXY: https://proxy.golang.org,direct
   APK_MIRROR: https://linux-mirror.liara.ir/repository/alpine
