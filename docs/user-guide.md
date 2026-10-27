@@ -185,6 +185,10 @@ Under your username, top-right of every page:
 - Change your password.
 - **Theme** — follow the system, or always light or dark. It is kept in
   this browser only.
+- **Version** — the running Gitman version, small at the foot of the menu.
+  Opening it shows **What's new**: the notes for this version, and older
+  releases below. A build with no notes of its own (a development build) shows
+  the newest release instead and says so.
 
 ## Admins
 

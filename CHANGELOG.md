@@ -5,6 +5,13 @@ Each release's section is also its GitHub release notes.
 
 ## Unreleased
 
+### Added
+
+- **What's new**: the account menu shows the running version, and opening it
+  lists the notes for this version with older releases below. The notes are
+  curated in `internal/web/releasenotes.json`, separate from this changelog.
+  `changelog` is now a reserved repository name.
+
 ### Fixed
 
 - A worker now reads `docker system df` the way Docker 29 prints it, with every
