@@ -5,15 +5,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
-	"os"
-	"path/filepath"
-	"sort"
-	"strconv"
-	"strings"
-	"text/tabwriter"
-	"time"
-
 	"github.com/mmrzaf/gitman/internal/auth"
 	"github.com/mmrzaf/gitman/internal/ci"
 	"github.com/mmrzaf/gitman/internal/config"
@@ -22,6 +13,14 @@ import (
 	"github.com/mmrzaf/gitman/internal/push"
 	reposvc "github.com/mmrzaf/gitman/internal/repo"
 	"github.com/mmrzaf/gitman/internal/worker"
+	"io"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"text/tabwriter"
+	"time"
 )
 
 // adminEnv is what every admin action works with.
@@ -34,6 +33,9 @@ type adminEnv struct {
 	out    io.Writer
 	// dockerBinary is the docker client "worker cleanup" runs.
 	dockerBinary string
+	// imageOperationWait is how long an images command waits for a queued
+	// operation to finish before reporting it as pending.
+	imageOperationWait time.Duration
 }
 
 type adminAction struct {
@@ -102,6 +104,12 @@ var adminGroups = map[string]map[string]adminAction{
 	"worker": {
 		"cleanup": {"", adminWorkerCleanup},
 		"release": {"--confirm [--run ID] <worker-id>", adminWorkerRelease},
+	},
+	"images": {
+		"list":    {"[--worker ID] [--class required|built|other] [--json]", adminImagesList},
+		"missing": {"", adminImagesMissing},
+		"prune":   {"[--worker ID] [--confirm] [--cache] [--keep-storage GiB] [--older-than HOURS]", adminImagesPrune},
+		"remove":  {"[--confirm] <worker-id> <image>", adminImagesRemove},
 	},
 }
 
@@ -179,7 +187,7 @@ func runAdmin(args []string) error {
 	store.SetDiskReserve(uint64(cfg.Resources.DiskReserveGiB) << 30)
 	defer store.Close()
 
-	if args[0] != "maintenance" && args[0] != "operation" && args[0] != "migrate" &&
+	if args[0] != "maintenance" && args[0] != "operation" && args[0] != "migrate" && args[0] != "images" &&
 		(args[0] != "worker" || (args[1] != "cleanup" && args[1] != "release")) {
 		var release func()
 		ctx, release, err = database.AdmitMutation(ctx)
@@ -196,7 +204,8 @@ func runAdmin(args []string) error {
 		ci:     ci.NewService(database),
 		out:    os.Stdout,
 
-		dockerBinary: "docker",
+		dockerBinary:       "docker",
+		imageOperationWait: 30 * time.Second,
 	}, rest)
 }
 
