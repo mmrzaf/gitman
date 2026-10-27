@@ -26,6 +26,190 @@
       "items": [
         "Commits is a section of its own: the commits of a branch, tag or revision, filterable to a path from the file browser."
       ]
+    },
+    {
+      "version": "1.0.0-beta.21",
+      "releasedOn": "2026-09-28",
+      "items": [
+        "Gitman keeps its data in PostgreSQL, so any number of workers can run, and each repository is open to everyone signed in or limited to named readers and admins.",
+        "Ref rules decide who may push, force-push or delete, and whether a push runs a pipeline, deploys, gets secrets or gets Docker.",
+        "Pipelines live in .gitman.yml: steps run in containers, targets follow branch or tag patterns, and steps can be conditional or require images on the host.",
+        "Any branch or tag can be run by hand, a file or directory shows its history, and Gitman says why a push started no run or why a run is waiting.",
+        "The interface is redesigned and updates live, with a command palette and a no-script Jump to page.",
+        "SSH access, collaborators, self-registration, artifacts and caches are gone; use readers and ref rules instead, and archive downloads are paused for now."
+      ]
+    },
+    {
+      "version": "1.0.0-beta.20",
+      "releasedOn": "2026-09-11",
+      "items": [
+        "No user-facing changes in this release."
+      ]
+    },
+    {
+      "version": "1.0.0-beta.19",
+      "releasedOn": "2026-09-11",
+      "items": [
+        "No user-facing changes in this release."
+      ]
+    },
+    {
+      "version": "1.0.0-beta.18",
+      "releasedOn": "2026-09-10",
+      "items": [
+        "Access tokens can be read-only or read-and-write, expire on a set date, and show when they were last used.",
+        "A security activity page records sign-ins, people, SSH keys, repositories and collaborators without ever showing a secret.",
+        "When Gitman is busy, Git requests wait with a clear retry time instead of hanging, and large repositories and diffs stay responsive.",
+        "Admins can see worker health and queue depth, and storage limits keep the host from filling up.",
+        "A pipeline run can be retried.",
+        "Repeated failed sign-ins are slowed down, and only the owner can change a repository's settings."
+      ]
+    },
+    {
+      "version": "1.0.0-beta.17",
+      "releasedOn": "2026-08-18",
+      "items": [
+        "A repository is one interface: files, source navigation, commits and pipeline runs share the same pages.",
+        "A commit shows its diff, and a pipeline run shows each step and its log.",
+        "A run is tied to the exact commit that started it, even after a restart.",
+        "Large diffs are limited so a page stays usable."
+      ]
+    },
+    {
+      "version": "1.0.0-beta.16",
+      "releasedOn": "2026-08-18",
+      "items": [
+        "The first build of the beta 17 work: pipeline runs you can inspect, commit diffs and one repository view; beta 17 replaced it the same day."
+      ]
+    },
+    {
+      "version": "1.0.0-beta.15",
+      "releasedOn": "2026-07-14",
+      "items": [
+        "Queued runs survive a restart and keep their order.",
+        "A repository's settings page can change its description and whether it is private, and deleting a repository asks for confirmation.",
+        "Invalid settings are rejected at startup instead of failing later.",
+        "Adding an SSH key rejects invalid keys and duplicates."
+      ]
+    },
+    {
+      "version": "1.0.0-beta.14",
+      "releasedOn": "2026-06-23",
+      "items": [
+        "A pipeline can trust a pattern of branches or tags, such as v* or release/*, instead of listing each one.",
+        "The web interface has a new design.",
+        "A failed pipeline's log says why it failed."
+      ]
+    },
+    {
+      "version": "1.0.0-beta.13",
+      "releasedOn": "2026-06-23",
+      "items": [
+        "Gitman's Docker image now uses Debian as its base."
+      ]
+    },
+    {
+      "version": "1.0.0-beta.12",
+      "releasedOn": "2026-06-23",
+      "items": [
+        "A pipeline run's full log can be downloaded.",
+        "The browser tab shows a Gitman icon."
+      ]
+    },
+    {
+      "version": "1.0.0-beta.11",
+      "releasedOn": "2026-06-12",
+      "items": [
+        "Ref rules decide which branches and tags may start a pipeline, and a newer push cancels older queued runs for the same ref.",
+        "gitman version prints the version you are running.",
+        "Signing in and pushing over HTTP are safer, pushes have a size limit, and a source archive refuses unsafe files."
+      ]
+    },
+    {
+      "version": "1.0.0-beta.10",
+      "releasedOn": "2026-06-11",
+      "items": [
+        "No user-facing changes in this release."
+      ]
+    },
+    {
+      "version": "1.0.0-beta.9",
+      "releasedOn": "2026-06-11",
+      "items": [
+        "A pipeline can use the host's Docker daemon to build images when an admin allows it.",
+        "Gitman starts cleanly when the database is briefly busy."
+      ]
+    },
+    {
+      "version": "1.0.0-beta.8",
+      "releasedOn": "2026-06-10",
+      "items": [
+        "A run's log keeps its place while it refreshes.",
+        "Self-hosted pipeline runs work reliably again."
+      ]
+    },
+    {
+      "version": "1.0.0-beta.7",
+      "releasedOn": "2026-05-30",
+      "items": [
+        "Pipelines are written in YAML and run in containers instead of as scripts on the host.",
+        "An admin can set Gitman's public URL.",
+        "Signing in, sessions and signing out are safer, and long Git pushes and clones no longer time out.",
+        "Backups are consistent and safe to restore.",
+        "A run can be recovered after a worker stops without running the same work twice."
+      ]
+    },
+    {
+      "version": "1.0.0-beta.6",
+      "releasedOn": "2026-05-19",
+      "items": [
+        "Tags can be browsed in the web interface, like branches.",
+        "Archives of branches and tags whose names contain a slash download correctly.",
+        "Passwords must be at least eight characters, and SSH keys are checked when added.",
+        "Expired sessions end instead of lingering.",
+        "Pipeline artifacts have size limits, and each run is claimed once so it cannot run twice."
+      ]
+    },
+    {
+      "version": "1.0.0-beta.5",
+      "releasedOn": "2026-05-15",
+      "items": [
+        "The Docker image can serve Git over HTTP, so a Docker install can push and pull without extra setup."
+      ]
+    },
+    {
+      "version": "1.0.0-beta.4",
+      "releasedOn": "2026-05-15",
+      "items": [
+        "No user-facing changes in this release."
+      ]
+    },
+    {
+      "version": "1.0.0-beta.3",
+      "releasedOn": "2026-05-15",
+      "items": [
+        "Gitman is no longer published for Windows; releases continue for Linux and macOS."
+      ]
+    },
+    {
+      "version": "1.0.0-beta.2",
+      "releasedOn": "2026-05-15",
+      "items": [
+        "An admin can let people create their own accounts instead of making each one.",
+        "A repository's webhook secret lets its Git host start a pipeline on push without storing a personal token.",
+        "A run's page lists the artifacts it produced."
+      ]
+    },
+    {
+      "version": "1.0.0-beta.1",
+      "releasedOn": "2026-05-07",
+      "items": [
+        "Gitman hosts your Git repositories: browse files and commits in the browser, download an archive, and push or pull over HTTP or SSH.",
+        "People sign in with an account, and a repository can be shared with collaborators.",
+        "Access tokens let a script or Git client sign in without a password.",
+        "A push can start a pipeline on a worker, with secrets and artifacts managed from the web interface.",
+        "gitman admin manages people, repositories and backups from the command line."
+      ]
     }
   ]
 }
