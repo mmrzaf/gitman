@@ -10,7 +10,8 @@ The `gitman` binary picks its role from its first argument.
 | `gitman worker` | Run the worker process (claims and runs pipelines). |
 | `gitman admin ...` | Manage people, tokens, repositories and rules. |
 | `gitman hook ...` | Run a Git hook. Started by Git itself, not by hand. |
-| `gitman check <file>` | Validate a `.gitman.yml` pipeline file. |
+| `gitman check [file]` | Validate a `.gitman.yml` pipeline file (defaults to `.gitman.yml`). |
+| `gitman doctor` | Check config, data, database, Docker and workers without changing anything. |
 | `gitman restore <backup-directory>` | Verify and restore a maintenance snapshot into empty destinations. |
 | `gitman version` | Print the Gitman version (`gitman <version>`). |
 
@@ -25,8 +26,13 @@ gitman admin person list | disable | enable | reset-password <username>
 gitman admin person revoke-all <username>
 gitman admin person role <username> admin|member
 gitman admin token create [--write] [--days N] [--repos name[,name]] <username> <name>
+gitman admin token list <username>
+gitman admin session list [username]
+gitman admin session revoke <id>
 gitman admin repo create [--description TEXT] [--default-branch NAME] <name>
 gitman admin repo list | delete <name> | sync <name>
+gitman admin repo size <name>
+gitman admin repo gc <name>
 gitman admin repo visibility <name> everyone|restricted
 gitman admin repo default-branch <name> <branch>
 gitman admin repo default-push [--push everyone|admins|people] [--people a,b] <name>
@@ -37,9 +43,10 @@ gitman admin rule set [--push everyone|admins|people] [--people a,b] [--force] [
                       [--run] [--docker] [--secrets] [--deploy] <repo> branch|tag <pattern>
 gitman admin rule delete <repo> branch|tag <pattern>
 gitman admin run cancel <repo> <number>
-gitman admin worker list
 gitman admin worker cleanup
+gitman admin worker release --confirm [--run ID] <worker-id>
 gitman admin operation list | recover
+gitman admin operation abandon --reason TEXT <id>
 gitman admin maintenance enable | disable | status
 gitman admin maintenance backup <new-directory>
 gitman admin migrate
@@ -76,9 +83,34 @@ Flags go before the positional arguments.
   use). See [Security model](../operator/security.md).
 - `admin run cancel` stops a run in progress; the same is available from
   a run's page in the UI to anyone allowed to push to its ref.
+- `admin token list` shows a person's tokens, their scope, expiry, last
+  use and repository selection. The token value itself is only ever shown
+  once, by `token create`.
+- `admin session list` shows unexpired browser sessions; `revoke` ends one
+  by its opaque ID. A person can do the same for their own sessions on the
+  account page, and an admin can revoke anyone's there too.
+- `admin repo size` walks the bare repository and prints its disk usage;
+  `admin repo gc` runs `git gc` under the repository mutation lock and
+  records the result in Activity. Pushes to that repository wait while it
+  runs. Both are also on the repository's Settings → Maintenance tab.
 - `admin worker cleanup` reclaims step containers and workspaces left
   behind by a worker that was killed outright (SIGKILL, OOM) rather than
   shut down normally. See [Troubleshooting](../troubleshooting.md).
+- `admin worker release --confirm` is for a worker whose host is gone for
+  good. It refuses a worker that is still heartbeating, fails its running
+  runs, releases their deployment targets, marks their containers removed
+  and stops the worker record. Use it only after confirming the host and
+  its containers are gone; `--run ID` limits it to one run.
+- `admin operation recover` retries every pending repository operation.
+  `admin operation abandon --reason TEXT <id>` releases a repository whose
+  operation recovery has failed repeatedly, but only when the operation
+  has a recorded recovery error and no Git receipt proving it already
+  changed Git. It leaves Git and database rows untouched for inspection;
+  it only clears the mutation block. See
+  [Troubleshooting](../troubleshooting.md).
 - `admin migrate` runs pending database migrations by hand; normally
   unnecessary, since `web` and `worker` both run migrations automatically
-  on start.
+  on start. A binary refuses to start against a schema newer than its own
+  migrations.
+- `gitman doctor` is read-only and safe beside a live web or worker. It
+  exits 0 with only warnings, and 1 if any check fails.

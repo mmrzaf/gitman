@@ -7,7 +7,7 @@ export PGHOST=${PGHOST:-127.0.0.1} PGPORT=${PGPORT:-5432} PGUSER=${PGUSER:-postg
 fail() { echo "FAILED: $*" >&2; exit 1; }
 step() { printf '\n=== %s\n' "$*"; }
 urlencode() {
-  local LC_ALL=C value=$1 out= char hex i
+  local LC_ALL=C value=$1 out='' char hex i
   for ((i = 0; i < ${#value}; i++)); do
     char=${value:i:1}
     case "$char" in
@@ -42,7 +42,9 @@ integration_init() {
   database_url="postgresql://${userinfo}@/${DATABASE}?host=$(urlencode "$PGHOST")&port=$(urlencode "$PGPORT")&sslmode=disable"
   export GITMAN_DATABASE_URL="$database_url"
   export GITMAN_DATA_DIR="$DATA" GITMAN_PUBLIC_URL="$BASE" GITMAN_PORT="$PORT"
-  export GITMAN_SECRET_KEY="$(openssl rand -base64 32)"
+  local secret_key
+  secret_key=$(openssl rand -base64 32)
+  export GITMAN_SECRET_KEY="$secret_key"
   trap integration_cleanup EXIT
   # Never drop an existing database or reuse an existing data directory.
   createdb "$DATABASE"
@@ -69,7 +71,8 @@ integration_cleanup() {
   rm -f "$RUN/admin.txt" "$RUN/cookies"
   if [[ -n ${GITMAN_INTEGRATION_ARTIFACTS:-} ]]; then
     mkdir -p "$GITMAN_INTEGRATION_ARTIFACTS"
-    local evidence="$GITMAN_INTEGRATION_ARTIFACTS/$(basename "$RUN")"
+    local evidence
+    evidence="$GITMAN_INTEGRATION_ARTIFACTS/$(basename "$RUN")"
     mkdir -p "$evidence"
     # Publish evidence only, not binaries, database snapshots or workspaces.
     for file in "$RUN"/*.log "$RUN"/push-*.txt "$RUN"/worker-cleanup.txt; do

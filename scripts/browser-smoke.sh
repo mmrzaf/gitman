@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Rendered UI checks without a Docker daemon; full live execution is browser.sh.
+# shellcheck source=scripts/integration-lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/integration-lib.sh"
 integration_init smoke "${GITMAN_BROWSER_PORT:-18081}"
 bootstrap_admin

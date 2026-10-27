@@ -113,7 +113,7 @@ func (a *App) archive(w http.ResponseWriter, r *http.Request) error {
 		return nil
 	}
 
-	release, ok := a.acquireGitSlot()
+	release, ok := a.acquireGitSlot(false)
 	if !ok {
 		return apperr.New(apperr.KindUnavailable, "Gitman is handling too many downloads right now.")
 	}

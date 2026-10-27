@@ -20,13 +20,16 @@ import (
 const contentSecurityPolicy = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; " +
 	"connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 
-func setSecurityHeaders(h http.Header) {
+func setSecurityHeaders(h http.Header, secure bool) {
 	h.Set("Content-Security-Policy", contentSecurityPolicy)
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("X-Frame-Options", "DENY")
 	h.Set("Referrer-Policy", "same-origin")
 	h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
 	h.Set("Cross-Origin-Opener-Policy", "same-origin")
+	if secure {
+		h.Set("Strict-Transport-Security", "max-age=31536000")
+	}
 }
 
 // sameOrigin reports whether a request may change state. Safe methods
@@ -52,11 +55,37 @@ func (a *App) sameOrigin(r *http.Request) bool {
 	if origin == "" {
 		return true
 	}
-	parsed, err := url.Parse(origin)
-	if err != nil {
+	got, ok := normalizeOrigin(origin)
+	if !ok {
 		return false
 	}
-	return parsed.Scheme+"://"+parsed.Host == a.origin
+	want, _ := normalizeOrigin(a.origin)
+	return got == want
+}
+
+// normalizeOrigin compares origins without caring about the case of the
+// scheme or host, and with an explicit default port treated as the same
+// origin as one without it.
+func normalizeOrigin(raw string) (string, bool) {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil {
+		return "", false
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	host := strings.ToLower(parsed.Hostname())
+	port := parsed.Port()
+	if port == "" {
+		switch scheme {
+		case "http":
+			port = "80"
+		case "https":
+			port = "443"
+		}
+	}
+	if host == "" || port == "" {
+		return "", false
+	}
+	return scheme + "://" + net.JoinHostPort(host, port), true
 }
 
 // maxFormBytes bounds every form submission. Gitman's forms carry names,
@@ -139,8 +168,28 @@ type clientIPKey struct{}
 // stores it for clientIP to read back.
 func (a *App) clientIPMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx := context.WithValue(r.Context(), clientIPKey{}, a.resolveClientIP(r))
+		ip := a.resolveClientIP(r)
+		a.warnUntrustedProxy(r)
+		ctx := context.WithValue(r.Context(), clientIPKey{}, ip)
 		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// warnUntrustedProxy explains the one failure mode of leaving
+// GITMAN_TRUSTED_PROXIES empty behind a proxy: every client shares the
+// proxy's private address, so one person's failed sign-ins lock out
+// everyone. It warns once, on the first private peer.
+func (a *App) warnUntrustedProxy(r *http.Request) {
+	if len(a.cfg.TrustedProxies) != 0 {
+		return
+	}
+	peer, ok := peerAddr(r)
+	if !ok || !peer.IsPrivate() {
+		return
+	}
+	a.proxyWarn.Do(func() {
+		a.log.Warn("requests arrive from a private address and GITMAN_TRUSTED_PROXIES is empty; " +
+			"if a reverse proxy is in front, every client will share one sign-in rate-limit bucket")
 	})
 }
 

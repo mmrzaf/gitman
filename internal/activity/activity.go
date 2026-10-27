@@ -24,6 +24,8 @@ import (
 const (
 	RepoCreated              = "repo.created"
 	RepoDeleted              = "repo.deleted"
+	RepoGC                   = "repo.gc"
+	RepoOperationAbandoned   = "repo.operation_abandoned"
 	RepoDescribed            = "repo.description_changed"
 	RepoAccessChanged        = "repo.access_changed"
 	RepoVisibilityChanged    = "repo.visibility_changed"
@@ -41,6 +43,8 @@ const (
 	PersonRole               = "person.role"
 	PasswordReset            = "person.password_reset"
 	CredentialsRevoked       = "person.credentials_revoked"
+	SessionRevoked           = "person.session_revoked"
+	WorkerReleased           = "worker.released"
 )
 
 // NotifyChannel is the PostgreSQL channel that carries a repository's ID
@@ -54,7 +58,19 @@ const NotifyChannel = "gitman_activity"
 // event about a person has no repository, and an action taken from the
 // command line has no acting person.
 func Record(ctx context.Context, tx postgres.Tx, repoID, personID, action, detail string) error {
-	if err := insertEvent(ctx, tx, id.New(), repoID, personID, action, detail); err != nil {
+	return record(ctx, tx, repoID, personID, action, detail, false)
+}
+
+// RecordAdmin is Record for an event only admins may see. It is for
+// events that name no repository but are not instance-wide news, such as
+// a person's role changing or a deleted repository's name: without the
+// flag every member's Home feed would announce them.
+func RecordAdmin(ctx context.Context, tx postgres.Tx, repoID, personID, action, detail string) error {
+	return record(ctx, tx, repoID, personID, action, detail, true)
+}
+
+func record(ctx context.Context, tx postgres.Tx, repoID, personID, action, detail string, adminOnly bool) error {
+	if err := insertEvent(ctx, tx, id.New(), repoID, personID, action, detail, adminOnly); err != nil {
 		return err
 	}
 	return Changed(ctx, tx, repoID)
@@ -140,11 +156,11 @@ func (s *Service) Recent(ctx context.Context, repoID *string, limit int) ([]Entr
 // who cannot necessarily read every repository: entries are restricted
 // to repoIDs, plus any entry naming no repository at all. Pass every
 // repository's ID to get everything an admin would see.
-func (s *Service) RecentForRepos(ctx context.Context, repoIDs []string, limit int) ([]Entry, error) {
+func (s *Service) RecentForRepos(ctx context.Context, repoIDs []string, isAdmin bool, limit int) ([]Entry, error) {
 	if repoIDs == nil {
 		repoIDs = []string{}
 	}
-	return s.recent(ctx, filter{repoIDs: repoIDs}, limit)
+	return s.recent(ctx, filter{repoIDs: repoIDs, admin: isAdmin}, limit)
 }
 
 // The four kinds come from different tables with different shapes, so

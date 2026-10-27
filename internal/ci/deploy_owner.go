@@ -120,16 +120,23 @@ func (s *Service) ConfirmExecutionStopped(ctx context.Context, runID string) err
 	ctx, stop := context.WithTimeout(ctx, 10*time.Second)
 	defer stop()
 	return s.db.Tx(ctx, func(tx postgres.Tx) error {
-		if err := lockRunRepo(ctx, tx, runID); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `SELECT 1 FROM runs WHERE id = $1 FOR UPDATE`, runID); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `UPDATE steps SET status = 'failed', finished_at = now() WHERE run_id = $1 AND type = 'deploy' AND status = 'running'`, runID); err != nil {
-			return err
-		}
-		_, err := tx.Exec(ctx, `UPDATE deployment_targets SET owner_run_id = NULL, owner_step_id = NULL WHERE owner_run_id = $1`, runID)
-		return err
+		return confirmExecutionStoppedTx(ctx, tx, runID)
 	})
+}
+
+// confirmExecutionStoppedTx is the transaction half of
+// ConfirmExecutionStopped, shared with the operator command that releases
+// a worker confirmed gone.
+func confirmExecutionStoppedTx(ctx context.Context, tx postgres.Tx, runID string) error {
+	if err := lockRunRepo(ctx, tx, runID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM runs WHERE id = $1 FOR UPDATE`, runID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE steps SET status = 'failed', finished_at = now() WHERE run_id = $1 AND type = 'deploy' AND status = 'running'`, runID); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, `UPDATE deployment_targets SET owner_run_id = NULL, owner_step_id = NULL WHERE owner_run_id = $1`, runID)
+	return err
 }

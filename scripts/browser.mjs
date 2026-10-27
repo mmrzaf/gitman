@@ -513,6 +513,38 @@ for (const scheme of ["light", "dark"]) {
     check(`nothing inside a panel spills sideways: ${path}`, fit.overflowing.length === 0, JSON.stringify(fit));
   }
   await context.close();
+
+  // A wheel over a table cell must scroll the fitted panel around it, even
+  // when the cell is itself a scroll container with nothing to scroll.
+  // Cells used to trap the wheel because of overscroll-behavior: contain.
+  const wheel = await signedIn({ viewport: { width: 1100, height: 560 } });
+  for (const path of ["/", "/demo"]) {
+    await wheel.page.goto(base + path);
+    const target = await wheel.page.evaluate(() => {
+      for (const panel of document.querySelectorAll(".fit > .panel-scroll")) {
+        if (panel.scrollHeight <= panel.clientHeight + 20) continue;
+        for (const cell of panel.querySelectorAll(".table-cell")) {
+          if (cell.scrollHeight <= cell.clientHeight && cell.scrollWidth <= cell.clientWidth) {
+            panel.scrollTop = 0;
+            const r = cell.getBoundingClientRect();
+            return { x: r.left + r.width / 2, y: r.top + r.height / 2, label: panel.parentElement.getAttribute("aria-labelledby") };
+          }
+        }
+      }
+      return null;
+    });
+    if (!target) {
+      check(`the wheel over a cell scrolls its panel: ${path}`, false, "no scrollable panel with a non-scrolling cell");
+      continue;
+    }
+    await wheel.page.mouse.move(target.x, target.y);
+    await wheel.page.mouse.wheel(0, 400);
+    await wheel.page.waitForTimeout(250);
+    const scrolled = await wheel.page.evaluate(
+      (label) => document.querySelector(`[aria-labelledby="${label}"] > .panel-scroll`)?.scrollTop ?? -1, target.label);
+    check(`the wheel over a cell scrolls its panel: ${path}`, scrolled > 0, `scrollTop ${scrolled} over ${target.label}`);
+  }
+  await wheel.context.close();
 }
 
 // ---- Phone width: nothing scrolls sideways but what is meant to --------

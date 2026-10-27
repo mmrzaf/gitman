@@ -47,6 +47,10 @@ var commands = map[string]command{
 		summary: "run a Git hook (started by Git, not by hand)",
 		run:     runHook,
 	},
+	"doctor": {
+		summary: "check a live installation without changing it",
+		run:     runDoctor,
+	},
 }
 
 func main() {
@@ -64,7 +68,7 @@ func main() {
 	}
 
 	if err := cmd.run(os.Args[2:]); err != nil {
-		if !errors.Is(err, errHookFailed) {
+		if !errors.Is(err, errHookFailed) && !errors.Is(err, errDoctorFailed) {
 			fmt.Fprintf(os.Stderr, "gitman: %v\n", err)
 		}
 		os.Exit(1)

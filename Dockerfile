@@ -54,6 +54,6 @@ COPY --from=build /out/gitman /usr/local/bin/gitman
 COPY LICENSE THIRD_PARTY_NOTICES.md /usr/share/doc/gitman/
 USER gitman
 EXPOSE 8080
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
-  CMD curl -fsS -o /dev/null "http://127.0.0.1:${GITMAN_PORT:-8080}/readyz" || exit 1
+# Health checks belong to the deployment, not the image: the same image
+# also runs the worker, which has no HTTP port. compose.yaml checks web.
 CMD ["gitman", "web"]

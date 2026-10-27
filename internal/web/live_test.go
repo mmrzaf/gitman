@@ -200,7 +200,7 @@ func eventStreamFixture(t *testing.T) (a *App, handler http.HandlerFunc) {
 	`, r.ID); err != nil {
 		t.Fatal(err)
 	}
-	session, _, err := people.CreateSession(context.Background(), person, sessionTTL)
+	session, _, err := people.CreateSession(context.Background(), person, sessionTTL, "127.0.0.1", "test")
 	if err != nil {
 		t.Fatal(err)
 	}

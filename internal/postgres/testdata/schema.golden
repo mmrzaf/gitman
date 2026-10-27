@@ -1,0 +1,271 @@
+column commit_metadata.repo_id text null=NO default=
+column commit_metadata.hash text null=NO default=
+column commit_metadata.subject text null=NO default=
+column commit_metadata.author_name text null=NO default=
+column commit_metadata.author_email text null=NO default=
+column commit_metadata.authored_at timestamp with time zone null=YES default=
+column deployment_targets.repo_id text null=NO default=
+column deployment_targets.target text null=NO default=
+column deployment_targets.generation bigint null=NO default=0
+column deployment_targets.latest_run_number bigint null=NO default=0
+column deployment_targets.owner_run_id text null=YES default=
+column deployment_targets.owner_step_id text null=YES default=
+column deployments.step_id text null=YES default=
+column deployments.id text null=NO default=
+column deployments.repo_id text null=NO default=
+column deployments.target text null=NO default=
+column deployments.version text null=NO default=
+column deployments.commit_hash text null=NO default=
+column deployments.run_id text null=YES default=
+column deployments.person_id text null=YES default=
+column deployments.created_at timestamp with time zone null=NO default=now()
+column events.id text null=NO default=
+column events.repo_id text null=YES default=
+column events.person_id text null=YES default=
+column events.action text null=NO default=
+column events.detail text null=NO default=''::text
+column events.created_at timestamp with time zone null=NO default=now()
+column events.admin_only boolean null=NO default=false
+column instance.maintenance boolean null=NO default=false
+column instance.id text null=NO default=
+column instance.singleton boolean null=NO default=true
+column people.id text null=NO default=
+column people.username text null=NO default=
+column people.password_hash text null=NO default=
+column people.auth_generation bigint null=NO default=1
+column people.bootstrap_expires_at timestamp with time zone null=YES default=
+column people.is_admin boolean null=NO default=false
+column people.disabled_at timestamp with time zone null=YES default=
+column people.created_at timestamp with time zone null=NO default=now()
+column push_refusal_refs.refusal_id text null=NO default=
+column push_refusal_refs.position integer null=NO default=
+column push_refusal_refs.ref text null=NO default=
+column push_refusal_refs.reason text null=NO default=
+column push_refusals.id text null=NO default=
+column push_refusals.repo_id text null=NO default=
+column push_refusals.person_id text null=YES default=
+column push_refusals.source_ip text null=NO default=''::text
+column push_refusals.created_at timestamp with time zone null=NO default=now()
+column push_updates.id text null=NO default=
+column push_updates.push_id text null=NO default=
+column push_updates.kind text null=NO default=
+column push_updates.name text null=NO default=
+column push_updates.old_commit text null=NO default=
+column push_updates.new_commit text null=NO default=
+column push_updates.is_create boolean null=NO default=false
+column push_updates.is_delete boolean null=NO default=false
+column push_updates.is_force boolean null=NO default=false
+column push_updates.commit_count integer null=NO default=0
+column push_updates.commit_count_capped boolean null=NO default=false
+column pushes.id text null=NO default=
+column pushes.repo_id text null=NO default=
+column pushes.person_id text null=YES default=
+column pushes.source_ip text null=NO default=''::text
+column pushes.created_at timestamp with time zone null=NO default=now()
+column ref_rules.id text null=NO default=
+column ref_rules.repo_id text null=NO default=
+column ref_rules.kind text null=NO default=
+column ref_rules.pattern text null=NO default=
+column ref_rules.push_policy text null=NO default='everyone'::text
+column ref_rules.allow_force boolean null=NO default=false
+column ref_rules.allow_delete boolean null=NO default=false
+column ref_rules.run_on_push boolean null=NO default=false
+column ref_rules.allow_docker boolean null=NO default=false
+column ref_rules.allow_secrets boolean null=NO default=false
+column ref_rules.allow_deploy boolean null=NO default=false
+column ref_rules.created_at timestamp with time zone null=NO default=now()
+column ref_rules.created_by text null=YES default=
+column refs.repo_id text null=NO default=
+column refs.kind text null=NO default=
+column refs.name text null=NO default=
+column refs.commit_hash text null=NO default=
+column refs.updated_at timestamp with time zone null=NO default=now()
+column refs.updated_by text null=YES default=
+column repo_push_people.repo_id text null=NO default=
+column repo_push_people.person_id text null=NO default=
+column repo_readers.repo_id text null=NO default=
+column repo_readers.person_id text null=NO default=
+column repo_readers.added_at timestamp with time zone null=NO default=now()
+column repos.id text null=NO default=
+column repos.name text null=NO default=
+column repos.description text null=NO default=''::text
+column repos.default_branch text null=NO default='main'::text
+column repos.run_counter bigint null=NO default=0
+column repos.visibility text null=NO default='everyone'::text
+column repos.default_push_policy text null=NO default='everyone'::text
+column repos.created_by text null=YES default=
+column repos.created_at timestamp with time zone null=NO default=now()
+column repository_operations.id text null=NO default=
+column repository_operations.repo_id text null=NO default=
+column repository_operations.kind text null=NO default=
+column repository_operations.name text null=NO default=''::text
+column repository_operations.payload jsonb null=NO default=
+column repository_operations.actor_id text null=YES default=
+column repository_operations.created_at timestamp with time zone null=NO default=now()
+column repository_operations.completed_at timestamp with time zone null=YES default=
+column repository_operations.error text null=NO default=''::text
+column repository_storage.repo_id text null=NO default=
+column repository_storage.log_bytes bigint null=NO default=0
+column rule_push_people.rule_id text null=NO default=
+column rule_push_people.person_id text null=NO default=
+column run_summary.run_id text null=NO default=
+column run_summary.key text null=NO default=
+column run_summary.value text null=NO default=
+column runs.id text null=NO default=
+column runs.repo_id text null=NO default=
+column runs.number bigint null=NO default=
+column runs.commit_hash text null=NO default=
+column runs.ref_kind text null=NO default=
+column runs.ref_name text null=NO default=
+column runs.trigger text null=NO default=
+column runs.triggered_by text null=YES default=
+column runs.push_id text null=YES default=
+column runs.status text null=NO default='queued'::text
+column runs.reason text null=NO default=''::text
+column runs.target text null=NO default=''::text
+column runs.version text null=NO default=''::text
+column runs.allow_secrets boolean null=NO default=false
+column runs.pipeline bytea null=YES default=
+column runs.required_images ARRAY null=NO default='{}'::text[]
+column runs.timeout_ns bigint null=NO default=0
+column runs.deadline_at timestamp with time zone null=YES default=
+column runs.cancel_requested boolean null=NO default=false
+column runs.worker_id text null=YES default=
+column runs.fetch_token_hash text null=YES default=
+column runs.queued_at timestamp with time zone null=NO default=now()
+column runs.started_at timestamp with time zone null=YES default=
+column runs.finished_at timestamp with time zone null=YES default=
+column schema_migrations.version bigint null=NO default=
+column schema_migrations.name text null=NO default=
+column schema_migrations.applied_at timestamp with time zone null=NO default=now()
+column secrets.id text null=NO default=
+column secrets.repo_id text null=NO default=
+column secrets.key text null=NO default=
+column secrets.ciphertext bytea null=NO default=
+column secrets.nonce bytea null=NO default=
+column secrets.created_at timestamp with time zone null=NO default=now()
+column secrets.created_by text null=YES default=
+column sessions.token_hash text null=NO default=
+column sessions.person_id text null=NO default=
+column sessions.auth_generation bigint null=NO default=
+column sessions.created_at timestamp with time zone null=NO default=now()
+column sessions.expires_at timestamp with time zone null=NO default=
+column sessions.id uuid null=NO default=gen_random_uuid()
+column sessions.last_seen_at timestamp with time zone null=NO default=now()
+column sessions.ip text null=NO default=''::text
+column sessions.user_agent text null=NO default=''::text
+column step_logs.repo_id text null=NO default=
+column step_logs.step_id text null=NO default=
+column step_logs.sequence integer null=NO default=
+column step_logs.content text null=NO default=
+column step_logs.byte_len integer null=NO default=
+column step_logs.line_count integer null=NO default=
+column steps.id text null=NO default=
+column steps.run_id text null=NO default=
+column steps.index integer null=NO default=
+column steps.name text null=NO default=
+column steps.status text null=NO default='pending'::text
+column steps.exit_code integer null=YES default=
+column steps.type text null=NO default='run'::text
+column steps.deployment_generation bigint null=YES default=
+column steps.container_name text null=YES default=
+column steps.container_id text null=YES default=
+column steps.container_removed_at timestamp with time zone null=YES default=
+column steps.logs_expired_at timestamp with time zone null=YES default=
+column steps.log_recording_error text null=NO default=''::text
+column steps.log_bytes bigint null=NO default=0
+column steps.log_lines bigint null=NO default=0
+column steps.started_at timestamp with time zone null=YES default=
+column steps.finished_at timestamp with time zone null=YES default=
+column token_repos.token_id text null=NO default=
+column token_repos.repo_id text null=NO default=
+column tokens.id text null=NO default=
+column tokens.person_id text null=NO default=
+column tokens.name text null=NO default=
+column tokens.token_hash text null=NO default=
+column tokens.all_repositories boolean null=NO default=true
+column tokens.auth_generation bigint null=NO default=
+column tokens.scope text null=NO default=
+column tokens.created_at timestamp with time zone null=NO default=now()
+column tokens.expires_at timestamp with time zone null=NO default=
+column tokens.last_used_at timestamp with time zone null=YES default=
+column workers.engine_id text null=NO default=''::text
+column workers.workspace_root text null=NO default=''::text
+column workers.id text null=NO default=
+column workers.hostname text null=NO default=
+column workers.started_at timestamp with time zone null=NO default=now()
+column workers.heartbeat_at timestamp with time zone null=NO default=now()
+column workers.active_runs integer null=NO default=0
+column workers.ready boolean null=NO default=false
+column workers.readiness_reason text null=NO default='Starting'::text
+column workers.images ARRAY null=NO default='{}'::text[]
+column workers.readiness_at timestamp with time zone null=YES default=
+column workers.stopped_at timestamp with time zone null=YES default=
+index commit_metadata commit_metadata_pkey
+index deployment_targets deployment_targets_pkey
+index deployment_targets idx_deployment_targets_owner
+index deployments deployments_pkey
+index deployments deployments_step_id_key
+index deployments idx_deployments_created
+index deployments idx_deployments_repo_created
+index deployments idx_deployments_repo_target
+index deployments idx_deployments_run
+index events events_pkey
+index events idx_events_created
+index events idx_events_repo_created
+index instance instance_pkey
+index people people_pkey
+index people people_username_key
+index push_refusal_refs push_refusal_refs_pkey
+index push_refusals idx_push_refusals_repo_created
+index push_refusals push_refusals_pkey
+index push_updates idx_push_updates_push
+index push_updates push_updates_pkey
+index pushes idx_pushes_created
+index pushes idx_pushes_repo_created
+index pushes pushes_pkey
+index ref_rules ref_rules_pkey
+index ref_rules ref_rules_repo_id_kind_pattern_key
+index refs idx_refs_repo_updated
+index refs refs_pkey
+index repo_push_people repo_push_people_pkey
+index repo_readers repo_readers_pkey
+index repos repos_name_key
+index repos repos_pkey
+index repository_operations idx_repository_operations_completed
+index repository_operations repository_operations_pending_name
+index repository_operations repository_operations_pending_repo
+index repository_operations repository_operations_pkey
+index repository_storage repository_storage_pkey
+index rule_push_people rule_push_people_pkey
+index run_summary run_summary_pkey
+index runs idx_runs_fetch_token
+index runs idx_runs_finished
+index runs idx_runs_push
+index runs idx_runs_queue_order
+index runs idx_runs_repo_commit
+index runs idx_runs_repo_finished
+index runs idx_runs_repo_queued
+index runs idx_runs_repo_ref
+index runs idx_runs_repo_ref_commit
+index runs idx_runs_status
+index runs idx_runs_worker
+index runs runs_id_repo_id_key
+index runs runs_pkey
+index runs runs_repo_id_number_key
+index schema_migrations schema_migrations_pkey
+index secrets secrets_pkey
+index secrets secrets_repo_id_key_key
+index sessions idx_sessions_expires
+index sessions idx_sessions_person
+index sessions sessions_id_key
+index sessions sessions_pkey
+index step_logs step_logs_pkey
+index steps idx_steps_logs_pending
+index steps steps_pkey
+index steps steps_run_id_index_key
+index token_repos token_repos_pkey
+index tokens idx_tokens_person
+index tokens tokens_pkey
+index tokens tokens_token_hash_key
+index workers workers_pkey

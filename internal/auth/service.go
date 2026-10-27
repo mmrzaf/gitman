@@ -67,7 +67,7 @@ func (s *Service) create(ctx context.Context, username, password string, isAdmin
 		if err := insertPerson(ctx, tx, p); err != nil {
 			return err
 		}
-		return activity.Record(ctx, tx, "", actorID, activity.PersonAdded, p.Username)
+		return activity.RecordAdmin(ctx, tx, "", actorID, activity.PersonAdded, p.Username)
 	})
 	if err != nil {
 		return nil, err
@@ -126,7 +126,7 @@ func (s *Service) Disable(ctx context.Context, personID, actorID string) error {
 		if err := revokeCredentials(ctx, tx, personID); err != nil {
 			return err
 		}
-		return activity.Record(ctx, tx, "", actorID, activity.PersonDisabled, p.Username)
+		return activity.RecordAdmin(ctx, tx, "", actorID, activity.PersonDisabled, p.Username)
 	})
 }
 
@@ -156,7 +156,7 @@ func (s *Service) Enable(ctx context.Context, personID, actorID string) (string,
 		if err := revokeCredentials(ctx, tx, personID); err != nil {
 			return err
 		}
-		return activity.Record(ctx, tx, "", actorID, activity.PersonEnabled, p.Username)
+		return activity.RecordAdmin(ctx, tx, "", actorID, activity.PersonEnabled, p.Username)
 	})
 	if err != nil {
 		return "", err
@@ -191,7 +191,7 @@ func (s *Service) SetAdmin(ctx context.Context, personID string, isAdmin bool, a
 		if isAdmin {
 			role = "admin"
 		}
-		return activity.Record(ctx, tx, "", actorID, activity.PersonRole, p.Username+" "+role)
+		return activity.RecordAdmin(ctx, tx, "", actorID, activity.PersonRole, p.Username+" "+role)
 	})
 }
 
@@ -217,7 +217,7 @@ func (s *Service) ResetPassword(ctx context.Context, personID, newPassword, acto
 		if err := revokeCredentials(ctx, tx, personID); err != nil {
 			return err
 		}
-		return activity.Record(ctx, tx, "", actorID, activity.PasswordReset, p.Username)
+		return activity.RecordAdmin(ctx, tx, "", actorID, activity.PasswordReset, p.Username)
 	})
 }
 
@@ -291,14 +291,15 @@ func (s *Service) VerifyLogin(ctx context.Context, username, password string) (*
 }
 
 // CreateSession starts a session for the verified person snapshot and returns the plain
-// token to set as a cookie. Only the token's hash is stored.
-func (s *Service) CreateSession(ctx context.Context, person *Person, ttl time.Duration) (plain string, expiresAt time.Time, err error) {
+// token to set as a cookie. Only the token's hash is stored; ip and
+// userAgent are shown to the person so they can recognise the session.
+func (s *Service) CreateSession(ctx context.Context, person *Person, ttl time.Duration, ip, userAgent string) (plain string, expiresAt time.Time, err error) {
 	plain, err = token.New(sessionTokenBytes)
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("generate session token: %w", err)
 	}
 	expiresAt = time.Now().Add(ttl)
-	if err := insertSession(ctx, s.db.Q, token.Hash(plain), person, expiresAt); err != nil {
+	if err := insertSession(ctx, s.db.Q, token.Hash(plain), person, expiresAt, ip, userAgent); err != nil {
 		return "", time.Time{}, err
 	}
 	return plain, expiresAt, nil
@@ -309,17 +310,74 @@ func (s *Service) CreateSession(ctx context.Context, person *Person, ttl time.Du
 // their sessions, as defense against a session created concurrently
 // with the disable.
 func (s *Service) SessionPerson(ctx context.Context, sessionToken string) (*Person, error) {
-	p, err := selectSessionPerson(ctx, s.db.Q, token.Hash(sessionToken))
+	p, _, err := s.SessionIdentity(ctx, sessionToken)
+	return p, err
+}
+
+// SessionIdentity is SessionPerson plus the opaque session ID, so a page
+// can mark which listed session is the one making the request.
+func (s *Service) SessionIdentity(ctx context.Context, sessionToken string) (*Person, string, error) {
+	hash := token.Hash(sessionToken)
+	p, sessionID, err := selectSessionIdentity(ctx, s.db.Q, hash)
 	if err != nil {
 		if errors.Is(err, postgres.ErrNotFound) {
-			return nil, ErrInvalidSession
+			return nil, "", ErrInvalidSession
 		}
-		return nil, fmt.Errorf("resolve session: %w", err)
+		return nil, "", fmt.Errorf("resolve session: %w", err)
 	}
 	if p.Disabled() {
-		return nil, ErrInvalidSession
+		return nil, "", ErrInvalidSession
 	}
-	return p, nil
+	_ = touchSession(ctx, s.db.Q, hash)
+	return p, sessionID, nil
+}
+
+// ListSessions returns a person's unexpired sessions, most recently seen
+// first.
+func (s *Service) ListSessions(ctx context.Context, personID string) ([]Session, error) {
+	return selectSessions(ctx, s.db.Q, personID)
+}
+
+// ListAllSessions returns every unexpired session on the instance.
+func (s *Service) ListAllSessions(ctx context.Context) ([]Session, error) {
+	return selectSessions(ctx, s.db.Q, "")
+}
+
+// RevokeSession deletes one session by its opaque ID. The owner may
+// revoke their own; an admin may revoke anyone's, and that is recorded in
+// Activity. An empty actorID is the command line acting with full
+// authority.
+func (s *Service) RevokeSession(ctx context.Context, sessionID, actorID string) (*Session, error) {
+	var revoked *Session
+	err := s.db.Tx(ctx, func(tx postgres.Tx) error {
+		session, err := selectSessionByID(ctx, tx, sessionID)
+		if err != nil {
+			return err
+		}
+		if session.PersonID != actorID && actorID != "" {
+			actor, err := selectPersonByID(ctx, tx, actorID)
+			if err != nil {
+				return err
+			}
+			if !actor.IsAdmin {
+				return ErrNotSessionOwner
+			}
+		}
+		if err := deleteSessionByID(ctx, tx, session.ID); err != nil {
+			return err
+		}
+		if session.PersonID != actorID {
+			if err := activity.RecordAdmin(ctx, tx, "", actorID, activity.SessionRevoked, session.Username); err != nil {
+				return err
+			}
+		}
+		revoked = session
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return revoked, nil
 }
 
 // DeleteSession ends one session. Deleting a session that does not exist
@@ -430,6 +488,13 @@ func (s *Service) PruneExpiredSessions(ctx context.Context) (int64, error) {
 	return deleteExpiredSessions(ctx, s.db.Q)
 }
 
+// PruneExpiredTokens deletes access tokens past their expiry and returns
+// how many. An expired token already fails to authenticate; this only
+// keeps the table from growing with credentials nobody can use.
+func (s *Service) PruneExpiredTokens(ctx context.Context) (int64, error) {
+	return deleteExpiredTokens(ctx, s.db.Q)
+}
+
 // RevokeAll invalidates every credential, including login snapshots verified
 // before this transaction. The password is preserved; the caller must sign in.
 func (s *Service) RevokeAll(ctx context.Context, personID, actorID string) error {
@@ -441,6 +506,6 @@ func (s *Service) RevokeAll(ctx context.Context, personID, actorID string) error
 		if err := revokeCredentials(ctx, tx, personID); err != nil {
 			return err
 		}
-		return activity.Record(ctx, tx, "", actorID, activity.CredentialsRevoked, username)
+		return activity.RecordAdmin(ctx, tx, "", actorID, activity.CredentialsRevoked, username)
 	})
 }

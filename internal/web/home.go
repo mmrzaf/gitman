@@ -130,7 +130,7 @@ func (a *App) buildHomeData(r *http.Request, createForm *form) (homePage, error)
 	if err != nil {
 		return homePage{}, err
 	}
-	feed, err := a.activity.RecentForRepos(ctx, readableIDs, homeTimelineLimit)
+	feed, err := a.activity.RecentForRepos(ctx, readableIDs, person.IsAdmin, homeTimelineLimit)
 	if err != nil {
 		return homePage{}, err
 	}

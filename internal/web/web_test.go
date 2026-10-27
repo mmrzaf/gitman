@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mmrzaf/gitman/internal/activity"
 	"github.com/mmrzaf/gitman/internal/auth"
@@ -209,6 +210,80 @@ func TestLoginIsRateLimited(t *testing.T) {
 	}
 	resp, body := login(b, "darius", "nope", "/")
 	expect(t, resp, body, http.StatusTooManyRequests, "Too many failed attempts. Try again in 15 minutes.")
+}
+
+// TestStalledLoginsCannotBlockMutations holds every admission slot with
+// unauthenticated, half-sent login bodies, then proves a signed-in
+// mutation still gets through. Before admission moved behind the body
+// and login was exempted, these four held all four slots for the read
+// deadline and every other mutation queued behind them.
+func TestStalledLoginsCannotBlockMutations(t *testing.T) {
+	database, b := setup(t)
+	signIn(t, database, b, "darius", true)
+
+	type stalled struct {
+		writer *io.PipeWriter
+		done   chan struct{}
+	}
+	var held []stalled
+	for i := 0; i < 4; i++ {
+		reader, writer := io.Pipe()
+		req, err := http.NewRequest(http.MethodPost, b.server.URL+"/login", reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
+		wrote := make(chan struct{})
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			if _, err := writer.Write([]byte("username=darius&password=")); err == nil {
+				close(wrote)
+			}
+			// Keep the pipe open: the server is still waiting for the
+			// rest of the body.
+		}()
+		go func() {
+			resp, _ := http.DefaultClient.Do(req)
+			if resp != nil {
+				_ = resp.Body.Close()
+			}
+		}()
+		select {
+		case <-wrote:
+		case <-time.After(5 * time.Second):
+			t.Fatal("a stalled login never reached the server")
+		}
+		held = append(held, stalled{writer: writer, done: done})
+	}
+	defer func() {
+		for _, h := range held {
+			_ = h.writer.Close()
+			<-h.done
+		}
+	}()
+
+	resp, body := b.do(http.MethodPost, "/repos", url.Values{"name": {"still-works"}}, nil)
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("authenticated mutation behind four stalled logins: %d\n%s", resp.StatusCode, body)
+	}
+}
+
+func TestMaintenancePausesRepositoryMutationsButNotSignIn(t *testing.T) {
+	database, b := setup(t)
+	signIn(t, database, b, "darius", true)
+	if err := database.SetMaintenance(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.SetMaintenance(context.Background(), false) })
+
+	resp, body := b.do(http.MethodPost, "/repos", url.Values{"name": {"paused"}}, nil)
+	expect(t, resp, body, http.StatusServiceUnavailable, "Too busy")
+
+	other := newBrowser(t, b.server)
+	resp, body = login(other, "darius", "correct-horse-battery", "/")
+	expect(t, resp, body, http.StatusSeeOther)
 }
 
 func TestMissingFieldsAreReportedInline(t *testing.T) {

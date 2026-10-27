@@ -194,7 +194,7 @@ func addSummaryLine(summary map[string]string, line string, masker *secretMasker
 	if _, exists := summary[key]; !exists && len(summary) == maxSummaryEntries {
 		return
 	}
-	value = storable(masker.mask(strings.TrimSpace(value)))
+	value = storable(masker.mask(stripANSI(strings.TrimSpace(value))))
 	summary[key] = cutAtRune(value, maxSummaryValueLen)
 }
 

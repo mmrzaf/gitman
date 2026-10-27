@@ -1,0 +1,24 @@
+{{define "content"}}
+<div class="page">
+<header class="page-header"><div class="page-header-text">
+  <h1 class="page-title" id="sessions-title">Sessions</h1>
+  <p class="page-subtitle">Every signed-in browser. Revoking one ends that browser's session immediately; the cookie's token is never shown.</p>
+</div></header>
+<section class="panel" aria-labelledby="sessions-title">
+{{if .Data.Sessions}}
+<div class="table-scroll"><table class="table table-cards table-rich">
+<thead><tr><th scope="col">Person</th><th scope="col">Signed in</th><th scope="col">Last seen</th><th scope="col">Address</th><th scope="col">Device</th><th scope="col">Expires</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+<tbody>{{range .Data.Sessions}}<tr>
+<th scope="row" class="table-rowheader"><div class="table-cell"><span class="mono">{{.Username}}</span>{{if eq .ID $.Data.CurrentSession}} <span class="chip">this session</span>{{end}}</div></th>
+<td data-label="Signed in"><div class="table-cell">{{template "time" .CreatedAt}}</div></td>
+<td data-label="Last seen"><div class="table-cell">{{template "time" .LastSeenAt}}</div></td>
+<td data-label="Address"><div class="table-cell mono">{{if .IP}}{{.IP}}{{else}}<span class="muted">unknown</span>{{end}}</div></td>
+<td data-label="Device"><div class="table-cell cell-truncate" title="{{.UserAgent}}">{{if .UserAgent}}{{.UserAgent}}{{else}}<span class="muted">unknown</span>{{end}}</div></td>
+<td data-label="Expires"><div class="table-cell">{{template "time" .ExpiresAt}}</div></td>
+<td data-label="Actions" class="cell-shrink cell-end"><div class="table-cell">
+<form method="post" action="/sessions/{{.ID}}/revoke" data-confirm="Revoke {{.Username}}'s session?" data-confirm-detail="That browser is signed out at once." data-confirm-action="Revoke session"><button type="submit" class="btn btn-sm btn-danger">Revoke</button></form>
+</div></td>
+</tr>{{end}}</tbody></table></div>
+{{else}}<div class="empty"><p class="empty-title">No sessions</p><p>Nobody is signed in.</p></div>{{end}}
+</section></div>
+{{end}}

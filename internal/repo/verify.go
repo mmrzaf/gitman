@@ -49,7 +49,7 @@ func (s *Service) VerifySnapshot(ctx context.Context) error {
 				return fmt.Errorf("%s: indexed ref %s does not match snapshot", r.Name, ref.Name)
 			}
 		}
-		hashes, err := s.retainedObjects(ctx, r.ID)
+		hashes, err := s.retainedObjects(ctx, r)
 		if err != nil {
 			return err
 		}

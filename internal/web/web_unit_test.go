@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -57,8 +58,12 @@ func TestSameOrigin(t *testing.T) {
 		{"cross-site fetch", http.MethodPost, map[string]string{"Sec-Fetch-Site": "cross-site"}, false},
 		{"same-site but other host", http.MethodPost, map[string]string{"Sec-Fetch-Site": "same-site"}, false},
 		{"matching origin", http.MethodPost, map[string]string{"Origin": "https://git.example.com"}, true},
+		{"host case differs", http.MethodPost, map[string]string{"Origin": "https://GIT.Example.COM"}, true},
+		{"default https port", http.MethodPost, map[string]string{"Origin": "https://git.example.com:443"}, true},
 		{"other origin", http.MethodPost, map[string]string{"Origin": "https://evil.example"}, false},
 		{"scheme differs", http.MethodPost, map[string]string{"Origin": "http://git.example.com"}, false},
+		{"other port", http.MethodPost, map[string]string{"Origin": "https://git.example.com:8443"}, false},
+		{"origin with credentials", http.MethodPost, map[string]string{"Origin": "https://user@git.example.com"}, false},
 		{"no browser headers", http.MethodPost, nil, true},
 	}
 	for _, c := range cases {
@@ -78,38 +83,84 @@ func TestLoginLimiter(t *testing.T) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	l := newLoginLimiter(func() time.Time { return now })
 	for i := 0; i < loginUsernameLimit; i++ {
-		if ok, _ := l.allow("darius", "1.1.1.1"); !ok {
+		if attempt, _ := l.allow("Darius ", "1.1.1.1"); attempt == nil {
 			t.Fatalf("attempt %d refused too early", i+1)
 		}
-		l.failure("Darius ", "1.1.1.1")
 	}
-	ok, wait := l.allow("darius", "1.1.1.1")
-	if ok || wait != loginWindow {
-		t.Fatalf("after %d failures: allow=%v wait=%v", loginUsernameLimit, ok, wait)
+	attempt, wait := l.allow("darius", "1.1.1.1")
+	if attempt != nil || wait != loginWindow {
+		t.Fatalf("after %d failures: allow=%v wait=%v", loginUsernameLimit, attempt != nil, wait)
 	}
-	if ok, _ := l.allow("darius", "2.2.2.2"); !ok {
+	if attempt, _ := l.allow("darius", "2.2.2.2"); attempt == nil {
 		t.Error("another address should not be limited by these failures")
 	}
-	if ok, _ := l.allow("sara", "1.1.1.1"); !ok {
+	if attempt, _ := l.allow("sara", "1.1.1.1"); attempt == nil {
 		t.Error("another username from the same address is below the address limit")
 	}
 	now = now.Add(loginWindow)
-	if ok, _ := l.allow("darius", "1.1.1.1"); !ok {
+	if attempt, _ := l.allow("darius", "1.1.1.1"); attempt == nil {
 		t.Error("expected the window to reset")
 	}
 }
 
-func TestLoginLimiterAddressLimitAndBound(t *testing.T) {
+func TestLoginLimiterAddressAndUsernameLimits(t *testing.T) {
 	now := time.Now()
 	l := newLoginLimiter(func() time.Time { return now })
 	for i := 0; i < loginAddressLimit; i++ {
-		l.failure("user"+strings.Repeat("x", i), "9.9.9.9")
+		if attempt, _ := l.allow("user"+strings.Repeat("x", i), "9.9.9.9"); attempt == nil {
+			t.Fatalf("address attempt %d refused too early", i+1)
+		}
 	}
-	if ok, _ := l.allow("fresh", "9.9.9.9"); ok {
+	if attempt, _ := l.allow("fresh", "9.9.9.9"); attempt != nil {
 		t.Error("expected the address limit to apply across usernames")
 	}
+
+	// One username is limited across addresses too, but not by another
+	// address's per-username budget.
+	for i := 0; i < loginGlobalLimit; i++ {
+		if attempt, _ := l.allow("shared", "198.51.100."+strconv.Itoa(i+1)); attempt == nil {
+			t.Fatalf("global attempt %d refused too early", i+1)
+		}
+	}
+	if attempt, _ := l.allow("shared", "203.0.113.9"); attempt != nil {
+		t.Error("expected the global username limit to apply across addresses")
+	}
+}
+
+func TestLoginLimiterIPv6UsesSlash64(t *testing.T) {
+	now := time.Now()
+	l := newLoginLimiter(func() time.Time { return now })
+	for i := 0; i < loginUsernameLimit; i++ {
+		addr := fmt.Sprintf("2001:db8:1:2::%x", i+1)
+		if attempt, _ := l.allow("darius", addr); attempt == nil {
+			t.Fatalf("attempt %d refused too early", i+1)
+		}
+	}
+	if attempt, _ := l.allow("darius", "2001:db8:1:2::ffff"); attempt != nil {
+		t.Error("rotating inside the same /64 reset the username budget")
+	}
+	if attempt, _ := l.allow("darius", "2001:db8:1:3::1"); attempt == nil {
+		t.Error("a different /64 should not be limited by the first")
+	}
+}
+
+func TestLoginLimiterSuccessRefundsAndBound(t *testing.T) {
+	now := time.Now()
+	l := newLoginLimiter(func() time.Time { return now })
+	for i := 0; i < loginAddressLimit; i++ {
+		attempt, _ := l.allow("user"+strconv.Itoa(i), "9.9.9.9")
+		if attempt == nil {
+			t.Fatalf("address attempt %d refused too early", i+1)
+		}
+		if i == 0 {
+			attempt.success()
+		}
+	}
+	if attempt, _ := l.allow("fresh", "9.9.9.9"); attempt == nil {
+		t.Error("a success did not refund its address attempt")
+	}
 	for i := 0; i < loginLimiterKeys; i++ {
-		l.failure("u"+strings.Repeat("y", i%50)+string(rune('a'+i%26)), "10.0.0.1")
+		l.allow("u"+strings.Repeat("y", i%50)+string(rune('a'+i%26)), "10.0.0.1")
 	}
 	if len(l.entries) > loginLimiterKeys {
 		t.Errorf("limiter holds %d entries, above its bound", len(l.entries))

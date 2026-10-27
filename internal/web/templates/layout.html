@@ -34,6 +34,7 @@
         {{- if .Person.IsAdmin}}
         <a class="menu-item" href="/workers"{{if eq .Name "workers"}} aria-current="page"{{end}}>{{template "icon" "play"}}Workers</a>
         <a class="menu-item" href="/people"{{if eq .Name "people"}} aria-current="page"{{end}}>{{template "icon" "person"}}People</a>
+        <a class="menu-item" href="/sessions"{{if eq .Name "sessions"}} aria-current="page"{{end}}>{{template "icon" "monitor"}}Sessions</a>
         <div class="menu-separator" role="separator"></div>
         {{- end}}
         <a class="menu-item" href="/me">{{template "icon" "key"}}Access tokens</a>

@@ -8,6 +8,7 @@
     <a class="tab" id="tab-rules" href="{{$base}}?tab=rules" data-tab="rules"{{if eq $d.Tab "rules"}} aria-current="page"{{end}}>{{template "icon" "shield"}}Ref rules <span class="count">{{len $d.Rules}}</span></a>
     <a class="tab" id="tab-secrets" href="{{$base}}?tab=secrets" data-tab="secrets"{{if eq $d.Tab "secrets"}} aria-current="page"{{end}}>{{template "icon" "key"}}Secrets <span class="count">{{len $d.Secrets}}</span></a>
     <a class="tab" id="tab-access" href="{{$base}}?tab=access" data-tab="access"{{if eq $d.Tab "access"}} aria-current="page"{{end}}>{{template "icon" "lock"}}Access</a>
+    <a class="tab" id="tab-maintenance" href="{{$base}}?tab=maintenance" data-tab="maintenance"{{if eq $d.Tab "maintenance"}} aria-current="page"{{end}}>{{template "icon" "settings"}}Maintenance</a>
     <a class="tab" id="tab-danger" href="{{$base}}?tab=danger" data-tab="danger"{{if eq $d.Tab "danger"}} aria-current="page"{{end}}>{{template "icon" "warning"}}Danger zone</a>
   </nav>
 
@@ -192,6 +193,19 @@
 
         <div class="form-actions"><button type="submit" class="btn btn-primary">Save access</button></div>
       </form>
+    </section>
+
+    <section class="panel" id="panel-maintenance" data-tab-panel="maintenance" aria-labelledby="maintenance-title"{{if ne $d.Tab "maintenance"}} hidden{{end}}>
+      <header class="panel-header"><h2 class="panel-title" id="maintenance-title">{{template "icon" "settings"}}Maintenance</h2></header>
+      <div class="panel-body stack">
+        <dl class="facts">
+          <dt>Size on disk</dt><dd>{{bytes $d.SizeBytes}}</dd>
+        </dl>
+        <p class="panel-intro">Git garbage collection repacks the repository and removes objects no retained history needs. Gitman pins every commit that runs, deployments, refs and the audit window still retain, so this is safe for history shown in Gitman.</p>
+        <form method="post" action="{{$base}}/maintenance" class="form" data-confirm="Run repository maintenance on {{$repo.Name}}?" data-confirm-detail="Pushes and other changes to this repository wait while it runs. A large repository can take several minutes." data-confirm-action="Run maintenance">
+          <div class="form-actions"><button type="submit" class="btn">{{template "icon" "settings"}}Run git gc</button></div>
+        </form>
+      </div>
     </section>
 
     <section class="panel panel-danger" id="panel-danger" data-tab-panel="danger" aria-labelledby="danger-title"{{if ne $d.Tab "danger"}} hidden{{end}}>

@@ -147,6 +147,64 @@ func (s *Service) Open(r *Repo) (*git.Repo, error) {
 	return gitRepo, nil
 }
 
+// Maintenance is what one repository maintenance run measured: bytes
+// before and after Git collected unreachable objects.
+type Maintenance struct {
+	BeforeBytes int64
+	AfterBytes  int64
+}
+
+// DiskUsage reports the bytes the bare repository occupies on disk.
+func (s *Service) DiskUsage(ctx context.Context, r *Repo) (int64, error) {
+	gr, err := s.Open(r)
+	if err != nil {
+		return 0, err
+	}
+	return gr.DiskUsage(ctx)
+}
+
+// Maintain runs git gc inside the repository mutation lock, so a push
+// waits rather than interleaves with a repack, and records the result in
+// the activity log. It has no durable operation journal: gc is
+// idempotent and changes no database row of its own.
+func (s *Service) Maintain(ctx context.Context, repoID, actorID string) (Maintenance, error) {
+	r, err := s.GetByID(ctx, repoID)
+	if err != nil {
+		return Maintenance{}, err
+	}
+	var result Maintenance
+	err = s.WithMutation(ctx, repoID, func() error {
+		gr, err := s.Open(r)
+		if err != nil {
+			return err
+		}
+		if result.BeforeBytes, err = gr.DiskUsage(ctx); err != nil {
+			return err
+		}
+		if err := gr.GC(ctx); err != nil {
+			return err
+		}
+		result.AfterBytes, err = gr.DiskUsage(ctx)
+		return err
+	})
+	if err != nil {
+		if errors.Is(err, git.ErrDiskReserve) {
+			return result, apperr.Wrap(apperr.KindUnavailable,
+				"Repository disk reserve is low; maintenance is paused until the disk reserve is available.", err)
+		}
+		return result, err
+	}
+	freed := result.BeforeBytes - result.AfterBytes
+	if freed < 0 {
+		freed = 0
+	}
+	err = s.db.Tx(ctx, func(tx postgres.Tx) error {
+		return activity.Record(ctx, tx, repoID, actorID, activity.RepoGC,
+			fmt.Sprintf("freed %d bytes, now %d bytes", freed, result.AfterBytes))
+	})
+	return result, err
+}
+
 // Delete journals the operation, moves storage aside, and removes the database
 // record and its dependent data. Recovery completes an interrupted deletion.
 func (s *Service) Delete(ctx context.Context, repoID, actorID string) error {

@@ -104,7 +104,7 @@ func (s *Store) Open(repoID string) (*Repo, error) {
 	if !info.IsDir() {
 		return nil, fmt.Errorf("open repository: %s is not a directory", path)
 	}
-	return &Repo{path: path, source: pooledSource{pool: s.pool, path: path}, cache: s.cache}, nil
+	return &Repo{path: path, source: pooledSource{pool: s.pool, path: path}, cache: s.cache, diskReserve: s.diskReserve}, nil
 }
 
 // Create initializes an empty bare repository whose HEAD names

@@ -29,9 +29,14 @@ rule matches gets no secrets, the same as it gets no Docker access.
 ## How they reach a step
 
 - Secrets are injected as environment variables into every step of a run
-  that's allowed to receive them.
+  that's allowed to receive them, including steps that do not need them.
+  A step that can change its own output can print a secret; the ref rule is
+  the permission boundary. Anyone who can change and run a secret-enabled ref
+  can read that repository's secrets.
 - They never appear on a command line.
-- Their values are masked wherever run output is stored and displayed.
+- Their values are masked in stored run output after terminal escapes are
+  removed, so colour codes cannot split a value past the matcher. Encoded
+  forms (base64, compression, one character per line) are not detected.
 
 See [Security model](../operator/security.md) for how this fits with the
 rest of the ref-rule permission system.

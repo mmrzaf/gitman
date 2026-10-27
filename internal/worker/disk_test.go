@@ -1,12 +1,16 @@
 package worker
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
 	"testing/fstest"
+	"time"
+
+	"github.com/mmrzaf/gitman/internal/config"
 )
 
 func TestWorkspaceBudgetIncludesMetadataButDoesNotFollowSymlinks(t *testing.T) {
@@ -56,6 +60,39 @@ type disappearingEntry struct {
 }
 
 func (entry disappearingEntry) Info() (fs.FileInfo, error) { return nil, entry.err }
+
+// TestMonitorDiskSkipsAWalkThatOutlivesItsCheck makes the usage walk
+// slow on the first tick and over budget on the second. The first tick
+// must not kill the run with a misleading shutdown reason; the second
+// must still stop it for the real budget.
+func TestMonitorDiskSkipsAWalkThatOutlivesItsCheck(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	stopped := make(chan error, 1)
+	calls := 0
+	usage := func(check context.Context, _ string, _ int64) (int64, error) {
+		calls++
+		if calls == 1 {
+			<-check.Done()
+			return 0, check.Err()
+		}
+		return 0, errDiskBudget
+	}
+	monitorDiskWith(ctx, t.TempDir(), t.TempDir(), config.Resources{}, func(cause error) {
+		stopped <- cause
+	}, 20*time.Millisecond, usage)
+	select {
+	case cause := <-stopped:
+		if !errors.Is(cause, errDiskBudget) {
+			t.Fatalf("stopped for %v, want the real disk budget", cause)
+		}
+	default:
+		t.Fatal("the monitor did not stop for the second tick's budget breach")
+	}
+	if calls < 2 {
+		t.Fatalf("usage called %d times, want at least 2", calls)
+	}
+}
 
 func TestWorkspaceUsageAllowsConcurrentRemoval(t *testing.T) {
 	tree := disappearingFS{MapFS: fstest.MapFS{

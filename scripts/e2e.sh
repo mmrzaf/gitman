@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Real Git HTTP, Docker execution, cancellation, lost-worker cleanup and output safety.
+# shellcheck source=scripts/integration-lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/integration-lib.sh"
 integration_init e2e "${GITMAN_E2E_PORT:-18080}"
 start_worker
 INSTANCE=$(psql -d "$DATABASE" -tAc 'SELECT id FROM instance')
 # steps lists this instance's running step containers.
-steps() { docker ps -q --filter "label=gitman.instance=$INSTANCE" "$@"; }
+steps() { docker ps -q --filter "label=gitman.instance=$INSTANCE"; }
 
 step "admin, repository, write token"
 bootstrap_admin
@@ -79,7 +80,7 @@ step "a run cancelled mid-step"
 git -C "$W" checkout -qb slow/one
 git -C "$W" commit -q --allow-empty -m "Slow"
 git -C "$W" push "$REMOTE" slow/one 2>&1 | tee "$RUN/push-slow.txt"
-for i in $(seq 1 60); do
+for _ in $(seq 1 60); do
   curl -s -b "$JAR" "$BASE/demo/runs/2/log?step=1" | grep -q 'tick 3' && break
   sleep 1
 done
@@ -97,7 +98,7 @@ curl -s -b "$JAR" "$BASE/demo/runs/2/log?step=1" | tail -3
 # A cancelled run's container is force-removed in the background, not
 # synchronously with the page reporting "cancelled", so give it a moment.
 removed=false
-for i in $(seq 1 10); do
+for _ in $(seq 1 10); do
   [ -z "$(steps)" ] && { removed=true; break; }
   sleep 1
 done
@@ -118,7 +119,7 @@ EOF
 git -C "$W" add -A && git -C "$W" commit -qm "Malicious pipeline: symlinked summary, NUL output"
 git -C "$W" push "$REMOTE" malicious 2>&1 | tee "$RUN/push-malicious.txt"
 grep -q "run #3 queued" "$RUN/push-malicious.txt" || fail "malicious pipeline's run was not queued"
-for i in $(seq 1 60); do
+for _ in $(seq 1 60); do
   page=$(curl -s -b "$JAR" "$BASE/demo/runs/3")
   echo "$page" | grep -qE 'status-lg is-(passed|failed)' && break
   sleep 1
@@ -128,7 +129,7 @@ echo "$page" | grep -qi '/etc/hostname\|root:' && fail "the symlinked summary le
 curl -s -b "$JAR" "$BASE/demo/runs/3/log?step=1" | tee "$RUN/nul-output.log"
 grep -qF $'before\xEF\xBF\xBDafter\xEF\xBF\xBDstill-here' "$RUN/nul-output.log" || fail "NUL bytes were not replaced with U+FFFD in the stored log"
 removed=false
-for i in $(seq 1 10); do
+for _ in $(seq 1 10); do
   [ -z "$(steps)" ] && { removed=true; break; }
   sleep 1
 done
@@ -152,7 +153,7 @@ git -C "$W" checkout -qb slow/two main
 git -C "$W" commit -q --allow-empty -m "Slow, again"
 git -C "$W" push "$REMOTE" slow/two 2>&1 | tee "$RUN/push-slow2.txt"
 RUN_NUM=$(grep -oE 'run #[0-9]+' "$RUN/push-slow2.txt" | grep -oE '[0-9]+')
-for i in $(seq 1 60); do
+for _ in $(seq 1 60); do
   curl -s -b "$JAR" "$BASE/demo/runs/$RUN_NUM/log?step=1" | grep -q 'tick 3' && break
   sleep 1
 done

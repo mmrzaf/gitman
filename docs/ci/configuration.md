@@ -79,8 +79,40 @@ clean them up. Deployment may be followed by health checks or other verification
 ## Checking a file
 
 ```sh
-gitman check .gitman.yml
+gitman check [file]
 ```
+
+It is syntax-only: a warning reminds you that `docker: true` or a target needs a
+ref rule with `--docker` or `--deploy`. It does not contact a server or run
+anything.
+
+## A minimal pipeline
+
+```yaml
+image: alpine:3.20
+steps:
+  - name: test
+    run: echo hello
+```
+
+A pipeline with no target starts no deploy; add a `targets:` map and a
+`type: deploy` step only when you need managed deployments.
+
+## Limits and fixed behavior
+
+These are deliberately not tunable per repository:
+
+- The pipeline file is at most 256 KiB; `run` scripts are at most 64 KiB each.
+- At most 64 steps, 16 targets, 32 `requires` images and 128 environment
+  variables per pipeline (8 KiB per value).
+- A run's `timeout` defaults to 30 minutes and may not exceed 24 hours. Write a
+  unit: `20m`, not `20`.
+- A worker runs one run at a time. Workers never pull images, so a run stays
+  queued until a ready worker has all of them.
+- There is no per-step timeout, no continue-on-error, and no step-level `env`.
+  A step's shell script can implement a shorter timeout itself if it needs one.
+- Secrets go to every step of a run whose ref rule allows secrets. A step that
+  can print one can leak it; see [Secrets](secrets.md).
 
 ## Deployment ownership
 

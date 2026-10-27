@@ -45,42 +45,37 @@ const (
 // this limit costs a client only a retry.
 const gitConcurrencyLimit = 32
 
+// gitReservedWorkerSlots keeps capacity for a worker fetching its run's
+// commit. A worker's fetch has no retry and a 503 fails the whole run, so
+// clients cannot consume every slot first.
+const gitReservedWorkerSlots = 4
+
 // registerGitRoutes adds the Git routes to mux. A repository may be
 // addressed with or without the ".git" suffix, since Git clients accept
 // both.
 func (a *App) registerGitRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /{repo}/info/refs", a.limitGitConcurrency(a.infoRefs))
-	mux.HandleFunc("POST /{repo}/git-upload-pack", a.limitGitConcurrency(a.gitRPC(git.UploadPack)))
-	mux.HandleFunc("POST /{repo}/git-receive-pack", a.limitGitConcurrency(a.gitRPC(git.ReceivePack)))
+	mux.HandleFunc("GET /{repo}/info/refs", a.infoRefs)
+	mux.HandleFunc("POST /{repo}/git-upload-pack", a.gitRPC(git.UploadPack))
+	mux.HandleFunc("POST /{repo}/git-receive-pack", a.gitRPC(git.ReceivePack))
 }
 
 // acquireGitSlot takes one of the slots that bound Git work, without
-// waiting, and reports false when every slot is taken. The caller releases
-// the slot when its work is done.
-func (a *App) acquireGitSlot() (release func(), ok bool) {
-	select {
-	case a.gitSlots <- struct{}{}:
-		return func() { <-a.gitSlots }, true
-	default:
+// waiting, and reports false when the applicable limit is reached. Normal
+// clients stop at the limit minus the reserved worker slots; a worker's
+// authenticated fetch may use all of them. The caller releases the slot
+// when its work is done.
+func (a *App) acquireGitSlot(worker bool) (release func(), ok bool) {
+	a.gitMu.Lock()
+	defer a.gitMu.Unlock()
+	limit := gitConcurrencyLimit - gitReservedWorkerSlots
+	if worker {
+		limit = gitConcurrencyLimit
+	}
+	if len(a.gitSlots) >= limit {
 		return nil, false
 	}
-}
-
-// limitGitConcurrency wraps a Git HTTP handler with the shared limit on
-// how many may run at once, answering 503 with Retry-After the instant
-// it is full rather than queuing behind whichever ones already hold a
-// slot — those can each run for as long as a large clone or push takes.
-func (a *App) limitGitConcurrency(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		release, ok := a.acquireGitSlot()
-		if !ok {
-			w.Header().Set("Retry-After", "5")
-			http.Error(w, "Gitman is handling too many Git requests right now. Try again shortly.", http.StatusServiceUnavailable)
-			return
-		}
-		defer release()
-		next(w, r)
-	}
+	a.gitSlots <- struct{}{}
+	return func() { <-a.gitSlots }, true
 }
 
 // requiredScope is the token scope a service needs.
@@ -96,9 +91,10 @@ type gitRequest struct {
 	svc git.Service
 	// person is who is cloning, fetching or pushing; nil when a worker is
 	// fetching a run's commit.
-	person *auth.Person
-	repo   *reposvc.Repo
-	git    *git.Repo
+	person  *auth.Person
+	repo    *reposvc.Repo
+	git     *git.Repo
+	release func()
 }
 
 // actor names who made a Git request, for logs.
@@ -204,13 +200,23 @@ func (a *App) resolveGit(w http.ResponseWriter, r *http.Request, svc git.Service
 			return nil, false
 		}
 	}
+	// Take a slot only after authentication and authorization: an
+	// anonymous request must never be able to exhaust Git capacity. A
+	// worker fetch is the one caller allowed into the reserved slots.
+	release, ok := a.acquireGitSlot(person == nil)
+	if !ok {
+		w.Header().Set("Retry-After", "5")
+		refuse("Gitman is handling too many Git requests right now. Try again shortly.", http.StatusServiceUnavailable)
+		return nil, false
+	}
 	gitRepo, err := a.repos.Open(repoRecord)
 	if err != nil {
+		release()
 		a.log.Error("git repository open failed", "repo", name, "error", err)
 		http.Error(w, "Internal error.", http.StatusInternalServerError)
 		return nil, false
 	}
-	return &gitRequest{svc: svc, person: person, repo: repoRecord, git: gitRepo}, true
+	return &gitRequest{svc: svc, person: person, repo: repoRecord, git: gitRepo, release: release}, true
 }
 
 func (a *App) transportOptions(r *http.Request, req *gitRequest) (git.TransportOptions, bool) {
@@ -236,6 +242,7 @@ func (a *App) infoRefs(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	defer req.release()
 	opts, ok := a.transportOptions(r, req)
 	if !ok {
 		http.Error(w, "Invalid Git-Protocol header.", http.StatusBadRequest)
@@ -259,6 +266,7 @@ func (a *App) gitRPC(svc git.Service) http.HandlerFunc {
 		if !ok {
 			return
 		}
+		defer req.release()
 		opts, ok := a.transportOptions(r, req)
 		if !ok {
 			http.Error(w, "Invalid Git-Protocol header.", http.StatusBadRequest)

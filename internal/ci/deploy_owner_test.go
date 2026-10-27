@@ -86,6 +86,73 @@ func TestDeployOwnerSurvivesLostWorkerAndRecordingIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestReleaseLostWorkerRefusesLiveWorkerAndFreesItsRun(t *testing.T) {
+	ctx := t.Context()
+	db := pgtest.Open(t)
+	seedRepo(t, db, "r1", "demo")
+	svc := NewService(db)
+	pipeline := []byte("image: alpine:3.20\ntargets:\n  staging:\n    branch: '*'\nsteps:\n  - name: deploy\n    type: deploy\n    when: target\n    run: echo deploy\n")
+	if err := db.Tx(ctx, func(tx postgres.Tx) error {
+		_, err := svc.CreateTx(ctx, tx, CreateParams{RepoID: "r1", Commit: strings.Repeat("a", 40), RefKind: git.KindBranch, RefName: "main", Trigger: TriggerPush, Pipeline: pipeline, Decision: repo.Decision{AllowDeploy: true}})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.RegisterWorker(ctx, "w1", "host"); err != nil {
+		t.Fatal(err)
+	}
+	claim, err := svc.ClaimNext(ctx, "w1", 30*time.Minute, []string{"alpine:3.20"})
+	if err != nil || claim == nil {
+		t.Fatalf("claim = %+v, %v", claim, err)
+	}
+	step := claim.Steps[0]
+	if err := svc.StepStarted(ctx, claim.RunID, step.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.PlanContainer(ctx, claim.RunID, step.ID, "gitman-"+claim.RunID+"-0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.BeginDeployment(ctx, claim.RunID, step.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := svc.ReleaseLostWorker(ctx, "w1", ""); !errors.Is(err, ErrWorkerAlive) {
+		t.Fatalf("released a live worker: %v", err)
+	}
+	if err := svc.StopWorker(ctx, "w1"); err != nil {
+		t.Fatal(err)
+	}
+	n, err := svc.ReleaseLostWorker(ctx, "w1", "")
+	if err != nil || n != 1 {
+		t.Fatalf("ReleaseLostWorker = %d, %v", n, err)
+	}
+	var status, reason string
+	if err := db.Q.QueryRow(ctx, `SELECT status, reason FROM runs WHERE id = $1`, claim.RunID).Scan(&status, &reason); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failed" || !strings.Contains(reason, "confirmed gone") {
+		t.Fatalf("run after release = %s %q", status, reason)
+	}
+	var owner *string
+	if err := db.Q.QueryRow(ctx, `SELECT owner_run_id FROM deployment_targets WHERE repo_id = 'r1' AND target = 'staging'`).Scan(&owner); err != nil {
+		t.Fatal(err)
+	}
+	if owner != nil {
+		t.Fatalf("deployment target still owned by %v", *owner)
+	}
+	var removed *time.Time
+	if err := db.Q.QueryRow(ctx, `SELECT container_removed_at FROM steps WHERE id = $1`, step.ID).Scan(&removed); err != nil {
+		t.Fatal(err)
+	}
+	if removed == nil {
+		t.Error("released run's container is not recorded as removed")
+	}
+	var stopped *time.Time
+	if err := db.Q.QueryRow(ctx, `SELECT stopped_at FROM workers WHERE id = 'w1'`).Scan(&stopped); err != nil || stopped == nil {
+		t.Fatalf("worker after release: %v, %v", stopped, err)
+	}
+}
+
 func TestClaimRequiresImagesAndPersistsDeadlineAtClaim(t *testing.T) {
 	ctx := t.Context()
 	db := pgtest.Open(t)

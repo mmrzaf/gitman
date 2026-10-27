@@ -296,8 +296,9 @@ type updateRecord struct {
 
 func (h *Hook) prepareRecords(ctx context.Context, pc *pushContext, updates []Update) ([]updateRecord, error) {
 	var err error
-	// Everything that reads Git happens before the transaction, which
-	// then holds its locks only for the writes.
+	// Authorization and commit metadata are read before the transaction.
+	// recordPush then re-reads the ref index inside its transaction, after
+	// the refs have been applied, so it records exactly what Git holds.
 	records := make([]updateRecord, 0, len(updates))
 	for _, u := range updates {
 		if u.Kind == "" {

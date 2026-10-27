@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/mmrzaf/gitman/internal/apperr"
 )
@@ -41,11 +42,14 @@ func (a *App) register(mux *http.ServeMux) {
 	mux.Handle("POST /me/password", a.page(member, a.mePasswordChange))
 	mux.Handle("POST /me/tokens", a.page(member, a.meCreateToken))
 	mux.Handle("POST /me/tokens/{id}/delete", a.page(member, a.meDeleteToken))
+	mux.Handle("POST /me/sessions/{id}/revoke", a.page(member, a.meRevokeSession))
 
 	mux.Handle("GET /operations", a.page(admin, a.operationsView))
 	mux.Handle("POST /operations/recover", a.page(admin, a.operationsRecover))
 	mux.Handle("GET /workers", a.page(admin, a.workersView))
 	mux.Handle("GET /people", a.page(admin, a.peopleView))
+	mux.Handle("GET /sessions", a.page(admin, a.sessionsView))
+	mux.Handle("POST /sessions/{id}/revoke", a.page(admin, a.sessionsRevoke))
 	mux.Handle("POST /people", a.page(admin, a.peopleAdd))
 	mux.Handle("POST /people/{username}/disable", a.page(admin, a.peopleDisable))
 	mux.Handle("POST /people/{username}/enable", a.page(admin, a.peopleEnable))
@@ -83,6 +87,9 @@ func (a *App) register(mux *http.ServeMux) {
 	mux.Handle("POST /{repo}/settings/secrets", a.page(member, a.repoSettingsSecretSet))
 	mux.Handle("POST /{repo}/settings/secrets/delete", a.page(member, a.repoSettingsSecretDelete))
 	mux.Handle("POST /{repo}/settings/access", a.page(member, a.repoSettingsAccess))
+	// A full repack can outlast the ordinary page budget. The handler
+	// resets its write deadline before redirecting when it finishes.
+	mux.Handle("POST /{repo}/settings/maintenance", a.pageWithBudget(member, a.repoSettingsMaintenance, 35*time.Minute))
 	mux.Handle("POST /{repo}/settings/delete", a.page(member, a.repoSettingsDelete))
 
 	// Every other path is a page that does not exist, rendered inside the

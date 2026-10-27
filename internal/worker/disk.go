@@ -18,6 +18,11 @@ const (
 
 var errDiskBudget = errors.New("workspace or disk reserve exceeded")
 
+// CheckReserve reports whether root has at least reserve bytes free. It
+// is exported for diagnostics that must not duplicate the worker's
+// Statfs logic.
+func CheckReserve(root string, reserve uint64) error { return reserveAvailable(root, reserve) }
+
 func reserveAvailable(root string, reserve uint64) error {
 	var stat syscall.Statfs_t
 	if err := syscall.Statfs(root, &stat); err != nil {
@@ -72,16 +77,32 @@ func filesystemUsage(ctx context.Context, tree fs.FS, limit int64) (int64, error
 // them between checks. Socket-enabled pipelines also need operator quotas for
 // any child containers they create themselves.
 func monitorDisk(ctx context.Context, root, reserveRoot string, resources config.Resources, stop context.CancelCauseFunc) {
+	monitorDiskWith(ctx, root, reserveRoot, resources, stop, diskCheckInterval, workspaceUsage)
+}
+
+// monitorDiskWith is monitorDisk with the check interval and the usage
+// walk injectable for tests. A walk that cannot finish within one check
+// is not a budget breach: it only means this tick has no answer, so it
+// is skipped and the next one tries again.
+func monitorDiskWith(ctx context.Context, root, reserveRoot string, resources config.Resources, stop context.CancelCauseFunc,
+	interval time.Duration, usage func(context.Context, string, int64) (int64, error)) {
 	resources = resources.WithDefaults()
-	ticker := time.NewTicker(diskCheckInterval)
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		check, cancel := context.WithTimeout(ctx, diskCheckInterval)
-		_, err := workspaceUsage(check, root, int64(resources.WorkspaceGiB)<<30)
+		check, cancel := context.WithTimeout(ctx, interval)
+		_, err := usage(check, root, int64(resources.WorkspaceGiB)<<30)
 		if err == nil {
 			err = reserveAvailable(reserveRoot, uint64(resources.DiskReserveGiB)<<30)
 		}
+		skipped := errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil
 		cancel()
+		if skipped {
+			// The walk ran out of its own check budget. Leaving the run
+			// alive is the only safe answer; killing it would blame the
+			// pipeline for a slow filesystem.
+			err = nil
+		}
 		if err != nil && ctx.Err() == nil {
 			stop(fmt.Errorf("monitor workspace disk: %w", err))
 			return

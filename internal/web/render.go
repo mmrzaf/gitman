@@ -50,6 +50,7 @@ func loadViews(assets *assets) (*views, error) {
 		"add":         func(a, b int) int { return a + b },
 		"sub":         func(a, b int) int { return a - b },
 		"duration":    formatDuration,
+		"bytes":       formatBytes,
 		"deref":       func(p *int) int { return *p },
 		"lineKind":    lineKind,
 		"dirOf":       dirOf,
@@ -347,23 +348,42 @@ func shortHash(h string) string {
 	return h
 }
 
+// formatBytes shows a byte count in binary units, with one decimal past a
+// kilobyte: "0 B", "512 B", "1.5 KiB", "42.0 MiB".
+func formatBytes(n int64) string {
+	if n < 1024 {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(1024), 0
+	for n >= div*1024 && exp < 5 {
+		div *= 1024
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
+}
+
 // eventDescriptions maps a settings-change event's action to the phrase
 // the timeline shows for it. It is a package variable, not a switch,
 // so a new action added in internal/activity is a one-line addition here
 // too, in the same shape.
 var eventDescriptions = map[string]string{
-	activity.RepoCreated:    "created the repository",
-	activity.RepoDeleted:    "deleted the repository",
-	activity.RepoDescribed:  "updated the description",
-	activity.RuleSaved:      "saved a ref rule",
-	activity.RuleDeleted:    "removed a ref rule",
-	activity.SecretSet:      "set a secret",
-	activity.SecretDeleted:  "removed a secret",
-	activity.PersonAdded:    "added a person",
-	activity.PersonDisabled: "disabled a person",
-	activity.PersonEnabled:  "enabled a person",
-	activity.PersonRole:     "changed a role",
-	activity.PasswordReset:  "reset a password",
+	activity.RepoCreated:            "created the repository",
+	activity.RepoDeleted:            "deleted the repository",
+	activity.RepoGC:                 "ran repository maintenance",
+	activity.RepoOperationAbandoned: "abandoned a failed repository operation",
+	activity.RepoDescribed:          "updated the description",
+	activity.RuleSaved:              "saved a ref rule",
+	activity.RuleDeleted:            "removed a ref rule",
+	activity.SecretSet:              "set a secret",
+	activity.SecretDeleted:          "removed a secret",
+	activity.PersonAdded:            "added a person",
+	activity.PersonDisabled:         "disabled a person",
+	activity.PersonEnabled:          "enabled a person",
+	activity.PersonRole:             "changed a role",
+	activity.PasswordReset:          "reset a password",
+	activity.CredentialsRevoked:     "revoked credentials",
+	activity.SessionRevoked:         "revoked a session",
+	activity.WorkerReleased:         "released a worker confirmed gone",
 
 	activity.RepoVisibilityChanged:    "changed who may read the repository",
 	activity.RepoReaderAdded:          "added a reader",

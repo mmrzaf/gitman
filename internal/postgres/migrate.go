@@ -25,6 +25,72 @@ type migration struct {
 	sql     string
 }
 
+// MigrationInfo names one applied, pending or newer-than-this-binary
+// schema migration.
+type MigrationInfo struct {
+	Version int64
+	Name    string
+}
+
+// MigrationStatus compares the schema recorded in the database with the
+// migrations this binary embeds: applied, pending, and database-ahead
+// (applied by a newer binary and unknown here). It is read-only, so a
+// diagnostic can run beside a live process.
+type MigrationStatus struct {
+	Applied       []MigrationInfo
+	Pending       []MigrationInfo
+	DatabaseAhead []MigrationInfo
+}
+
+// MigrationStatus reports the schema's relationship to this binary.
+func (d *DB) MigrationStatus(ctx context.Context) (*MigrationStatus, error) {
+	migrations, err := loadMigrations()
+	if err != nil {
+		return nil, err
+	}
+	known := make(map[int64]migration, len(migrations))
+	for _, m := range migrations {
+		known[m.version] = m
+	}
+	status := &MigrationStatus{}
+	var present bool
+	if err := d.Q.QueryRow(ctx, `SELECT to_regclass('schema_migrations') IS NOT NULL`).Scan(&present); err != nil {
+		return nil, fmt.Errorf("check schema_migrations: %w", err)
+	}
+	applied := make(map[int64]bool, len(migrations))
+	if present {
+		rows, err := d.Q.Query(ctx, `SELECT version, name FROM schema_migrations ORDER BY version`)
+		if err != nil {
+			return nil, fmt.Errorf("read applied migrations: %w", err)
+		}
+		for rows.Next() {
+			var version int64
+			var name string
+			if err := rows.Scan(&version, &name); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("scan applied migration: %w", err)
+			}
+			applied[version] = true
+			info := MigrationInfo{Version: version, Name: name}
+			if _, ok := known[version]; ok {
+				status.Applied = append(status.Applied, info)
+			} else {
+				status.DatabaseAhead = append(status.DatabaseAhead, info)
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("read applied migrations: %w", err)
+		}
+	}
+	for _, m := range migrations {
+		if !applied[m.version] {
+			status.Pending = append(status.Pending, MigrationInfo{Version: m.version, Name: m.name})
+		}
+	}
+	return status, nil
+}
+
 // loadMigrations reads every embedded migration file and orders it by the
 // numeric prefix in its filename (e.g. "0001_init.sql").
 func loadMigrations() ([]migration, error) {
@@ -108,17 +174,26 @@ func (d *DB) Migrate(ctx context.Context) error {
 	}
 
 	applied := make(map[int64]bool)
-	rows, err := conn.Query(ctx, `SELECT version FROM schema_migrations`)
+	known := make(map[int64]bool, len(migrations))
+	for _, m := range migrations {
+		known[m.version] = true
+	}
+	rows, err := conn.Query(ctx, `SELECT version, name FROM schema_migrations ORDER BY version`)
 	if err != nil {
 		return fmt.Errorf("read applied migrations: %w", err)
 	}
 	for rows.Next() {
 		var version int64
-		if err := rows.Scan(&version); err != nil {
+		var name string
+		if err := rows.Scan(&version, &name); err != nil {
 			rows.Close()
 			return fmt.Errorf("scan applied migration: %w", err)
 		}
 		applied[version] = true
+		if !known[version] {
+			rows.Close()
+			return fmt.Errorf("database schema is ahead of this Gitman binary: migration %d (%s) is not embedded here; run a newer binary or restore a backup made by this version", version, name)
+		}
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {

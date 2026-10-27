@@ -17,37 +17,62 @@ const retentionInterval = time.Hour
 // workerRecordRetention is how long a stopped worker's record is kept.
 const workerRecordRetention = 7 * 24 * time.Hour
 
-// runRetention prunes expired sessions, stopped workers' records and —
-// when retentionDays is not zero — finished runs older than that, once
-// at start and then every hour, until ctx ends.
+// Each retention phase gets its own budget and admission, so one slow or
+// failing phase cannot skip the rest or hold the backup fence for the
+// others. Git pin reconciliation is the slowest on a busy repository.
+const (
+	pruneCredentialsTimeout = 2 * time.Minute
+	pruneRunsTimeout        = 10 * time.Minute
+	pruneGitTimeout         = 30 * time.Minute
+)
+
+// runRetention prunes expired sessions and tokens, stopped workers'
+// records, finished runs and Git pins once at start and then every hour,
+// until ctx ends.
 func runRetention(ctx context.Context, people *auth.Service, runs *ci.Service, repos *repo.Service, policy config.Retention, log *slog.Logger) {
-	prune := func() {
-		work, stop := context.WithTimeout(ctx, 5*time.Minute)
+	prunePhase := func(name string, timeout time.Duration, fn func(context.Context) error) {
+		work, stop := context.WithTimeout(ctx, timeout)
 		defer stop()
 		work, release, err := runs.AdmitMutation(work)
 		if err != nil {
+			if ctx.Err() == nil {
+				log.Warn("retention phase skipped", "phase", name, "error", err)
+			}
 			return
 		}
 		defer release()
-		ctx := work
-		now := time.Now()
-		if n, err := people.PruneExpiredSessions(ctx); err != nil {
-			log.Warn("could not prune expired sessions", "error", err)
-		} else if n > 0 {
-			log.Info("pruned expired sessions", "sessions", n)
+		if err := fn(work); err != nil {
+			log.Error("retention requires attention", "phase", name, "error", err)
 		}
-		if n, err := runs.PruneWorkers(ctx, now.Add(-workerRecordRetention)); err != nil {
-			log.Warn("could not prune worker records", "error", err)
-		} else if n > 0 {
-			log.Info("pruned worker records", "workers", n)
-		}
-		if err := runs.PruneRetention(ctx, now, policy); err != nil {
-			log.Error("retention requires attention", "error", err)
-			return
-		}
-		if err := repos.PruneGitPins(ctx); err != nil {
-			log.Error("Git retention requires attention", "error", err)
-		}
+	}
+
+	prune := func() {
+		prunePhase("credentials", pruneCredentialsTimeout, func(ctx context.Context) error {
+			if n, err := people.PruneExpiredSessions(ctx); err != nil {
+				log.Warn("could not prune expired sessions", "error", err)
+			} else if n > 0 {
+				log.Info("pruned expired sessions", "sessions", n)
+			}
+			if n, err := people.PruneExpiredTokens(ctx); err != nil {
+				log.Warn("could not prune expired access tokens", "error", err)
+			} else if n > 0 {
+				log.Info("pruned expired access tokens", "tokens", n)
+			}
+			return nil
+		})
+		prunePhase("worker records", pruneCredentialsTimeout, func(ctx context.Context) error {
+			n, err := runs.PruneWorkers(ctx, time.Now().Add(-workerRecordRetention))
+			if err == nil && n > 0 {
+				log.Info("pruned worker records", "workers", n)
+			}
+			return err
+		})
+		prunePhase("run history", pruneRunsTimeout, func(ctx context.Context) error {
+			return runs.PruneRetention(ctx, time.Now(), policy)
+		})
+		prunePhase("Git pins", pruneGitTimeout, func(ctx context.Context) error {
+			return repos.PruneGitPins(ctx)
+		})
 	}
 
 	ticker := time.NewTicker(retentionInterval)

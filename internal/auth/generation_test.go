@@ -22,7 +22,7 @@ func TestResetRejectsPreviouslyVerifiedLogin(t *testing.T) {
 	if err := svc.ResetPassword(ctx, p.ID, "new-password-value", ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := svc.CreateSession(ctx, verified, time.Hour); !errors.Is(err, ErrInvalidCredentials) {
+	if _, _, err := svc.CreateSession(ctx, verified, time.Hour, "", ""); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("stale login created a session: %v", err)
 	}
 }
@@ -41,7 +41,7 @@ func TestResetRejectsPasswordChangeSessionSnapshot(t *testing.T) {
 	if err := svc.ResetPassword(ctx, p.ID, "reset-password-value", ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := svc.CreateSession(ctx, changed, time.Hour); !errors.Is(err, ErrInvalidCredentials) {
+	if _, _, err := svc.CreateSession(ctx, changed, time.Hour, "", ""); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("stale changed password created a session: %v", err)
 	}
 }
@@ -63,7 +63,7 @@ func TestBootstrapExpiresAndCannotCreateTokens(t *testing.T) {
 	if _, err := svc.VerifyLogin(ctx, p.Username, "temporary-password"); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("expired bootstrap login: %v", err)
 	}
-	if _, _, err := svc.CreateSession(ctx, p, time.Hour); !errors.Is(err, ErrInvalidCredentials) {
+	if _, _, err := svc.CreateSession(ctx, p, time.Hour, "", ""); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("expired bootstrap session: %v", err)
 	}
 }
@@ -99,7 +99,7 @@ func TestRevokeAllEndsSessionsTokensAndVerifiedSnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	session, _, err := svc.CreateSession(ctx, p, time.Hour)
+	session, _, err := svc.CreateSession(ctx, p, time.Hour, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestRevokeAllEndsSessionsTokensAndVerifiedSnapshots(t *testing.T) {
 	if _, _, err := svc.Authenticate(ctx, plain, "token-repo"); !errors.Is(err, ErrInvalidToken) {
 		t.Fatalf("token survived: %v", err)
 	}
-	if _, _, err := svc.CreateSession(ctx, p, time.Hour); !errors.Is(err, ErrInvalidCredentials) {
+	if _, _, err := svc.CreateSession(ctx, p, time.Hour, "", ""); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("verified snapshot survived: %v", err)
 	}
 	if _, err := svc.VerifyLogin(ctx, p.Username, "password-value-long"); err != nil {

@@ -120,12 +120,12 @@ func deleteSessionsOf(ctx context.Context, q postgres.Querier, personID string) 
 	return nil
 }
 
-func insertSession(ctx context.Context, q postgres.Querier, tokenHash string, person *Person, expiresAt time.Time) error {
+func insertSession(ctx context.Context, q postgres.Querier, tokenHash string, person *Person, expiresAt time.Time, ip, userAgent string) error {
 	tag, err := q.Exec(ctx, `
-		INSERT INTO sessions (token_hash, person_id, expires_at, auth_generation)
-        SELECT $1, id, $3, auth_generation FROM people
+		INSERT INTO sessions (token_hash, person_id, expires_at, auth_generation, ip, user_agent)
+        SELECT $1, id, $3, auth_generation, $5, $6 FROM people
         WHERE id = $2 AND auth_generation = $4 AND disabled_at IS NULL AND (bootstrap_expires_at IS NULL OR bootstrap_expires_at > now())
-	`, tokenHash, person.ID, expiresAt, person.Generation)
+	`, tokenHash, person.ID, expiresAt, person.Generation, ip, userAgent)
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
 	}
@@ -135,13 +135,76 @@ func insertSession(ctx context.Context, q postgres.Querier, tokenHash string, pe
 	return nil
 }
 
-func selectSessionPerson(ctx context.Context, q postgres.Querier, tokenHash string) (*Person, error) {
+func selectSessionIdentity(ctx context.Context, q postgres.Querier, tokenHash string) (*Person, string, error) {
+	var sessionID string
 	p, err := scanPerson(q.QueryRow(ctx, `
-		SELECT `+personColumns+`
+		SELECT `+personColumns+`, sessions.id
 		FROM sessions JOIN people ON people.id = sessions.person_id
 		WHERE sessions.token_hash = $1 AND sessions.expires_at > now() AND sessions.auth_generation = people.auth_generation AND (people.bootstrap_expires_at IS NULL OR people.bootstrap_expires_at > now())
-	`, tokenHash))
-	return p, postgres.NormalizeNotFound(err)
+	`, tokenHash), &sessionID)
+	return p, sessionID, postgres.NormalizeNotFound(err)
+}
+
+func touchSession(ctx context.Context, q postgres.Querier, tokenHash string) error {
+	_, err := q.Exec(ctx, `
+		UPDATE sessions SET last_seen_at = now()
+		WHERE token_hash = $1 AND last_seen_at < now() - interval '1 minute'
+	`, tokenHash)
+	return err
+}
+
+const sessionColumns = `sessions.id, sessions.person_id, people.username, sessions.created_at, sessions.expires_at, sessions.last_seen_at, sessions.ip, sessions.user_agent`
+
+func scanSession(row interface{ Scan(...any) error }) (Session, error) {
+	var s Session
+	err := row.Scan(&s.ID, &s.PersonID, &s.Username, &s.CreatedAt, &s.ExpiresAt, &s.LastSeenAt, &s.IP, &s.UserAgent)
+	return s, err
+}
+
+func selectSessions(ctx context.Context, q postgres.Querier, personID string) ([]Session, error) {
+	rows, err := q.Query(ctx, `
+		SELECT `+sessionColumns+`
+		FROM sessions JOIN people ON people.id = sessions.person_id
+		WHERE sessions.expires_at > now() AND sessions.auth_generation = people.auth_generation
+		  AND people.disabled_at IS NULL AND ($1 = '' OR sessions.person_id = $1)
+		ORDER BY sessions.last_seen_at DESC, sessions.id
+	`, personID)
+	if err != nil {
+		return nil, fmt.Errorf("list sessions: %w", err)
+	}
+	defer rows.Close()
+	var sessions []Session
+	for rows.Next() {
+		s, err := scanSession(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan session: %w", err)
+		}
+		sessions = append(sessions, s)
+	}
+	return sessions, rows.Err()
+}
+
+func selectSessionByID(ctx context.Context, q postgres.Querier, sessionID string) (*Session, error) {
+	s, err := scanSession(q.QueryRow(ctx, `
+		SELECT `+sessionColumns+`
+		FROM sessions JOIN people ON people.id = sessions.person_id
+		WHERE sessions.id = $1
+	`, sessionID))
+	if err != nil {
+		return nil, postgres.NormalizeNotFound(err)
+	}
+	return &s, nil
+}
+
+func deleteSessionByID(ctx context.Context, q postgres.Querier, sessionID string) error {
+	tag, err := q.Exec(ctx, `DELETE FROM sessions WHERE id = $1`, sessionID)
+	if err != nil {
+		return fmt.Errorf("revoke session: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return postgres.ErrNotFound
+	}
+	return nil
 }
 
 func deleteSession(ctx context.Context, q postgres.Querier, tokenHash string) error {
@@ -203,31 +266,35 @@ func deleteTokenRow(ctx context.Context, q postgres.Querier, tokenID string) err
 	return nil
 }
 
-// useToken resolves a token hash to its owner and scope, recording the
-// use. The expiry check, the disabled-person check and the last_used_at
-// update are one statement, so a token revoked or a person disabled
-// concurrently stops subsequent authentication. Each token also carries
-// the password generation at creation, closing reset/creation races.
+// useToken resolves a token hash to its owner and scope, then records
+// the use at most once a minute. The validating statement keeps every
+// expiry, revocation and repository check. A token revoked between that
+// statement and the guarded update may still finish the request in
+// flight; every later request fails, as before.
 func useToken(ctx context.Context, q postgres.Querier, tokenHash, repositoryName string) (*Person, Scope, error) {
 	var scope Scope
+	var tokenID string
 	p, err := scanPerson(q.QueryRow(ctx, `
-		UPDATE tokens SET last_used_at = now()
-		FROM people
+		SELECT `+personColumns+`, tokens.scope, tokens.id
+		FROM tokens
+		JOIN people ON tokens.person_id = people.id
 		WHERE tokens.token_hash = $1
-		  AND tokens.person_id = people.id
 		  AND tokens.expires_at > now()
 		  AND tokens.auth_generation = people.auth_generation
 		  AND people.bootstrap_expires_at IS NULL
 		  AND (tokens.all_repositories OR EXISTS (SELECT 1 FROM token_repos tr JOIN repos r ON r.id = tr.repo_id WHERE tr.token_id = tokens.id AND r.name = lower($2)))
 		  AND people.disabled_at IS NULL
-		RETURNING `+personColumns+`, tokens.scope
-	`, tokenHash, repositoryName), &scope)
+	`, tokenHash, repositoryName), &scope, &tokenID)
 	if err != nil {
 		if errors.Is(postgres.NormalizeNotFound(err), postgres.ErrNotFound) {
 			return nil, "", ErrInvalidToken
 		}
 		return nil, "", fmt.Errorf("authenticate token: %w", err)
 	}
+	_, _ = q.Exec(ctx, `
+		UPDATE tokens SET last_used_at = now()
+		WHERE id = $1 AND (last_used_at IS NULL OR last_used_at < now() - interval '1 minute')
+	`, tokenID)
 	return p, scope, nil
 }
 
@@ -235,6 +302,14 @@ func deleteExpiredSessions(ctx context.Context, q postgres.Querier) (int64, erro
 	tag, err := q.Exec(ctx, `DELETE FROM sessions WHERE expires_at <= now()`)
 	if err != nil {
 		return 0, fmt.Errorf("delete expired sessions: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
+func deleteExpiredTokens(ctx context.Context, q postgres.Querier) (int64, error) {
+	tag, err := q.Exec(ctx, `DELETE FROM tokens WHERE expires_at <= now()`)
+	if err != nil {
+		return 0, fmt.Errorf("delete expired access tokens: %w", err)
 	}
 	return tag.RowsAffected(), nil
 }

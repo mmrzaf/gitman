@@ -140,9 +140,20 @@ func TestArchiveTakesAGitSlotAndAnswersBusyWhenFull(t *testing.T) {
 	signIn(t, database, b, "darius", false)
 	seedFilesRepo(t, database, store, b)
 
-	for i := 0; i < gitConcurrencyLimit; i++ {
-		app.gitSlots <- struct{}{}
+	normalLimit := gitConcurrencyLimit - gitReservedWorkerSlots
+	var held []func()
+	for i := 0; i < normalLimit; i++ {
+		release, ok := app.acquireGitSlot(false)
+		if !ok {
+			t.Fatalf("slot %d refused too early", i+1)
+		}
+		held = append(held, release)
 	}
+	defer func() {
+		for _, release := range held {
+			release()
+		}
+	}()
 	resp, body := b.do(http.MethodGet, "/waiotech/archive/main.zip", nil, nil)
 	expect(t, resp, body, http.StatusServiceUnavailable, "too busy")
 	if resp.Header.Get("Retry-After") == "" {
@@ -152,14 +163,15 @@ func TestArchiveTakesAGitSlotAndAnswersBusyWhenFull(t *testing.T) {
 		t.Error("an archive was made with every slot taken")
 	}
 
-	<-app.gitSlots
+	held[len(held)-1]()
+	held = held[:len(held)-1]
 	resp, body = b.do(http.MethodGet, "/waiotech/archive/main.zip", nil, nil)
 	if resp.StatusCode != http.StatusOK || !strings.HasPrefix(body, "PK") {
 		t.Fatalf("with a slot free: %d %.80q", resp.StatusCode, body)
 	}
 	// And gives the slot back when it is done.
-	if len(app.gitSlots) != gitConcurrencyLimit-1 {
-		t.Errorf("%d slots are taken after the download, want %d", len(app.gitSlots), gitConcurrencyLimit-1)
+	if len(app.gitSlots) != normalLimit-1 {
+		t.Errorf("%d slots are taken after the download, want %d", len(app.gitSlots), normalLimit-1)
 	}
 }
 

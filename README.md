@@ -52,8 +52,15 @@ git clone https://git.example.com/waiotech.git
 A read token can clone and fetch; pushing needs a write token. Tokens cover all
 current and future repositories by default; optionally limit
 one to selected repositories. Your permissions still apply. Tokens expire after
-30 days by default.
+30 days by default, up to 365. The account page lists and revokes browser
+sessions, and admins can do the same for anyone under **Sessions**.
 [Docker deployment](docs/operator/docker.md) has the whole setup.
+
+Check an installation at any time without changing it:
+
+```sh
+docker compose exec web gitman doctor
+```
 
 ### Behind a reverse proxy
 
@@ -83,7 +90,7 @@ Execution checks again before starting a step.
 ### Mirrors
 
 Every download the image build makes is a build argument (`GO_IMAGE`,
-`RUNTIME_IMAGE`, `DOCKER_CLI_IMAGE`, `POSTGRES_IMAGE`, `DEBIAN_MIRROR`,
+`RUNTIME_IMAGE`, `DOCKER_CLI_IMAGE`, `DEBIAN_MIRROR`,
 `DEBIAN_SECURITY_MIRROR`, `GOPROXY`); see the top of the `Dockerfile`.
 Gitman's own [`.gitman.yml`](.gitman.yml) uses the public registries and module
 proxy by default; change these arguments to use your own mirrors.
@@ -113,6 +120,10 @@ Everything is set through the environment.
 | `GITMAN_DISK_RESERVE_GIB` | `5` | Minimum free space for pushes and worker execution, in GiB. |
 | `GITMAN_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. |
 | `GITMAN_LOG_FORMAT` | `text` | `text` or `json`. |
+
+Runs default to a 30-minute timeout (a pipeline may set up to 24 hours), a
+worker runs one run at a time, and browser sessions last seven days. These are
+fixed in this release; see the [configuration reference](docs/operator/configuration.md).
 
 See [Configuration reference](docs/operator/configuration.md) for
 Compose-level settings and image build arguments.
