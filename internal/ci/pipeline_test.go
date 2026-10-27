@@ -304,6 +304,16 @@ steps:
 `, "timeout")
 }
 
+func TestParseSuggestsAUnitForTimeout(t *testing.T) {
+	wantParseError(t, `
+image: docker:29-cli
+timeout: "20"
+steps:
+  - name: build
+    run: echo hi
+`, `write it as "20m"`)
+}
+
 func TestParseRejectsNegativeTimeout(t *testing.T) {
 	wantParseError(t, `
 image: docker:29-cli

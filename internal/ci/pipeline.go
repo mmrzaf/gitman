@@ -416,6 +416,8 @@ func validate(raw *rawConfig) (*Config, error) {
 	if timeout := strings.TrimSpace(raw.Timeout); timeout != "" {
 		d, err := time.ParseDuration(timeout)
 		switch {
+		case err != nil && strings.Contains(err.Error(), "missing unit"):
+			v.errorf("timeout: %q needs a unit; write it as %q for minutes, or a duration such as 90s or 2h", timeout, timeout+"m")
 		case err != nil:
 			v.errorf("timeout: %v", err)
 		case d <= 0:

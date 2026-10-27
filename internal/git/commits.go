@@ -21,10 +21,11 @@ const (
 // store's reader pool and cache; one from OpenHookRepo owns a single
 // reader and must be closed.
 type Repo struct {
-	path   string
-	env    []string
-	source objectSource
-	cache  *objectCache
+	path        string
+	env         []string
+	source      objectSource
+	cache       *objectCache
+	diskReserve uint64
 }
 
 // OpenHookRepo opens the repository a Git hook is running in. env carries
@@ -39,7 +40,8 @@ func OpenHookRepo(path string, env []string) *Repo {
 		// A fraction of Store's shared cache: this one serves a single
 		// push's hook invocation, not every concurrent reader in the
 		// process, so it does not need nearly as much room.
-		cache: newObjectCache(8 << 20),
+		cache:       newObjectCache(8 << 20),
+		diskReserve: 5 << 30,
 	}
 }
 

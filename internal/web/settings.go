@@ -3,9 +3,11 @@ package web
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"sort"
+	"time"
 
 	"github.com/mmrzaf/gitman/internal/apperr"
 	"github.com/mmrzaf/gitman/internal/auth"
@@ -72,6 +74,8 @@ type repoSettingsPage struct {
 	Secrets      []reposvc.Secret
 	People       []auth.Person
 	SecretsReady bool
+	// SizeBytes is the bare repository's current disk usage.
+	SizeBytes int64
 	// Branches are the branches the default branch can be moved to, by
 	// name; DefaultExists is whether the current one is among them.
 	Branches      []string
@@ -93,14 +97,14 @@ type settingsState struct {
 	// replaces.
 	ReplaceKey string
 	AccessForm *form
-	// Tab is "general", "rules", "secrets", "access" or "danger"; Dialog
-	// is "rule-new", "rule-edit", "secret-new", "secret-replace", or
-	// empty.
+	// Tab is "general", "rules", "secrets", "access", "maintenance" or
+	// "danger"; Dialog is "rule-new", "rule-edit", "secret-new",
+	// "secret-replace", or empty.
 	Tab    string
 	Dialog string
 }
 
-var settingsTabs = []string{"general", "rules", "secrets", "access", "danger"}
+var settingsTabs = []string{"general", "rules", "secrets", "access", "maintenance", "danger"}
 
 // freshSettings is the settings page with nothing submitted: every form
 // pre-filled with what is already saved, the same way any other field
@@ -157,9 +161,14 @@ func (a *App) repoSettingsData(r *http.Request, repo *reposvc.Repo, state settin
 	if err != nil {
 		return repoSettingsPage{}, err
 	}
+	size, err := a.repos.DiskUsage(r.Context(), repo)
+	if err != nil {
+		return repoSettingsPage{}, err
+	}
 	page := repoSettingsPage{
 		repoFrame: repoFrame{Repo: repo, Section: "settings"}, settingsState: state,
 		CloneURL: a.cloneURL(repo), Rules: rules, Secrets: secrets, People: everyone, SecretsReady: a.repos.SecretsAvailable(),
+		SizeBytes: size,
 	}
 	for _, ref := range refs {
 		if ref.Kind == git.KindBranch {
@@ -433,6 +442,29 @@ func (a *App) repoSettingsAccess(w http.ResponseWriter, r *http.Request) error {
 		return a.reRenderRepoSettings(w, r, repo, state)
 	}
 	a.redirect(w, r, "/"+repo.Name+"/settings?tab=access", flashSuccess, "Saved.")
+	return nil
+}
+
+// repoSettingsMaintenance runs git gc for the repository. Pushes wait for
+// the mutation lock while it runs, which the form warns about.
+func (a *App) repoSettingsMaintenance(w http.ResponseWriter, r *http.Request) error {
+	repo, err := a.repoSettingsRepo(r)
+	if err != nil {
+		return err
+	}
+	result, err := a.repos.Maintain(r.Context(), repo.ID, personFrom(r).ID)
+	if err != nil {
+		return err
+	}
+	freed := result.BeforeBytes - result.AfterBytes
+	if freed < 0 {
+		freed = 0
+	}
+	// The route's budget allows a long repack; the page's ordinary write
+	// deadline does not, so renew it for the redirect that follows.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(30 * time.Second))
+	a.redirect(w, r, "/"+repo.Name+"/settings?tab=maintenance", flashSuccess,
+		fmt.Sprintf("Repository maintenance finished: freed %s, now %s.", formatBytes(freed), formatBytes(result.AfterBytes)))
 	return nil
 }
 

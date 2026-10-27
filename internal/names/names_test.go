@@ -49,7 +49,7 @@ func TestRunFetchUsernameIsReserved(t *testing.T) {
 // TestPageNamesAreReserved keeps a repository from taking the name of a
 // page, which would make one of the two unreachable.
 func TestPageNamesAreReserved(t *testing.T) {
-	for _, name := range []string{"jump", "people", "events"} {
+	for _, name := range []string{"jump", "people", "events", "operations", "workers", "sessions"} {
 		if err := ValidateRepository(name); err == nil {
 			t.Errorf("ValidateRepository(%q) = nil; it is a page's address", name)
 		}

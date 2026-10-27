@@ -78,6 +78,71 @@ func storable(s string) string {
 	return strings.ReplaceAll(strings.ToValidUTF8(s, "\uFFFD"), "\x00", "\uFFFD")
 }
 
+// ansiStripper removes the terminal control sequences Gitman's log view
+// strips for display, but while the bytes are still contiguous with
+// secrets. A sequence split across writes is retained until its end, so
+// it can never hide a secret from the matcher.
+type ansiStripper struct {
+	state ansiState
+}
+
+type ansiState int
+
+const (
+	ansiText ansiState = iota
+	ansiEscape
+	ansiCSI
+	ansiOSC
+	ansiOSCEscape
+)
+
+func (s *ansiStripper) strip(p []byte) []byte {
+	out := make([]byte, 0, len(p))
+	for _, b := range p {
+		switch s.state {
+		case ansiText:
+			if b == 0x1b {
+				s.state = ansiEscape
+			} else {
+				out = append(out, b)
+			}
+		case ansiEscape:
+			switch b {
+			case '[':
+				s.state = ansiCSI
+			case ']':
+				s.state = ansiOSC
+			default:
+				out = append(out, 0x1b, b)
+				s.state = ansiText
+			}
+		case ansiCSI:
+			if b >= 0x40 && b <= 0x7e {
+				s.state = ansiText
+			}
+		case ansiOSC:
+			switch b {
+			case 0x07:
+				s.state = ansiText
+			case 0x1b:
+				s.state = ansiOSCEscape
+			}
+		case ansiOSCEscape:
+			if b == '\\' {
+				s.state = ansiText
+				continue
+			}
+			s.state = ansiOSC
+		}
+	}
+	return out
+}
+
+func stripANSI(value string) string {
+	s := &ansiStripper{}
+	return string(s.strip([]byte(value)))
+}
+
 // cutAtRune shortens s to at most n bytes without splitting a character.
 func cutAtRune(s string, n int) string {
 	if len(s) <= n {
@@ -98,6 +163,7 @@ type logSink func(ctx context.Context, sequence int, content string) error
 // use.
 type logWriter struct {
 	redactor *redact.Stream
+	ansi     ansiStripper
 	ctx      context.Context
 	sink     logSink
 
@@ -166,7 +232,10 @@ func (w *logWriter) kickLocked() {
 func (w *logWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	text := append(w.textTail, w.redactor.Append(p, false)...)
+	// Strip terminal escapes before matching secrets: otherwise a step
+	// printing s\e[0mecret is stored verbatim, and the page — which
+	// strips escapes for display — shows the secret unmasked.
+	text := append(w.textTail, w.redactor.Append(w.ansi.strip(p), false)...)
 	w.textTail = nil
 	// Retain an incomplete final character until the next write. Invalid
 	// complete bytes are normalized only after secret matching.

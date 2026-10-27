@@ -13,11 +13,15 @@ import (
 
 type mePage struct {
 	Tokens       []auth.AccessToken
+	Sessions     []auth.Session
 	Repositories []*reposvc.Repo
 	PasswordForm *form
 	TokenForm    *form
 	NewToken     string
-	// Tab is "tokens" or "password"; Dialog is "token-new" or empty.
+	// CurrentSession is the ID of the session making this request.
+	CurrentSession string
+	// Tab is "tokens", "sessions" or "password"; Dialog is "token-new" or
+	// empty.
 	Tab    string
 	Dialog string
 }
@@ -28,13 +32,18 @@ func (a *App) meView(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	sessions, err := a.people.ListSessions(r.Context(), person.ID)
+	if err != nil {
+		return err
+	}
 	repositories, err := a.repos.ListReadable(r.Context(), person.ID, person.IsAdmin)
 	if err != nil {
 		return err
 	}
 	a.render(w, r, http.StatusOK, "me", "Your account", mePage{Repositories: repositories,
-		Tokens: tokens, PasswordForm: newForm(nil), TokenForm: newForm(nil),
-		Tab: tabFrom(r, "tokens", "password"), Dialog: dialogFrom(r, "token-new"),
+		Tokens: tokens, Sessions: sessions, CurrentSession: sessionIDFrom(r),
+		PasswordForm: newForm(nil), TokenForm: newForm(nil),
+		Tab: tabFrom(r, "tokens", "sessions", "password"), Dialog: dialogFrom(r, "token-new"),
 	})
 	return nil
 }
@@ -52,20 +61,28 @@ func (a *App) mePasswordChange(w http.ResponseWriter, r *http.Request) error {
 		return a.reRenderMe(w, r, mePage{PasswordForm: f, TokenForm: newForm(nil), Tab: "password"})
 	}
 
+	attempt, _ := a.passwordLimiter.allow(person.Username, clientIP(r))
+	if attempt == nil {
+		return apperr.New(apperr.KindTooMany, "Too many wrong current passwords. Try again in a few minutes.")
+	}
 	person, err := a.people.ChangePassword(r.Context(), person.ID, current, next)
 	switch {
 	case errors.Is(err, auth.ErrInvalidCredentials):
 		f.Fail("current_password", "That is not your current password.")
 		return a.reRenderMe(w, r, mePage{PasswordForm: f, TokenForm: newForm(nil), Tab: "password"})
 	case apperr.KindOf(err) == apperr.KindInvalid:
+		// The current password was right; only the new one was invalid,
+		// so this is not a guess worth counting.
+		attempt.success()
 		f.Fail("new_password", apperr.PublicMessage(err))
 		return a.reRenderMe(w, r, mePage{PasswordForm: f, TokenForm: newForm(nil), Tab: "password"})
 	case err != nil:
 		return err
 	}
+	attempt.success()
 
 	// Changing the password ended every session, this one included.
-	token, expires, err := a.people.CreateSession(r.Context(), person, sessionTTL)
+	token, expires, err := a.people.CreateSession(r.Context(), person, sessionTTL, clientIP(r), r.UserAgent())
 	if err != nil {
 		return err
 	}
@@ -82,11 +99,36 @@ func (a *App) reRenderMe(w http.ResponseWriter, r *http.Request, page mePage) er
 		return err
 	}
 	page.Tokens = tokens
+	page.Sessions, err = a.people.ListSessions(r.Context(), personFrom(r).ID)
+	if err != nil {
+		return err
+	}
+	page.CurrentSession = sessionIDFrom(r)
 	page.Repositories, err = a.repos.ListReadable(r.Context(), personFrom(r).ID, personFrom(r).IsAdmin)
 	if err != nil {
 		return err
 	}
 	a.render(w, r, http.StatusUnprocessableEntity, "me", "Your account", page)
+	return nil
+}
+
+func (a *App) meRevokeSession(w http.ResponseWriter, r *http.Request) error {
+	session, err := a.people.RevokeSession(r.Context(), r.PathValue("id"), personFrom(r).ID)
+	switch {
+	case errors.Is(err, postgres.ErrNotFound):
+		return apperr.New(apperr.KindNotFound, "That session no longer exists.")
+	case errors.Is(err, auth.ErrNotSessionOwner):
+		return apperr.New(apperr.KindForbidden, "That session does not belong to you.")
+	case err != nil:
+		return err
+	}
+	message := "Revoked that session."
+	if session.ID == sessionIDFrom(r) {
+		a.clearSessionCookie(w)
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return nil
+	}
+	a.redirect(w, r, "/me?tab=sessions", flashSuccess, message)
 	return nil
 }
 
@@ -108,6 +150,12 @@ func (a *App) meCreateToken(w http.ResponseWriter, r *http.Request) error {
 		ttl = &d
 	case "90":
 		d := 90 * 24 * time.Hour
+		ttl = &d
+	case "180":
+		d := 180 * 24 * time.Hour
+		ttl = &d
+	case "365":
+		d := 365 * 24 * time.Hour
 		ttl = &d
 	case "", "30-default":
 		d := 30 * 24 * time.Hour

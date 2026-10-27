@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/mmrzaf/gitman/internal/activity"
@@ -28,6 +29,16 @@ type repositoryIntent struct{ Name, Description, Branch string }
 const (
 	recoveryLockTimeout    = 15 * time.Second
 	recoveryAttemptTimeout = 5 * time.Minute
+)
+
+var (
+	// ErrOperationNotFailed refuses to abandon an operation recovery has
+	// not yet tried and failed: there is nothing to declare hopeless.
+	ErrOperationNotFailed = errors.New("operation has no recorded recovery failure")
+	// ErrOperationApplied refuses to abandon an operation whose Git
+	// receipt exists: it already changed Git, so recovery, not
+	// abandonment, is the way forward.
+	ErrOperationApplied = errors.New("operation already applied its Git change")
 )
 
 // WithMutation serializes filesystem changes and refuses further changes until an
@@ -95,6 +106,70 @@ func (s *Service) RejectOperation(ctx context.Context, opID string, reason error
 	return err
 }
 
+// AbandonOperation clears a pending operation that recovery has failed
+// and whose receipt proves it never changed Git. It deliberately leaves
+// Git and the database untouched: the operator inspects and repairs the
+// half-finished state, then this only releases the repository's
+// mutation block. The reason is kept on the operation and in Activity.
+func (s *Service) AbandonOperation(ctx context.Context, opID, actorID, reason string) (*Operation, error) {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return nil, apperr.New(apperr.KindInvalid, "say why the operation is being abandoned")
+	}
+	if len(reason) > 1000 {
+		return nil, apperr.New(apperr.KindInvalid, "the reason must be at most 1000 characters")
+	}
+	ctx, stop := context.WithTimeout(ctx, 30*time.Second)
+	defer stop()
+	var abandoned *Operation
+	err := s.db.Tx(ctx, func(tx postgres.Tx) error {
+		op := &Operation{}
+		err := tx.QueryRow(ctx, `
+			SELECT id, repo_id, kind, name, COALESCE(actor_id,''), payload, created_at, error
+			FROM repository_operations WHERE id = $1 AND completed_at IS NULL FOR UPDATE
+		`, opID).Scan(&op.ID, &op.RepoID, &op.Kind, &op.Name, &op.ActorID, &op.Payload, &op.CreatedAt, &op.Error)
+		if err != nil {
+			return postgres.NormalizeNotFound(err)
+		}
+		if op.Error == "" {
+			return ErrOperationNotFailed
+		}
+		if gr, err := s.git.Open(op.RepoID); err == nil {
+			applied, err := gr.OperationApplied(ctx, op.ID, op.Payload)
+			if err != nil {
+				return err
+			}
+			if applied {
+				return ErrOperationApplied
+			}
+		} else if !errors.Is(err, git.ErrNotFound) {
+			return err
+		}
+		var repoName string
+		_ = tx.QueryRow(ctx, `SELECT name FROM repos WHERE id = $1`, op.RepoID).Scan(&repoName)
+		if repoName == "" {
+			repoName = op.RepoID
+		}
+		by := actorID
+		if by == "" {
+			by = "the command line"
+		}
+		op.Error = "abandoned by " + by + ": " + reason
+		if _, err := tx.Exec(ctx, `UPDATE repository_operations SET completed_at = now(), error = $2 WHERE id = $1`, op.ID, op.Error); err != nil {
+			return err
+		}
+		if err := activity.RecordAdmin(ctx, tx, "", actorID, activity.RepoOperationAbandoned, op.Kind+" "+repoName+": "+reason); err != nil {
+			return err
+		}
+		abandoned = op
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return abandoned, nil
+}
+
 func (s *Service) PendingOperations(ctx context.Context) ([]Operation, error) {
 	rows, err := s.db.Q.Query(ctx, `SELECT id,repo_id,kind,name,COALESCE(actor_id,''),payload,created_at,error FROM repository_operations WHERE completed_at IS NULL ORDER BY created_at,id`)
 	if err != nil {
@@ -146,7 +221,7 @@ func (s *Service) applyRepositoryOperation(ctx context.Context, op Operation) er
 			if _, err := deleteRepoRow(ctx, tx, op.RepoID); err != nil && !errors.Is(err, postgres.ErrNotFound) {
 				return err
 			}
-			if err := activity.Record(ctx, tx, "", op.ActorID, activity.RepoDeleted, p.Name); err != nil {
+			if err := activity.RecordAdmin(ctx, tx, "", op.ActorID, activity.RepoDeleted, p.Name); err != nil {
 				return err
 			}
 			return CompleteOperationTx(ctx, tx, op.ID)

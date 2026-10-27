@@ -48,6 +48,50 @@ func TestCreateAndAuthenticateToken(t *testing.T) {
 	}
 }
 
+func TestTokenLastUsedIsThrottled(t *testing.T) {
+	ctx := context.Background()
+	database := pgtest.Open(t)
+	svc := NewService(database)
+	p, err := svc.Create(ctx, "darius", "correct-horse-battery", false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, token, err := svc.CreateToken(ctx, p.ID, "CI", ScopeRead, nil, tokenTestRepos(t, database))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := svc.Authenticate(ctx, plain, "token-repo"); err != nil {
+		t.Fatal(err)
+	}
+	var first time.Time
+	if err := database.Q.QueryRow(ctx, `SELECT last_used_at FROM tokens WHERE id = $1`, token.ID).Scan(&first); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := svc.Authenticate(ctx, plain, "token-repo"); err != nil {
+		t.Fatal(err)
+	}
+	var second time.Time
+	if err := database.Q.QueryRow(ctx, `SELECT last_used_at FROM tokens WHERE id = $1`, token.ID).Scan(&second); err != nil {
+		t.Fatal(err)
+	}
+	if !second.Equal(first) {
+		t.Fatalf("last used was rewritten within a minute: %v then %v", first, second)
+	}
+	if _, err := database.Q.Exec(ctx, `UPDATE tokens SET last_used_at = now() - interval '2 minutes' WHERE id = $1`, token.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := svc.Authenticate(ctx, plain, "token-repo"); err != nil {
+		t.Fatal(err)
+	}
+	var third time.Time
+	if err := database.Q.QueryRow(ctx, `SELECT last_used_at FROM tokens WHERE id = $1`, token.ID).Scan(&third); err != nil {
+		t.Fatal(err)
+	}
+	if !third.After(first) {
+		t.Fatalf("a stale last-used time was not refreshed: %v then %v", first, third)
+	}
+}
+
 func TestCreateTokenRejectsBadName(t *testing.T) {
 	ctx := context.Background()
 	database := pgtest.Open(t)
@@ -101,6 +145,30 @@ func TestTokenForDisabledPersonFails(t *testing.T) {
 	}
 	if _, _, err := svc.Authenticate(ctx, plain, "token-repo"); !errors.Is(err, ErrInvalidToken) {
 		t.Fatalf("Authenticate(disabled owner) = %v, want ErrInvalidToken", err)
+	}
+}
+
+func TestPruneExpiredTokens(t *testing.T) {
+	ctx := context.Background()
+	database := pgtest.Open(t)
+	svc := NewService(database)
+	p, err := svc.Create(ctx, "darius", "correct-horse-battery", false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := svc.CreateToken(ctx, p.ID, "old", ScopeRead, nil, tokenTestRepos(t, database)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Q.Exec(ctx, `UPDATE tokens SET expires_at = now() - interval '1 second'`); err != nil {
+		t.Fatal(err)
+	}
+	n, err := svc.PruneExpiredTokens(ctx)
+	if err != nil || n != 1 {
+		t.Fatalf("PruneExpiredTokens = %d, %v", n, err)
+	}
+	tokens, err := svc.ListTokens(ctx, p.ID)
+	if err != nil || len(tokens) != 0 {
+		t.Fatalf("tokens after prune = %+v, %v", tokens, err)
 	}
 }
 

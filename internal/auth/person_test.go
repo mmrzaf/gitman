@@ -122,7 +122,7 @@ func TestDisableRevokesSessionsAndBlocksLogin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, _, err := svc.CreateSession(ctx, p, time.Hour)
+	token, _, err := svc.CreateSession(ctx, p, time.Hour, "", "")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestResetPasswordRevokesSessions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, _, err := svc.CreateSession(ctx, p, time.Hour)
+	token, _, err := svc.CreateSession(ctx, p, time.Hour, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +276,7 @@ func TestChangePassword(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, _, err := svc.CreateSession(ctx, p, time.Hour)
+	token, _, err := svc.CreateSession(ctx, p, time.Hour, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

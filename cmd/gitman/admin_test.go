@@ -53,6 +53,26 @@ func TestWorkerCleanupCommandIsRegistered(t *testing.T) {
 	}
 }
 
+func TestBeta23AdminCommandsAreRegistered(t *testing.T) {
+	for group, action := range map[string]string{
+		"worker":    "release",
+		"operation": "abandon",
+		"session":   "list",
+		"token":     "list",
+		"repo":      "size",
+	} {
+		if _, ok := adminGroups[group][action]; !ok {
+			t.Errorf("expected %q %q to be registered", group, action)
+		}
+	}
+	if _, ok := adminGroups["session"]["revoke"]; !ok {
+		t.Error(`expected "session revoke" to be registered`)
+	}
+	if _, ok := adminGroups["repo"]["gc"]; !ok {
+		t.Error(`expected "repo gc" to be registered`)
+	}
+}
+
 func TestAdminWorkerCleanupRejectsArguments(t *testing.T) {
 	if err := adminWorkerCleanup(t.Context(), &adminEnv{}, []string{"unexpected"}); err == nil {
 		t.Fatal("expected an error for an unexpected argument")

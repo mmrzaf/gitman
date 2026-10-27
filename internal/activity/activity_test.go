@@ -103,6 +103,46 @@ func TestRecentScopedToOneRepo(t *testing.T) {
 	}
 }
 
+// TestAdminOnlyEventsStayOutOfMemberFeeds checks that an event naming no
+// repository but marked admin-only — a person's role changing, or a
+// deleted repository's name — never reaches a member's instance feed,
+// while a member still sees the public repository events and the admin
+// sees everything.
+func TestAdminOnlyEventsStayOutOfMemberFeeds(t *testing.T) {
+	database := pgtest.Open(t)
+	repoID, _, personID := seed(t, database)
+	ctx := context.Background()
+	if _, err := database.Pool.Exec(ctx, `
+		INSERT INTO events (id, person_id, action, detail, admin_only)
+		VALUES ('admin-ev', $1, 'person.role', 'sara admin', true)
+	`, personID); err != nil {
+		t.Fatal(err)
+	}
+
+	member, err := NewService(database).RecentForRepos(ctx, []string{repoID}, false, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin, err := NewService(database).RecentForRepos(ctx, []string{repoID}, true, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hasAdminEvent := func(entries []Entry) bool {
+		for _, e := range entries {
+			if e.Action == "person.role" {
+				return true
+			}
+		}
+		return false
+	}
+	if hasAdminEvent(member) {
+		t.Error("an admin-only event reached a member's feed")
+	}
+	if !hasAdminEvent(admin) {
+		t.Error("an admin's feed is missing an admin-only event")
+	}
+}
+
 func TestPushEntryShape(t *testing.T) {
 	database := pgtest.Open(t)
 	repoID, _, _ := seed(t, database)

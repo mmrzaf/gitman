@@ -103,6 +103,30 @@ func TestLogWriterMasksASecretStraddlingAForcedSplit(t *testing.T) {
 	}
 }
 
+// TestLogWriterMasksASecretSplitByAnEscape prints a secret with a
+// terminal escape in the middle. The page strips escapes before showing
+// the log, so masking the raw bytes would store a secret that becomes
+// readable on screen; masking after stripping does not.
+func TestLogWriterMasksASecretSplitByAnEscape(t *testing.T) {
+	rec := &recordedLog{}
+	w := newLogWriter(context.Background(), rec.sink, newSecretMasker(map[string]string{"TOKEN": "hunter2-secret"}))
+	for _, part := range []string{"token is hunt", "\x1b[0m", "er2-secret here\n", "plain \x1b[32mgreen\x1b[0m text\n"} {
+		if _, err := w.Write([]byte(part)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	got := rec.text()
+	if strings.Contains(got, "hunter2-secret") || strings.Contains(got, "\x1b") {
+		t.Fatalf("log still contains the secret or an escape: %q", got)
+	}
+	if want := "token is *** here\nplain green text\n"; got != want {
+		t.Fatalf("log = %q, want %q", got, want)
+	}
+}
+
 func TestLogWriterFlushesQuietOutputOnATimer(t *testing.T) {
 	rec := &recordedLog{}
 	w := newLogWriter(context.Background(), rec.sink, newSecretMasker(nil))

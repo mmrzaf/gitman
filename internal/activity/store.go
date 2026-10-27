@@ -10,11 +10,11 @@ import (
 	"github.com/mmrzaf/gitman/internal/postgres"
 )
 
-func insertEvent(ctx context.Context, q postgres.Querier, id, repoID, personID, action, detail string) error {
+func insertEvent(ctx context.Context, q postgres.Querier, id, repoID, personID, action, detail string, adminOnly bool) error {
 	_, err := q.Exec(ctx, `
-		INSERT INTO events (id, repo_id, person_id, action, detail)
-		VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), $4, $5)
-	`, id, repoID, personID, action, detail)
+		INSERT INTO events (id, repo_id, person_id, action, detail, admin_only)
+		VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), $4, $5, $6)
+	`, id, repoID, personID, action, detail, adminOnly)
 	if err != nil {
 		return fmt.Errorf("record event %s: %w", action, err)
 	}
@@ -30,12 +30,14 @@ func notifyChanged(ctx context.Context, q postgres.Querier, repoID string) error
 
 // filter is which repositories a recentX query includes: every
 // repository (repoID and repoIDs both nil), exactly one (repoID set —
-// a repository's own page), or a set of them plus any row naming no
-// repository at all (repoIDs set, possibly empty — the repositories one
-// particular person may read, for the instance-wide feed).
+// a repository's own page), or a set of them plus the rows naming no
+// repository that this person may see (repoIDs set, possibly empty —
+// the repositories one particular person may read, for the
+// instance-wide feed).
 type filter struct {
 	repoID  *string
 	repoIDs []string
+	admin   bool
 }
 
 func (f filter) clause(column string) (clause string, args []any) {
@@ -186,11 +188,15 @@ func recentDeployments(ctx context.Context, q postgres.Querier, f filter) ([]Ent
 }
 
 // recentEvents lists settings changes: people, rules, secrets and
-// repositories. A person-level event (adding or disabling someone) has
-// no repository and is included whenever the feed is not scoped to one
-// particular repository.
+// repositories. An event naming no repository is included in the
+// instance feed only when it is not admin-only, or when the person
+// reading is an admin.
 func recentEvents(ctx context.Context, q postgres.Querier, f filter) ([]Entry, error) {
 	clause, args := f.clause("e.repo_id")
+	if f.repoIDs != nil {
+		clause = " AND (e.repo_id = ANY($2) OR (e.repo_id IS NULL AND (NOT e.admin_only OR $3)))"
+		args = []any{fetchLimit, f.repoIDs, f.admin}
+	}
 	rows, err := q.Query(ctx, `
 		SELECT COALESCE(repos.name, ''), e.created_at, COALESCE(p.username, ''), e.action, e.detail
 		FROM events e

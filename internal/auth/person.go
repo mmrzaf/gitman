@@ -59,4 +59,21 @@ var (
 	// ErrNotTokenOwner is returned when revoking an access token that
 	// belongs to someone else.
 	ErrNotTokenOwner = errors.New("that token belongs to someone else")
+
+	// ErrNotSessionOwner is returned when revoking a session that belongs
+	// to someone else.
+	ErrNotSessionOwner = errors.New("that session belongs to someone else")
 )
+
+// Session is one signed-in browser. The cookie's token hash is never part
+// of it: ID is the opaque handle pages and commands use.
+type Session struct {
+	ID         string
+	PersonID   string
+	Username   string
+	CreatedAt  time.Time
+	ExpiresAt  time.Time
+	LastSeenAt time.Time
+	IP         string
+	UserAgent  string
+}

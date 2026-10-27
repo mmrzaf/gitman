@@ -100,6 +100,7 @@ git push -u origin {{.Branch}}</code></pre>
 <div class="field">
   <label class="field-label" for="f-{{.ID}}">{{.Label}}</label>
   <input class="input{{if eq .Type "password"}} input-mono{{end}}" id="f-{{.ID}}" name="{{.Name}}" type="{{.Type}}" value="{{.Value}}"
+    {{- if eq .Type "text"}} autocapitalize="none" spellcheck="false"{{end}}
     {{- with .Autocomplete}} autocomplete="{{.}}"{{end}}
     {{- if .Required}} required{{end}}
     {{- if .Autofocus}} autofocus{{end}}

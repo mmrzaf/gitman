@@ -122,8 +122,9 @@ func (r *Repo) CheckIntegrity(ctx context.Context) error {
 	return err
 }
 
-// ReconcilePins runs under the repository mutation lock. Pins precede GC;
-// receipts remain while their operation is retained in PostgreSQL.
+// ReconcilePins runs under the repository mutation lock. It only moves
+// refs; AutoGC runs afterwards without the lock, so a garbage collection
+// cannot make a push wait for the mutation lock.
 func (r *Repo) ReconcilePins(ctx context.Context, objects, operations []string) error {
 	wanted := map[string]bool{}
 	var input strings.Builder
@@ -159,6 +160,14 @@ func (r *Repo) ReconcilePins(ctx context.Context, objects, operations []string) 
 			return err
 		}
 	}
-	_, err = run(ctx, r.opts(), "gc", "--auto")
+	return nil
+}
+
+// AutoGC lets Git repack when it decides the repository has grown enough.
+// It is deliberately separate from ReconcilePins: a push may run during
+// it, and Git's own locks handle that safely, but the repository mutation
+// lock must not be held for a repack.
+func (r *Repo) AutoGC(ctx context.Context) error {
+	_, err := run(ctx, r.opts(), "gc", "--auto")
 	return err
 }

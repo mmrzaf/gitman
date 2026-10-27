@@ -41,9 +41,22 @@ on("click", "[data-dialog-close]", (event, button) => {
   button.closest("dialog")?.close();
 });
 
-// A click on the backdrop — outside the dialog's box — closes it.
+// A click that both starts and ends on the backdrop — outside the
+// dialog's box — closes it. A drag that began inside the dialog and
+// happens to end outside must not close it and discard the form.
+let backdropPointer = false;
+on("pointerdown", "dialog[data-dialog]", (event, dialog) => {
+  if (event.target !== dialog) {
+    backdropPointer = false;
+    return;
+  }
+  const box = dialog.getBoundingClientRect();
+  backdropPointer = !(event.clientX >= box.left && event.clientX <= box.right && event.clientY >= box.top && event.clientY <= box.bottom);
+});
 on("click", "dialog[data-dialog]", (event, dialog) => {
-  if (event.target !== dialog) return;
+  const startedOutside = backdropPointer;
+  backdropPointer = false;
+  if (event.target !== dialog || !startedOutside) return;
   const box = dialog.getBoundingClientRect();
   const inside = event.clientX >= box.left && event.clientX <= box.right && event.clientY >= box.top && event.clientY <= box.bottom;
   if (!inside) dialog.close();

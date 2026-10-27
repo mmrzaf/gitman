@@ -401,11 +401,17 @@ func (s *Service) StopWorker(ctx context.Context, workerID string) error {
 // exactly when a live worker would have.
 const WorkerLostAfter = 5 * time.Minute
 
+// WorkerReadyAfter is how old a worker's heartbeat or readiness check may
+// be before it stops counting as ready for new work. It is shorter than
+// WorkerLostAfter: not taking work is cheap to recover from, while
+// declaring a worker lost fails its running runs.
+const WorkerReadyAfter = time.Minute
+
 // AnyWorkerReady reports whether any worker is running: one that has
 // not stopped and has sent a heartbeat within WorkerLostAfter. Without
 // one, a queued run waits until a worker starts.
 func (s *Service) AnyWorkerReady(ctx context.Context) (bool, error) {
-	return selectAnyWorkerReady(ctx, s.db.Q, WorkerLostAfter)
+	return selectAnyWorkerReady(ctx, s.db.Q, WorkerReadyAfter)
 }
 
 // FailLostRuns fails every running run whose worker stopped, or has not
@@ -639,7 +645,7 @@ type WorkerStatus struct {
 }
 
 func (s *Service) Workers(ctx context.Context) ([]WorkerStatus, error) {
-	rows, err := s.db.Q.Query(ctx, `SELECT id, hostname, ready AND stopped_at IS NULL AND heartbeat_at >= now() - interval '1 minute' AND readiness_at >= now() - interval '1 minute', CASE WHEN stopped_at IS NOT NULL THEN 'Stopped' WHEN heartbeat_at < now() - interval '1 minute' THEN 'Heartbeat is stale' WHEN readiness_at IS NULL OR readiness_at < now() - interval '1 minute' THEN 'Readiness has not been checked recently' ELSE readiness_reason END, heartbeat_at, stopped_at, images, active_runs FROM workers ORDER BY started_at DESC LIMIT 100`)
+	rows, err := s.db.Q.Query(ctx, `SELECT id, hostname, ready AND stopped_at IS NULL AND heartbeat_at >= now() - make_interval(secs => $1) AND readiness_at >= now() - make_interval(secs => $1), CASE WHEN stopped_at IS NOT NULL THEN 'Stopped' WHEN heartbeat_at < now() - make_interval(secs => $1) THEN 'Heartbeat is stale' WHEN readiness_at IS NULL OR readiness_at < now() - make_interval(secs => $1) THEN 'Readiness has not been checked recently' ELSE readiness_reason END, heartbeat_at, stopped_at, images, active_runs FROM workers ORDER BY started_at DESC LIMIT 100`, WorkerReadyAfter.Seconds())
 	if err != nil {
 		return nil, err
 	}
@@ -657,7 +663,7 @@ func (s *Service) Workers(ctx context.Context) ([]WorkerStatus, error) {
 
 func (s *Service) AnyWorkerReadyForRun(ctx context.Context, runID string) (bool, error) {
 	var ready bool
-	err := s.db.Q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM workers w JOIN runs r ON r.id = $1 WHERE w.ready AND w.stopped_at IS NULL AND w.heartbeat_at >= now() - interval '1 minute' AND w.readiness_at >= now() - interval '1 minute' AND r.required_images <@ w.images)`, runID).Scan(&ready)
+	err := s.db.Q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM workers w JOIN runs r ON r.id = $1 WHERE w.ready AND w.stopped_at IS NULL AND w.heartbeat_at >= now() - make_interval(secs => $2) AND w.readiness_at >= now() - make_interval(secs => $2) AND r.required_images <@ w.images)`, runID, WorkerReadyAfter.Seconds()).Scan(&ready)
 	return ready, err
 }
 

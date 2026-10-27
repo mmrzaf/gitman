@@ -10,6 +10,7 @@
 
 <nav class="tabs tabs-page" data-tabs aria-label="Account">
   <a class="tab" id="tab-tokens" href="/me" data-tab="tokens"{{if eq $d.Tab "tokens"}} aria-current="page"{{end}}>{{template "icon" "key"}}Access tokens <span class="count">{{len $d.Tokens}}</span></a>
+  <a class="tab" id="tab-sessions" href="/me?tab=sessions" data-tab="sessions"{{if eq $d.Tab "sessions"}} aria-current="page"{{end}}>{{template "icon" "monitor"}}Sessions <span class="count">{{len $d.Sessions}}</span></a>
   <a class="tab" id="tab-password" href="/me?tab=password" data-tab="password"{{if eq $d.Tab "password"}} aria-current="page"{{end}}>{{template "icon" "lock"}}Password</a>
 </nav>
 
@@ -44,6 +45,38 @@
     </div>
     {{- else}}
     {{template "empty" (emptyModel "key" "No tokens yet" "Create one to clone and push over HTTP or HTTPS." false)}}
+    {{- end}}
+  </section>
+</div>
+
+<div class="stack" id="panel-sessions" data-tab-panel="sessions" aria-labelledby="sessions-title"{{if ne $d.Tab "sessions"}} hidden{{end}}>
+  <section class="panel" aria-labelledby="sessions-title">
+    <header class="panel-header"><h2 class="panel-title" id="sessions-title">{{template "icon" "monitor"}}Sessions</h2></header>
+    <p class="panel-intro">Every browser signed in to this account. Revoking one signs it out at once.</p>
+    {{- if $d.Sessions}}
+    <div class="table-scroll">
+      <table class="table table-cards table-rich">
+        <thead><tr><th scope="col">Signed in</th><th scope="col">Last seen</th><th scope="col">Address</th><th scope="col">Device</th><th scope="col">Expires</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+        <tbody>
+        {{- range $d.Sessions}}
+          <tr>
+            <th scope="row" class="table-rowheader"><div class="table-cell">{{template "time" .CreatedAt}}{{if eq .ID $d.CurrentSession}} <span class="chip">this session</span>{{end}}</div></th>
+            <td data-label="Last seen"><div class="table-cell">{{template "time" .LastSeenAt}}</div></td>
+            <td data-label="Address"><div class="table-cell mono">{{if .IP}}{{.IP}}{{else}}<span class="muted">unknown</span>{{end}}</div></td>
+            <td data-label="Device"><div class="table-cell cell-truncate" title="{{.UserAgent}}">{{if .UserAgent}}{{.UserAgent}}{{else}}<span class="muted">unknown</span>{{end}}</div></td>
+            <td data-label="Expires"><div class="table-cell">{{template "time" .ExpiresAt}}</div></td>
+            <td data-label="Actions" class="cell-shrink cell-end"><div class="table-cell">
+              <form method="post" action="/me/sessions/{{.ID}}/revoke" data-confirm="Revoke this session?" data-confirm-detail="{{if eq .ID $d.CurrentSession}}This is the session you are using, so you will be signed out.{{else}}That browser is signed out at once.{{end}}" data-confirm-action="Revoke session">
+                <button type="submit" class="btn btn-sm btn-danger">Revoke</button>
+              </form>
+            </div></td>
+          </tr>
+        {{- end}}
+        </tbody>
+      </table>
+    </div>
+    {{- else}}
+    {{template "empty" (emptyModel "monitor" "No sessions" "" false)}}
     {{- end}}
   </section>
 </div>
@@ -95,6 +128,8 @@
 
             <option value="30"{{if eq ($d.TokenForm.Get "expires") "30"}} selected{{end}}>In 30 days</option>
             <option value="90"{{if eq ($d.TokenForm.Get "expires") "90"}} selected{{end}}>In 90 days</option>
+            <option value="180"{{if eq ($d.TokenForm.Get "expires") "180"}} selected{{end}}>In 180 days</option>
+            <option value="365"{{if eq ($d.TokenForm.Get "expires") "365"}} selected{{end}}>In 365 days</option>
           </select>
         </span>
       </div>

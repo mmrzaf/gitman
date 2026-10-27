@@ -249,6 +249,48 @@ func TestAccessMatrixHomeJumpAndActivity(t *testing.T) {
 	}
 }
 
+func TestEventStreamDoesNotRevealWhetherARepositoryExists(t *testing.T) {
+	f := newMatrixFixture(t)
+	resp, hidden := f.outsider.do(http.MethodGet, "/events?repo="+f.restricted.ID, nil, nil)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unreadable repository stream = %d, want 404", resp.StatusCode)
+	}
+	resp, missing := f.outsider.do(http.MethodGet, "/events?repo=no-such-repository", nil, nil)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown repository stream = %d, want 404", resp.StatusCode)
+	}
+	if hidden != missing {
+		t.Fatalf("unreadable and unknown repositories answer differently:\n%s\n---\n%s", hidden, missing)
+	}
+}
+
+func TestAdminOnlyEventsDoNotLeakToMembers(t *testing.T) {
+	f := newMatrixFixture(t)
+	resp, body := f.admin.do(http.MethodPost, "/restricted-repo/settings/delete", url.Values{"confirm_name": {"restricted-repo"}}, nil)
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("delete restricted repository: %d\n%s", resp.StatusCode, body)
+	}
+	for _, who := range []struct {
+		name string
+		b    *browser
+	}{
+		{"reader", f.reader},
+		{"outsider", f.outsider},
+	} {
+		_, body = who.b.do(http.MethodGet, "/", nil, nil)
+		if strings.Contains(body, "restricted-repo") {
+			t.Errorf("%s's Home names a deleted restricted repository", who.name)
+		}
+		if strings.Contains(body, "added a person") {
+			t.Errorf("%s's Home shows a person-level admin event", who.name)
+		}
+	}
+	_, body = f.admin.do(http.MethodGet, "/", nil, nil)
+	if !strings.Contains(body, "restricted-repo") || !strings.Contains(body, "deleted the repository") {
+		t.Fatalf("admin's Home does not show the deletion:\n%s", body)
+	}
+}
+
 // TestEveryRepoRouteReachesTheAccessCheck parses routes.go itself and
 // fails if a route taking a {repo} path value is registered against a
 // handler that does not resolve it through repoByName or repoNamed
@@ -317,8 +359,17 @@ func handlerName(e ast.Expr) string {
 	case *ast.SelectorExpr:
 		return v.Sel.Name
 	case *ast.CallExpr:
-		if sel, ok := v.Fun.(*ast.SelectorExpr); ok && (sel.Sel.Name == "page" || sel.Sel.Name == "stream") && len(v.Args) == 2 {
-			return handlerName(v.Args[1])
+		if sel, ok := v.Fun.(*ast.SelectorExpr); ok && len(v.Args) >= 2 {
+			switch sel.Sel.Name {
+			case "page", "stream":
+				if len(v.Args) == 2 {
+					return handlerName(v.Args[1])
+				}
+			case "pageWithBudget":
+				if len(v.Args) == 3 {
+					return handlerName(v.Args[1])
+				}
+			}
 		}
 	}
 	return ""

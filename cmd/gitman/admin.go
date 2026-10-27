@@ -56,6 +56,7 @@ var adminGroups = map[string]map[string]adminAction{
 	"operation": {
 		"list":    {"", adminOperationList},
 		"recover": {"", adminOperationRecover},
+		"abandon": {"--reason TEXT <id>", adminOperationAbandon},
 	},
 	"person": {
 		"add":            {"[--admin] <username>", adminPersonAdd},
@@ -68,6 +69,11 @@ var adminGroups = map[string]map[string]adminAction{
 	},
 	"token": {
 		"create": {"[--write] [--days N] [--repos name[,name]] <username> <name>", adminTokenCreate},
+		"list":   {"<username>", adminTokenList},
+	},
+	"session": {
+		"list":   {"[username]", adminSessionList},
+		"revoke": {"<id>", adminSessionRevoke},
 	},
 	"run": {
 		"cancel": {"<repo> <number>", adminRunCancel},
@@ -76,6 +82,8 @@ var adminGroups = map[string]map[string]adminAction{
 		"create":         {"[--description TEXT] [--default-branch NAME] <name>", adminRepoCreate},
 		"list":           {"", adminRepoList},
 		"delete":         {"<name>", adminRepoDelete},
+		"size":           {"<name>", adminRepoSize},
+		"gc":             {"<name>", adminRepoGC},
 		"sync":           {"<name>", adminRepoSync},
 		"visibility":     {"<name> everyone|restricted", adminRepoVisibility},
 		"default-branch": {"<name> <branch>", adminRepoDefaultBranch},
@@ -93,6 +101,7 @@ var adminGroups = map[string]map[string]adminAction{
 	},
 	"worker": {
 		"cleanup": {"", adminWorkerCleanup},
+		"release": {"--confirm [--run ID] <worker-id>", adminWorkerRelease},
 	},
 }
 
@@ -170,7 +179,8 @@ func runAdmin(args []string) error {
 	store.SetDiskReserve(uint64(cfg.Resources.DiskReserveGiB) << 30)
 	defer store.Close()
 
-	if args[0] != "maintenance" && args[0] != "operation" && args[0] != "migrate" && (args[0] != "worker" || args[1] != "cleanup") {
+	if args[0] != "maintenance" && args[0] != "operation" && args[0] != "migrate" &&
+		(args[0] != "worker" || (args[1] != "cleanup" && args[1] != "release")) {
 		var release func()
 		ctx, release, err = database.AdmitMutation(ctx)
 		if err != nil {
@@ -397,6 +407,95 @@ func adminTokenCreate(ctx context.Context, env *adminEnv, args []string) error {
 	return nil
 }
 
+func adminTokenList(ctx context.Context, env *adminEnv, args []string) error {
+	pos, err := parseArgs(flag.NewFlagSet("token list", flag.ContinueOnError), args, 1, "gitman admin token list <username>")
+	if err != nil {
+		return err
+	}
+	p, err := personByName(ctx, env, pos[0])
+	if err != nil {
+		return err
+	}
+	tokens, err := env.people.ListTokens(ctx, p.ID)
+	if err != nil {
+		return err
+	}
+	if len(tokens) == 0 {
+		fmt.Fprintf(env.out, "%s has no access tokens.\n", p.Username)
+		return nil
+	}
+	tw := tabwriter.NewWriter(env.out, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(tw, "NAME\tSCOPE\tCREATED\tEXPIRES\tLAST USED\tREPOSITORIES")
+	for _, token := range tokens {
+		repos := "all"
+		if !token.AllRepositories {
+			repos = strings.Join(token.Repositories, ",")
+		}
+		lastUsed := "never"
+		if token.LastUsedAt != nil {
+			lastUsed = token.LastUsedAt.Format("2006-01-02 15:04")
+		}
+		expires := "never"
+		if token.ExpiresAt != nil {
+			expires = token.ExpiresAt.Format("2006-01-02")
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", token.Name, token.Scope,
+			token.CreatedAt.Format("2006-01-02"), expires, lastUsed, repos)
+	}
+	return tw.Flush()
+}
+
+func adminSessionList(ctx context.Context, env *adminEnv, args []string) error {
+	if len(args) > 1 {
+		return fmt.Errorf("usage: gitman admin session list [username]")
+	}
+	var sessions []auth.Session
+	var err error
+	if len(args) == 0 {
+		sessions, err = env.people.ListAllSessions(ctx)
+	} else {
+		p, personErr := personByName(ctx, env, args[0])
+		if personErr != nil {
+			return personErr
+		}
+		sessions, err = env.people.ListSessions(ctx, p.ID)
+	}
+	if err != nil {
+		return err
+	}
+	if len(sessions) == 0 {
+		fmt.Fprintln(env.out, "No active sessions.")
+		return nil
+	}
+	tw := tabwriter.NewWriter(env.out, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tPERSON\tSIGNED IN\tLAST SEEN\tADDRESS\tEXPIRES")
+	for _, s := range sessions {
+		ip := s.IP
+		if ip == "" {
+			ip = "-"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", s.ID, s.Username,
+			s.CreatedAt.Format("2006-01-02 15:04"), s.LastSeenAt.Format("2006-01-02 15:04"), ip, s.ExpiresAt.Format("2006-01-02 15:04"))
+	}
+	return tw.Flush()
+}
+
+func adminSessionRevoke(ctx context.Context, env *adminEnv, args []string) error {
+	pos, err := parseArgs(flag.NewFlagSet("session revoke", flag.ContinueOnError), args, 1, "gitman admin session revoke <id>")
+	if err != nil {
+		return err
+	}
+	session, err := env.people.RevokeSession(ctx, pos[0], "")
+	if errors.Is(err, postgres.ErrNotFound) {
+		return fmt.Errorf("no session with ID %q", pos[0])
+	}
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(env.out, "Revoked %s's session signed in %s.\n", session.Username, session.CreatedAt.Format("2006-01-02 15:04"))
+	return nil
+}
+
 func adminRepoCreate(ctx context.Context, env *adminEnv, args []string) error {
 	fs := flag.NewFlagSet("repo create", flag.ContinueOnError)
 	description := fs.String("description", "", "")
@@ -425,11 +524,65 @@ func adminRepoList(ctx context.Context, env *adminEnv, args []string) error {
 		return err
 	}
 	tw := tabwriter.NewWriter(env.out, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tDEFAULT BRANCH\tCREATED\tDESCRIPTION")
+	fmt.Fprintln(tw, "NAME\tDEFAULT BRANCH\tSIZE\tCREATED\tDESCRIPTION")
 	for _, r := range list {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", r.Name, r.DefaultBranch, r.CreatedAt.Format("2006-01-02"), r.Description)
+		size, err := env.repos.DiskUsage(ctx, r)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", r.Name, r.DefaultBranch, formatSize(size), r.CreatedAt.Format("2006-01-02"), r.Description)
 	}
 	return tw.Flush()
+}
+
+func adminRepoSize(ctx context.Context, env *adminEnv, args []string) error {
+	pos, err := parseArgs(flag.NewFlagSet("repo size", flag.ContinueOnError), args, 1, "gitman admin repo size <name>")
+	if err != nil {
+		return err
+	}
+	repo, err := repoByName(ctx, env, pos[0])
+	if err != nil {
+		return err
+	}
+	size, err := env.repos.DiskUsage(ctx, repo)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(env.out, "%s\t%s\n", repo.Name, formatSize(size))
+	return nil
+}
+
+func adminRepoGC(ctx context.Context, env *adminEnv, args []string) error {
+	pos, err := parseArgs(flag.NewFlagSet("repo gc", flag.ContinueOnError), args, 1, "gitman admin repo gc <name>")
+	if err != nil {
+		return err
+	}
+	repo, err := repoByName(ctx, env, pos[0])
+	if err != nil {
+		return err
+	}
+	result, err := env.repos.Maintain(ctx, repo.ID, "")
+	if err != nil {
+		return err
+	}
+	freed := result.BeforeBytes - result.AfterBytes
+	if freed < 0 {
+		freed = 0
+	}
+	fmt.Fprintf(env.out, "Maintained %s: freed %s, now %s.\n", repo.Name, formatSize(freed), formatSize(result.AfterBytes))
+	return nil
+}
+
+func formatSize(n int64) string {
+	if n < 1024 {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(1024), 0
+	for n >= div*1024 && exp < 5 {
+		div *= 1024
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
 func adminRepoDelete(ctx context.Context, env *adminEnv, args []string) error {
@@ -627,6 +780,33 @@ func adminWorkerCleanup(ctx context.Context, env *adminEnv, args []string) error
 	return nil
 }
 
+func adminWorkerRelease(ctx context.Context, env *adminEnv, args []string) error {
+	fs := flag.NewFlagSet("worker release", flag.ContinueOnError)
+	confirm := fs.Bool("confirm", false, "confirm the worker's host and containers are gone")
+	runID := fs.String("run", "", "release only this run")
+	pos, err := parseArgs(fs, args, 1, "gitman admin worker release --confirm [--run ID] <worker-id>")
+	if err != nil {
+		return err
+	}
+	if !*confirm {
+		return fmt.Errorf("refusing without --confirm: this releases deployment targets and assumes the worker's containers are stopped")
+	}
+	released, err := env.ci.ReleaseLostWorker(ctx, pos[0], *runID)
+	switch {
+	case errors.Is(err, postgres.ErrNotFound):
+		if *runID != "" {
+			return fmt.Errorf("worker %q has no releasable run %q", pos[0], *runID)
+		}
+		return fmt.Errorf("no worker with ID %q", pos[0])
+	case errors.Is(err, ci.ErrWorkerAlive):
+		return fmt.Errorf("worker %q is still heartbeating; stop it and wait %s, or pass a worker confirmed gone", pos[0], ci.WorkerLostAfter)
+	case err != nil:
+		return err
+	}
+	fmt.Fprintf(env.out, "Released %d run(s) of worker %s. Its deployment targets are free and its containers are recorded as removed.\n", released, pos[0])
+	return nil
+}
+
 func adminRuleList(ctx context.Context, env *adminEnv, args []string) error {
 	pos, err := parseArgs(flag.NewFlagSet("rule list", flag.ContinueOnError), args, 1, "gitman admin rule list <repo>")
 	if err != nil {
@@ -810,6 +990,28 @@ func adminOperationRecover(ctx context.Context, env *adminEnv, args []string) er
 		return fmt.Errorf("usage: gitman admin operation recover")
 	}
 	return push.NewRefs(env.db, env.people, env.repos, env.ci).Recover(ctx)
+}
+
+func adminOperationAbandon(ctx context.Context, env *adminEnv, args []string) error {
+	fs := flag.NewFlagSet("operation abandon", flag.ContinueOnError)
+	reason := fs.String("reason", "", "")
+	pos, err := parseArgs(fs, args, 1, "gitman admin operation abandon --reason TEXT <id>")
+	if err != nil {
+		return err
+	}
+	op, err := env.repos.AbandonOperation(ctx, pos[0], "", *reason)
+	switch {
+	case errors.Is(err, postgres.ErrNotFound):
+		return fmt.Errorf("no pending operation with ID %q", pos[0])
+	case errors.Is(err, reposvc.ErrOperationNotFailed):
+		return fmt.Errorf("operation %s has not failed recovery yet; run recovery first", pos[0])
+	case errors.Is(err, reposvc.ErrOperationApplied):
+		return fmt.Errorf("operation %s already applied its Git change; run recovery instead of abandoning it", pos[0])
+	case err != nil:
+		return err
+	}
+	fmt.Fprintf(env.out, "Abandoned %s operation %s on repository %s. Git and database rows were left for inspection.\n", op.Kind, op.ID, op.RepoID)
+	return nil
 }
 func adminMaintenanceEnable(ctx context.Context, env *adminEnv, args []string) error {
 	if len(args) != 0 {

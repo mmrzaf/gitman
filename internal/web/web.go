@@ -10,6 +10,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/mmrzaf/gitman/internal/activity"
@@ -39,9 +41,18 @@ type App struct {
 	views    *views
 	assets   *assets
 	limiter  *loginLimiter
-	handler  http.Handler
-	// gitSlots bounds how many Git HTTP requests run at once.
+	// passwordLimiter counts wrong current-password checks on the
+	// account page, which bcrypt makes worth guessing against.
+	passwordLimiter *loginLimiter
+	handler         http.Handler
+	// proxyWarn lets the first request from a private peer without
+	// configured trusted proxies explain the shared rate-limit bucket
+	// once, rather than on every request.
+	proxyWarn sync.Once
+	// gitSlots bounds how many Git HTTP requests run at once; gitMu
+	// makes the reserved-capacity check atomic with taking a slot.
 	gitSlots chan struct{}
+	gitMu    sync.Mutex
 	// origin is the scheme and host of the public URL, which every
 	// state-changing request must come from.
 	origin string
@@ -88,21 +99,22 @@ func New(cfg *config.Config, services Services, log *slog.Logger) (*App, error) 
 		return nil, fmt.Errorf("parse public URL: %w", err)
 	}
 	a := &App{
-		cfg:      cfg,
-		people:   services.People,
-		repos:    services.Repos,
-		ci:       services.CI,
-		refs:     services.Refs,
-		activity: services.Activity,
-		ping:     services.Ping,
-		listen:   services.Listen,
-		hub:      newHub(),
-		log:      log,
-		limiter:  newLoginLimiter(time.Now),
-		gitSlots: make(chan struct{}, gitConcurrencyLimit),
-		origin:   public.Scheme + "://" + public.Host,
-		secure:   public.Scheme == "https",
-		now:      time.Now,
+		cfg:             cfg,
+		people:          services.People,
+		repos:           services.Repos,
+		ci:              services.CI,
+		refs:            services.Refs,
+		activity:        services.Activity,
+		ping:            services.Ping,
+		listen:          services.Listen,
+		hub:             newHub(),
+		log:             log,
+		limiter:         newLoginLimiter(time.Now),
+		passwordLimiter: newLoginLimiter(time.Now),
+		gitSlots:        make(chan struct{}, gitConcurrencyLimit),
+		origin:          public.Scheme + "://" + public.Host,
+		secure:          public.Scheme == "https",
+		now:             time.Now,
 
 		pageReadTimeout:  pageReadTimeout,
 		pageWriteTimeout: pageWriteTimeout,
@@ -157,7 +169,7 @@ func (a *App) pageWithBudget(level access, h handler, budget time.Duration) http
 		rc := http.NewResponseController(w)
 		_ = rc.SetReadDeadline(time.Now().Add(a.pageReadTimeout))
 		_ = rc.SetWriteDeadline(time.Now().Add(a.pageWriteTimeout))
-		setSecurityHeaders(w.Header())
+		setSecurityHeaders(w.Header(), a.secure)
 
 		if !a.sameOrigin(r) {
 			a.renderError(w, r, apperr.New(apperr.KindForbidden,
@@ -191,7 +203,14 @@ func (a *App) pageWithBudget(level access, h handler, budget time.Duration) http
 			return
 		}
 
-		if r.Method != http.MethodGet && r.Method != http.MethodHead && a.repos != nil {
+		if a.fencedMutation(r) {
+			// Read the form before taking an admission slot: a client
+			// trickling a body must not hold a fenced slot, and a body
+			// too large to accept is refused before it costs one.
+			if err := parseForm(w, r); err != nil {
+				a.renderError(w, r, err)
+				return
+			}
 			ctx, release, err := a.repos.AdmitMutation(r.Context())
 			if err != nil {
 				a.renderError(w, r, err)
@@ -204,6 +223,28 @@ func (a *App) pageWithBudget(level access, h handler, budget time.Duration) http
 			a.renderError(w, r, err)
 		}
 	})
+}
+
+// fencedMutation reports whether a state-changing request must hold the
+// admission fence that backs up maintenance. Authentication pages and
+// account and person credential changes are deliberately outside it:
+// they cannot change a repository or an execution, and they can spend
+// their time in bcrypt. Login in particular is unauthenticated, so
+// admitting it would let anyone hold every slot with a slow body.
+func (a *App) fencedMutation(r *http.Request) bool {
+	if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions || a.repos == nil {
+		return false
+	}
+	path := r.URL.Path
+	switch {
+	case path == "/login" || path == "/logout":
+		return false
+	case path == "/me" || strings.HasPrefix(path, "/me/"):
+		return false
+	case path == "/people" || strings.HasPrefix(path, "/people/"):
+		return false
+	}
+	return true
 }
 
 // requireSignIn sends a signed-out visitor to the login page. A page
@@ -231,6 +272,8 @@ func statusFor(kind apperr.Kind) int {
 		return http.StatusConflict
 	case apperr.KindTooLarge:
 		return http.StatusRequestEntityTooLarge
+	case apperr.KindTooMany:
+		return http.StatusTooManyRequests
 	case apperr.KindUnavailable:
 		return http.StatusServiceUnavailable
 	}
@@ -240,6 +283,7 @@ func statusFor(kind apperr.Kind) int {
 var errorTitles = map[int]string{
 	http.StatusNotFound:            "Not found",
 	http.StatusForbidden:           "Not allowed",
+	http.StatusTooManyRequests:     "Too many attempts",
 	http.StatusServiceUnavailable:  "Too busy",
 	http.StatusInternalServerError: "Something went wrong",
 }

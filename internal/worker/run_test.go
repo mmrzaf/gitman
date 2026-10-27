@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mmrzaf/gitman/internal/ci"
+	"github.com/mmrzaf/gitman/internal/config"
 	"github.com/mmrzaf/gitman/internal/git"
 	"github.com/mmrzaf/gitman/internal/postgres"
 	"github.com/mmrzaf/gitman/internal/postgres/pgtest"
@@ -373,7 +374,12 @@ func TestUnconfirmedCleanupRetainsWorkspaceAndRecoveryNeverReruns(t *testing.T) 
 	if err := os.Symlink(strings.TrimPrefix(f.url, "file://"), filepath.Join(transport, "demo.git")); err != nil {
 		t.Fatal(err)
 	}
-	w := New(Config{WorkspaceRoot: root, WebURL: "file://" + transport, DefaultTimeout: time.Minute}, f.db, f.svc, nil, f.fake.docker, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	// This test is about cleanup, not host disk capacity; keep its reserve
+	// small so a busy CI host's free space cannot fail it for the wrong
+	// reason.
+	resources := config.DefaultResources()
+	resources.DiskReserveGiB = 1
+	w := New(Config{WorkspaceRoot: root, WebURL: "file://" + transport, DefaultTimeout: time.Minute, Resources: resources}, f.db, f.svc, nil, f.fake.docker, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	w.id = "w1"
 	t.Setenv("FAKE_DOCKER_RM_FAIL", "1")
 	outcome := w.execute(t.Context(), f.claim, w.log)

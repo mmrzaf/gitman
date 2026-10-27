@@ -817,7 +817,6 @@ time { white-space: nowrap; }
   min-width: 0;
   align-content: safe center;
   overflow: auto;
-  overscroll-behavior: contain;
   white-space: nowrap;
 }
 .table-cell > .cluster { flex-wrap: nowrap; }
@@ -1415,7 +1414,10 @@ h1.path { font-size: var(--text-xl); letter-spacing: -0.01em; }
   .run-output-title { flex: 1 1 100%; }
   .run-layout { grid-template-columns: minmax(0, 1fr); }
   .run-side, .run-output { position: static; }
-  .run-output { height: 70vh; }
+  .run-output { height: 70dvh; }
+  /* The log keeps its own scroll for reading, but at the end of it the
+     page may continue scrolling instead of trapping the wheel. */
+  .run-output .log { overscroll-behavior: auto; }
   .steps { grid-template-columns: minmax(0, 1fr); }
 }
 

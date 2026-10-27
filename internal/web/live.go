@@ -196,9 +196,15 @@ func (a *App) events(w http.ResponseWriter, r *http.Request) error {
 	if repoID != "" {
 		readable, err := a.repos.CanReadID(setup, repoID, person.ID, person.IsAdmin)
 		if err != nil {
-			return err
+			if !errors.Is(err, postgres.ErrNotFound) {
+				return err
+			}
+			readable = false
 		}
 		if !readable {
+			// A repository that does not exist and one this person may
+			// not read must answer identically, or the stream becomes a
+			// name oracle.
 			return notFound("There is no such repository.")
 		}
 	}

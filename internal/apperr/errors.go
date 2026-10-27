@@ -28,6 +28,9 @@ const (
 	KindConflict
 	// KindTooLarge is a request, or a thing asked for, past a size limit.
 	KindTooLarge
+	// KindTooMany is a request refused because the caller has made too
+	// many attempts too quickly.
+	KindTooMany
 	// KindUnavailable is a request refused because a resource Gitman
 	// depends on, such as the database, could not be reached quickly
 	// enough — worth trying again, unlike the other kinds.

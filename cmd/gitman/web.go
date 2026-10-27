@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
@@ -97,9 +98,14 @@ func runWeb(args []string) error {
 	if err := repos.RecoverOperations(ctx, recoverPush); err != nil {
 		log.Error("repository recovery requires attention", "error", err)
 	}
+	// Quarantine only preserves unexpected directories; it never deletes
+	// anything. A failure is worth reporting but must not keep working
+	// repositories offline — real corruption will still surface on the
+	// affected repository's page.
 	if err := repos.QuarantineOrphans(ctx); err != nil {
-		return err
+		log.Warn("could not quarantine repository directories with no database row", "error", err)
 	}
+	go runStoreSweep(ctx, store, log)
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
@@ -130,4 +136,24 @@ func runWeb(args []string) error {
 	go runRetention(ctx, people, runs, repos, cfg.Retention, log)
 	go runLostRunSweep(ctx, database, runs, log)
 	return app.Run(ctx)
+}
+
+// storeSweepInterval is how often leftovers of an interrupted create or
+// delete are removed. Startup does it once; a crash later in the day
+// should not leave a growing trash directory until the next restart.
+const storeSweepInterval = time.Hour
+
+func runStoreSweep(ctx context.Context, store *git.Store, log *slog.Logger) {
+	ticker := time.NewTicker(storeSweepInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := store.Sweep(ctx); err != nil && ctx.Err() == nil {
+				log.Warn("could not remove repository leftovers", "error", err)
+			}
+		}
+	}
 }

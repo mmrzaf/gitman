@@ -2,9 +2,12 @@ package repo
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/mmrzaf/gitman/internal/activity"
+	"github.com/mmrzaf/gitman/internal/postgres"
 	"github.com/mmrzaf/gitman/internal/postgres/pgtest"
 )
 
@@ -56,6 +59,80 @@ func TestRecoverDeleteAfterFilesystemRemoval(t *testing.T) {
 	}
 	if _, err := s.GetByID(ctx, r.ID); err == nil {
 		t.Fatal("deleted repository row survives recovery")
+	}
+}
+
+func TestMaintainWaitsForTheMutationLockAndRecordsActivity(t *testing.T) {
+	ctx := context.Background()
+	db := pgtest.Open(t)
+	store := newStore(t)
+	s := NewService(db, store, "")
+	r, err := s.Create(ctx, "maintained", "", "main", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := s.git.MutationLock(ctx, r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.Maintain(ctx, r.ID, "")
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		unlock()
+		t.Fatalf("Maintain finished while another mutation held the lock: %v", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+	unlock()
+	if err := <-done; err != nil {
+		t.Fatalf("Maintain after the lock was released: %v", err)
+	}
+	entries, err := activity.NewService(db).Recent(ctx, &r.ID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.Action == activity.RepoGC {
+			return
+		}
+	}
+	t.Fatal("maintenance was not recorded in Activity")
+}
+
+func TestAbandonOperationRequiresAFailureAndUnblocksTheRepository(t *testing.T) {
+	ctx := context.Background()
+	db := pgtest.Open(t)
+	store := newStore(t)
+	s := NewService(db, store, "")
+	op, err := s.BeginOperation(ctx, "abandon-me", "create", "abandon-me", "", repositoryIntent{Name: "abandon-me", Branch: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AbandonOperation(ctx, op.ID, "", "directory is corrupt"); !errors.Is(err, ErrOperationNotFailed) {
+		t.Fatalf("abandon before a failure = %v, want ErrOperationNotFailed", err)
+	}
+	if _, err := db.Pool.Exec(ctx, `UPDATE repository_operations SET error='permission denied' WHERE id=$1`, op.ID); err != nil {
+		t.Fatal(err)
+	}
+	abandoned, err := s.AbandonOperation(ctx, op.ID, "", "directory is corrupt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if abandoned.Error != "abandoned by the command line: directory is corrupt" {
+		t.Fatalf("recorded reason = %q", abandoned.Error)
+	}
+	ops, err := s.PendingOperations(ctx)
+	if err != nil || len(ops) != 0 {
+		t.Fatalf("pending after abandon = %+v, %v", ops, err)
+	}
+	if err := s.WithMutation(ctx, op.RepoID, func() error { return nil }); err != nil {
+		t.Fatalf("repository is still blocked: %v", err)
+	}
+	if _, err := s.AbandonOperation(ctx, "no-such-operation", "", "why"); !errors.Is(err, postgres.ErrNotFound) {
+		t.Fatalf("unknown operation = %v, want postgres.ErrNotFound", err)
 	}
 }
 

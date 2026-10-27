@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mmrzaf/gitman/internal/activity"
 	"github.com/mmrzaf/gitman/internal/postgres/pgtest"
 )
 
@@ -19,7 +20,7 @@ func TestSessionLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	token, expiresAt, err := svc.CreateSession(ctx, p, time.Hour)
+	token, expiresAt, err := svc.CreateSession(ctx, p, time.Hour, "", "")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -66,6 +67,101 @@ func TestSessionPersonUnknownToken(t *testing.T) {
 	}
 }
 
+func TestSessionDetailsAndThrottledLastSeen(t *testing.T) {
+	ctx := context.Background()
+	database := pgtest.Open(t)
+	svc := NewService(database)
+	p, err := svc.Create(ctx, "darius", "correct-horse-battery", false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, _, err := svc.CreateSession(ctx, p, time.Hour, "192.0.2.10", "Test Browser")
+	if err != nil {
+		t.Fatal(err)
+	}
+	person, sessionID, err := svc.SessionIdentity(ctx, token)
+	if err != nil || person.ID != p.ID || sessionID == "" {
+		t.Fatalf("SessionIdentity = %+v, %q, %v", person, sessionID, err)
+	}
+	sessions, err := svc.ListSessions(ctx, p.ID)
+	if err != nil || len(sessions) != 1 {
+		t.Fatalf("ListSessions = %+v, %v", sessions, err)
+	}
+	if sessions[0].ID != sessionID || sessions[0].IP != "192.0.2.10" || sessions[0].UserAgent != "Test Browser" {
+		t.Fatalf("session details = %+v", sessions[0])
+	}
+
+	// A first use may record last seen; an immediate second one must not.
+	if _, err := database.Q.Exec(ctx, `UPDATE sessions SET last_seen_at = now() - interval '2 minutes' WHERE id = $1`, sessionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := svc.SessionIdentity(ctx, token); err != nil {
+		t.Fatal(err)
+	}
+	var first time.Time
+	if err := database.Q.QueryRow(ctx, `SELECT last_seen_at FROM sessions WHERE id = $1`, sessionID).Scan(&first); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := svc.SessionIdentity(ctx, token); err != nil {
+		t.Fatal(err)
+	}
+	var second time.Time
+	if err := database.Q.QueryRow(ctx, `SELECT last_seen_at FROM sessions WHERE id = $1`, sessionID).Scan(&second); err != nil {
+		t.Fatal(err)
+	}
+	if !second.Equal(first) {
+		t.Fatalf("last seen was rewritten within a minute: %v then %v", first, second)
+	}
+}
+
+func TestRevokeSessionOwnershipAndAdmin(t *testing.T) {
+	ctx := context.Background()
+	database := pgtest.Open(t)
+	svc := NewService(database)
+	owner, err := svc.Create(ctx, "owner", "correct-horse-battery", false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := svc.Create(ctx, "other", "correct-horse-battery", false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin, err := svc.Create(ctx, "boss", "correct-horse-battery", true, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, _, err := svc.CreateSession(ctx, owner, time.Hour, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, sessionID, err := svc.SessionIdentity(ctx, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.RevokeSession(ctx, sessionID, other.ID); !errors.Is(err, ErrNotSessionOwner) {
+		t.Fatalf("non-owner revoked a session: %v", err)
+	}
+	if _, err := svc.RevokeSession(ctx, sessionID, admin.ID); err != nil {
+		t.Fatalf("admin revoke: %v", err)
+	}
+	if _, err := svc.SessionPerson(ctx, token); !errors.Is(err, ErrInvalidSession) {
+		t.Fatalf("revoked session still works: %v", err)
+	}
+	entries, err := activity.NewService(database).Recent(ctx, nil, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, entry := range entries {
+		if entry.Action == activity.SessionRevoked {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("admin session revocation was not recorded")
+	}
+}
+
 func TestSessionExpires(t *testing.T) {
 	ctx := context.Background()
 	database := pgtest.Open(t)
@@ -75,7 +171,7 @@ func TestSessionExpires(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, _, err := svc.CreateSession(ctx, p, -time.Second)
+	token, _, err := svc.CreateSession(ctx, p, -time.Second, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
