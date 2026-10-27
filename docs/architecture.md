@@ -37,6 +37,16 @@ explicit `type: deploy` step records a deployment. Target ownership is
 serialized across workers and released with a durable receipt or confirmed stop.
 A deployment record describes script success, not application health.
 
+Each worker also publishes its Docker host's image inventory, keyed by engine ID
+so workers sharing a host share one view. Pipelines that build images declare
+them under `images:`; a pure classifier compares that declaration, the required
+set of pipelines that can still run, in-use containers and the latest deployments
+to decide what may be pruned. Image removals and build-cache pruning are durable
+operations claimed by the owning host's worker. Runs hold the shared side of a
+host execution lock and image work the exclusive side, so neither overlaps the
+other; maintenance stops new claims. Workers enforce a bounded build-cache
+policy by default.
+
 ## Read paths
 
 Server-rendered pages use typed partial views and database read models. Home is

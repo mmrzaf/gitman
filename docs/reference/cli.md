@@ -45,6 +45,11 @@ gitman admin rule delete <repo> branch|tag <pattern>
 gitman admin run cancel <repo> <number>
 gitman admin worker cleanup
 gitman admin worker release --confirm [--run ID] <worker-id>
+gitman admin images list [--worker ID] [--class required|built|other] [--json]
+gitman admin images missing
+gitman admin images prune [--worker ID] [--confirm]
+gitman admin images prune --cache [--worker ID] [--confirm] [--keep-storage GiB] [--older-than HOURS]
+gitman admin images remove [--confirm] <worker-id> <image>
 gitman admin operation list | recover
 gitman admin operation abandon --reason TEXT <id>
 gitman admin maintenance enable | disable | status
@@ -101,6 +106,26 @@ Flags go before the positional arguments.
   runs, releases their deployment targets, marks their containers removed
   and stops the worker record. Use it only after confirming the host and
   its containers are gone; `--run ID` limits it to one run.
+- `admin images list` shows each Docker host's inventory with its class,
+  reason, size, age, in-use/deployed state and whether it is prunable. `--json`
+  emits the same structure for scripts; `--worker` selects one worker's host.
+- `admin images missing` lists required images no ready worker advertises, with
+  the pipelines that require them. **It exits non-zero when anything is
+  missing**, so it can guard a deployment check. A missing image means a run
+  stays queued; Gitman never pulls it.
+- `admin images prune` is a dry run by default. `--confirm` queues one durable
+  operation for the owning worker and prints its result when the worker finishes
+  it (or reports it as pending if no worker claims it in time). It refuses a
+  stale inventory. Only built images beyond their keep count are considered;
+  required, in-use and deployed images are reported as refused.
+- `admin images prune --cache` applies the build-cache policy instead of
+  touching images. `--keep-storage` and `--older-than` override the worker's
+  policy for this one run; both are between the documented bounds. The action
+  never removes images, containers or volumes.
+- `admin images remove --confirm <worker-id> <image>` removes one named tag or
+  dangling image without force. Required and in-use images are refused even
+  with `--confirm`; a deployed image may be removed deliberately. Without
+  `--confirm` it only prints what it would do.
 - `admin operation recover` retries every pending repository operation.
   `admin operation abandon --reason TEXT <id>` releases a repository whose
   operation recovery has failed repeatedly, but only when the operation

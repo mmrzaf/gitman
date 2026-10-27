@@ -189,9 +189,11 @@ Under your username, top-right of every page:
 ## Admins
 
 Admins additionally see **People**, to add, disable, enable, and change
-the role of accounts, and **Sessions**, to list and revoke any browser
-session. People are disabled, never deleted, so their name stays attached to
-what they did.
+the role of accounts, **Sessions**, to list and revoke any browser
+session, **Workers**, for readiness and heartbeats, and **Images**, for each
+Docker host's image inventory, missing required images, build-cache policy and
+pruning. **Operations** shows unfinished work, including image removals. People
+are disabled, never deleted, so their name stays attached to what they did.
 
 See [Security model](operator/security.md) for how ref rules and roles
 fit together, and the [CLI reference](reference/cli.md) for doing any of
