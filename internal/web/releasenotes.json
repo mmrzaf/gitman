@@ -1,0 +1,31 @@
+{
+  "releases": [
+    {
+      "version": "1.0.0-beta.24",
+      "releasedOn": "2026-10-27",
+      "items": [
+        "The new Images page shows every image on your worker hosts: which ones pipelines need, which ones they build, and which can be removed.",
+        "A pipeline lists the images it builds under images: and says how many tags to keep, so old versions can be pruned safely.",
+        "gitman admin images list, missing, prune and remove manage them from the command line. Prune and remove only preview unless you add --confirm.",
+        "Workers keep the Docker build cache to 3 GiB and 7 days by default, so it no longer grows until the disk is full.",
+        "The Gitman image is built on Alpine and is about a third of the size."
+      ]
+    },
+    {
+      "version": "1.0.0-beta.23",
+      "releasedOn": "2026-10-27",
+      "items": [
+        "A repository's Settings page has a Maintenance tab showing its disk use and running git gc.",
+        "Your account page lists every signed-in browser and lets you sign any of them out. Admins get a Sessions page.",
+        "gitman doctor checks configuration, disk space, the database, Docker and workers without changing anything."
+      ]
+    },
+    {
+      "version": "1.0.0-beta.22",
+      "releasedOn": "2026-10-02",
+      "items": [
+        "Commits is a section of its own: the commits of a branch, tag or revision, filterable to a path from the file browser."
+      ]
+    }
+  ]
+}
