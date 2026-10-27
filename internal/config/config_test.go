@@ -23,6 +23,9 @@ func setBase(t *testing.T) string {
 	t.Setenv(EnvDatabaseMaxConns, "")
 	t.Setenv(EnvLogLevel, "")
 	t.Setenv(EnvLogFormat, "")
+	for _, name := range []string{EnvImageAutomation, EnvImageCacheEnabled, EnvImageCacheKeepGiB, EnvImageCacheMaxAgeHours} {
+		t.Setenv(name, "")
+	}
 	return dir
 }
 
@@ -70,6 +73,43 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.LogFormat != "text" {
 		t.Errorf("LogFormat default = %q, want %q", cfg.LogFormat, "text")
 	}
+	if cfg.ImageAutomation != ImageAutomationOff {
+		t.Errorf("ImageAutomation default = %q, want off", cfg.ImageAutomation)
+	}
+	cache := cfg.ImageCache
+	if cache.Disabled || cache.KeepGiB != DefaultImageCacheKeepGiB || cache.OlderThanHours() != DefaultImageCacheMaxAgeHours {
+		t.Errorf("ImageCache default = %+v", cache)
+	}
+}
+
+func TestImageSettings(t *testing.T) {
+	setBase(t)
+	t.Setenv(EnvImageAutomation, ImageAutomationLowDisk)
+	t.Setenv(EnvImageCacheEnabled, "false")
+	t.Setenv(EnvImageCacheKeepGiB, "7")
+	t.Setenv(EnvImageCacheMaxAgeHours, "24")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ImageAutomation != ImageAutomationLowDisk {
+		t.Errorf("ImageAutomation = %q", cfg.ImageAutomation)
+	}
+	if !cfg.ImageCache.Disabled || cfg.ImageCache.KeepGiB != 7 || cfg.ImageCache.OlderThanHours() != 24 {
+		t.Errorf("ImageCache = %+v", cfg.ImageCache)
+	}
+}
+
+func TestImageCacheWithDefaults(t *testing.T) {
+	if got := (ImageCache{}).WithDefaults(); got != DefaultImageCache() {
+		t.Errorf("zero policy = %+v, want defaults", got)
+	}
+	disabled := ImageCache{Disabled: true}
+	wantDefaults := DefaultImageCache()
+	wantDefaults.Disabled = true
+	if got := disabled.WithDefaults(); got != wantDefaults {
+		t.Errorf("explicitly disabled policy = %+v, want defaults with Disabled", got)
+	}
 }
 
 func TestLoadMakesDataDirAbsolute(t *testing.T) {
@@ -102,6 +142,12 @@ func TestLoadRejects(t *testing.T) {
 		"out-of-range max conns": {EnvDatabaseMaxConns: "1001"},
 		"invalid log level":      {EnvLogLevel: "verbose"},
 		"invalid log format":     {EnvLogFormat: "xml"},
+		"invalid automation":     {EnvImageAutomation: "sometimes"},
+		"invalid cache switch":   {EnvImageCacheEnabled: "yes"},
+		"zero cache keep":        {EnvImageCacheKeepGiB: "0"},
+		"huge cache keep":        {EnvImageCacheKeepGiB: "1025"},
+		"zero cache age":         {EnvImageCacheMaxAgeHours: "0"},
+		"huge cache age":         {EnvImageCacheMaxAgeHours: "8761"},
 	}
 	for name, env := range cases {
 		t.Run(name, func(t *testing.T) {
