@@ -14,11 +14,15 @@ step runs in its own Docker container on the worker's host.
 
 A pipeline is one commit, run once, in order: the first failing step ends
 the run and later steps are skipped. There are deliberately no automatic
-retries, no caches shared between runs, no artifacts, no matrix builds
+retries, no artifact or dependency caches provided by Gitman, no matrix builds
 and no scheduled runs (see
 [Not added, on purpose](../../README.md#not-added-on-purpose)). Gitman
 never pulls images — every image a pipeline references (its `image`, and
-anything in `requires`) must already exist on the worker's Docker host.
+anything in `requires`) must already exist on the worker's Docker host. A
+pipeline declares the images it builds under `images:` so Gitman can keep a
+bounded number of their tags; the worker's own BuildKit cache is managed
+separately by the default cache policy. See
+[Docker deployment](../operator/docker.md#disk-use-and-images).
 
 ## Checking a pipeline before pushing
 

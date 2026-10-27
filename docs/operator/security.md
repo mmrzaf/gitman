@@ -204,9 +204,14 @@ until recovery confirms termination. Gitman does not automatically rerun scripts
 Each run has a monitored workspace budget (10 GiB by default). Checks run every five seconds,
 including during checkout. Workers stop claiming below the configured disk
 reserve (5 GiB by default). See [Configuration](configuration.md).
-These are monitored limits: writes can overshoot between checks. Operators must
-budget image storage and socket-created child containers separately.
+These are monitored limits: writes can overshoot between checks. Image storage
+is bounded separately by the image and build-cache management described in
+[Docker deployment](docker.md#disk-use-and-images); socket-created child
+containers are still the pipeline's responsibility.
 
 Workers advertise current image inventories. Runs stay queued when no worker
 has every required image. The admin **Workers** page distinguishes readiness
-from a heartbeat and shows readiness failures and available images.
+from a heartbeat and shows readiness failures and available images; **Images**
+shows the full classified inventory and the build-cache policy. Image removal
+and cache pruning are admin actions executed by the worker that owns the host,
+never by the web process.

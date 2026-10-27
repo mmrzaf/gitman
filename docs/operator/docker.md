@@ -51,11 +51,139 @@ minutes even if the container itself is gone.
 ## Disk use and images
 
 Every pipeline run executes in images that must already exist on the worker
-host, and steps that build images leave them there. Gitman neither pulls nor
-prunes images: `docker image prune` (and build-cache pruning) on the worker host
-is the operator's job. Pruning images a pipeline still requires is safe only
-after updating the pipeline or its `requires`; a run stays queued until a ready
-worker advertises all of them.
+host; Gitman still never pulls an image. A pipeline may also declare the images
+it builds under `images:` in `.gitman.yml`. Those declarations are how Gitman
+knows which `repo:tag` images are its own and how many of each to keep.
+
+Each worker publishes its host's inventory to PostgreSQL: every tagged image,
+every dangling image, the containers that use each image, and the build cache's
+size and reclaimable size. The admin **Images** page and
+`gitman admin images list` show that inventory per Docker host (workers sharing
+one host share one inventory). An inventory older than five minutes is marked
+stale, and no prune or removal acts on it.
+
+Each image is classified as:
+
+- **Required** — it is the `image` or a member of `requires` of a pipeline that
+  can still run: every queued or running run, and the latest stored pipeline of
+  every existing branch or tag matched by a ref rule. An exact required
+  reference (including implicit `:latest` and digest references) is never
+  pruned and cannot be removed from the page or by `images remove`.
+- **Built** — its repository appears in a pipeline's `images:`. The image also
+  reports its keep count, whether it is the deployed version, and whether it is
+  within the newest `keep` tags. Tags are ordered by Docker's image creation
+  time; ties are deterministic.
+- **Other** — everything else, including dangling images. Automatic pruning
+  never touches these. Only an explicit removal removes one.
+
+In-use images (a running or stopped container references the image ID) are
+protected even when they are built, and can only be removed after the container
+is gone. The currently deployed version comes from the latest successful
+deployment per target of the pipeline's repository, mapped to
+`<repository>:<version>`. If a recorded version cannot be matched to a live tag,
+Gitman protects the newest tag rather than risk removing the live image.
+
+Image automation is **off by default**. No image is removed automatically
+unless an operator enables `GITMAN_IMAGE_AUTOMATION`:
+
+- `off` (the default) — only manual pruning and removal.
+- `after-deploy` — after a passed run with a deploy step on that worker, prune
+  built images beyond their keep count.
+- `low-disk` — when free space on the worker's data filesystem falls below
+  `GITMAN_DISK_RESERVE_GIB` plus 2 GiB, prune built images beyond their keep
+  count. It acts at most once an hour. The worker can only measure the
+  filesystem holding its workspace root; on the supported Compose layout that is
+  the same data disk as Docker's image and cache storage. If you put Docker's
+  data root on another filesystem, monitor that filesystem separately.
+
+Manual work:
+
+```sh
+gitman admin images list [--worker ID] [--class required|built|other] [--json]
+gitman admin images missing
+gitman admin images prune [--worker ID] [--confirm]
+gitman admin images prune --cache [--worker ID] [--confirm] [--keep-storage GiB] [--older-than HOURS]
+gitman admin images remove [--confirm] <worker-id> <image>
+```
+
+`prune` and `remove` are dry runs without `--confirm`. Confirmed work is queued
+as a durable operation for the owning worker and appears on **Operations** and
+the **Images** page; the worker re-reads the inventory and the required set
+before acting, and skips anything that became required, in use or deployed. A
+removal uses `docker image rm` without `--force`, so it removes a tag rather
+than an image another tag still uses, and it refuses an image a container uses.
+`images missing` exits non-zero when a ready worker lacks a required image.
+
+Two workers on one Docker host share the inventory and the operation queue.
+Only one can hold the host's image-execution lock, so removals cannot overlap a
+run or each other. Enabling maintenance stops workers from claiming new image
+operations; an operation already running finishes or is recorded as
+interrupted. Builds and removals never run concurrently on one host.
+
+## Build cache
+
+The Docker build cache is rebuildable data, and an unbounded cache is the most
+common way a Gitman worker host fills its disk. Gitman therefore manages it by
+default, separately from image automation.
+
+- **Policy:** keep at most **3 GiB** and no cache entry older than **7 days**.
+  These defaults suit a small host: they leave room for the disk reserve,
+  workspaces, PostgreSQL and a build that temporarily exceeds the cache cap.
+- **Enforcement:** on by default. A worker enforces the policy after every run
+  that used Docker (once its containers are gone) and every 15 minutes. It uses
+  `docker builder prune --force --all --keep-storage <cap> --filter until=<age>`
+  and, if recent unused cache still leaves the cache above the cap, a second
+  pass with the cap alone. `--all` is required: without it Docker removes only
+  dangling cache and leaves the layer cache of build steps, so the cap could
+  never be met. Records a running build holds are never removed. Enforcement
+  never touches images, containers or volumes. Enforcement is serialized with runs by the host lock,
+  so it never races a build.
+- **A ceiling after enforcement:** the cache can exceed the cap while a build is
+  using it. The cap is what enforcement leaves behind, not a limit during a
+  build; size `GITMAN_DISK_RESERVE_GIB` with that headroom in mind.
+- **Tune or disable:** `GITMAN_IMAGE_CACHE_KEEP_GIB`,
+  `GITMAN_IMAGE_CACHE_MAX_AGE_HOURS` and `GITMAN_IMAGE_CACHE_ENABLED`. Turning
+  enforcement off is an explicit choice, not the default, and leaves the cache
+  to the daemon and the operator.
+- **See what it did:** the **Images** page and `images list` show cache size,
+  reclaimable size, the policy, when enforcement last ran, what it reclaimed and
+  any error. A cache still above its cap is shown as a warning, and a failure is
+  recorded in Activity. A failed prune (daemon unreachable, a build holding
+  cache) does not fail the run; the next trigger retries.
+- **Assumption:** on a Gitman worker host, every image build comes from Gitman
+  pipelines, so Gitman may treat the host's whole BuildKit cache as its own. A
+  daemon shared with other build tools will have its cache pruned too; disable
+  enforcement or give those tools a separate daemon.
+
+Manual enforcement uses the same code path:
+
+```sh
+gitman admin images prune --cache
+gitman admin images prune --cache --confirm
+gitman admin images prune --cache --confirm --keep-storage 5 --older-than 24
+```
+
+The page's **Prune cache** action applies the worker's current policy.
+
+### Disk is filling up
+
+1. Open **Images** (or `gitman admin images list`) and find the host.
+2. Check the build cache first. If it is above its cap or has a recorded error,
+   run `gitman admin images prune --cache --confirm`.
+3. Review prunable built images and run `gitman admin images prune --confirm`.
+   Start with one host if you have several.
+4. If the pressure repeats, enable `GITMAN_IMAGE_AUTOMATION=after-deploy` or
+   `low-disk` for the worker, and lower `GITMAN_IMAGE_CACHE_KEEP_GIB` if the
+   host is small.
+5. Anything left is an "other" image from outside Gitman's declarations. Remove
+   one explicitly with `gitman admin images remove --confirm <worker-id> <image>`
+   only after checking what uses it. Never remove a required image.
+
+A run stuck in the queue because an image is missing is a different problem:
+`gitman admin images missing` names the image and the pipelines that require it,
+and the **Images** page shows the same under **Missing required images**. Make
+the image present on that worker's Docker host — pull or build it there — and
+the worker advertises it on its next readiness check. Gitman will not pull it.
 
 The Gitman image does not include PostgreSQL client tools. `admin maintenance
 backup` and `gitman restore` therefore run on a host with a `pg_dump`/

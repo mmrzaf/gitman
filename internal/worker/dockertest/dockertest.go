@@ -40,6 +40,9 @@ rmdir "$dir/lock"
 if [ "$FAKE_DOCKER_HANG" = "$1" ] || [ "$FAKE_DOCKER_HANG" = all ]; then
 	exec sleep 300
 fi
+if [ "$FAKE_DOCKER_HANG" = image-rm ] && [ "$1" = image ] && [ "$2" = rm ]; then
+	exec sleep 300
+fi
 if [ -n "$FAKE_DOCKER_DOWN" ]; then
 	echo "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?" >&2
 	exit 1
@@ -48,18 +51,44 @@ case "$1" in
 version) echo 29.0.0; exit 0 ;;
 info) echo fake-engine; exit 0 ;;
 image)
- if [ "$2" = ls ]; then printf "%s\n" $FAKE_DOCKER_IMAGES; exit 0; fi
+ if [ "$2" = ls ]; then
+  case "$*" in
+   *'{{json .}}'*) printf '%s\n' "$FAKE_DOCKER_IMAGE_LS" ;;
+   *) printf "%s\n" $FAKE_DOCKER_IMAGES ;;
+  esac
+  exit 0
+ fi
+ if [ "$2" = rm ]; then
+  if [ -n "$FAKE_DOCKER_IMAGE_RM_FAIL" ]; then echo "$FAKE_DOCKER_IMAGE_RM_FAIL" >&2; exit 1; fi
+  if [ -n "$FAKE_DOCKER_IMAGE_RM_MISSING" ]; then echo "Error: No such image: $3" >&2; exit 1; fi
+  echo "Untagged: $3"
+  exit 0
+ fi
+ case "$*" in
+  *'{{json .}}'*) printf '%s\n' "$FAKE_DOCKER_IMAGE_INSPECT"; exit 0 ;;
+ esac
 	eval "wanted=\${$#}"
 	for image in $FAKE_DOCKER_IMAGES; do
 		[ "$image" = "$wanted" ] && { echo sha256:abc; exit 0; }
 	done
 	echo "Error: No such image: $wanted" >&2; exit 1 ;;
 ps)
+ if [ "$2" = -aq ]; then printf '%s\n' "$FAKE_DOCKER_CONTAINER_IDS"; exit 0; fi
  full=0
  for arg in "$@"; do [ "$arg" != --no-trunc ] || full=1; done
  if [ "$full" = 1 ]; then printf '%s' "$FAKE_DOCKER_PS"
  else printf '%s' "$FAKE_DOCKER_PS" | awk '{ if (length($1) == 64) $1=substr($1,1,12); print }'
  fi
+ exit 0 ;;
+container)
+ printf '%s\n' "$FAKE_DOCKER_CONTAINER_IMAGES"
+ exit 0 ;;
+system)
+ printf '%s\n' "$FAKE_DOCKER_DF"
+ exit 0 ;;
+builder)
+ if [ -n "$FAKE_DOCKER_BUILDER_PRUNE_FAIL" ]; then echo "builder prune unavailable" >&2; exit 1; fi
+ printf '%s\n' "$FAKE_DOCKER_BUILDER_PRUNE"
  exit 0 ;;
 kill)
  if [ -f "$dir/pid-$2" ]; then
@@ -159,6 +188,15 @@ func New(t testing.TB, images ...string) *Fake {
 	t.Setenv("FAKE_DOCKER_DOWN", "")
 	t.Setenv("FAKE_DOCKER_HANG", "")
 	t.Setenv("FAKE_DOCKER_RM_FAIL", "")
+	t.Setenv("FAKE_DOCKER_IMAGE_LS", "")
+	t.Setenv("FAKE_DOCKER_IMAGE_INSPECT", "")
+	t.Setenv("FAKE_DOCKER_CONTAINER_IDS", "")
+	t.Setenv("FAKE_DOCKER_CONTAINER_IMAGES", "")
+	t.Setenv("FAKE_DOCKER_DF", "")
+	t.Setenv("FAKE_DOCKER_BUILDER_PRUNE", "")
+	t.Setenv("FAKE_DOCKER_BUILDER_PRUNE_FAIL", "")
+	t.Setenv("FAKE_DOCKER_IMAGE_RM_FAIL", "")
+	t.Setenv("FAKE_DOCKER_IMAGE_RM_MISSING", "")
 	return &Fake{Binary: bin, dir: dir}
 }
 

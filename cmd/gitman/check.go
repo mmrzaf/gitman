@@ -30,6 +30,9 @@ func runCheck(args []string) error {
 	if len(cfg.Targets) > 0 {
 		fmt.Printf(", %d target(s)", len(cfg.Targets))
 	}
+	if len(cfg.Images) > 0 {
+		fmt.Printf(", %d image policies", len(cfg.Images))
+	}
 	fmt.Println()
 	if cfg.Docker {
 		fmt.Println("warning: docker: true needs a ref rule that allows Docker (gitman admin rule set --docker).")

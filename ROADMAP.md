@@ -91,9 +91,10 @@ Not Gitman changes, but open work on the projects it runs.
   guidance; the real pipeline is not changed here.
 - [ ] waiotech: tick **run** on the `develop` rule, so pushes deploy
   staging.
-- [x] Prune old images on the host: every run leaves `<app>:<version>`
-  images behind. [Docker deployment](docs/operator/docker.md) now says to prune
-  them on the worker host.
+- [x] Prune old images on the host: pipelines declare built images under
+  `images:`, the Images page and `admin images` classify and prune them, and
+  workers bound the BuildKit cache by default. See
+  [Docker deployment](docs/operator/docker.md#disk-use-and-images).
 - [ ] cerv: tag `cerv:1.0` from a `cerv:1.0.x` build, since waiotech's
   pipeline requires it.
 

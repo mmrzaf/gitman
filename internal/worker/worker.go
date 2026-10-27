@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -42,6 +43,27 @@ const (
 	// run's end; it doubles up to maxFinishRetryDelay.
 	finishRetryDelay    = time.Second
 	maxFinishRetryDelay = 30 * time.Second
+	// imagePoll is how often a worker looks for queued image operations.
+	// They are not urgent, and polling keeps them off the run queue's
+	// LISTEN/NOTIFY path.
+	imagePoll = 15 * time.Second
+	// inventoryInterval is how often a worker republishes its host's image
+	// inventory even when nothing changed. After a run it does so sooner,
+	// rate-limited by inventoryMinGap.
+	inventoryInterval = time.Minute
+	inventoryMinGap   = 10 * time.Second
+	// cacheEnforceInterval is the periodic build-cache enforcement pass, in
+	// addition to the pass after every Docker-enabled run.
+	cacheEnforceInterval = 15 * time.Minute
+	// lowDiskInterval rate-limits the low-disk image automation, which could
+	// otherwise run on every image poll while a host stays under pressure.
+	lowDiskInterval = time.Hour
+	// lowDiskMargin is the extra free space the low-disk automation leaves
+	// above GITMAN_DISK_RESERVE_GIB before it starts pruning.
+	lowDiskMargin = 2 << 30
+	// imageShutdownGrace bounds how long Run waits for in-flight image work
+	// to record its outcome after the context ends.
+	imageShutdownGrace = 10 * time.Second
 )
 
 // Config is how a worker is set up.
@@ -56,6 +78,10 @@ type Config struct {
 	// DefaultTimeout bounds a run whose pipeline sets no timeout.
 	DefaultTimeout time.Duration
 	Hostname       string
+	// ImageAutomation is off, after-deploy or low-disk.
+	ImageAutomation string
+	// ImageCache is the build-cache policy this worker enforces.
+	ImageCache config.ImageCache
 }
 
 // Worker claims and runs queued runs.
@@ -78,11 +104,19 @@ type Worker struct {
 	// is used only by the heartbeat goroutine.
 	healthySince atomic.Int64
 	engineID     string
+
+	// inventoryMu guards the last inventory publication, so the periodic
+	// loop and a run's completion cannot publish in a burst.
+	inventoryMu   sync.Mutex
+	lastInventory time.Time
+	// lastLowDisk is when the low-disk automation last acted, as UnixNano.
+	lastLowDisk atomic.Int64
 }
 
 // New returns a Worker with a fresh ID.
 func New(cfg Config, db *postgres.DB, ciService *ci.Service, repos *repo.Service, docker *Docker, log *slog.Logger) *Worker {
 	cfg.Resources = cfg.Resources.WithDefaults()
+	cfg.ImageCache = cfg.ImageCache.WithDefaults()
 	if docker != nil {
 		docker.Resources = cfg.Resources
 	}
@@ -127,6 +161,11 @@ func (w *Worker) Run(ctx context.Context) error {
 	})
 	go w.heartbeat(ctx)
 	go w.cleanup(ctx)
+	imagesDone := make(chan struct{})
+	go func() {
+		defer close(imagesDone)
+		w.images(ctx)
+	}()
 
 	poll := time.NewTicker(w.pollEvery)
 	defer poll.Stop()
@@ -135,6 +174,13 @@ func (w *Worker) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			w.log.Info("worker stopping", "worker", w.id)
+			// Let an image operation that was already running record its
+			// outcome. Its Docker call ends with the context; this only
+			// waits for the short recording step, never for a new prune.
+			select {
+			case <-imagesDone:
+			case <-time.After(imageShutdownGrace):
+			}
 			return nil
 		case <-wake:
 		case <-poll.C:
@@ -221,6 +267,7 @@ func (w *Worker) handle(ctx context.Context, claim *ci.Claim) {
 			log.Warn("could not remove the finished run's workspace", "error", err)
 		}
 		log.Info("run finished", "status", outcome.Status, "duration", time.Since(start).Round(time.Second))
+		w.afterRun(ctx, claim, outcome)
 	}
 }
 
@@ -302,6 +349,13 @@ func (w *Worker) execute(ctx context.Context, claim *ci.Claim, log *slog.Logger)
 		return o
 	}
 	defer unlock()
+	// Image removals and cache pruning take the exclusive side of this
+	// host lock; a run keeps it shared for as long as it may touch Docker.
+	unlockHost, err := waitHostExecution(ctx, w.cfg.WorkspaceRoot)
+	if err != nil {
+		return e.internalFailure("Could not reserve the host's image execution lock", err)
+	}
+	defer unlockHost()
 	if claim.AllowSecrets {
 		read, stopRead := context.WithTimeout(ctx, 10*time.Second)
 		secrets, err := w.repos.RunSecrets(read, claim.RepoID)

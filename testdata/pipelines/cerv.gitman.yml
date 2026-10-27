@@ -7,6 +7,9 @@ docker: true
 requires:
   - debian:trixie
 
+images:
+  cerv: {keep: 2}
+
 env:
   DOCKER_BUILDKIT: "1"
   BASE_IMAGE: debian:trixie

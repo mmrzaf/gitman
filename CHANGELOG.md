@@ -3,6 +3,64 @@
 What changed in each release, for the people who run Gitman. Newest first.
 Each release's section is also its GitHub release notes.
 
+## [1.0.0-beta.24] - 2026-10-27
+
+Image inventory, retention and build-cache management.
+
+**Installation:** this release adds migration `0005_images.sql`, which creates
+the per-host image inventory and extends the operations journal for
+host-targeted image work. Existing databases upgrade in place when `web` or
+`worker` starts. Pipelines that build images should declare them under
+`images:`; an undeclared image is still inventoried but is never pruned
+automatically. A server running an earlier beta rejects `images:`, so upgrade
+Gitman before adding it to pipelines.
+
+The Gitman image is now built on Alpine. A host that builds it needs
+`golang:1.27-alpine` and `alpine:3.24` locally in place of
+`golang:1.27-bookworm` and `debian:bookworm-slim`, and the `DEBIAN_MIRROR` and
+`DEBIAN_SECURITY_MIRROR` build arguments are replaced by `APK_MIRROR`.
+
+### Added
+
+- **Image inventory and retention**: pipelines declare built images under
+  `images:` with an explicit `keep` of 1–50. Workers publish each Docker host's
+  inventory; the admin **Images** page and `gitman admin images list` show
+  required, built and other images with their reason, size, age, in-use and
+  deployed state and whether they are prunable. Required images, in-use images
+  and the deployed version are protected. `gitman admin images prune` and
+  `images remove` are dry runs unless given `--confirm`, then queue durable
+  work for the owning worker.
+- **Missing-image checks**: `gitman admin images missing` lists required images
+  no ready worker advertises, with the pipelines that require them, and exits
+  non-zero when anything is missing. The Images page shows the same warning.
+- **Image automation**: `GITMAN_IMAGE_AUTOMATION` selects `off` (the default),
+  `after-deploy` or `low-disk`. Automatic pruning removes only built images
+  beyond their keep count.
+- **Bounded build cache**: workers enforce a 3 GiB / 7 day cache policy by
+  default after Docker runs and periodically, using `docker builder prune
+  --all` with a storage cap and an age filter. It is tunable with `GITMAN_IMAGE_CACHE_KEEP_GIB`,
+  `GITMAN_IMAGE_CACHE_MAX_AGE_HOURS` and `GITMAN_IMAGE_CACHE_ENABLED`, and
+  manual `admin images prune --cache` uses the same path. Inventory and the
+  Images page show cache size, policy, last run and reclaimed bytes.
+- `gitman admin images list --json` for scripts.
+
+### Changed
+
+- **Smaller image on Alpine**: the runtime is `alpine:3.24` with `git`,
+  `curl`, `ca-certificates` and `tzdata`, and the builder is
+  `golang:1.27-alpine`. The binary is built with `CGO_ENABLED=0` and the Docker
+  client is the Docker project's static binary, so nothing depends on glibc.
+  The user and group are still UID/GID 1000.
+- `repository_operations` now also carries host-targeted image operations;
+  **Operations** shows both repository recovery and image work, and image
+  removal/cache results are per image.
+- Worker readiness still advertises available images; the Images page is the
+  full inventory, not just that claim-routing list.
+- Documentation for Docker disk use, pipeline `images:`, the CLI, settings,
+  security bounds and troubleshooting now covers image retention and the build
+  cache. The "no caches" wording now distinguishes Gitman caches from the
+  worker's local BuildKit cache.
+
 ## [1.0.0-beta.23] - 2026-10-27
 
 The last beta before 1.0: security and stability fixes, repository maintenance,

@@ -22,6 +22,7 @@ func TestAdminOnlyPagesRequireAnAdmin(t *testing.T) {
 	}{
 		{"/operations", "Repository recovery"},
 		{"/workers", "Workers"},
+		{"/images", "Images"},
 		{"/sessions", "Sessions"},
 	} {
 		t.Run(page.path, func(t *testing.T) {

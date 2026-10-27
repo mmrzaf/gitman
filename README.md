@@ -90,8 +90,7 @@ Execution checks again before starting a step.
 ### Mirrors
 
 Every download the image build makes is a build argument (`GO_IMAGE`,
-`RUNTIME_IMAGE`, `DOCKER_CLI_IMAGE`, `DEBIAN_MIRROR`,
-`DEBIAN_SECURITY_MIRROR`, `GOPROXY`); see the top of the `Dockerfile`.
+`RUNTIME_IMAGE`, `DOCKER_CLI_IMAGE`, `APK_MIRROR`, `GOPROXY`); see the top of the `Dockerfile`.
 Gitman's own [`.gitman.yml`](.gitman.yml) uses the public registries and module
 proxy by default; change these arguments to use your own mirrors.
 
@@ -118,6 +117,10 @@ Everything is set through the environment.
 | `GITMAN_STEP_PIDS` | `256` | Maximum processes per step container. |
 | `GITMAN_WORKSPACE_GIB` | `10` | Monitored workspace size per run, in GiB. |
 | `GITMAN_DISK_RESERVE_GIB` | `5` | Minimum free space for pushes and worker execution, in GiB. |
+| `GITMAN_IMAGE_AUTOMATION` | `off` | `off`, `after-deploy` or `low-disk`; automatic removal of built images only. |
+| `GITMAN_IMAGE_CACHE_ENABLED` | `true` | Enforce the worker's Docker build-cache policy. |
+| `GITMAN_IMAGE_CACHE_KEEP_GIB` | `3` | Build-cache storage cap in GiB; 1–1024. |
+| `GITMAN_IMAGE_CACHE_MAX_AGE_HOURS` | `168` | Oldest build-cache entry enforcement keeps, in hours; 1–8760. |
 | `GITMAN_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. |
 | `GITMAN_LOG_FORMAT` | `text` | `text` or `json`. |
 
@@ -171,8 +174,10 @@ image: docker:29-cli           # every step runs in this image
 docker: true                   # steps use the host's Docker; a ref rule must allow it
 timeout: 20m                   # the whole run; default 30m, at most 24h
 requires:                      # images that must already be on the host
-  - golang:1.27-bookworm
-  - debian:bookworm-slim
+  - golang:1.27-alpine
+  - alpine:3.24
+images:                        # images this pipeline builds, and how many tags to keep
+  example-app: {keep: 3}
 env:                           # for every step
   GOPROXY: https://goproxy.example.com,direct
 
@@ -180,21 +185,21 @@ targets:                       # target contexts matched by ref
   staging:
     branch: develop
     env:
-      DEPLOY_DIR: /srv/apps/waiotech-stage
+      DEPLOY_DIR: /srv/apps/example-app-stage
   production:
     tag: "v*"
     env:
-      DEPLOY_DIR: /srv/apps/waiotech
+      DEPLOY_DIR: /srv/apps/example-app
 
 steps:
   - name: build
-    run: docker build --pull=false --build-arg GOPROXY="$GOPROXY" -t "waiotech:$GITMAN_VERSION" .
+    run: docker build --pull=false --build-arg GOPROXY="$GOPROXY" -t "example-app:$GITMAN_VERSION" .
   - name: check
-    run: docker run --rm "waiotech:$GITMAN_VERSION" waiotech version
+    run: docker run --rm "example-app:$GITMAN_VERSION" example-app version
   - name: deploy
     type: deploy
     when: target               # always (default), target, branch, tag, or a target's name
-    run: ./deploy.sh "$DEPLOY_DIR" "waiotech:$GITMAN_VERSION"
+    run: ./deploy.sh "$DEPLOY_DIR" "example-app:$GITMAN_VERSION"
 ```
 
 A pipeline is meant to stay this light: build, check, and deploy. Each
@@ -314,6 +319,10 @@ gitman admin rule set [--push everyone|admins|people] [--people a,b] [--force] [
 gitman admin rule delete <repo> branch|tag <pattern>
 gitman admin run cancel <repo> <number>
 gitman admin worker cleanup
+gitman admin images list [--worker ID] [--class required|built|other] [--json]
+gitman admin images missing
+gitman admin images prune [--worker ID] [--confirm] [--cache] [--keep-storage GiB] [--older-than HOURS]
+gitman admin images remove [--confirm] <worker-id> <image>
 gitman admin migrate
 ```
 
@@ -327,9 +336,12 @@ See [backups and recovery](docs/operator/backups-and-upgrades.md).
 
 Workers preserve execution receipts until recording commits. Recovery confirms
 termination before releasing deployment ownership, and never reruns scripts.
-Pending repository operations are visible in **Operations**; worker readiness and
-local image inventory appear in **Workers**. Logs have independent age and size
-limits. See [architecture](docs/architecture.md) and [configuration](docs/operator/configuration.md).
+Pending repository operations are visible in **Operations**, which also lists
+durable image removals and cache prunes; worker readiness and local image
+inventory appear in **Workers**, and the full classified inventory and
+build-cache state are on **Images**. Logs have independent age and size
+limits. See [architecture](docs/architecture.md) and
+[configuration](docs/operator/configuration.md).
 
 The schema has one current baseline and ordinary versioned migrations.
 
@@ -360,8 +372,10 @@ GITMAN_TEST_DATABASE_URL='postgres://postgres@localhost/gitman_test?sslmode=disa
   read-only or unauthenticated mode, and no way to turn one on.
 - **Pulling images.** What a pipeline runs is what the operator put on
   the host.
-- **Automatic retries, caches between runs, artifacts, matrix builds,
-  scheduled runs.** A run is one commit, run once, in order.
+- **Automatic retries, artifact or dependency caches, matrix builds,
+  scheduled runs.** A run is one commit, run once, in order. The worker's
+  Docker build cache is local and bounded, not a Gitman cache service; see
+  [Docker deployment](docs/operator/docker.md#build-cache).
 - **Webhooks, email and plugins.**
 - **Deleting people.** People are disabled, so history keeps their names.
 - **SQLite or other databases.** PostgreSQL's notifications and row

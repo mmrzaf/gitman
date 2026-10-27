@@ -384,6 +384,9 @@ var eventDescriptions = map[string]string{
 	activity.CredentialsRevoked:     "revoked credentials",
 	activity.SessionRevoked:         "revoked a session",
 	activity.WorkerReleased:         "released a worker confirmed gone",
+	activity.ImageRemoved:           "removed an image",
+	activity.ImagesPruned:           "pruned built images",
+	activity.ImageCachePruned:       "pruned the Docker build cache",
 
 	activity.RepoVisibilityChanged:    "changed who may read the repository",
 	activity.RepoReaderAdded:          "added a reader",

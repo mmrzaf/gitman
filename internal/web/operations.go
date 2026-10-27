@@ -1,18 +1,27 @@
 package web
 
 import (
-	"github.com/mmrzaf/gitman/internal/repo"
 	"net/http"
+
+	"github.com/mmrzaf/gitman/internal/ci"
+	"github.com/mmrzaf/gitman/internal/repo"
 )
 
-type operationsPage struct{ Operations []repo.Operation }
+type operationsPage struct {
+	Operations      []repo.Operation
+	ImageOperations []ci.ImageOperation
+}
 
 func (a *App) operationsView(w http.ResponseWriter, r *http.Request) error {
 	ops, err := a.repos.PendingOperations(r.Context())
 	if err != nil {
 		return err
 	}
-	a.render(w, r, http.StatusOK, "operations", "Repository recovery", operationsPage{Operations: ops})
+	images, err := a.ci.ImageOperations(r.Context(), 50)
+	if err != nil {
+		return err
+	}
+	a.render(w, r, http.StatusOK, "operations", "Operations", operationsPage{Operations: ops, ImageOperations: images})
 	return nil
 }
 

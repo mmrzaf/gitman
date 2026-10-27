@@ -9,6 +9,9 @@ requires:
   - golang:1.26-bookworm
   - gcr.io/distroless/static-debian12:nonroot
 
+images:
+  sms-gateway: {keep: 3}
+
 env:
   DOCKER_BUILDKIT: "1"
   GO_IMAGE: golang:1.26-bookworm

@@ -14,11 +14,61 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func DefaultRetention() Retention { return Retention{Logs: 30, Runs: 90, Audit: 365, Deployments: 365} }
 
 type Retention struct{ Logs, Runs, Audit, Deployments int }
+
+// Image automation modes. Image removal is off unless an operator asks for
+// it; build-cache enforcement is independent and on by default.
+const (
+	ImageAutomationOff         = "off"
+	ImageAutomationAfterDeploy = "after-deploy"
+	ImageAutomationLowDisk     = "low-disk"
+)
+
+const (
+	DefaultImageCacheKeepGiB     = 3
+	DefaultImageCacheMaxAgeHours = 168
+	MaxImageCacheKeepGiB         = 1024
+	MaxImageCacheMaxAgeHours     = 8760
+)
+
+// DefaultImageCache is the build-cache policy used when none is configured: a
+// small cap and a week of history, conservative for a small disk.
+func DefaultImageCache() ImageCache {
+	return ImageCache{KeepGiB: DefaultImageCacheKeepGiB, OlderThan: DefaultImageCacheMaxAgeHours * time.Hour}
+}
+
+// ImageCache is the build-cache policy a worker enforces. The zero value is
+// not used by config.Load; WithDefaults fills it for callers that build a
+// Config directly (tests, mostly).
+type ImageCache struct {
+	Disabled  bool
+	KeepGiB   int
+	OlderThan time.Duration
+}
+
+// WithDefaults supplies the documented defaults for any unset bound. A policy
+// with Disabled alone therefore still has a valid cap and age.
+func (c ImageCache) WithDefaults() ImageCache {
+	defaults := DefaultImageCache()
+	if c.KeepGiB == 0 {
+		c.KeepGiB = defaults.KeepGiB
+	}
+	if c.OlderThan == 0 {
+		c.OlderThan = defaults.OlderThan
+	}
+	return c
+}
+
+// OlderThanHours is the policy age in whole hours, as workers and the page
+// report it.
+func (c ImageCache) OlderThanHours() int {
+	return int(c.OlderThan / time.Hour)
+}
 
 // Config holds every setting Gitman reads from its environment.
 type Config struct {
@@ -43,6 +93,12 @@ type Config struct {
 
 	// Retention separates logs, run metadata, audit records and deployments.
 	Retention Retention
+
+	// ImageAutomation is off, after-deploy or low-disk. It governs only
+	// removal of built images.
+	ImageAutomation string
+	// ImageCache is the build-cache policy every worker enforces.
+	ImageCache ImageCache
 
 	// SecretKey encrypts repository secrets at rest. Secret storage is
 	// unavailable when this is empty.
@@ -113,18 +169,28 @@ const (
 	// collector that parses lines itself) or "json" (for one that wants
 	// structured fields).
 	EnvLogFormat = "GITMAN_LOG_FORMAT"
+	// EnvImageAutomation is off, after-deploy or low-disk.
+	EnvImageAutomation = "GITMAN_IMAGE_AUTOMATION"
+	// EnvImageCacheEnabled turns automatic build-cache enforcement on or off.
+	EnvImageCacheEnabled = "GITMAN_IMAGE_CACHE_ENABLED"
+	// EnvImageCacheKeepGiB is the build-cache storage cap.
+	EnvImageCacheKeepGiB = "GITMAN_IMAGE_CACHE_KEEP_GIB"
+	// EnvImageCacheMaxAgeHours is the oldest cache entry enforcement keeps.
+	EnvImageCacheMaxAgeHours = "GITMAN_IMAGE_CACHE_MAX_AGE_HOURS"
 )
 
 // Load reads configuration from the environment and validates it.
 func Load() (*Config, error) {
 	cfg := &Config{
-		DatabaseURL: strings.TrimSpace(os.Getenv(EnvDatabaseURL)),
-		DataDir:     getEnv(EnvDataDir, ".data"),
-		PublicURL:   strings.TrimRight(getEnv(EnvPublicURL, "http://localhost:8080"), "/"),
-		WebURL:      strings.TrimRight(strings.TrimSpace(os.Getenv(EnvWebURL)), "/"),
-		SecretKey:   os.Getenv(EnvSecretKey),
-		LogLevel:    getEnv(EnvLogLevel, "info"),
-		LogFormat:   getEnv(EnvLogFormat, "text"),
+		DatabaseURL:     strings.TrimSpace(os.Getenv(EnvDatabaseURL)),
+		DataDir:         getEnv(EnvDataDir, ".data"),
+		PublicURL:       strings.TrimRight(getEnv(EnvPublicURL, "http://localhost:8080"), "/"),
+		WebURL:          strings.TrimRight(strings.TrimSpace(os.Getenv(EnvWebURL)), "/"),
+		SecretKey:       os.Getenv(EnvSecretKey),
+		LogLevel:        getEnv(EnvLogLevel, "info"),
+		LogFormat:       getEnv(EnvLogFormat, "text"),
+		ImageAutomation: getEnv(EnvImageAutomation, ImageAutomationOff),
+		ImageCache:      DefaultImageCache(),
 	}
 
 	port, err := getEnvInt(EnvPort, 8080)
@@ -136,6 +202,20 @@ func Load() (*Config, error) {
 	if cfg.DatabaseMaxConns, err = getEnvInt(EnvDatabaseMaxConns, 0); err != nil {
 		return nil, err
 	}
+
+	cacheEnabled, err := getEnvBool(EnvImageCacheEnabled, true)
+	if err != nil {
+		return nil, err
+	}
+	cfg.ImageCache.Disabled = !cacheEnabled
+	if cfg.ImageCache.KeepGiB, err = getEnvInt(EnvImageCacheKeepGiB, DefaultImageCacheKeepGiB); err != nil {
+		return nil, err
+	}
+	cacheAgeHours, err := getEnvInt(EnvImageCacheMaxAgeHours, DefaultImageCacheMaxAgeHours)
+	if err != nil {
+		return nil, err
+	}
+	cfg.ImageCache.OlderThan = time.Duration(cacheAgeHours) * time.Hour
 
 	for _, setting := range []struct {
 		name     string
@@ -173,6 +253,14 @@ func Load() (*Config, error) {
 // where it is regardless of working directory.
 func (c *Config) Validate() error {
 	c.Resources = c.Resources.WithDefaults()
+	if c.ImageCache.KeepGiB == 0 && c.ImageCache.OlderThan == 0 {
+		cache := DefaultImageCache()
+		cache.Disabled = c.ImageCache.Disabled
+		c.ImageCache = cache
+	}
+	if c.ImageAutomation == "" {
+		c.ImageAutomation = ImageAutomationOff
+	}
 	if err := c.Resources.Validate(); err != nil {
 		return err
 	}
@@ -240,6 +328,18 @@ func (c *Config) Validate() error {
 	default:
 		return fmt.Errorf("%s must be \"text\" or \"json\"", EnvLogFormat)
 	}
+	switch c.ImageAutomation {
+	case ImageAutomationOff, ImageAutomationAfterDeploy, ImageAutomationLowDisk:
+	default:
+		return fmt.Errorf("%s must be %q, %q or %q", EnvImageAutomation, ImageAutomationOff, ImageAutomationAfterDeploy, ImageAutomationLowDisk)
+	}
+	if c.ImageCache.KeepGiB < 1 || c.ImageCache.KeepGiB > MaxImageCacheKeepGiB {
+		return fmt.Errorf("%s must be between 1 and %d", EnvImageCacheKeepGiB, MaxImageCacheKeepGiB)
+	}
+	hours := c.ImageCache.OlderThanHours()
+	if hours < 1 || hours > MaxImageCacheMaxAgeHours {
+		return fmt.Errorf("%s must be between 1 and %d", EnvImageCacheMaxAgeHours, MaxImageCacheMaxAgeHours)
+	}
 	return nil
 }
 
@@ -293,6 +393,18 @@ func getEnvInt(key string, fallback int) (int, error) {
 		return 0, fmt.Errorf("%s must be an integer", key)
 	}
 	return n, nil
+}
+
+func getEnvBool(key string, fallback bool) (bool, error) {
+	value, ok := os.LookupEnv(key)
+	if !ok || strings.TrimSpace(value) == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.ParseBool(strings.TrimSpace(value))
+	if err != nil {
+		return false, fmt.Errorf("%s must be true or false", key)
+	}
+	return parsed, nil
 }
 
 func parseProxies(raw string) ([]netip.Prefix, error) {

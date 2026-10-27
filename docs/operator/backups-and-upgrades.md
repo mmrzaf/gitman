@@ -19,14 +19,17 @@ gitman admin maintenance disable
 Maintenance stops new mutations and claims while workers finish current runs.
 `status` refuses backup readiness until running executions, unremoved containers,
 deployment owners and repository operations are resolved. Check the **Workers**
-and **Operations** pages, or `admin operation list`. Recover pending operations
-with `admin operation recover`; if recovery keeps failing and the operation has
-no Git receipt, `admin operation abandon --reason TEXT <id>` releases the
-repository after you have inspected the half-finished state. For a worker whose
-host is gone for good, run `admin worker release --confirm <worker-id>` **only
-after confirming its containers are stopped**. For a killed worker on a host
-that still exists, use `admin worker cleanup` there with its original workspace
-path. Never release target ownership by deleting database rows.
+and **Operations** pages, or `admin operation list`. Image operations are
+host-targeted and wait for maintenance to end; they do not block backup
+readiness because no worker may start one while maintenance is enabled.
+Recover pending repository operations with `admin operation recover`; if
+recovery keeps failing and the operation has no Git receipt, `admin operation
+abandon --reason TEXT <id>` releases the repository after you have inspected
+the half-finished state. For a worker whose host is gone for good, run
+`admin worker release --confirm <worker-id>` **only after confirming its
+containers are stopped**. For a killed worker on a host that still exists, use
+`admin worker cleanup` there with its original workspace path. Never release
+target ownership by deleting database rows.
 
 `backup` holds an exclusive admission lease, so another process cannot resume
 writes during the snapshot. It requires a new destination outside the data

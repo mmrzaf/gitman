@@ -23,7 +23,11 @@ config file. `web` and `worker` read the same settings.
 | `GITMAN_STEP_CPUS` | `2` | CPU quota per step container. |
 | `GITMAN_STEP_PIDS` | `256` | Maximum processes per step container. |
 | `GITMAN_WORKSPACE_GIB` | `10` | Monitored workspace size per run, in GiB. |
-| `GITMAN_DISK_RESERVE_GIB` | `5` | Minimum free space for pushes and worker execution, in GiB. |
+| `GITMAN_DISK_RESERVE_GIB` | `5` | Minimum free space for pushes and worker execution, in GiB. Also the base of the low-disk image automation threshold (plus 2 GiB). |
+| `GITMAN_IMAGE_AUTOMATION` | `off` | `off`, `after-deploy` or `low-disk`. Controls automatic removal of built images only. |
+| `GITMAN_IMAGE_CACHE_ENABLED` | `true` | Enforce the worker's Docker build-cache policy. Turning it off leaves the cache to the operator and the daemon. |
+| `GITMAN_IMAGE_CACHE_KEEP_GIB` | `3` | Build-cache storage cap in GiB; 1–1024. |
+| `GITMAN_IMAGE_CACHE_MAX_AGE_HOURS` | `168` | Oldest build-cache entry enforcement keeps, in hours; 1–8760 (seven days by default). |
 | `GITMAN_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. |
 | `GITMAN_LOG_FORMAT` | `text` | `text` or `json`. |
 
@@ -45,6 +49,10 @@ These are fixed in this release, not environment settings:
 - a worker is ready while its heartbeat and readiness check are under one
   minute old, and its running runs are failed after five minutes without a
   heartbeat;
+- a worker publishes its image inventory every minute, and an inventory older
+  than five minutes is stale and is never used for pruning;
+- build-cache enforcement also runs every 15 minutes, and low-disk image
+  automation acts at most once an hour above the reserve plus 2 GiB;
 - there is no per-step timeout, continue-on-error or step-level environment.
 
 ## Compose (`.env`)
@@ -83,11 +91,10 @@ Not runtime settings — passed at `docker build` time, so the image itself can 
 
 | Build arg | Default | Purpose |
 |---|---|---|
-| `GO_IMAGE` | `golang:1.27-bookworm` | Builder base image. |
-| `RUNTIME_IMAGE` | `debian:bookworm-slim` | Runtime base image. |
+| `GO_IMAGE` | `golang:1.27-alpine` | Builder base image. |
+| `RUNTIME_IMAGE` | `alpine:3.24` | Runtime base image. |
 | `DOCKER_CLI_IMAGE` | `docker:29-cli` | The image the worker's `docker` client is copied from. |
-| `DEBIAN_MIRROR` | `http://deb.debian.org/debian` | Debian package mirror for the runtime image. |
-| `DEBIAN_SECURITY_MIRROR` | `http://security.debian.org/debian-security` | Debian security mirror for the runtime image. |
+| `APK_MIRROR` | `https://dl-cdn.alpinelinux.org/alpine` | Alpine package mirror for the runtime image. It needs Alpine's `/vMAJOR.MINOR/{main,community}` layout. |
 | `GOPROXY` | `https://proxy.golang.org,direct` | Go module proxy used during the build. |
 | `VERSION` | `dev` | Embedded into the binary as `main.version`, shown by `gitman version`. |
 

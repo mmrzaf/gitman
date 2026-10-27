@@ -103,7 +103,7 @@ func (d *DB) Maintenance(ctx context.Context) (bool, error) {
 // BackupReady requires admitted operations, executions and cleanup to drain.
 func (d *DB) BackupReady(ctx context.Context) error {
 	var paused, busy bool
-	err := d.Q.QueryRow(ctx, `SELECT maintenance, EXISTS(SELECT 1 FROM repository_operations WHERE completed_at IS NULL) OR EXISTS(SELECT 1 FROM runs WHERE status='running') OR EXISTS(SELECT 1 FROM steps WHERE container_name IS NOT NULL AND container_removed_at IS NULL) OR EXISTS(SELECT 1 FROM deployment_targets WHERE owner_run_id IS NOT NULL) FROM instance`).Scan(&paused, &busy)
+	err := d.Q.QueryRow(ctx, `SELECT maintenance, EXISTS(SELECT 1 FROM repository_operations WHERE completed_at IS NULL AND repo_id IS NOT NULL) OR EXISTS(SELECT 1 FROM runs WHERE status='running') OR EXISTS(SELECT 1 FROM steps WHERE container_name IS NOT NULL AND container_removed_at IS NULL) OR EXISTS(SELECT 1 FROM deployment_targets WHERE owner_run_id IS NOT NULL) FROM instance`).Scan(&paused, &busy)
 	if err != nil {
 		return err
 	}

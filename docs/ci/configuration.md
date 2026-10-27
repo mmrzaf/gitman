@@ -5,8 +5,10 @@ image: docker:29-cli           # every step runs in this image
 docker: true                   # steps use the host's Docker; a ref rule must allow it
 timeout: 20m                   # the whole run; default 30m, at most 24h
 requires:                      # images that must already be on the host
-  - golang:1.27-bookworm
-  - debian:bookworm-slim
+  - golang:1.27-alpine
+  - alpine:3.24
+images:                        # images this pipeline builds, and how many tags to keep
+  example-app: {keep: 3}
 env:                           # for every step
   GOPROXY: https://goproxy.example.com,direct
 
@@ -14,26 +16,31 @@ targets:                       # target contexts matched by ref
   staging:
     branch: develop
     env:
-      DEPLOY_DIR: /srv/apps/waiotech-stage
+      DEPLOY_DIR: /srv/apps/example-app-stage
   production:
     tag: "v*"
     env:
-      DEPLOY_DIR: /srv/apps/waiotech
+      DEPLOY_DIR: /srv/apps/example-app
 
 steps:
   - name: build
-    run: docker build --pull=false --build-arg GOPROXY="$GOPROXY" -t "waiotech:$GITMAN_VERSION" .
+    run: docker build --pull=false --build-arg GOPROXY="$GOPROXY" -t "example-app:$GITMAN_VERSION" .
   - name: check
-    run: docker run --rm "waiotech:$GITMAN_VERSION" waiotech version
+    run: docker run --rm "example-app:$GITMAN_VERSION" example-app version
   - name: deploy
     type: deploy
     when: target               # always (default), target, branch, tag, or a target's name
-    run: ./deploy.sh "$DEPLOY_DIR" "waiotech:$GITMAN_VERSION"
+    run: ./deploy.sh "$DEPLOY_DIR" "example-app:$GITMAN_VERSION"
 ```
 
 Each step runs in one container. Gitman does not provision service containers;
 a pipeline with Docker permission can start its own test dependencies and must
 clean them up. Deployment may be followed by health checks or other verification.
+
+`images` is the pipeline's declaration of what it builds. Gitman uses it only
+for inventory and retention on the worker host; it never builds an image,
+finds one, or pulls one on its own. A repository named there must not also
+appear in the same pipeline's `image` or `requires`.
 
 ## Fields
 
@@ -49,6 +56,14 @@ clean them up. Deployment may be followed by health checks or other verification
   is claimed only by a worker advertising all of them, and `image`. A missing
   image leaves it queued; execution also rechecks images before its first step. Gitman never pulls them, and starts nothing from
   them.
+- **`images`** — built images, as a map of Docker repository name to
+  `keep`. The name is a repository only, with no tag or digest. `keep` is
+  required and is between 1 and 50: for each repository, the worker keeps the
+  newest `keep` tags by image creation time, plus any image a container uses,
+  the version currently deployed, and any exact reference another pipeline
+  requires. Everything else is prunable. Images a pipeline does not declare are
+  never pruned automatically. See [Docker deployment](../operator/docker.md#disk-use-and-images)
+  for how the worker classifies and prunes images.
 - **`env`** — variables set for every step. Keys starting with `GITMAN_`
   are rejected — that prefix is reserved for the variables below.
 - **`targets`** — a map of target names to ref matching and environment context. Each target matches
@@ -103,8 +118,9 @@ A pipeline with no target starts no deploy; add a `targets:` map and a
 These are deliberately not tunable per repository:
 
 - The pipeline file is at most 256 KiB; `run` scripts are at most 64 KiB each.
-- At most 64 steps, 16 targets, 32 `requires` images and 128 environment
-  variables per pipeline (8 KiB per value).
+- At most 64 steps, 16 targets, 32 `requires` images, 32 built-image
+  repositories and 128 environment variables per pipeline (8 KiB per value).
+  Each built image's `keep` is 1–50.
 - A run's `timeout` defaults to 30 minutes and may not exceed 24 hours. Write a
   unit: `20m`, not `20`.
 - A worker runs one run at a time. Workers never pull images, so a run stays
