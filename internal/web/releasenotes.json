@@ -1,6 +1,14 @@
 {
   "releases": [
     {
+      "version": "1.0.0-beta.25",
+      "releasedOn": "2026-10-28",
+      "items": [
+        "The account menu shows the version you are running; opening it lists what changed in that release and the ones before it.",
+        "On hosts running Docker 29, the Images page now lists the images on each worker, and the build cache stays within its limit."
+      ]
+    },
+    {
       "version": "1.0.0-beta.24",
       "releasedOn": "2026-10-27",
       "items": [
