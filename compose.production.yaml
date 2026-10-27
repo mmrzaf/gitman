@@ -3,6 +3,10 @@ services:
   web:
     environment:
       GITMAN_PUBLIC_URL: https://${GITMAN_DOMAIN:?Set the public domain}
+      # Caddy is the only caller on the compose network; this default
+      # makes it the trusted proxy without trusting the whole internet.
+      # Override it if the compose network uses another private range.
+      GITMAN_TRUSTED_PROXIES: ${GITMAN_TRUSTED_PROXIES:-172.16.0.0/12}
   proxy:
     image: caddy:2-alpine
     restart: unless-stopped
@@ -13,6 +17,17 @@ services:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
+    mem_limit: ${GITMAN_PROXY_MEMORY_LIMIT:-128m}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: [CMD-SHELL, "wget -q -O /dev/null http://127.0.0.1:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     depends_on:
       web:
         condition: service_healthy

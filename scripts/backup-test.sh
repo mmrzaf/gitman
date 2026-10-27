@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Restore source, reader grants, token scope, secret values and retained history.
+# shellcheck source=scripts/integration-lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/integration-lib.sh"
 integration_init backup "${GITMAN_BACKUP_PORT:-18082}"
 bootstrap_admin

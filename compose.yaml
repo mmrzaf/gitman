@@ -5,17 +5,22 @@ name: gitman
 x-app: &app
   image: ${GITMAN_IMAGE:-gitman:local}
   pull_policy: never
-  env_file: .env
   environment:
     GITMAN_DATABASE_URL: postgres://gitman:${GITMAN_DATABASE_PASSWORD:?Set a URL-safe database password}@db:5432/gitman?sslmode=disable
     GITMAN_PUBLIC_URL: ${GITMAN_PUBLIC_URL:-http://localhost:8080}
     GITMAN_WEB_URL: http://web:8080
     GITMAN_PORT: "8080"
+    GITMAN_DATA_DIR: ${GITMAN_DATA_DIR:?Set an absolute data directory}
   volumes:
     # Step containers mount host paths, so this absolute path must match.
     - ${GITMAN_DATA_DIR:?Set an absolute data directory}:${GITMAN_DATA_DIR}
   security_opt: [no-new-privileges:true]
   pids_limit: 512
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
 
 services:
   db:
@@ -25,9 +30,17 @@ services:
       POSTGRES_DB: gitman
       POSTGRES_USER: gitman
       POSTGRES_PASSWORD: ${GITMAN_DATABASE_PASSWORD:?Set a URL-safe database password}
+    # Loopback only, for host-side pg_dump/pg_restore and psql. Web and
+    # worker always use the compose network.
     ports:
       - "127.0.0.1:${GITMAN_DATABASE_PORT:-5433}:5432"
     volumes: [database:/var/lib/postgresql/data]
+    mem_limit: ${GITMAN_DATABASE_MEMORY_LIMIT:-1g}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
       test: [CMD-SHELL, "pg_isready -U gitman -d gitman"]
       interval: 5s
@@ -38,6 +51,7 @@ services:
     <<: *app
     user: root
     command: [sh, -ec, 'install -d -o 1000 -g 1000 "$$GITMAN_DATA_DIR"']
+    mem_limit: 64m
     healthcheck:
       disable: true
 
@@ -45,6 +59,7 @@ services:
     <<: *app
     build: .
     restart: unless-stopped
+    env_file: .env
     command: [gitman, web]
     ports:
       - "${GITMAN_BIND_ADDRESS:-127.0.0.1}:${GITMAN_HTTP_PORT:-8080}:8080"
@@ -56,6 +71,7 @@ services:
     cap_drop: [ALL]
     read_only: true
     tmpfs: [/tmp:size=256m,noexec,nosuid,nodev]
+    mem_limit: ${GITMAN_WEB_MEMORY_LIMIT:-1g}
     healthcheck:
       test: [CMD, curl, -fsS, -o, /dev/null, "http://127.0.0.1:8080/readyz"]
       interval: 10s
@@ -69,12 +85,35 @@ services:
     restart: unless-stopped
     command: [gitman, worker]
     user: root
+    # The worker holds the Docker socket, so it gets an explicit
+    # environment instead of the whole .env file: no database password
+    # variable it does not need is passed to a root process.
+    environment:
+      GITMAN_DATABASE_URL: postgres://gitman:${GITMAN_DATABASE_PASSWORD:?Set a URL-safe database password}@db:5432/gitman?sslmode=disable
+      GITMAN_PUBLIC_URL: ${GITMAN_PUBLIC_URL:-http://localhost:8080}
+      GITMAN_WEB_URL: http://web:8080
+      GITMAN_PORT: "8080"
+      GITMAN_DATA_DIR: ${GITMAN_DATA_DIR:?Set an absolute data directory}
+      GITMAN_SECRET_KEY: ${GITMAN_SECRET_KEY:-}
+      GITMAN_DATABASE_MAX_CONNS: ${GITMAN_DATABASE_MAX_CONNS:-0}
+      GITMAN_TRUSTED_PROXIES: ${GITMAN_TRUSTED_PROXIES:-}
+      GITMAN_LOG_LEVEL: ${GITMAN_LOG_LEVEL:-info}
+      GITMAN_LOG_FORMAT: ${GITMAN_LOG_FORMAT:-text}
+      GITMAN_STEP_MEMORY_MIB: ${GITMAN_STEP_MEMORY_MIB:-2048}
+      GITMAN_STEP_CPUS: ${GITMAN_STEP_CPUS:-2}
+      GITMAN_STEP_PIDS: ${GITMAN_STEP_PIDS:-256}
+      GITMAN_WORKSPACE_GIB: ${GITMAN_WORKSPACE_GIB:-10}
+      GITMAN_DISK_RESERVE_GIB: ${GITMAN_DISK_RESERVE_GIB:-5}
     volumes:
       - ${GITMAN_DATA_DIR:?Set an absolute data directory}:${GITMAN_DATA_DIR}
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       web:
         condition: service_healthy
+    mem_limit: ${GITMAN_WORKER_MEMORY_LIMIT:-2g}
+    # The worker has no HTTP endpoint; its liveness is the container's
+    # process. A stopped worker is restarted by compose, and runs it left
+    # behind are failed after the heartbeat timeout.
     healthcheck:
       disable: true
     stop_grace_period: 60s

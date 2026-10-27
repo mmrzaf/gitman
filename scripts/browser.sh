@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Real Chromium with live Docker execution, keyboard, axe, no-JS and mobile checks.
+# shellcheck source=scripts/integration-lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/integration-lib.sh"
 integration_init browser "${GITMAN_BROWSER_PORT:-18081}"
 start_worker
