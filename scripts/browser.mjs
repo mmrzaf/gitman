@@ -173,8 +173,8 @@ const query = (page) => new URL(page.url()).searchParams;
   await page.locator("[role=tab][data-tab=tokens]").focus();
   await page.keyboard.press("ArrowRight");
   check("arrow keys move between tabs and the address follows",
-    (await page.locator("[data-tab=password]").getAttribute("aria-selected")) === "true" && query(page).get("tab") === "password"
-    && (await page.locator("#panel-password").isVisible()) && !(await page.locator("#panel-tokens").isVisible())
+    (await page.locator("[data-tab=sessions]").getAttribute("aria-selected")) === "true" && query(page).get("tab") === "sessions"
+    && (await page.locator("#panel-sessions").isVisible()) && !(await page.locator("#panel-tokens").isVisible())
     && (await focused(page))?.role === "tab");
   await page.goBack();
   check("Back returns to the tab before", (await page.locator("[data-tab=tokens]").getAttribute("aria-selected")) === "true"
