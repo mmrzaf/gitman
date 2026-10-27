@@ -4,10 +4,39 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/mmrzaf/gitman/internal/postgres/pgtest"
 )
+
+func TestSessionRowsHaveOpaqueIDsAndClientDetails(t *testing.T) {
+	ctx := context.Background()
+	database := pgtest.Open(t)
+	if _, err := database.Pool.Exec(ctx, `INSERT INTO people (id, username, password_hash) VALUES ('p1', 'darius', 'x')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Pool.Exec(ctx, `
+		INSERT INTO sessions (token_hash, person_id, auth_generation, expires_at, ip, user_agent)
+		VALUES ('hash1', 'p1', 1, now() + interval '1 hour', '192.0.2.1', 'browser')
+	`); err != nil {
+		t.Fatal(err)
+	}
+	var id, ip, agent string
+	var lastSeen time.Time
+	if err := database.Pool.QueryRow(ctx, `SELECT id::text, last_seen_at, ip, user_agent FROM sessions WHERE token_hash = 'hash1'`).Scan(&id, &lastSeen, &ip, &agent); err != nil {
+		t.Fatal(err)
+	}
+	if id == "" || lastSeen.IsZero() || ip != "192.0.2.1" || agent != "browser" {
+		t.Fatalf("session row = id %q last_seen %v ip %q agent %q", id, lastSeen, ip, agent)
+	}
+	if _, err := database.Pool.Exec(ctx, `
+		INSERT INTO sessions (id, token_hash, person_id, auth_generation, expires_at)
+		VALUES ($1, 'hash2', 'p1', 1, now() + interval '1 hour')
+	`, id); err == nil {
+		t.Fatal("two sessions were allowed to share an ID")
+	}
+}
 
 // TestSchemaEnforcesTheDataModel writes rows the data model forbids,
 // which only a bug could produce: the schema must refuse each one rather

@@ -12,30 +12,46 @@ import (
 type admissionKey struct{}
 type admission struct{ db *DB }
 
+// admissionWait bounds how long a mutation waits for a slot and the
+// shared lock. A backup holds the exclusive lock while it drains, and a
+// request must answer 503 rather than occupy a server goroutine for an
+// unbounded time behind it.
+const admissionWait = 3 * time.Second
+
 // AdmitMutation holds shared admission until its caller finishes. Maintenance
 // takes exclusive admission before persisting the pause, draining admitted work.
 func (d *DB) AdmitMutation(ctx context.Context) (context.Context, func(), error) {
 	if held, ok := ctx.Value(admissionKey{}).(admission); ok && held.db == d {
 		return ctx, func() {}, nil
 	}
-	conn, err := d.admissionPool.Acquire(ctx)
-	if err != nil {
+	// Acquiring is bounded; the returned context is the caller's own, so
+	// releasing the acquisition deadline cannot cut the handler short.
+	wait, cancel := context.WithTimeout(ctx, admissionWait)
+	defer cancel()
+	fail := func(err error) (context.Context, func(), error) {
+		if ctx.Err() == nil && (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)) {
+			return ctx, nil, apperr.New(apperr.KindUnavailable, "Gitman is busy with other changes. Try again in a moment.")
+		}
 		return ctx, nil, err
+	}
+	conn, err := d.admissionPool.Acquire(wait)
+	if err != nil {
+		return fail(err)
 	}
 	var key int64
-	if err := conn.QueryRow(ctx, `SELECT hashtextextended('gitman.mutations.' || id,0) FROM instance`).Scan(&key); err != nil {
+	if err := conn.QueryRow(wait, `SELECT hashtextextended('gitman.mutations.' || id,0) FROM instance`).Scan(&key); err != nil {
 		conn.Release()
-		return ctx, nil, err
+		return fail(err)
 	}
-	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock_shared($1)`, key); err != nil {
+	if _, err := conn.Exec(wait, `SELECT pg_advisory_lock_shared($1)`, key); err != nil {
 		conn.Release()
-		return ctx, nil, err
+		return fail(err)
 	}
 	release := func() { unlockConnection(conn, true, key) }
 	var paused bool
-	if err := conn.QueryRow(ctx, `SELECT maintenance FROM instance`).Scan(&paused); err != nil {
+	if err := conn.QueryRow(wait, `SELECT maintenance FROM instance`).Scan(&paused); err != nil {
 		release()
-		return ctx, nil, err
+		return fail(err)
 	}
 	if paused {
 		release()
