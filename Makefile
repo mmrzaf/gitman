@@ -53,7 +53,7 @@ fmt: ## Format Go files
 	gofmt -w cmd internal
 
 lint: ## Run golangci-lint
-	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2 run --timeout=5m
+	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run --timeout=5m
 
 deps: ## Download and tidy Go modules
 	GOPROXY=$(GOPROXY) $(GO) mod download
