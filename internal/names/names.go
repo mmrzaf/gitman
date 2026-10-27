@@ -28,6 +28,7 @@ var reserved = map[string]bool{
 	"runs":        true,
 	"events":      true,
 	"jump":        true,
+	"changelog":   true,
 	"operations":  true,
 	"workers":     true,
 	"sessions":    true,

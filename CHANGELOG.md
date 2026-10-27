@@ -3,6 +3,32 @@
 What changed in each release, for the people who run Gitman. Newest first.
 Each release's section is also its GitHub release notes.
 
+## [1.0.0-beta.25] - 2026-10-28
+
+The running version and its notes are in the account menu, and image inventory
+and the build-cache limit work on Docker 29.
+
+**Installation:** this release has no schema change. Existing beta 24 databases
+upgrade in place, and rolling back to beta 24 is safe.
+
+### Added
+
+- **What's new**: the account menu shows the running version, and opening it
+  lists the notes for this version with older releases below. The notes are
+  curated in `internal/web/releasenotes.json`, separate from this changelog.
+  `changelog` is now a reserved repository name.
+
+### Changed
+
+- Gitman's own pipeline declares its image and keeps the two newest tags, so
+  older builds are pruned instead of accumulating.
+
+### Fixed
+
+- A worker now reads `docker system df` the way Docker 29 prints it, with every
+  column as a string. In beta 24 the read failed, so no image inventory was
+  published and the build-cache cap was never enforced.
+
 ## [1.0.0-beta.24] - 2026-10-27
 
 Image inventory, retention and build-cache management.

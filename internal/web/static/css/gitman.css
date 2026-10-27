@@ -377,6 +377,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 .icon-sm { width: 14px; height: 14px; vertical-align: -2px; }
 .icon-lg { width: 20px; height: 20px; vertical-align: -4px; }
+.icon-sparkles { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6.5 1.8l1.2 3.3 3.3 1.2-3.3 1.2-1.2 3.3-1.2-3.3-3.3-1.2 3.3-1.2z'/%3E%3Cpath d='M12.5 9.5v4M10.5 11.5h4'/%3E%3C/svg%3E"); }
 
 .icon-passed { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='8' cy='8' r='6.6'/%3E%3Cpath d='M5.2 8.3l1.9 1.9 3.7-4'/%3E%3C/svg%3E"); }
 .icon-failed { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.6' stroke-linecap='round'%3E%3Ccircle cx='8' cy='8' r='6.6'/%3E%3Cpath d='M5.8 5.8l4.4 4.4M10.2 5.8l-4.4 4.4'/%3E%3C/svg%3E"); }
@@ -957,6 +958,35 @@ time { white-space: nowrap; }
 .menu-item-danger, .menu-item-danger .icon { color: var(--danger); }
 .menu-separator { height: 1px; margin: var(--sp-1) 0; background: var(--border); }
 .menu-heading { padding: var(--sp-1) var(--sp-2); color: var(--muted); font-size: var(--text-xs); }
+/* The running version, small and quiet at the foot of the account menu. */
+.menu-version { min-height: 26px; color: var(--muted); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
+.menu-version .icon { margin-left: auto; }
+
+/* ---- Release notes -------------------------------------------------
+   The running version's card, then older releases behind a disclosure. */
+
+.release { display: grid; gap: var(--sp-3); padding: var(--sp-4); }
+.release-heading { display: grid; gap: 2px; }
+.release-title { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin: 0; font-size: var(--text-md); }
+.release-date { color: var(--muted); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
+.release-items { display: grid; gap: var(--sp-2); margin: 0; padding: 0; list-style: none; }
+.release-items li { display: flex; gap: var(--sp-2); line-height: 1.5; }
+.release-items li::before {
+  content: "";
+  flex: none;
+  width: 4px;
+  height: 4px;
+  margin-top: 0.65em;
+  border-radius: var(--radius-full);
+  background: var(--muted);
+}
+.releases-earlier { margin-top: var(--sp-4); }
+.releases-earlier > summary { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) 0; cursor: pointer; font-weight: var(--weight-medium); }
+.releases-earlier > summary::-webkit-details-marker { display: none; }
+.releases-earlier > summary .icon { color: var(--muted); transition: transform 0.15s; }
+.releases-earlier:not([open]) > summary .icon { transform: rotate(-90deg); }
+.releases-earlier > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--radius); }
+.releases-earlier .release { margin-top: var(--sp-3); }
 
 /* ---- Dialogs ------------------------------------------------------ */
 

@@ -51,6 +51,10 @@
         </div>
         <div class="menu-separator" role="separator"></div>
         <form method="post" action="/logout"><button type="submit" class="menu-item">{{template "icon" "signout"}}Sign out</button></form>
+        {{- if .Version}}
+        <div class="menu-separator" role="separator"></div>
+        <a class="menu-item menu-version" href="/changelog" title="What's new in Gitman {{.Version}}"{{if eq .Name "changelog"}} aria-current="page"{{end}}><span>Gitman {{.Version}}</span>{{template "icon" "sparkles"}}</a>
+        {{- end}}
       </div>
     </details>
   </nav>

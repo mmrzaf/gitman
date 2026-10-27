@@ -95,8 +95,10 @@ type pageData struct {
 	Title  string
 	Name   string
 	Person *auth.Person
-	Flash  *flash
-	Data   any
+	// Version is the running build's version, for the account menu.
+	Version string
+	Flash   *flash
+	Data    any
 	// EventStream is the event stream the page listens to for live
 	// updates, or empty for a page that does not change on its own.
 	EventStream string
@@ -157,7 +159,7 @@ func (a *App) render(w http.ResponseWriter, r *http.Request, status int, name, t
 		return
 	}
 	var buf bytes.Buffer
-	page := pageData{Title: title, Name: name, Person: personFrom(r), Flash: flashFrom(r), Data: data}
+	page := pageData{Title: title, Name: name, Person: personFrom(r), Version: a.version, Flash: flashFrom(r), Data: data}
 	if live, ok := data.(liveSource); ok {
 		page.EventStream = live.LiveEvents()
 	}

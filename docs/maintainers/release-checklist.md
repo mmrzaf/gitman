@@ -10,6 +10,11 @@ Releases are cut by pushing a tag matching `v*` (e.g. `v1.0.0`,
    headed `## [1.2.3] - YYYY-MM-DD`, and tick off what shipped in
    [`ROADMAP.md`](../../ROADMAP.md). The release workflow publishes that
    section as the release notes, and fails without one.
+   Add the same release, newest first, to
+   [`internal/web/releasenotes.json`](../../internal/web/releasenotes.json):
+   short, user-facing sentences, not installation or operational detail. The
+   **What's new** page shows them, and a test fails when the newest entry does
+   not match the newest changelog heading.
 3. Run the local verification set before tagging:
    ```sh
    make verify
