@@ -24,14 +24,22 @@ var errDiskBudget = errors.New("workspace or disk reserve exceeded")
 func CheckReserve(root string, reserve uint64) error { return reserveAvailable(root, reserve) }
 
 func reserveAvailable(root string, reserve uint64) error {
-	var stat syscall.Statfs_t
-	if err := syscall.Statfs(root, &stat); err != nil {
+	available, err := availableBytes(root)
+	if err != nil {
 		return err
 	}
-	if stat.Bavail*uint64(stat.Bsize) < reserve {
+	if available < reserve {
 		return errDiskBudget
 	}
 	return nil
+}
+
+func availableBytes(root string) (uint64, error) {
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(root, &stat); err != nil {
+		return 0, err
+	}
+	return stat.Bavail * uint64(stat.Bsize), nil
 }
 
 // workspaceUsage counts regular files without following symlinks. The budget
