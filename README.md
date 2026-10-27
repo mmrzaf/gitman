@@ -90,8 +90,7 @@ Execution checks again before starting a step.
 ### Mirrors
 
 Every download the image build makes is a build argument (`GO_IMAGE`,
-`RUNTIME_IMAGE`, `DOCKER_CLI_IMAGE`, `DEBIAN_MIRROR`,
-`DEBIAN_SECURITY_MIRROR`, `GOPROXY`); see the top of the `Dockerfile`.
+`RUNTIME_IMAGE`, `DOCKER_CLI_IMAGE`, `APK_MIRROR`, `GOPROXY`); see the top of the `Dockerfile`.
 Gitman's own [`.gitman.yml`](.gitman.yml) uses the public registries and module
 proxy by default; change these arguments to use your own mirrors.
 
@@ -175,8 +174,8 @@ image: docker:29-cli           # every step runs in this image
 docker: true                   # steps use the host's Docker; a ref rule must allow it
 timeout: 20m                   # the whole run; default 30m, at most 24h
 requires:                      # images that must already be on the host
-  - golang:1.27-bookworm
-  - debian:bookworm-slim
+  - golang:1.27-alpine
+  - alpine:3.24
 images:                        # images this pipeline builds, and how many tags to keep
   example-app: {keep: 3}
 env:                           # for every step

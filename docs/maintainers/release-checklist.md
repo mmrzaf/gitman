@@ -47,7 +47,7 @@ Releases are cut by pushing a tag matching `v*` (e.g. `v1.0.0`,
 
 ## Notes
 
-- The release workflow builds with the public `GOPROXY` and Debian
-  mirrors. Mirrors are for restricted-network *self-hosted* pipeline runs
+- The release workflow builds with the public `GOPROXY` and Alpine
+  mirror. Mirrors are for restricted-network *self-hosted* pipeline runs
   (see this repository's own [`.gitman.yml`](../../.gitman.yml)), not for
   GitHub-hosted runners.

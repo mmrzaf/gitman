@@ -12,7 +12,13 @@ the per-host image inventory and extends the operations journal for
 host-targeted image work. Existing databases upgrade in place when `web` or
 `worker` starts. Pipelines that build images should declare them under
 `images:`; an undeclared image is still inventoried but is never pruned
-automatically.
+automatically. A server running an earlier beta rejects `images:`, so upgrade
+Gitman before adding it to pipelines.
+
+The Gitman image is now built on Alpine. A host that builds it needs
+`golang:1.27-alpine` and `alpine:3.24` locally in place of
+`golang:1.27-bookworm` and `debian:bookworm-slim`, and the `DEBIAN_MIRROR` and
+`DEBIAN_SECURITY_MIRROR` build arguments are replaced by `APK_MIRROR`.
 
 ### Added
 
@@ -40,6 +46,11 @@ automatically.
 
 ### Changed
 
+- **Smaller image on Alpine**: the runtime is `alpine:3.24` with `git`,
+  `curl`, `ca-certificates` and `tzdata`, and the builder is
+  `golang:1.27-alpine`. The binary is built with `CGO_ENABLED=0` and the Docker
+  client is the Docker project's static binary, so nothing depends on glibc.
+  The user and group are still UID/GID 1000.
 - `repository_operations` now also carries host-targeted image operations;
   **Operations** shows both repository recovery and image work, and image
   removal/cache results are per image.

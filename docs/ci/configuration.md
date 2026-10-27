@@ -5,8 +5,8 @@ image: docker:29-cli           # every step runs in this image
 docker: true                   # steps use the host's Docker; a ref rule must allow it
 timeout: 20m                   # the whole run; default 30m, at most 24h
 requires:                      # images that must already be on the host
-  - golang:1.27-bookworm
-  - debian:bookworm-slim
+  - golang:1.27-alpine
+  - alpine:3.24
 images:                        # images this pipeline builds, and how many tags to keep
   example-app: {keep: 3}
 env:                           # for every step

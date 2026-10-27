@@ -91,11 +91,10 @@ Not runtime settings — passed at `docker build` time, so the image itself can 
 
 | Build arg | Default | Purpose |
 |---|---|---|
-| `GO_IMAGE` | `golang:1.27-bookworm` | Builder base image. |
-| `RUNTIME_IMAGE` | `debian:bookworm-slim` | Runtime base image. |
+| `GO_IMAGE` | `golang:1.27-alpine` | Builder base image. |
+| `RUNTIME_IMAGE` | `alpine:3.24` | Runtime base image. |
 | `DOCKER_CLI_IMAGE` | `docker:29-cli` | The image the worker's `docker` client is copied from. |
-| `DEBIAN_MIRROR` | `http://deb.debian.org/debian` | Debian package mirror for the runtime image. |
-| `DEBIAN_SECURITY_MIRROR` | `http://security.debian.org/debian-security` | Debian security mirror for the runtime image. |
+| `APK_MIRROR` | `https://dl-cdn.alpinelinux.org/alpine` | Alpine package mirror for the runtime image. It needs Alpine's `/vMAJOR.MINOR/{main,community}` layout. |
 | `GOPROXY` | `https://proxy.golang.org,direct` | Go module proxy used during the build. |
 | `VERSION` | `dev` | Embedded into the binary as `main.version`, shown by `gitman version`. |
 
