@@ -11,6 +11,11 @@ every image the run requires. A running run is failed only after five
 minutes without a heartbeat; readiness and loss deliberately use different
 thresholds.
 
+If a worker is ready but the run still waits, a required image is missing.
+`gitman admin images missing` names it and the pipelines that require it, and
+the **Images** page shows the same under **Missing required images**. Make the
+image present on that worker's Docker host; Gitman never pulls it.
+
 ## A run is stuck / its worker seems gone
 
 A run whose worker stops sending heartbeats for five minutes is failed
