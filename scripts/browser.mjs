@@ -440,6 +440,7 @@ const screens = [
   ["settings-secrets", "/demo/settings?tab=secrets", "#settings-title"],
   ["settings-danger", "/demo/settings?tab=danger", "#settings-title"],
   ["people", "/people", "#people-title"],
+  ["images", "/images", "#images-title"],
   ["account", "/me", "#account-title"],
   ["account-password", "/me?tab=password", "#account-title"],
   ["new-token", "/me?dialog=token-new", "#account-title"],
