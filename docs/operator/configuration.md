@@ -35,26 +35,47 @@ inherit ambient `PG*` variables such as `PGPASSWORD`.
 Secure cookies aren't a separate setting: the session cookie's `Secure`
 flag is derived from `GITMAN_PUBLIC_URL`'s scheme (set automatically when
 it's `https`). Git over HTTPS (clone, fetch, push) has a fixed
-concurrency limit.
+concurrency limit, with four slots reserved for worker fetches.
+
+These are fixed in this release, not environment settings:
+
+- a run's timeout defaults to 30 minutes (a pipeline may set up to 24 hours);
+- a worker runs one run at a time;
+- a browser session lasts seven days, with an absolute expiry;
+- a worker is ready while its heartbeat and readiness check are under one
+  minute old, and its running runs are failed after five minutes without a
+  heartbeat;
+- there is no per-step timeout, continue-on-error or step-level environment.
 
 ## Compose (`.env`)
 
-`.env` supplies app settings to web and workers. Compose additionally uses:
+`.env` supplies app settings to web; the worker gets an explicit subset of the
+same values, so its root process does not receive unrelated secrets. Compose
+additionally uses:
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `GITMAN_IMAGE` | `gitman:local` | App image built from the repository. |
 | `GITMAN_DATABASE_PASSWORD` | required | URL-safe password for the included PostgreSQL. |
-| `GITMAN_DATABASE_PORT` | `5433` | Host database port, published on loopback. |
+| `GITMAN_DATABASE_PORT` | `5433` | Host database port, published on loopback for host-side backup tools. |
 | `GITMAN_DATA_DIR` | required | Absolute host directory, mounted at the same path. |
 | `GITMAN_BIND_ADDRESS` | `127.0.0.1` | Host interface for the app's HTTP port. |
 | `GITMAN_HTTP_PORT` | `8080` | Host HTTP port. |
 | `GITMAN_DOMAIN` | required for production | Public domain for the HTTPS example. |
+| `GITMAN_WEB_MEMORY_LIMIT` | `1g` | Compose memory limit for web. |
+| `GITMAN_WORKER_MEMORY_LIMIT` | `2g` | Compose memory limit for the worker. |
+| `GITMAN_DATABASE_MEMORY_LIMIT` | `1g` | Compose memory limit for PostgreSQL. |
+| `GITMAN_PROXY_MEMORY_LIMIT` | `128m` | Compose memory limit for Caddy. |
+
+The production override sets `GITMAN_TRUSTED_PROXIES` to `172.16.0.0/12`
+(the default Compose network range) unless you set it yourself. Override it if
+your Compose network uses another private range.
 
 Compose generates the database URL for its `db` service and sets
 `GITMAN_WEB_URL=http://web:8080`. It initializes the data directory and waits
-for PostgreSQL and web readiness before workers start. No fixed container
-names or external networks are required.
+for PostgreSQL and web readiness before workers start. Every service has log
+rotation; web and Caddy have health checks. No fixed container names or
+external networks are required.
 
 ## Image build arguments (`Dockerfile`)
 

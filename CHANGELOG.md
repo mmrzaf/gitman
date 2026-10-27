@@ -3,7 +3,98 @@
 What changed in each release, for the people who run Gitman. Newest first.
 Each release's section is also its GitHub release notes.
 
-## [Unreleased]
+## [1.0.0-beta.23] - 2026-10-27
+
+The last beta before 1.0: security and stability fixes, repository maintenance,
+session management, and a read-only diagnostic command.
+
+**Installation:** this release adds ordinary schema migrations (session
+details, activity visibility and two indexes). Existing beta 22 databases
+upgrade in place when `web` or `worker` starts.
+
+### Added
+
+- **Repository maintenance**: a Maintenance tab on a repository's Settings
+  page shows its disk usage and runs `git gc`. `gitman admin repo size` and
+  `gitman admin repo gc` do the same from the command line, and `repo list`
+  shows each repository's size. Pushes wait for maintenance instead of
+  interleaving with it.
+- **Sessions**: the account page lists every signed-in browser with its
+  address, device, last-seen time and expiry, marks the current one, and can
+  revoke each. Admins get a **Sessions** page beside **People**; admin
+  revocations are recorded in Activity. `gitman admin session list` and
+  `session revoke` expose the same, and `gitman admin token list` shows a
+  person's tokens and their last use.
+- **`gitman doctor`**: a read-only check of config, data directory and free
+  space, database and schema version, Docker and registered workers. It is safe
+  beside a live web or worker; warnings exit 0, failures exit 1.
+- `gitman admin worker release --confirm <worker-id>` releases the bookkeeping
+  of a worker whose host is gone for good, after the operator confirms its
+  containers are stopped.
+- `gitman admin operation abandon --reason TEXT <id>` releases a repository
+  whose operation recovery has failed, when the operation has no Git receipt
+  proving it changed Git. It is audited and leaves Git and database rows for
+  inspection.
+- Compose memory limits for web, worker, database and proxy, log rotation on
+  every service, a Caddy health check, and an explicit worker environment that
+  no longer receives the whole `.env` file.
+
+### Changed
+
+- Sign-in admission moved behind body reading and authentication, with login and
+  logout exempt, so stalled unauthenticated requests can no longer take every
+  maintenance slot. Mutation admission now waits at most three seconds before
+  answering 503.
+- Login attempts are reserved before bcrypt runs, IPv6 clients are counted by
+  /64, and one username is limited across addresses as well as per address.
+  Wrong current-password checks on the account page are limited too.
+- A worker fetching a run's commit can use capacity reserved from ordinary Git
+  requests, so a burst of clones cannot fail a run with a 503. Git slots are
+  taken after authentication.
+- A binary refuses to start against a database schema newer than the migrations
+  it embeds, and reports pending or ahead migrations to `doctor`.
+- Git pin reconciliation has its own per-repository budget, accepts a much
+  larger audit window, and runs `gc --auto` outside the repository mutation
+  lock. Retention phases now run independently with separate budgets.
+- Stale repository trash is swept hourly, not only at startup. A failed orphan
+  quarantine is logged instead of stopping web.
+- Admin-only person and repository-deletion events no longer appear in every
+  member's Home feed. Deleting a restricted repository no longer announces its
+  name to members.
+- The `field` template disables autocapitalisation and spellcheck for text
+  inputs, the copy button works on plain-HTTP installs, and a dialog no longer
+  closes when a drag starts inside it and ends on the backdrop. Token creation
+  offers 180- and 365-day expiries, matching the documented maximum.
+- Pipeline timeout errors explain that a unit is required (`20m`, not `20`), and
+  `gitman check` warns when Docker or deploy targets need a ref rule.
+- Panel scrolling: the wheel now scrolls a dashboard panel when it is over a
+  table cell, not only over the gaps between cells. On phones, the run log no
+  longer traps page scroll at its end.
+- Documentation now covers upgrades, Docker image pruning and backup tooling,
+  pipeline limits, fixed settings, trusted-proxy lockout, HSTS, session and
+  token revocation, and the remaining secret-masking limits. The release promise
+  is an in-place upgrade from any 1.0 release candidate to 1.0.
+
+### Fixed
+
+- A disk check that outlives its five-second walk no longer kills a run with a
+  misleading "worker was shut down" reason; the tick is skipped, and a real
+  budget breach still stops it.
+- Expired access tokens are pruned with expired sessions.
+- Worker readiness now uses one one-minute threshold everywhere, while a run is
+  failed only after five minutes without a heartbeat.
+- `admin worker list`, which never existed, is gone from the docs; cleanup and
+  release are the worker commands.
+- The SQL comment claiming all Git reads precede a push transaction was
+  corrected; ref indexing still reads Git inside it.
+- Pending-operation checks and retention scans use new indexes for pending
+  logs and completed operations.
+- Generated-password responses are documented as one-shot: refreshing the page
+  re-submits the action.
+
+Known gaps are listed in [ROADMAP.md](ROADMAP.md#later): no TTL for queued runs
+with images no worker has, retention does not truncate stored pipeline bytes,
+and CI does not start the full Compose stack.
 
 ## [1.0.0-beta.22] - 2026-10-02
 

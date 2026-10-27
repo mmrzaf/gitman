@@ -29,6 +29,20 @@ at most 365 days. Repository permissions still apply on every Git request.
 Live streams recheck credentials and permissions before each batch and
 close after revocation.
 
+The account page lists every signed-in browser by an opaque session ID, with its
+address, user agent, last-seen time and expiry; a session can be revoked there
+without exposing its cookie. Admins see all sessions under **Sessions** and can
+revoke anyone's; that action is recorded in Activity. The session cookie's token
+hash is never shown. The same opaque handles and last-used times are available
+with `gitman admin session list` / `revoke` and `gitman admin token list`.
+
+Sign-in is limited per username and address, and per username across
+addresses, so parallel guesses cannot pass the check before bcrypt finishes.
+IPv6 clients are counted by their /64. Wrong current-password checks on the
+account page are limited the same way. A generated password is shown once in
+the response that creates it; refreshing that page re-submits the action, so
+copy the password before leaving it.
+
 ## Repository read access
 
 Each repository has one visibility, set on its Settings page's **Access**
@@ -44,6 +58,17 @@ every other list, and every route that names it — including Git's own
 clone, fetch and push — answers as if no repository by that name had ever
 existed, never with a distinguishable "forbidden." Nobody can push to a
 repository they cannot read, regardless of what its ref rules allow.
+Deleting a repository is an admin-only event; its name is never announced to
+members who could not read it. Person-level events (added, disabled, role
+changed, password reset, credentials revoked, session revoked) are admin-only
+for the same reason.
+
+Repository names are globally unique, so creating one that already exists
+answers "already exists" even when the existing repository is restricted and
+the person cannot read it. That is a deliberate exception: hiding the name
+would require per-person aliases or a different uniqueness rule, and the answer
+reveals only that some repository uses that name, never its contents, owner or
+activity.
 
 ## Ref rules
 
@@ -109,22 +134,36 @@ artifact — see [Pipelines](../../README.md#pipelines) for examples — and
 it is also why `--docker` and, to a lesser extent, unrestricted outbound
 access are only for refs whose pushers are trusted.
 
+`GITMAN_STEP_MEMORY_MIB`, `GITMAN_STEP_CPUS` and `GITMAN_STEP_PIDS` bound the
+step container Gitman starts. They do not bound a `docker build` or any other
+container a socket-enabled step creates: build daemons and child containers run
+outside those limits. Bound those at the Docker level (daemon defaults or build
+resource limits) if a pipeline builds on the worker.
+
 ## Secrets
 
 See [Secrets](../ci/secrets.md) — encrypted with `GITMAN_SECRET_KEY`,
 gated per-ref by `--secrets`, masked in stored run output, and never
-placed on a command line.
+placed on a command line. Masking is exact-byte matching after terminal
+escapes are removed: it catches a secret split across writes or wrapped in
+colour codes, but it cannot catch every encoded form (base64, compression,
+character-by-character printing). Anyone who can change and run a
+secret-enabled ref can make the pipeline print the secret; the ref rule is the
+permission boundary, not log masking.
 
 ## Cross-site request forgery
 
-Every state-changing request (anything but GET/HEAD/OPTIONS) is checked
+Every state-changing web request (anything but GET/HEAD/OPTIONS) is checked
 against where it came from: the browser's `Sec-Fetch-Site` header, or
 failing that its `Origin` header, must say the request is same-origin. A
 cross-site request — from another site's form or script — is refused
 before it reaches a handler. A request carrying neither header does not
 come from a browser, so there is no forgery to prevent; this, together
 with the session cookie's `SameSite=Lax`, is the whole defense — there
-are no separate per-form CSRF tokens to keep in sync.
+are no separate per-form CSRF tokens to keep in sync. Git's smart HTTP
+POST routes authenticate with HTTP Basic access tokens instead of a session
+cookie, so they are outside this check; a token is not sent by a browser
+automatically and an attacker cannot make a forged request carry it.
 
 ## Cookies and proxies
 
@@ -132,7 +171,27 @@ The session cookie's `Secure` attribute follows `GITMAN_PUBLIC_URL`'s
 scheme automatically. If Gitman is behind a reverse proxy, set
 `GITMAN_TRUSTED_PROXIES` to the proxy's actual reachable address —
 otherwise the sign-in rate limiter (and anything else keyed on client IP)
-treats every proxied client as the same one.
+treats every proxied client as the same one. With no trusted proxies, one
+person's failed attempts can exhaust the shared address budget and lock out
+sign-in for everyone behind that proxy for fifteen minutes. Gitman warns at
+startup the first time a request arrives from a private address in that state.
+The production Compose example defaults the trusted range to `172.16.0.0/12`;
+override it if the Compose network uses another range.
+
+Gitman sets `Strict-Transport-Security` when `GITMAN_PUBLIC_URL` is HTTPS. If a
+TLS-terminating proxy is in front, or Gitman itself speaks plain HTTP behind
+one, configure HSTS at the proxy as well; a header the client never sees over
+plain HTTP cannot protect the first request.
+
+## Resource bounds
+
+Git and archive requests share a concurrency limit; four slots are reserved for
+a worker fetching a run's commit, so a burst of clones cannot make a run fail
+with a 503. Raw file downloads are streamed without taking a Git slot and are
+bounded by the file size Git already serves. Repository Overview and Home read
+the indexed refs rather than walking Git, but a repository with an extreme
+number of refs still costs more to render; the page deadline bounds the damage
+rather than paginating refs in this release.
 
 ## Execution and storage limits
 

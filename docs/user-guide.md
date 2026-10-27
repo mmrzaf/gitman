@@ -49,7 +49,8 @@ Its navigation has six sections (Settings is visible to admins):
   and the target it deployed to.
 - **Settings** — admins only: description, default branch, ref rules,
   secrets, who may read the repository and push to a ref no rule matches,
-  and deletion.
+  repository maintenance (size and Git garbage collection), and deletion.
+  Pushes to the repository wait while maintenance runs.
 
 ### Browsing files
 
@@ -158,8 +159,9 @@ tag's commit, on a worker. It starts in one of three ways:
   same branch or tag, under that ref's rule. Run again on an older run
   is how you roll back.
 
-A run waits in the queue until a worker claims it. When no worker is
-online, a queued run's page and Home say so.
+A run waits in the queue until a ready worker claims it. A worker runs one
+run at a time; when no worker is online or none has every image the run
+needs, the run's page and Home say so.
 
 A run's page shows each step, its output, and whether it passed. From
 there you can:
@@ -175,7 +177,11 @@ Under your username, top-right of every page:
 
 - **Access tokens** — create and revoke the tokens Git uses in place of a
   password. A read token can clone and fetch; a write token can also
-  push.
+  push. Tokens last 30 days by default, or up to 365 days; the page shows
+  when each was last used.
+- **Sessions** — every browser signed in to your account, with its address,
+  device, last-seen time and expiry. The current one is marked. Revoking
+  another one signs it out at once; revoking the current one signs you out.
 - Change your password.
 - **Theme** — follow the system, or always light or dark. It is kept in
   this browser only.
@@ -183,8 +189,9 @@ Under your username, top-right of every page:
 ## Admins
 
 Admins additionally see **People**, to add, disable, enable, and change
-the role of accounts. People are disabled, never deleted, so their name
-stays attached to what they did.
+the role of accounts, and **Sessions**, to list and revoke any browser
+session. People are disabled, never deleted, so their name stays attached to
+what they did.
 
 See [Security model](operator/security.md) for how ref rules and roles
 fit together, and the [CLI reference](reference/cli.md) for doing any of
