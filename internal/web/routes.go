@@ -37,6 +37,7 @@ func (a *App) register(mux *http.ServeMux) {
 	mux.Handle("POST /repos", a.page(member, a.repoCreate))
 
 	mux.Handle("GET /jump", a.page(member, a.jump))
+	mux.Handle("GET /changelog", a.page(member, a.changelogView))
 	mux.Handle("GET /me", a.page(member, a.meView))
 	mux.Handle("POST /me/revoke-all", a.page(member, a.meRevokeAll))
 	mux.Handle("POST /me/password", a.page(member, a.mePasswordChange))

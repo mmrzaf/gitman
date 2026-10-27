@@ -58,6 +58,10 @@ type App struct {
 	origin string
 	secure bool
 	now    func() time.Time
+	// version is the running build's version, shown in the account menu, and
+	// releases are the notes its What's new page lists.
+	version  string
+	releases []releaseNote
 	// pageReadTimeout and pageWriteTimeout bound reading one page
 	// request and writing its response, so a client cannot hold a
 	// connection open by sending or reading slowly. The server itself has
@@ -83,6 +87,8 @@ type Services struct {
 	Ping func(context.Context) error
 	// Listen delivers database notifications, for live pages.
 	Listen ListenFunc
+	// Version is the running build's version, as "gitman version" prints it.
+	Version string
 }
 
 // ListenFunc delivers PostgreSQL notifications on channels until ctx
@@ -115,9 +121,13 @@ func New(cfg *config.Config, services Services, log *slog.Logger) (*App, error) 
 		origin:          public.Scheme + "://" + public.Host,
 		secure:          public.Scheme == "https",
 		now:             time.Now,
+		version:         services.Version,
 
 		pageReadTimeout:  pageReadTimeout,
 		pageWriteTimeout: pageWriteTimeout,
+	}
+	if a.releases, err = loadReleaseNotes(); err != nil {
+		return nil, err
 	}
 	if a.assets, err = loadAssets(); err != nil {
 		return nil, err

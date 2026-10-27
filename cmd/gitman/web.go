@@ -129,6 +129,7 @@ func runWeb(args []string) error {
 		Activity: activity.NewService(database),
 		Ping:     database.Ping,
 		Listen:   database.Listen,
+		Version:  version,
 	}, log)
 	if err != nil {
 		return err

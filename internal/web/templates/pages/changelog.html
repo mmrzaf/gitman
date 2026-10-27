@@ -1,0 +1,30 @@
+{{define "release"}}
+<section class="panel release" aria-labelledby="release-{{.Version}}">
+  <div class="release-heading">
+    <h2 class="release-title" id="release-{{.Version}}">Gitman {{.Version}}{{with .Badge}} <span class="chip chip-accent">{{.}}</span>{{end}}</h2>
+    <span class="release-date">Released {{.Released.Format "2 January 2006"}}</span>
+  </div>
+  <ul class="release-items">{{range .Items}}
+    <li><span>{{.}}</span></li>{{end}}
+  </ul>
+</section>
+{{end}}
+
+{{define "content"}}
+{{$d := .Data}}
+<div class="page page-narrow">
+<header class="page-header"><div class="page-header-text">
+  <h1 class="page-title" id="changelog-title">What's new</h1>
+  <p class="page-subtitle">You are running Gitman <strong class="mono">{{$d.Version}}</strong>.{{if not $d.Exact}} There are no notes for this build, so the newest release is shown.{{end}}</p>
+</div></header>
+{{template "release" $d.Current}}
+{{- if $d.Earlier}}
+<details class="releases-earlier">
+  <summary>{{template "icon" "chevron-down"}}Earlier releases</summary>
+  {{- range $d.Earlier}}
+  {{template "release" .}}
+  {{- end}}
+</details>
+{{- end}}
+</div>
+{{end}}

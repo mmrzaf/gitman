@@ -77,6 +77,12 @@ func (b *browser) do(method, path string, form url.Values, headers map[string]st
 
 func setup(t *testing.T) (*postgres.DB, *browser) {
 	t.Helper()
+	return setupVersion(t, "")
+}
+
+// setupVersion is setup for a build that reports version.
+func setupVersion(t *testing.T, version string) (*postgres.DB, *browser) {
+	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git binary not available")
 	}
@@ -84,7 +90,9 @@ func setup(t *testing.T) (*postgres.DB, *browser) {
 	store := git.NewStore(t.TempDir())
 	t.Cleanup(store.Close)
 	cfg := &config.Config{Retention: config.DefaultRetention(), DataDir: t.TempDir(), PublicURL: "http://gitman.test", Port: 8080, SecretKey: testSecretKey}
-	app, err := New(cfg, testServices(database, store, cfg.SecretKey), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	services := testServices(database, store, cfg.SecretKey)
+	services.Version = version
+	app, err := New(cfg, services, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
