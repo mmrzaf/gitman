@@ -3,6 +3,14 @@
 What changed in each release, for the people who run Gitman. Newest first.
 Each release's section is also its GitHub release notes.
 
+## Unreleased
+
+### Fixed
+
+- A worker now reads `docker system df` the way Docker 29 prints it, with every
+  column as a string. In beta 24 the read failed, so no image inventory was
+  published and the build-cache cap was never enforced.
+
 ## [1.0.0-beta.24] - 2026-10-27
 
 Image inventory, retention and build-cache management.

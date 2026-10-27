@@ -33,8 +33,8 @@ func setImageInventory(t *testing.T) {
 	t.Setenv("FAKE_DOCKER_CONTAINER_IDS", "c1\nc2\n")
 	t.Setenv("FAKE_DOCKER_CONTAINER_IMAGES", imageOne+"\n"+imageTwo+"\n")
 	t.Setenv("FAKE_DOCKER_DF", strings.Join([]string{
-		`{"Type":"Images","Total":3,"Active":2,"Size":"5MB","Reclaimable":"1MB"}`,
-		`{"Type":"Build Cache","Total":2,"Active":1,"Size":"1.5GB","Reclaimable":"512MB"}`,
+		`{"Active":"2","Reclaimable":"1MB (20%)","Size":"5MB","TotalCount":"3","Type":"Images"}`,
+		`{"Active":"1","Reclaimable":"512MB","Size":"1.5GB","TotalCount":"2","Type":"Build Cache"}`,
 	}, "\n"))
 }
 

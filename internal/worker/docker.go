@@ -394,10 +394,11 @@ type imageInspect struct {
 	} `json:"Metadata"`
 }
 
+// systemDFRow is one line of "docker system df --format '{{json .}}'". The
+// client prints every column as a string, counts included, so only the columns
+// the inventory reads are declared.
 type systemDFRow struct {
 	Type        string `json:"Type"`
-	Total       int    `json:"Total"`
-	Active      int    `json:"Active"`
 	Size        string `json:"Size"`
 	Reclaimable string `json:"Reclaimable"`
 }
