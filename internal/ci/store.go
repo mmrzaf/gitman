@@ -793,6 +793,7 @@ func deleteGoneWorkers(ctx context.Context, q postgres.Querier, before time.Time
 		DELETE FROM workers
 		WHERE COALESCE(stopped_at, heartbeat_at) < $1
 		  AND NOT EXISTS (SELECT 1 FROM runs WHERE runs.worker_id = workers.id AND (runs.status = 'running' OR EXISTS(SELECT 1 FROM steps WHERE run_id=runs.id AND container_name IS NOT NULL AND container_removed_at IS NULL)))
+		  AND NOT EXISTS (SELECT 1 FROM deployment_targets dt JOIN runs r ON r.id = dt.owner_run_id WHERE r.worker_id = workers.id)
 	`, before)
 	if err != nil {
 		return 0, fmt.Errorf("delete gone workers: %w", err)

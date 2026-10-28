@@ -42,6 +42,33 @@ func TestRetentionSeparatesLogsActiveHeadAndLatestDeployment(t *testing.T) {
 	}
 }
 
+func TestPruneWorkersKeepsDeploymentOwner(t *testing.T) {
+	ctx := t.Context()
+	db := pgtest.Open(t)
+	seedRepo(t, db, "r1", "demo")
+	insertTestRun(t, db, "run", "r1", 1, "branch", "main", "passed", true)
+	for _, query := range []string{
+		`INSERT INTO steps (id, run_id, index, name, status) VALUES ('step', 'run', 0, 'deploy', 'passed')`,
+		`UPDATE runs SET worker_id = 'w-test' WHERE id = 'run'`,
+		`UPDATE workers SET heartbeat_at = now() - interval '30 days' WHERE id = 'w-test'`,
+		`INSERT INTO deployment_targets (repo_id, target, owner_run_id, owner_step_id) VALUES ('r1', 'production', 'run', 'step')`,
+	} {
+		if _, err := db.Pool.Exec(ctx, query); err != nil {
+			t.Fatal(err)
+		}
+	}
+	svc := NewService(db)
+	if n, err := svc.PruneWorkers(ctx, time.Now()); err != nil || n != 0 {
+		t.Fatalf("worker with a deployment owner was pruned: n=%d err=%v", n, err)
+	}
+	if _, err := db.Pool.Exec(ctx, `UPDATE deployment_targets SET owner_run_id = NULL, owner_step_id = NULL WHERE repo_id = 'r1'`); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := svc.PruneWorkers(ctx, time.Now()); err != nil || n != 1 {
+		t.Fatalf("released worker was not pruned: n=%d err=%v", n, err)
+	}
+}
+
 func TestRepositoryLogBudgetAndDuplicateChunks(t *testing.T) {
 	ctx := context.Background()
 	db := pgtest.Open(t)
