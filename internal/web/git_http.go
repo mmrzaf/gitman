@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mmrzaf/gitman/internal/apperr"
 	"github.com/mmrzaf/gitman/internal/auth"
 	"github.com/mmrzaf/gitman/internal/ci"
 	"github.com/mmrzaf/gitman/internal/git"
@@ -275,7 +276,7 @@ func (a *App) gitRPC(svc git.Service) http.HandlerFunc {
 		if svc == git.ReceivePack {
 			admitted, release, err := a.ci.AdmitMutation(r.Context())
 			if err != nil {
-				http.Error(w, "Gitman is preparing a backup. Try the push again shortly.", http.StatusServiceUnavailable)
+				http.Error(w, apperr.PublicMessage(err), statusFor(apperr.KindOf(err)))
 				return
 			}
 			defer release()
