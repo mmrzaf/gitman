@@ -92,6 +92,27 @@ func TestWorkersOnOneEngineRequireOneWorkspaceRoot(t *testing.T) {
 	}
 }
 
+func TestStoppedWorkerRootDoesNotBlockNewWorker(t *testing.T) {
+	ctx := context.Background()
+	db := pgtest.Open(t)
+	svc := ci.NewService(db)
+	if err := svc.RegisterWorker(ctx, "old", "host"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.BindWorkerEngine(ctx, "old", "engine", t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.StopWorker(ctx, "old"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.RegisterWorker(ctx, "new", "host"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.BindWorkerEngine(ctx, "new", "engine", t.TempDir()); err != nil {
+		t.Fatalf("a stopped worker's old root blocked a new worker: %v", err)
+	}
+}
+
 func TestCleanupRecordsFullContainerIDBeforeRemoval(t *testing.T) {
 	ctx := t.Context()
 	db := pgtest.Open(t)

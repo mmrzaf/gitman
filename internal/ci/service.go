@@ -709,7 +709,13 @@ func (s *Service) BindWorkerEngine(ctx context.Context, workerID, engineID, root
 			return err
 		}
 		var incompatible bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM workers WHERE engine_id=$1 AND workspace_root<>$2)`, engineID, root).Scan(&incompatible); err != nil {
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS(
+				SELECT 1 FROM workers
+				WHERE engine_id=$1 AND workspace_root<>$2 AND id<>$4
+				  AND stopped_at IS NULL AND heartbeat_at >= now() - make_interval(secs => $3)
+			)
+		`, engineID, root, WorkerLostAfter.Seconds(), workerID).Scan(&incompatible); err != nil {
 			return err
 		}
 		if incompatible {
