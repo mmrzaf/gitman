@@ -1,6 +1,18 @@
 {
   "releases": [
     {
+      "version": "1.0.0-beta.26",
+      "releasedOn": "2026-10-28",
+      "items": [
+        "The Images page is organized by worker host, with Required, Built and Other tabs; a prune shows exactly what will be removed and checks it again before the worker acts.",
+        "Image facts, inventories and tag removal are re-checked against the current head, the host and the reviewed list, so stale or unreviewed images are never removed.",
+        "Gitman bounds accounts and repositories: 20 sessions and 50 tokens per person, 100 repositories and 10 new repositories per hour, and raw web downloads at 1 GiB.",
+        "Backups cannot overlap a push, interrupted repository deletions finish on startup, and a push whose record is still being written cannot be abandoned.",
+        "Live pages keep your scroll position while they update, and revoking your own session warns that you will be signed out.",
+        "Admin commands are documented in the container that has the database or Docker socket they need."
+      ]
+    },
+    {
       "version": "1.0.0-beta.25",
       "releasedOn": "2026-10-28",
       "items": [
