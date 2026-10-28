@@ -40,8 +40,16 @@ func (d *DB) BindRepositoryStorage(ctx context.Context, root string) (result err
 	if err := check(); !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	// An existing database must not silently attach to an empty or partial store.
-	rows, err := d.Q.Query(ctx, `SELECT id FROM repos`)
+	// An existing database must not silently attach to an empty or partial
+	// store. A pending delete may legitimately have removed the directory
+	// before its row; recovery finishes it after binding.
+	rows, err := d.Q.Query(ctx, `
+		SELECT r.id FROM repos r
+		WHERE NOT EXISTS (
+			SELECT 1 FROM repository_operations o
+			WHERE o.repo_id = r.id AND o.kind = 'delete' AND o.completed_at IS NULL
+		)
+	`)
 	if err != nil {
 		return err
 	}
