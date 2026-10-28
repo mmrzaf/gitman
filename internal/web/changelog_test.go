@@ -43,11 +43,15 @@ func TestWhatsNewShowsTheRunningVersionAndOlderReleases(t *testing.T) {
 }
 
 func TestWhatsNewFallsBackToTheNewestReleaseForAnUnlistedBuild(t *testing.T) {
+	notes, err := loadReleaseNotes()
+	if err != nil {
+		t.Fatal(err)
+	}
 	database, b := setupVersion(t, "dev")
 	signIn(t, database, b, "member", false)
 
 	resp, body := b.do(http.MethodGet, "/changelog", nil, nil)
-	expect(t, resp, body, http.StatusOK, "Latest release", "There are no notes for this build", "Gitman 1.0.0-beta.25")
+	expect(t, resp, body, http.StatusOK, "Latest release", "There are no notes for this build", "Gitman "+notes[0].Version)
 	if strings.Contains(body, "Current version") {
 		t.Fatalf("an unlisted build is labelled as having its own notes:\n%s", body)
 	}
