@@ -54,7 +54,7 @@ func selectRepoByID(ctx context.Context, q postgres.Querier, repoID string) (*Re
 }
 
 func selectRepos(ctx context.Context, q postgres.Querier) ([]*Repo, error) {
-	rows, err := q.Query(ctx, `SELECT `+repoColumns+` FROM repos ORDER BY name`)
+	rows, err := q.Query(ctx, `SELECT `+repoColumns+` FROM repos ORDER BY name LIMIT 1000`)
 	if err != nil {
 		return nil, fmt.Errorf("list repositories: %w", err)
 	}
@@ -76,6 +76,7 @@ func selectReadableRepos(ctx context.Context, q postgres.Querier, personID strin
 		WHERE visibility = 'everyone'
 		   OR EXISTS (SELECT 1 FROM repo_readers WHERE repo_readers.repo_id = repos.id AND repo_readers.person_id = $1)
 		ORDER BY name
+		LIMIT 500
 	`, personID)
 	if err != nil {
 		return nil, fmt.Errorf("list readable repositories: %w", err)

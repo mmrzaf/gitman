@@ -87,3 +87,13 @@ func TestStoreSweep(t *testing.T) {
 		t.Fatalf("after Sweep: %v, want keep.git and the mutation-lock directory", entries)
 	}
 }
+
+func TestStoreCreateRefusesBelowDiskReserve(t *testing.T) {
+	requireGit(t)
+	store := NewStore(t.TempDir())
+	defer store.Close()
+	store.SetDiskReserve(^uint64(0))
+	if err := store.Create(context.Background(), "abc-123", "main"); err == nil {
+		t.Fatal("Create succeeded with an impossible disk reserve")
+	}
+}

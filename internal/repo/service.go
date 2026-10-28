@@ -39,10 +39,30 @@ func NewService(db *postgres.DB, store *git.Store, secretKey string) *Service {
 
 // Create adds a repository record and initializes its bare repository.
 // Intent commits before Git changes; recovery completes any interrupted creation.
+const (
+	maxRepositoriesPerPerson = 100
+	maxRepositoryCreatesHour = 10
+)
+
 func (s *Service) Create(ctx context.Context, name, description, defaultBranch, actorID string) (*Repo, error) {
 	name = strings.ToLower(name)
 	if err := names.ValidateRepository(name); err != nil {
 		return nil, err
+	}
+	if actorID != "" {
+		var total, recent int
+		if err := s.db.Q.QueryRow(ctx, `SELECT count(*) FROM repos WHERE created_by = $1`, actorID).Scan(&total); err != nil {
+			return nil, err
+		}
+		if total >= maxRepositoriesPerPerson {
+			return nil, apperr.New(apperr.KindConflict, fmt.Sprintf("You have reached the limit of %d repositories. Delete an old repository before creating another.", maxRepositoriesPerPerson))
+		}
+		if err := s.db.Q.QueryRow(ctx, `SELECT count(*) FROM repos WHERE created_by = $1 AND created_at > now() - interval '1 hour'`, actorID).Scan(&recent); err != nil {
+			return nil, err
+		}
+		if recent >= maxRepositoryCreatesHour {
+			return nil, apperr.New(apperr.KindConflict, fmt.Sprintf("You can create at most %d repositories per hour.", maxRepositoryCreatesHour))
+		}
 	}
 	description = strings.TrimSpace(description)
 	if err := ValidateDescription(description); err != nil {

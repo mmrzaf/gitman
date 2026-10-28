@@ -120,8 +120,8 @@ func (s *Store) Create(ctx context.Context, repoID, defaultBranch string) error 
 	if LooksLikeCommitHash(defaultBranch) {
 		return fmt.Errorf("default branch %q looks like a commit hash", defaultBranch)
 	}
-	if err := os.MkdirAll(s.root, 0o750); err != nil {
-		return fmt.Errorf("create repository root: %w", err)
+	if err := s.CheckPushCapacity(0); err != nil {
+		return fmt.Errorf("repository storage is below the configured disk reserve: %w", err)
 	}
 	if _, err := os.Stat(path); err == nil {
 		return ErrExists

@@ -631,3 +631,38 @@ func TestDefaultHeadsListsWhereEachDefaultBranchPoints(t *testing.T) {
 		t.Fatalf("for one repository: %+v, %v", only, err)
 	}
 }
+
+func TestRepositoryCreationQuotaAndHourlyLimit(t *testing.T) {
+	ctx := context.Background()
+	database := pgtest.Open(t)
+	store := newStore(t)
+	svc := NewService(database, store, testSecretKey)
+	person, err := auth.NewService(database).Create(ctx, "darius", "correct-horse-battery", false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < maxRepositoriesPerPerson; i++ {
+		if _, err := database.Pool.Exec(ctx, `INSERT INTO repos (id, name, created_by, created_at) VALUES ($1, $2, $3, now() - interval '2 hours')`, "quota-"+strings.Repeat("x", i+1), "quota-"+strings.Repeat("y", i+1), person.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := svc.Create(ctx, "one-more", "", "main", person.ID); apperr.KindOf(err) != apperr.KindConflict {
+		t.Fatalf("quota Create = %v, want conflict", err)
+	}
+
+	other := pgtest.Open(t)
+	otherStore := newStore(t)
+	otherService := NewService(other, otherStore, testSecretKey)
+	otherPerson, err := auth.NewService(other).Create(ctx, "mina", "correct-horse-battery", false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < maxRepositoryCreatesHour; i++ {
+		if _, err := other.Pool.Exec(ctx, `INSERT INTO repos (id, name, created_by) VALUES ($1, $2, $3)`, "hour-"+strings.Repeat("x", i+1), "hour-"+strings.Repeat("y", i+1), otherPerson.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := otherService.Create(ctx, "hourly-more", "", "main", otherPerson.ID); apperr.KindOf(err) != apperr.KindConflict {
+		t.Fatalf("hourly Create = %v, want conflict", err)
+	}
+}
