@@ -37,13 +37,13 @@ func NewService(db *postgres.DB, store *git.Store, secretKey string) *Service {
 	return &Service{db: db, git: store, secretKey: secretKey}
 }
 
-// Create adds a repository record and initializes its bare repository.
-// Intent commits before Git changes; recovery completes any interrupted creation.
 const (
 	maxRepositoriesPerPerson = 100
 	maxRepositoryCreatesHour = 10
 )
 
+// Create adds a repository record and initializes its bare repository.
+// Intent commits before Git changes; recovery completes any interrupted creation.
 func (s *Service) Create(ctx context.Context, name, description, defaultBranch, actorID string) (*Repo, error) {
 	name = strings.ToLower(name)
 	if err := names.ValidateRepository(name); err != nil {
@@ -112,11 +112,17 @@ func (s *Service) GetByID(ctx context.Context, repoID string) (*Repo, error) {
 	return selectRepoByID(ctx, s.db.Q, repoID)
 }
 
-// List returns every repository, ordered by name, regardless of
-// visibility. It is for the command line, which acts with full
-// authority and has no person to check readability against.
+// List returns up to 1000 repositories, ordered by name, regardless of
+// visibility. It is for display: the command line, which acts with full
+// authority, and the admin view of readable repositories. Maintenance that
+// must not skip a repository uses listAll.
 func (s *Service) List(ctx context.Context) ([]*Repo, error) {
 	return selectRepos(ctx, s.db.Q)
+}
+
+// listAll returns every repository, for maintenance that must not skip one.
+func (s *Service) listAll(ctx context.Context) ([]*Repo, error) {
+	return selectAllRepos(ctx, s.db.Q)
 }
 
 // ListReadable returns, ordered by name, every repository personID may

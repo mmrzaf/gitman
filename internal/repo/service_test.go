@@ -666,3 +666,29 @@ func TestRepositoryCreationQuotaAndHourlyLimit(t *testing.T) {
 		t.Fatalf("hourly Create = %v, want conflict", err)
 	}
 }
+
+func TestRepositoryListIsBoundedButMaintenanceSeesEveryRepository(t *testing.T) {
+	ctx := context.Background()
+	database := pgtest.Open(t)
+	if _, err := database.Pool.Exec(ctx, `
+		INSERT INTO repos (id, name)
+		SELECT 'repo-' || g, 'repo-' || g FROM generate_series(1, 1001) g
+	`); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(database, nil, "")
+	list, err := svc.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1000 {
+		t.Fatalf("List returned %d repositories, want the display bound of 1000", len(list))
+	}
+	all, err := svc.listAll(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 1001 {
+		t.Fatalf("listAll returned %d repositories, want every one", len(all))
+	}
+}

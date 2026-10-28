@@ -10,7 +10,7 @@ import (
 // the filesystem. It only reads; restoration must not hide an inconsistent pair
 // by silently rebuilding the index.
 func (s *Service) VerifySnapshot(ctx context.Context) error {
-	all, err := s.List(ctx)
+	all, err := s.listAll(ctx)
 	if err != nil {
 		return err
 	}

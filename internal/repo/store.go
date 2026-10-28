@@ -54,7 +54,15 @@ func selectRepoByID(ctx context.Context, q postgres.Querier, repoID string) (*Re
 }
 
 func selectRepos(ctx context.Context, q postgres.Querier) ([]*Repo, error) {
-	rows, err := q.Query(ctx, `SELECT `+repoColumns+` FROM repos ORDER BY name LIMIT 1000`)
+	return selectReposQuery(ctx, q, `SELECT `+repoColumns+` FROM repos ORDER BY name LIMIT 1000`)
+}
+
+func selectAllRepos(ctx context.Context, q postgres.Querier) ([]*Repo, error) {
+	return selectReposQuery(ctx, q, `SELECT `+repoColumns+` FROM repos ORDER BY name`)
+}
+
+func selectReposQuery(ctx context.Context, q postgres.Querier, query string) ([]*Repo, error) {
+	rows, err := q.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("list repositories: %w", err)
 	}

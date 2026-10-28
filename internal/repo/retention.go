@@ -22,7 +22,7 @@ const (
 // PruneGitPins releases objects only after database retention commits. A pending
 // repository operation blocks this sweep, and manual runs share its Git lock.
 func (s *Service) PruneGitPins(ctx context.Context) error {
-	repos, err := s.List(ctx)
+	repos, err := s.listAll(ctx)
 	if err != nil {
 		return err
 	}
