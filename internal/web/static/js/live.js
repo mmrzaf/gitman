@@ -93,6 +93,10 @@ if (!main || !("EventSource" in window)) {
     source.addEventListener("open", () => {
       retryDelay = 3000;
       setStatus("open");
+      // Close the gap between the page being rendered and this stream
+      // subscribing: a step can change in that window, and its notice
+      // would otherwise be missed until the next change.
+      scheduleRefresh();
     });
     source.addEventListener("change", scheduleRefresh);
     source.addEventListener("log", (event) => {
