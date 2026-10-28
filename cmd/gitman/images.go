@@ -62,7 +62,24 @@ func adminImagesList(ctx context.Context, env *adminEnv, args []string) error {
 		} else {
 			fmt.Fprint(env.out, ", none prunable")
 		}
-		fmt.Fprintf(env.out, "; build cache %s (%s reclaimable)\n\n", formatSize(host.Cache.Size), formatSize(host.Cache.Reclaimable))
+		fmt.Fprintf(env.out, "; build cache %s (%s reclaimable)", formatSize(host.Cache.Size), formatSize(host.Cache.Reclaimable))
+		if !host.Cache.Disabled {
+			fmt.Fprintf(env.out, "; policy %d GiB, %d hours", host.Cache.Policy.KeepGiB, host.Cache.Policy.OlderThanHours)
+		}
+		if host.Cache.PrunedAt != nil {
+			fmt.Fprintf(env.out, "; last prune %s", host.Cache.PrunedAt.Format(time.RFC3339))
+		}
+		if host.Cache.Reclaimed > 0 {
+			fmt.Fprintf(env.out, "; reclaimed %s", formatSize(host.Cache.Reclaimed))
+		}
+		if host.Cache.Error != "" {
+			fmt.Fprintf(env.out, "; error: %s", host.Cache.Error)
+		}
+		if host.FactsIncomplete {
+			fmt.Fprint(env.out, "; image facts incomplete")
+		}
+		fmt.Fprintln(env.out)
+		fmt.Fprintln(env.out)
 	}
 	return nil
 }

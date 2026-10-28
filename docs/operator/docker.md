@@ -107,8 +107,8 @@ gitman admin images remove [--confirm] <worker-id> <image>
 ```
 
 `prune` and `remove` are dry runs without `--confirm`. Confirmed work is queued
-as a durable operation for the owning worker and appears on **Operations** and
-the **Images** page; the worker re-reads the inventory and the required set
+as a durable operation for the owning worker and appears on **Operations**;
+the **Images** page links to it; the worker re-reads the inventory and the required set
 before acting, and skips anything that became required, in use or deployed. A
 removal uses `docker image rm` without `--force`, so it removes a tag rather
 than an image another tag still uses, and it refuses an image a container uses.
