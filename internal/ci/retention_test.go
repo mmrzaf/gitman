@@ -98,3 +98,28 @@ func TestRepositoryLogBudgetAndDuplicateChunks(t *testing.T) {
 		t.Fatalf("quota warning=%q error=%v", warning, err)
 	}
 }
+
+func TestRetentionExpiresStaleImageHostsAndPendingOperations(t *testing.T) {
+	ctx := t.Context()
+	db := pgtest.Open(t)
+	for _, query := range []string{
+		`INSERT INTO image_hosts (host_id, hostname, collected_at) VALUES ('engine-old', 'old-host', now() - interval '40 days')`,
+		`INSERT INTO repository_operations (id, repo_id, kind, name, payload, engine_id)
+		 VALUES ('image-op', NULL, 'image.prune', 'engine-old', '{"targets":[]}', 'engine-old')`,
+	} {
+		if _, err := db.Pool.Exec(ctx, query); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := NewService(db).PruneRetention(ctx, time.Now(), config.DefaultRetention()); err != nil {
+		t.Fatal(err)
+	}
+	var hosts, pending int
+	var cacheError string
+	if err := db.Q.QueryRow(ctx, `SELECT (SELECT count(*) FROM image_hosts), (SELECT count(*) FROM repository_operations WHERE id='image-op' AND completed_at IS NULL), COALESCE((SELECT error FROM repository_operations WHERE id='image-op'), '')`).Scan(&hosts, &pending, &cacheError); err != nil {
+		t.Fatal(err)
+	}
+	if hosts != 0 || pending != 0 || cacheError == "" {
+		t.Fatalf("hosts=%d pending=%d error=%q", hosts, pending, cacheError)
+	}
+}
