@@ -2,8 +2,9 @@ package ci
 
 import (
 	"context"
-	"github.com/mmrzaf/gitman/internal/config"
 	"time"
+
+	"github.com/mmrzaf/gitman/internal/config"
 )
 
 // imageHostRetention is how long a decommissioned host inventory is kept.
