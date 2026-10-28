@@ -124,7 +124,7 @@ func (s *Service) CreateTx(ctx context.Context, tx postgres.Tx, p CreateParams) 
 
 	for i, step := range pl.steps {
 		status := StepSkipped
-		if step.run {
+		if pl.status == StatusQueued && step.run {
 			status = StepPending
 		}
 		if err := insertStep(ctx, tx, run.ID, i, step.name, step.kind, status); err != nil {

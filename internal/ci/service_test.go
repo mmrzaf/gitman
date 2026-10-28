@@ -172,6 +172,43 @@ func TestCreateNumbersAndSupersedes(t *testing.T) {
 	}
 }
 
+func TestCreateAtPendingBudgetSkipsSteps(t *testing.T) {
+	ctx := t.Context()
+	database := pgtest.Open(t)
+	seedRepo(t, database, "r1", "demo")
+	if _, err := database.Pool.Exec(ctx, `
+		INSERT INTO runs (id, repo_id, number, commit_hash, ref_kind, ref_name, trigger, status)
+		SELECT 'queued-' || g, 'r1', g, repeat('a', 40), 'branch', 'main', 'push', 'queued'
+		FROM generate_series(1, 10000) g
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Pool.Exec(ctx, `UPDATE repos SET run_counter = 10000 WHERE id = 'r1'`); err != nil {
+		t.Fatal(err)
+	}
+	var run *Created
+	if err := database.Tx(ctx, func(tx postgres.Tx) error {
+		var err error
+		run, err = NewService(database).CreateTx(ctx, tx, CreateParams{
+			RepoID: "r1", Commit: strings.Repeat("b", 40), RefKind: git.KindBranch, RefName: "feature",
+			Trigger: TriggerPush, Pipeline: []byte("image: alpine:3.20\nsteps:\n  - name: build\n    run: echo hi\n"),
+		})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != StatusFailed {
+		t.Fatalf("run status = %s, want failed", run.Status)
+	}
+	var pending int
+	if err := database.Pool.QueryRow(ctx, `SELECT count(*) FROM steps WHERE run_id = $1 AND status = 'pending'`, run.ID).Scan(&pending); err != nil {
+		t.Fatal(err)
+	}
+	if pending != 0 {
+		t.Fatalf("failed run has %d pending steps", pending)
+	}
+}
+
 func TestCreateFailedRunIsFinished(t *testing.T) {
 	ctx := context.Background()
 	database := pgtest.Open(t)
