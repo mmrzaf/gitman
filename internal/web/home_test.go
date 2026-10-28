@@ -29,7 +29,8 @@ func TestHomeListsRepositoriesAndWhatIsDeployed(t *testing.T) {
 	// there is no column for runs.
 	resp, body := b.do(http.MethodGet, "/", nil, nil)
 	expect(t, resp, body, http.StatusOK, `id="repos-title"`, "Nothing in it", "Nothing pushed yet", "Update README",
-		`id="deployments-title"`, "Nothing deployed yet", "Nothing needs attention", `data-live-region="attention"`)
+		`id="deployments-title"`, "Nothing deployed yet", "Nothing needs attention", `data-live-region="attention"`,
+		`data-live-scroll="repos"`, `data-live-scroll="timeline"`)
 	if strings.Contains(body, `<th scope="col">Run</th>`) || strings.Contains(body, `<th scope="col">Comparison</th>`) {
 		t.Error("Home has a column with nothing in it")
 	}

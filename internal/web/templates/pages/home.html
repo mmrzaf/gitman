@@ -50,7 +50,7 @@
 
 {{define "region-home-repos"}}<section class="panel fit fit-3" aria-labelledby="repos-title" data-live-region="repos">
       <header class="panel-header"><h2 class="panel-title" id="repos-title">{{template "icon" "repo"}}Repositories <span class="count">{{len .Data.Repos}}</span></h2></header>
-      <div class="panel-scroll">
+      <div class="panel-scroll" data-live-scroll="repos">
         {{- if .Data.Repos}}
         {{$run := .Data.HasRun}}
         <div class="table-scroll">
@@ -99,7 +99,7 @@
 </section>{{end}}
 {{define "region-home-deployments"}}<section class="panel fit fit-2" aria-labelledby="deployments-title" data-live-region="deployments">
       <header class="panel-header"><h2 class="panel-title" id="deployments-title">{{template "icon" "ship"}}Deployed <span class="count">{{len .Data.Deployments}}</span></h2></header>
-      <div class="panel-scroll">
+      <div class="panel-scroll" data-live-scroll="deployments">
         {{- if .Data.Deployments}}
         <div class="table-scroll">
           <table class="table table-cards">
@@ -130,7 +130,7 @@
     </section>{{end}}
 {{define "region-home-attention"}}<section class="panel fit fit-auto attention{{if .Data.Attention}} is-alert{{end}}" aria-labelledby="attention-title" data-live-region="attention">
       <header class="panel-header"><h2 class="panel-title" id="attention-title">{{template "icon" "warning"}}Needs attention</h2></header>
-      <div class="panel-scroll">
+      <div class="panel-scroll" data-live-scroll="attention">
         {{- if .Data.Attention}}
         <ul class="attention-list">
           {{- range .Data.Attention}}
@@ -143,5 +143,5 @@
         {{- end}}
       </div>
     </section>{{end}}
-{{define "region-home-timeline"}}<div class="panel-scroll feed-scroll" data-live-region="timeline">{{template "feed" (feedModel .Data.Timeline true)}}</div>{{end}}
+{{define "region-home-timeline"}}<div class="panel-scroll feed-scroll" data-live-region="timeline" data-live-scroll="timeline">{{template "feed" (feedModel .Data.Timeline true)}}</div>{{end}}
 {{define "live"}}<main{{with .EventStream}} data-live-events="{{.}}"{{end}}>{{template "region-home-repos" .}}{{template "region-home-deployments" .}}{{template "region-home-attention" .}}{{template "region-home-timeline" .}}</main>{{end}}

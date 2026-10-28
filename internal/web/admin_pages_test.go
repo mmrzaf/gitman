@@ -77,7 +77,9 @@ func TestSessionsPageListsAndRevokesAnotherPersonsSession(t *testing.T) {
 		t.Fatalf("member sessions = %+v, %v", sessions, err)
 	}
 	resp, body := admin.do(http.MethodGet, "/sessions", nil, nil)
-	expect(t, resp, body, http.StatusOK, "member", sessions[0].ID, "127.0.0.1", "this session")
+	expect(t, resp, body, http.StatusOK, "member", sessions[0].ID, "127.0.0.1", "this session",
+		"Revoke this session?", "This is the session you are using, so you will be signed out.",
+		"That browser is signed out at once.")
 
 	resp, _ = admin.do(http.MethodPost, "/sessions/"+sessions[0].ID+"/revoke", url.Values{}, nil)
 	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/sessions" {

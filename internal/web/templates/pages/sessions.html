@@ -16,7 +16,7 @@
 <td data-label="Device"><div class="table-cell cell-truncate" title="{{.UserAgent}}">{{if .UserAgent}}{{.UserAgent}}{{else}}<span class="muted">unknown</span>{{end}}</div></td>
 <td data-label="Expires"><div class="table-cell">{{template "time" .ExpiresAt}}</div></td>
 <td data-label="Actions" class="cell-shrink cell-end"><div class="table-cell">
-<form method="post" action="/sessions/{{.ID}}/revoke" data-confirm="Revoke {{.Username}}'s session?" data-confirm-detail="That browser is signed out at once." data-confirm-action="Revoke session"><button type="submit" class="btn btn-sm btn-danger">Revoke</button></form>
+<form method="post" action="/sessions/{{.ID}}/revoke" data-confirm="{{if eq .ID $.Data.CurrentSession}}Revoke this session?{{else}}Revoke {{.Username}}'s session?{{end}}" data-confirm-detail="{{if eq .ID $.Data.CurrentSession}}This is the session you are using, so you will be signed out.{{else}}That browser is signed out at once.{{end}}" data-confirm-action="Revoke session"><button type="submit" class="btn btn-sm btn-danger">Revoke</button></form>
 </div></td>
 </tr>{{end}}</tbody></table></div>
 {{else}}<div class="empty"><p class="empty-title">No sessions</p><p>Nobody is signed in.</p></div>{{end}}

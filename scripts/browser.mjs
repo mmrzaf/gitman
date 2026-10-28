@@ -79,6 +79,10 @@ const query = (page) => new URL(page.url()).searchParams;
 
   sh(process.env.STOP_WORKER);
   const homeBefore = await home.locator("[data-live-region=repos]").innerText();
+  const timelineScroll = await home.locator("[data-live-region=timeline]").evaluate((el) => {
+    el.scrollTop = 120;
+    return el.scrollTop;
+  });
   sh(process.env.PUSH_SLOW);
 
   const homeUpdated = await until(async () => /#6/.test(await home.locator("[data-live-region=repos]").innerText()));
@@ -103,6 +107,8 @@ const query = (page) => new URL(page.url()).searchParams;
     && /running/i.test(await home.locator("[data-live-region=repos]").innerText()));
   const after = await focused(home);
   check("focus survives a live update", swapped && after?.href === "/demo/runs/6", JSON.stringify(after));
+  const timelineAfter = await home.locator("[data-live-region=timeline]").evaluate((el) => el.scrollTop);
+  check("scroll survives a live update", timelineScroll > 0 && timelineAfter === timelineScroll, `${timelineScroll} → ${timelineAfter}`);
 
   let buildStep = null;
   const sawBuild = await until(async () => {

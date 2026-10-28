@@ -99,7 +99,7 @@
 
 {{define "region-repository-targets"}}{{$repo := .Data.Repo}}<section class="panel fit fit-3" aria-labelledby="targets-title" data-live-region="targets">
       <header class="panel-header"><h2 class="panel-title" id="targets-title">{{template "icon" "ship"}}Deployed <span class="count">{{len .Data.Targets}}</span></h2></header>
-      <div class="panel-scroll">
+      <div class="panel-scroll" data-live-scroll="targets">
         {{- if .Data.Targets}}
         <div class="table-scroll">
           <table class="table table-cards">
@@ -128,17 +128,17 @@
     </section>{{end}}
 {{define "region-repository-branches"}}{{$repo := .Data.Repo}}<section class="panel fit fit-3" aria-labelledby="branches-title" data-live-region="branches">
       <header class="panel-header"><h2 class="panel-title" id="branches-title">{{template "icon" "branch"}}Branches <span class="count">{{len .Data.Branches}}</span></h2></header>
-      <div class="panel-scroll">{{template "refs" (refsModel $repo .Data.CloneURL .Data.Branches "branch" .Data.DefaultExists .Person.IsAdmin)}}</div>
+      <div class="panel-scroll" data-live-scroll="branches">{{template "refs" (refsModel $repo .Data.CloneURL .Data.Branches "branch" .Data.DefaultExists .Person.IsAdmin)}}</div>
     </section>{{end}}
 {{define "region-repository-tags"}}{{$repo := .Data.Repo}}<section class="panel fit fit-4" aria-labelledby="tags-title" data-live-region="tags">
       <header class="panel-header"><h2 class="panel-title" id="tags-title">{{template "icon" "tag"}}Tags <span class="count">{{len .Data.Tags}}</span></h2></header>
-      <div class="panel-scroll">{{template "refs" (refsModel $repo .Data.CloneURL .Data.Tags "tag" .Data.DefaultExists .Person.IsAdmin)}}</div>
+      <div class="panel-scroll" data-live-scroll="tags">{{template "refs" (refsModel $repo .Data.CloneURL .Data.Tags "tag" .Data.DefaultExists .Person.IsAdmin)}}</div>
     </section>{{end}}
 {{define "region-repository-strip"}}{{$repo := .Data.Repo}}<section class="panel fit fit-auto" aria-labelledby="strip-title" data-live-region="strip">
       <header class="panel-header"><h2 class="panel-title" id="strip-title">{{template "icon" "play"}}Runs of {{template "ref" (refModel "branch" $repo.DefaultBranch "")}}</h2>
         <span class="panel-actions"><a class="btn btn-sm" href="/{{$repo.Name}}/runs">All runs</a></span>
       </header>
-      <div class="panel-scroll">
+      <div class="panel-scroll" data-live-scroll="strip">
         {{- if .Data.Runs}}
         <ol class="run-strip" aria-label="Latest runs, oldest first">
           {{- range .Data.Runs}}
@@ -150,5 +150,5 @@
         {{- end}}
       </div>
     </section>{{end}}
-{{define "region-repository-timeline"}}{{$repo := .Data.Repo}}<div class="panel-scroll feed-scroll" data-live-region="timeline">{{template "repo-feed" (repoFeedModel .Data.Timeline $repo)}}</div>{{end}}
+{{define "region-repository-timeline"}}{{$repo := .Data.Repo}}<div class="panel-scroll feed-scroll" data-live-region="timeline" data-live-scroll="timeline">{{template "repo-feed" (repoFeedModel .Data.Timeline $repo)}}</div>{{end}}
 {{define "live"}}<main{{with .EventStream}} data-live-events="{{.}}"{{end}}>{{template "region-repository-targets" .}}{{template "region-repository-branches" .}}{{template "region-repository-tags" .}}{{template "region-repository-strip" .}}{{template "region-repository-timeline" .}}</main>{{end}}
