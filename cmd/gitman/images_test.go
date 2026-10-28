@@ -90,7 +90,7 @@ func TestAdminImagesMissingExitsNonZero(t *testing.T) {
 	if err := adminImagesMissing(ctx, env, nil); err == nil {
 		t.Fatal("missing required images did not fail the command")
 	}
-	if got := outputOf(env); !strings.Contains(got, "alpine:3.20") || !strings.Contains(got, "app branch main") {
+	if got := outputOf(env); !strings.Contains(got, "alpine:3.20") || !strings.Contains(got, "app run #1") {
 		t.Fatalf("missing output = %q", got)
 	}
 	if _, err := database.Pool.Exec(ctx, `UPDATE workers SET images = ARRAY['docker.io/library/alpine:3.20']`); err != nil {

@@ -54,7 +54,7 @@ steps:
     when: branch
     run: |
       if [ "${GITMAN_REF#slow/}" != "$GITMAN_REF" ]; then
-        for i in $(seq 1 300); do echo "tick $i: replaying recorded request $i against the sandbox"; sleep 1; done
+        for i in $(seq 1 900); do echo "tick $i: replaying recorded request $i against the sandbox"; sleep 1; done
       fi
       echo slow step done
   - name: deploy
