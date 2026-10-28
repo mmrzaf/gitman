@@ -161,6 +161,7 @@ func (c *cancelAfter) Write(p []byte) (int, error) {
 	c.n += len(p)
 	if c.n > c.after {
 		c.cancel()
+		return 0, context.Canceled
 	}
 	return len(p), nil
 }
