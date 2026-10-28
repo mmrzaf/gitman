@@ -141,6 +141,12 @@ func (s *Store) Create(ctx context.Context, repoID, defaultBranch string) error 
 	if _, err := run(ctx, cmdOptions{dir: tmp}, "config", "core.logAllRefUpdates", "always"); err != nil {
 		return fmt.Errorf("configure repository: %w", err)
 	}
+	// Receive-pack runs AutoGC after updating refs. The admission fence covers
+	// the whole request, but disabling the daemon's implicit GC keeps the
+	// managed maintenance path the only one that repacks.
+	if _, err := run(ctx, cmdOptions{dir: tmp}, "config", "receive.autogc", "false"); err != nil {
+		return fmt.Errorf("configure repository: %w", err)
+	}
 	// Hooks are supplied per invocation through core.hooksPath; the
 	// sample hooks git init copies in are never used, so they are not
 	// kept around to suggest otherwise.

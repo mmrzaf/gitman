@@ -272,6 +272,15 @@ func (a *App) gitRPC(svc git.Service) http.HandlerFunc {
 			http.Error(w, "Invalid Git-Protocol header.", http.StatusBadRequest)
 			return
 		}
+		if svc == git.ReceivePack {
+			admitted, release, err := a.ci.AdmitMutation(r.Context())
+			if err != nil {
+				http.Error(w, "Gitman is preparing a backup. Try the push again shortly.", http.StatusServiceUnavailable)
+				return
+			}
+			defer release()
+			r = r.WithContext(admitted)
+		}
 
 		limit := int64(maxNegotiationBytes)
 		if svc == git.ReceivePack {
