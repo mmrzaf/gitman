@@ -9,6 +9,7 @@ import (
 	"github.com/mmrzaf/gitman/internal/activity"
 	"github.com/mmrzaf/gitman/internal/ci"
 	"github.com/mmrzaf/gitman/internal/git"
+	"github.com/mmrzaf/gitman/internal/names"
 	reposvc "github.com/mmrzaf/gitman/internal/repo"
 )
 
@@ -78,6 +79,10 @@ func (a *App) repository(w http.ResponseWriter, r *http.Request) error {
 	// The clone URL opened in a browser lands on the repository. A name
 	// never contains ".", so this can't shadow one.
 	if name, ok := strings.CutSuffix(r.PathValue("repo"), ".git"); ok {
+		if err := names.ValidateRepository(name); err != nil {
+			http.NotFound(w, r)
+			return nil
+		}
 		http.Redirect(w, r, "/"+name, http.StatusMovedPermanently)
 		return nil
 	}
