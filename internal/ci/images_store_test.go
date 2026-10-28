@@ -117,6 +117,49 @@ steps:
 	}
 }
 
+func TestImageFactsUseOnlyCurrentHeadPipeline(t *testing.T) {
+	ctx := t.Context()
+	database := pgtest.Open(t)
+	seedRepo(t, database, "r1", "app")
+	for _, query := range []string{
+		`INSERT INTO refs (repo_id, kind, name, commit_hash) VALUES ('r1', 'branch', 'main', 'new')`,
+		`INSERT INTO ref_rules (id, repo_id, kind, pattern, run_on_push) VALUES ('rule1', 'r1', 'branch', 'main', true)`,
+	} {
+		if _, err := database.Pool.Exec(ctx, query); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := database.Pool.Exec(ctx, `
+		INSERT INTO runs (id, repo_id, number, commit_hash, trigger, status, ref_kind, ref_name, pipeline, finished_at)
+		VALUES ('old', 'r1', 1, 'old', 'push', 'passed', 'branch', 'main', $1, now())
+	`, []byte("image: alpine:3.20\nimages:\n  app: {keep: 1}\nsteps:\n  - name: build\n    run: echo hi\n")); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(database)
+	facts, err := svc.ImageFacts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := facts.Built[NormalizeImageRepository("app")]; ok {
+		t.Fatal("an older commit's pipeline leaked into current-head facts")
+	}
+
+	if _, err := database.Pool.Exec(ctx, `
+		INSERT INTO runs (id, repo_id, number, commit_hash, trigger, status, ref_kind, ref_name, pipeline, finished_at)
+		VALUES ('new', 'r1', 2, 'new', 'push', 'passed', 'branch', 'main', $1, now())
+	`, []byte("image: alpine:3.20\nimages:\n  app: {keep: 2}\nsteps:\n  - name: build\n    run: echo hi\n")); err != nil {
+		t.Fatal(err)
+	}
+	facts, err = svc.ImageFacts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := facts.Built[NormalizeImageRepository("app")]
+	if app.Keep != 2 {
+		t.Fatalf("current-head app keep = %d, want 2", app.Keep)
+	}
+}
+
 func TestPublishInventoryReplacesInPlace(t *testing.T) {
 	ctx := t.Context()
 	database := pgtest.Open(t)

@@ -52,7 +52,7 @@ func TestImagesPageShowsInventoryMissingCacheAndTabs(t *testing.T) {
 
 	resp, body := admin.do(http.MethodGet, "/images", nil, nil)
 	expect(t, resp, body, http.StatusOK, "Images", "host",
-		"Missing required images", "alpine:3.20", "app branch main",
+		"Missing required images", "alpine:3.20", "app run #1",
 		"Cache", "4.0 GiB", "above its 3 GiB cap", "app:old", "prunable",
 		"Required", "Built", "Other", "Prune built images", "Image operations")
 	if !strings.Contains(body, `href="/images?plan=engine-1"`) {

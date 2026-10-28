@@ -737,11 +737,12 @@ func (s *Service) ConfirmContainersRemoved(ctx context.Context, runID string) er
 // deployments that can map to built tags. It is one snapshot: callers classify
 // and plan from it without re-reading checkouts or the database.
 func (s *Service) ImageFacts(ctx context.Context) (*ImageFacts, error) {
-	pipelines, err := selectRequiredPipelines(ctx, s.db.Q)
+	pipelines, incomplete, err := selectRequiredPipelines(ctx, s.db.Q)
 	if err != nil {
 		return nil, err
 	}
 	facts := NewImageFacts()
+	facts.Incomplete = incomplete
 	repoIDs := map[string]bool{}
 	for _, fact := range pipelines {
 		cfg, err := Parse(fact.Pipeline)
@@ -842,7 +843,7 @@ func (s *Service) ImageHosts(ctx context.Context) ([]ImageHost, error) {
 		applyPlan(classified, plan)
 		host := &ImageHost{
 			EngineID: row.EngineID, Hostname: row.Hostname, HasInventory: true, Stale: row.Stale,
-			CollectedAt: row.CollectedAt, Automation: row.Automation, Images: classified, Plan: plan,
+			CollectedAt: row.CollectedAt, Automation: row.Automation, FactsIncomplete: facts.Incomplete, Images: classified, Plan: plan,
 			Cache: ImageCacheState{
 				Size: row.CacheSize, Reclaimable: row.CacheReclaimable,
 				Policy:   ImageCachePolicy{KeepGiB: row.KeepGiB, OlderThanHours: row.OlderHours},
@@ -858,7 +859,7 @@ func (s *Service) ImageHosts(ctx context.Context) ([]ImageHost, error) {
 		}
 		host := byEngine[worker.EngineID]
 		if host == nil {
-			host = &ImageHost{EngineID: worker.EngineID, Hostname: worker.Hostname}
+			host = &ImageHost{EngineID: worker.EngineID, Hostname: worker.Hostname, FactsIncomplete: facts.Incomplete}
 			byEngine[worker.EngineID] = host
 		}
 		if host.Hostname == "" {
@@ -910,6 +911,9 @@ func (s *Service) QueueImagePrune(ctx context.Context, engineID, actorID string)
 	if err != nil {
 		return "", PrunePlan{}, err
 	}
+	if host.FactsIncomplete {
+		return "", PrunePlan{}, apperr.New(apperr.KindConflict, "Image facts are incomplete; no built image is pruned. Try again after the current pipeline snapshot is under the limit.")
+	}
 	if len(host.Plan.Remove) == 0 {
 		return "", host.Plan, nil
 	}
@@ -927,6 +931,9 @@ func (s *Service) QueueImageRemove(ctx context.Context, engineID, ref, actorID s
 	host, err := s.freshImageHost(ctx, engineID)
 	if err != nil {
 		return "", err
+	}
+	if host.FactsIncomplete {
+		return "", apperr.New(apperr.KindConflict, "Image facts are incomplete; no image is removed. Try again after the current pipeline snapshot is under the limit.")
 	}
 	normalized := NormalizeImageReference(ref)
 	var found *ClassifiedImage

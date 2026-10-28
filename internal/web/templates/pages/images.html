@@ -17,8 +17,8 @@
     <h2 class="panel-title" id="image-plan-title">{{template "icon" "warning"}}Plan for {{.Hostname}}</h2>
     <span class="panel-actions"><a class="btn btn-sm" href="/images">Back to images</a></span>
   </header>
-  {{- if or (not .HasInventory) .Stale}}
-  <div class="panel-body"><div class="callout is-queued" role="note">{{template "icon" "warning"}}<p class="callout-body">This host's inventory is missing or stale. The plan cannot be shown until a worker refreshes it.</p></div></div>
+  {{- if or (not .HasInventory) .Stale .FactsIncomplete}}
+  <div class="panel-body"><div class="callout is-queued" role="note">{{template "icon" "warning"}}<p class="callout-body">{{if .FactsIncomplete}}Image facts are incomplete, so no built image can be pruned safely. Reduce the number of stored pipelines and try again.{{else}}This host's inventory is missing or stale. The plan cannot be shown until a worker refreshes it.{{end}}</p></div></div>
   {{- else if eq (len .Plan.Remove) 0}}
   <div class="panel-body"><p>No built images are prunable right now.</p>
     {{- if .Plan.Refuse}}<p class="muted">{{len .Plan.Refuse}} image(s) are protected or not built by a pipeline.</p>{{end}}
@@ -63,7 +63,7 @@
       </div></td>
       <td data-label="Missing"><div class="table-cell">{{if .Missing}}<a href="#missing-{{.EngineID}}"><span class="status is-queued">{{template "icon" "warning"}}{{len .Missing}} missing</span></a>{{else}}<span class="muted">none</span>{{end}}</div></td>
       <td data-label="Actions" class="cell-shrink cell-end"><div class="table-cell"><span class="cluster">
-        {{- if and .HasInventory (not .Stale)}}
+        {{- if and .HasInventory (not .Stale) (not .FactsIncomplete)}}
         <a class="btn btn-sm" href="/images?plan={{.EngineID}}">Prune built images</a>
         <form method="post" action="/images/cache-prune"><input type="hidden" name="host" value="{{.EngineID}}"><button class="btn btn-sm" type="submit" data-confirm="Prune the build cache on {{.Hostname}}?" data-confirm-detail="This enforces the worker's cache cap and age. It never removes images or containers." data-confirm-action="Prune cache">Prune cache</button></form>
         {{- end}}
@@ -77,6 +77,9 @@
   <div class="callout is-failed" role="alert">{{template "icon" "warning"}}<div class="callout-body"><p class="callout-title">Build cache on {{.Hostname}}</p><p>{{.Cache.Error}}</p></div></div>
   {{- else if .Cache.AboveCap}}
   <div class="callout is-queued" role="note">{{template "icon" "warning"}}<div class="callout-body"><p class="callout-title">Build cache on {{.Hostname}} is above its cap</p><p>The cache is above its {{.Cache.Policy.KeepGiB}} GiB cap. A build using it can keep it above the cap until the build finishes; the next enforcement retries.</p></div></div>
+  {{- end}}
+  {{- if .FactsIncomplete}}
+  <div class="callout is-failed" role="alert">{{template "icon" "warning"}}<div class="callout-body"><p class="callout-title">Image facts are incomplete on {{.Hostname}}</p><p>Gitman could not read every pipeline that may still need images. Image removal and pruning are disabled until the pipeline snapshot is complete.</p></div></div>
   {{- end}}
   {{- if .Missing}}
   <div class="callout is-queued" id="missing-{{.EngineID}}" role="note">

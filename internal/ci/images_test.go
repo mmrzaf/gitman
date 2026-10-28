@@ -13,6 +13,20 @@ func inventoryImage(repository, tag, id string, created time.Time) InventoryImag
 	}
 }
 
+func TestIncompleteImageFactsRefuseBuiltImages(t *testing.T) {
+	facts := NewImageFacts()
+	facts.Incomplete = true
+	facts.Built[NormalizeImageRepository("app")] = BuiltPolicy{Keep: 1}
+	classified := Classify([]InventoryImage{inventoryImage("app", "old", "sha256:old", time.Now())}, facts)
+	if len(classified) != 1 || classified[0].Class != ImageBuilt || classified[0].Refusal == "" {
+		t.Fatalf("classified = %+v, want a refused built image", classified)
+	}
+	plan := PlanPrune(classified)
+	if len(plan.Remove) != 0 || len(plan.Refuse) != 1 {
+		t.Fatalf("plan = %+v, want no removal", plan)
+	}
+}
+
 func TestNormalizeImageRepository(t *testing.T) {
 	for ref, want := range map[string]string{
 		"alpine":                                   "docker.io/library/alpine",

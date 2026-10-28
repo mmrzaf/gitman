@@ -34,7 +34,7 @@ func insertRun(ctx context.Context, tx postgres.Querier, run *Created, p CreateP
 		INSERT INTO runs (id, repo_id, number, commit_hash, ref_kind, ref_name, trigger, triggered_by, push_id,
 		                  status, reason, target, version, allow_secrets, pipeline, finished_at, timeout_ns, required_images)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, ''), NULLIF($9, ''), $10, $11, $12, $13, $14,
-		        CASE WHEN $15 THEN NULL ELSE $16::bytea END, CASE WHEN $15 THEN now() END, $17, $18)
+		        $16::bytea, CASE WHEN $15 THEN now() END, $17, $18)
 	`, run.ID, p.RepoID, number, p.Commit, string(p.RefKind), p.RefName, p.Trigger, p.PersonID, p.PushID,
 		run.Status, run.Reason, run.Target, run.Version, p.Decision.AllowSecrets, finished, p.Pipeline, int64(timeout), normalizeImages(images))
 	if err != nil {
@@ -869,6 +869,7 @@ func selectLogTail(ctx context.Context, q postgres.Querier, stepID string) (*Log
 // pipelineFact is one stored pipeline whose Image and Requires references
 // belong to the required-image set, and whose Images map declares built images.
 type pipelineFact struct {
+	RunID    string
 	RepoID   string
 	RepoName string
 	Source   string
@@ -883,30 +884,46 @@ type pipelineFact struct {
 // refs and rules are matched here with git.MatchPattern and the latest run per
 // matched ref is then fetched in one query. A rule with run_on_push off still
 // counts: its ref can be started by hand.
-func selectRequiredPipelines(ctx context.Context, q postgres.Querier) ([]pipelineFact, error) {
+func selectRequiredPipelines(ctx context.Context, q postgres.Querier) ([]pipelineFact, bool, error) {
 	facts := []pipelineFact{}
+	seen := map[string]bool{}
+	incomplete := false
+	add := func(fact pipelineFact) {
+		if fact.RunID != "" && seen[fact.RunID] {
+			return
+		}
+		if fact.RunID != "" {
+			seen[fact.RunID] = true
+		}
+		facts = append(facts, fact)
+	}
 
 	rows, err := q.Query(ctx, `
-		SELECT r.repo_id, repos.name, 'run #' || r.number, r.pipeline
+		SELECT r.id, r.repo_id, repos.name, 'run #' || r.number, r.pipeline
 		FROM runs r
 		JOIN repos ON repos.id = r.repo_id
 		WHERE r.status IN ('queued', 'running') AND r.pipeline IS NOT NULL
 		ORDER BY r.repo_id, r.number
-	`)
+		LIMIT $1
+	`, imageFactsLimit+1)
 	if err != nil {
-		return nil, fmt.Errorf("list required run pipelines: %w", err)
+		return nil, false, fmt.Errorf("list required run pipelines: %w", err)
 	}
 	for rows.Next() {
 		var fact pipelineFact
-		if err := rows.Scan(&fact.RepoID, &fact.RepoName, &fact.Source, &fact.Pipeline); err != nil {
+		if err := rows.Scan(&fact.RunID, &fact.RepoID, &fact.RepoName, &fact.Source, &fact.Pipeline); err != nil {
 			rows.Close()
-			return nil, fmt.Errorf("scan required run pipeline: %w", err)
+			return nil, false, fmt.Errorf("scan required run pipeline: %w", err)
 		}
-		facts = append(facts, fact)
+		add(fact)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list required run pipelines: %w", err)
+		return nil, false, fmt.Errorf("list required run pipelines: %w", err)
+	}
+	if len(facts) > imageFactsLimit {
+		facts = facts[:imageFactsLimit]
+		incomplete = true
 	}
 
 	type ruleKey struct {
@@ -916,20 +933,20 @@ func selectRequiredPipelines(ctx context.Context, q postgres.Querier) ([]pipelin
 	rules := map[ruleKey][]string{}
 	rows, err = q.Query(ctx, `SELECT repo_id, kind, pattern FROM ref_rules ORDER BY repo_id, kind, pattern`)
 	if err != nil {
-		return nil, fmt.Errorf("list rules for image facts: %w", err)
+		return nil, false, fmt.Errorf("list rules for image facts: %w", err)
 	}
 	for rows.Next() {
 		var repoID, kind, pattern string
 		if err := rows.Scan(&repoID, &kind, &pattern); err != nil {
 			rows.Close()
-			return nil, fmt.Errorf("scan rule for image facts: %w", err)
+			return nil, false, fmt.Errorf("scan rule for image facts: %w", err)
 		}
 		key := ruleKey{repoID, git.Kind(kind)}
 		rules[key] = append(rules[key], pattern)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list rules for image facts: %w", err)
+		return nil, false, fmt.Errorf("list rules for image facts: %w", err)
 	}
 
 	type ref struct {
@@ -940,14 +957,14 @@ func selectRequiredPipelines(ctx context.Context, q postgres.Querier) ([]pipelin
 	var matched []ref
 	rows, err = q.Query(ctx, `SELECT repo_id, kind, name FROM refs ORDER BY repo_id, kind, name`)
 	if err != nil {
-		return nil, fmt.Errorf("list refs for image facts: %w", err)
+		return nil, false, fmt.Errorf("list refs for image facts: %w", err)
 	}
 	for rows.Next() {
 		var r ref
 		var kind string
 		if err := rows.Scan(&r.repoID, &kind, &r.name); err != nil {
 			rows.Close()
-			return nil, fmt.Errorf("scan ref for image facts: %w", err)
+			return nil, false, fmt.Errorf("scan ref for image facts: %w", err)
 		}
 		r.kind = git.Kind(kind)
 		patterns := rules[ruleKey{r.repoID, r.kind}]
@@ -960,10 +977,10 @@ func selectRequiredPipelines(ctx context.Context, q postgres.Querier) ([]pipelin
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list refs for image facts: %w", err)
+		return nil, false, fmt.Errorf("list refs for image facts: %w", err)
 	}
 	if len(matched) == 0 {
-		return facts, nil
+		return facts, incomplete, nil
 	}
 
 	repoIDs := make([]string, len(matched))
@@ -973,32 +990,39 @@ func selectRequiredPipelines(ctx context.Context, q postgres.Querier) ([]pipelin
 		repoIDs[i], kinds[i], names[i] = r.repoID, string(r.kind), r.name
 	}
 	rows, err = q.Query(ctx, `
-		SELECT DISTINCT ON (r.repo_id, r.ref_kind, r.ref_name)
-		       r.repo_id, repos.name, r.ref_kind, r.ref_name, r.pipeline
-		FROM runs r
-		JOIN repos ON repos.id = r.repo_id
+		SELECT DISTINCT ON (refs.repo_id, refs.kind, refs.name)
+		       r.id, refs.repo_id, repos.name, refs.kind, refs.name, r.pipeline
+		FROM refs
+		JOIN repos ON repos.id = refs.repo_id
 		JOIN unnest($1::text[], $2::text[], $3::text[]) AS matched(repo_id, kind, name)
-		  ON r.repo_id = matched.repo_id AND r.ref_kind = matched.kind AND r.ref_name = matched.name
+		  ON refs.repo_id = matched.repo_id AND refs.kind = matched.kind AND refs.name = matched.name
+		JOIN runs r ON r.repo_id = refs.repo_id AND r.ref_kind = refs.kind
+		  AND r.ref_name = refs.name AND r.commit_hash = refs.commit_hash
 		WHERE r.pipeline IS NOT NULL
-		ORDER BY r.repo_id, r.ref_kind, r.ref_name, r.number DESC
-	`, repoIDs, kinds, names)
+		ORDER BY refs.repo_id, refs.kind, refs.name, r.number DESC
+		LIMIT $4
+	`, repoIDs, kinds, names, imageFactsLimit+1)
 	if err != nil {
-		return nil, fmt.Errorf("list latest pipelines per ref: %w", err)
+		return nil, false, fmt.Errorf("list current-head pipelines per ref: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var fact pipelineFact
 		var kind, name string
-		if err := rows.Scan(&fact.RepoID, &fact.RepoName, &kind, &name, &fact.Pipeline); err != nil {
-			return nil, fmt.Errorf("scan latest pipeline per ref: %w", err)
+		if err := rows.Scan(&fact.RunID, &fact.RepoID, &fact.RepoName, &kind, &name, &fact.Pipeline); err != nil {
+			return nil, false, fmt.Errorf("scan current-head pipeline per ref: %w", err)
 		}
 		fact.Source = kind + " " + name
-		facts = append(facts, fact)
+		add(fact)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list latest pipelines per ref: %w", err)
+		return nil, false, fmt.Errorf("list current-head pipelines per ref: %w", err)
 	}
-	return facts, nil
+	if len(facts) > imageFactsLimit {
+		facts = facts[:imageFactsLimit]
+		incomplete = true
+	}
+	return facts, incomplete, nil
 }
 
 // imageHostRow is one row of image_hosts, with stale already judged by the
