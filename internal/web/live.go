@@ -330,6 +330,9 @@ func (a *App) events(w http.ResponseWriter, r *http.Request) error {
 			if n.channel == ci.LogChannel && stepID == "" {
 				continue
 			}
+			if runID != "" && n.channel == ci.LogChannel && n.payload != runID {
+				continue
+			}
 			// Drop notices for another scoped run before re-authorizing.
 			// A large push produces one notice per run; without this filter
 			// every stream pays four authorization queries for every run.
