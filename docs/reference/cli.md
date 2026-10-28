@@ -20,13 +20,15 @@ The `gitman` binary picks its role from its first argument.
 Run database-only admin commands inside the `web` container:
 `docker compose exec web gitman admin person ...`.
 
-Commands that need the Docker socket, such as `admin worker cleanup` and
-`admin images ...`, run in the `worker` container:
-`docker compose exec worker gitman ...`.
+Commands that read or change the worker's host, such as `admin worker cleanup`,
+run in the `worker` container:
+`docker compose exec worker gitman admin worker cleanup`.
+`admin images ...` reads the database and queues work for a worker, so it can
+run in either.
 
-`doctor` also needs the Docker socket, so run it in the worker. Maintenance
-backups and restores need `pg_dump`/`pg_restore` and a matching native host;
-run them there, not in the web image.
+`doctor` needs the Docker socket, so run it in the worker. Maintenance backups
+and restores need `pg_dump`/`pg_restore` and a matching native host; run them
+there, not in the web image.
 
 ```
 gitman admin person add [--admin] <username>
@@ -119,8 +121,9 @@ Flags go before the positional arguments.
   emits the same structure for scripts; `--worker` selects one worker's host.
 - `admin images missing` lists required images no ready worker advertises, with
   the pipelines that require them. **It exits non-zero when anything is
-  missing**, so it can guard a deployment check. A missing image means a run
-  stays queued; Gitman never pulls it.
+  missing, or when the image facts are incomplete**, so it can guard a
+  deployment check. A missing image means a run stays queued; Gitman never
+  pulls it.
 - `admin images prune` is a dry run by default. `--confirm` queues one durable
   operation for the owning worker and prints its result when the worker finishes
   it (or reports it as pending if no worker claims it in time). It refuses a

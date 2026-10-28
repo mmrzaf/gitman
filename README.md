@@ -298,8 +298,10 @@ page, or with `gitman admin run cancel <repo> <number>`.
 
 ## The command line
 
-The same binary administers an instance
-(`docker compose exec web gitman admin ...`):
+The same binary administers an instance. Database-only commands run in the
+web container (`docker compose exec web gitman admin person ...`); commands
+that read or change the worker host, such as `admin worker cleanup`, run in
+the worker (`docker compose exec worker gitman admin worker cleanup`):
 
 ```
 gitman admin person add [--admin] <username>

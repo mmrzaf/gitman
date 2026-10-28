@@ -17,8 +17,9 @@ databases upgrade in place, and rolling back to beta 25 is safe.
 - **Images page by host**: a summary of every Docker host with its inventory
   freshness, ready and stopped workers, build-cache state and missing required
   images, followed by **Required**, **Built** and **Other** tabs. Built images
-  have a reviewed prune plan and every image operation links to **Operations**.
-  Long refs and reasons stay readable with the keyboard and on a phone.
+  have a reviewed prune plan, and image operations are listed on
+  **Operations**. Long refs and reasons stay readable with the keyboard and on
+  a phone.
 - **Full cache state on the command line**: `gitman admin images list` prints
   the cache policy, last prune, reclaimed bytes and any enforcement error, the
   same details the Images page shows.

@@ -24,8 +24,7 @@ and at most 72 UTF-8 bytes. Usernames and repository names are lowercase.
 
 Sessions have an absolute seven-day expiry. A person keeps at most 20
 sessions and 50 access tokens; creating more removes the oldest. Stored user
-agents are truncated to 512 bytes.
- Password changes, resets, and
+agents are truncated to 512 bytes. Password changes, resets, and
 disabling an account revoke sessions and access tokens. **Revoke all credentials**
 on the account page, or `gitman admin person revoke-all <username>`, also ends
 every session and token while preserving the password. Tokens cover all current and future repositories by default, or selected
