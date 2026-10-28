@@ -913,6 +913,17 @@ func (s *Service) ImageHost(ctx context.Context, engineID string) (*ImageHost, e
 // QueueImagePrune plans a built-image prune from the current inventory and
 // queues it for the host's workers. An empty plan returns no operation.
 func (s *Service) QueueImagePrune(ctx context.Context, engineID, actorID string) (string, PrunePlan, error) {
+	return s.queueImagePrune(ctx, engineID, actorID, nil)
+}
+
+// QueueImagePruneTargets queues only the targets the operator reviewed. The
+// fresh plan is intersected with the requested ref+ID pairs, so an image that
+// became prunable after the page rendered is never removed unseen.
+func (s *Service) QueueImagePruneTargets(ctx context.Context, engineID, actorID string, requested []ImageTarget) (string, PrunePlan, error) {
+	return s.queueImagePrune(ctx, engineID, actorID, requested)
+}
+
+func (s *Service) queueImagePrune(ctx context.Context, engineID, actorID string, requested []ImageTarget) (string, PrunePlan, error) {
 	host, err := s.freshImageHost(ctx, engineID)
 	if err != nil {
 		return "", PrunePlan{}, err
@@ -920,15 +931,31 @@ func (s *Service) QueueImagePrune(ctx context.Context, engineID, actorID string)
 	if host.FactsIncomplete {
 		return "", PrunePlan{}, apperr.New(apperr.KindConflict, "Image facts are incomplete; no built image is pruned. Try again after the current pipeline snapshot is under the limit.")
 	}
-	if len(host.Plan.Remove) == 0 {
-		return "", host.Plan, nil
+	plan := host.Plan
+	if requested != nil {
+		wanted := make(map[string]bool, len(requested))
+		for _, target := range requested {
+			wanted[NormalizeImageReference(target.Ref)+"\x00"+target.ID] = true
+		}
+		plan.Remove = nil
+		plan.ReclaimableBytes = 0
+		for _, image := range host.Plan.Remove {
+			if !wanted[ImageKey(image)] {
+				continue
+			}
+			plan.Remove = append(plan.Remove, image)
+			plan.ReclaimableBytes += image.Size
+		}
 	}
-	targets := make([]ImageTarget, 0, len(host.Plan.Remove))
-	for _, image := range host.Plan.Remove {
+	if len(plan.Remove) == 0 {
+		return "", plan, nil
+	}
+	targets := make([]ImageTarget, 0, len(plan.Remove))
+	for _, image := range plan.Remove {
 		targets = append(targets, ImageTarget{Ref: image.Ref(), ID: image.ID})
 	}
 	id, err := s.queueImageOperation(ctx, engineID, actorID, ImageOperationPrune, imageOperationPayload{Targets: targets})
-	return id, host.Plan, err
+	return id, plan, err
 }
 
 // QueueImageRemove queues one explicitly named image. Required and in-use
