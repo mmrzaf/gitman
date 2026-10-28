@@ -275,10 +275,13 @@ func TestTokensAreCappedPerPerson(t *testing.T) {
 		t.Fatal(err)
 	}
 	repos := tokenTestRepos(t, database)
+	var last string
 	for i := 0; i < maxTokensPerPerson+5; i++ {
-		if _, _, err := svc.CreateToken(ctx, p.ID, "token-"+strconv.Itoa(i), ScopeRead, nil, repos); err != nil {
+		plain, _, err := svc.CreateToken(ctx, p.ID, "token-"+strconv.Itoa(i), ScopeRead, nil, repos)
+		if err != nil {
 			t.Fatal(err)
 		}
+		last = plain
 	}
 	tokens, err := svc.ListTokens(ctx, p.ID)
 	if err != nil {
@@ -286,5 +289,8 @@ func TestTokensAreCappedPerPerson(t *testing.T) {
 	}
 	if len(tokens) != maxTokensPerPerson {
 		t.Fatalf("tokens = %d, want %d", len(tokens), maxTokensPerPerson)
+	}
+	if _, _, err := svc.Authenticate(ctx, last, "token-repo"); err != nil {
+		t.Fatalf("the newest token was pruned: %v", err)
 	}
 }

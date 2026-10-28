@@ -307,10 +307,11 @@ func (s *Service) CreateSession(ctx context.Context, person *Person, ttl time.Du
 	expiresAt = time.Now().Add(ttl)
 	userAgent = truncateUserAgent(userAgent)
 	if err := s.db.Tx(ctx, func(tx postgres.Tx) error {
-		if err := insertSession(ctx, tx, token.Hash(plain), person, expiresAt, ip, userAgent); err != nil {
+		sessionID, err := insertSession(ctx, tx, token.Hash(plain), person, expiresAt, ip, userAgent)
+		if err != nil {
 			return err
 		}
-		return pruneSessions(ctx, tx, person.ID)
+		return pruneSessions(ctx, tx, person.ID, sessionID)
 	}); err != nil {
 		return "", time.Time{}, err
 	}
@@ -361,7 +362,8 @@ func (s *Service) ListSessions(ctx context.Context, personID string) ([]Session,
 	return selectSessions(ctx, s.db.Q, personID)
 }
 
-// ListAllSessions returns every unexpired session on the instance.
+// ListAllSessions returns up to 500 unexpired sessions on the instance,
+// most recently seen first.
 func (s *Service) ListAllSessions(ctx context.Context) ([]Session, error) {
 	return selectSessions(ctx, s.db.Q, "")
 }
@@ -459,7 +461,7 @@ func (s *Service) CreateToken(ctx context.Context, personID, name string, scope 
 				return apperr.New(apperr.KindInvalid, "select repositories you can read")
 			}
 		}
-		return pruneTokens(ctx, tx, personID)
+		return pruneTokens(ctx, tx, personID, created.ID)
 	})
 	if err != nil {
 		return "", nil, err

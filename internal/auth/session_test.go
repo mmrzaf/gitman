@@ -190,10 +190,13 @@ func TestSessionsAreCappedAndUserAgentIsTruncated(t *testing.T) {
 		t.Fatal(err)
 	}
 	longAgent := strings.Repeat("x", 1000)
+	var last string
 	for i := 0; i < maxSessionsPerPerson+5; i++ {
-		if _, _, err := svc.CreateSession(ctx, p, time.Hour, "", longAgent); err != nil {
+		token, _, err := svc.CreateSession(ctx, p, time.Hour, "", longAgent)
+		if err != nil {
 			t.Fatal(err)
 		}
+		last = token
 	}
 	sessions, err := svc.ListSessions(ctx, p.ID)
 	if err != nil {
@@ -206,5 +209,8 @@ func TestSessionsAreCappedAndUserAgentIsTruncated(t *testing.T) {
 		if len(session.UserAgent) > maxUserAgentBytes {
 			t.Fatalf("user agent length = %d, want at most %d", len(session.UserAgent), maxUserAgentBytes)
 		}
+	}
+	if _, err := svc.SessionPerson(ctx, last); err != nil {
+		t.Fatalf("the newest session was pruned: %v", err)
 	}
 }
