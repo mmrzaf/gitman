@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -177,5 +178,33 @@ func TestSessionExpires(t *testing.T) {
 	}
 	if _, err := svc.SessionPerson(ctx, token); !errors.Is(err, ErrInvalidSession) {
 		t.Fatalf("SessionPerson(already expired) = %v, want ErrInvalidSession", err)
+	}
+}
+
+func TestSessionsAreCappedAndUserAgentIsTruncated(t *testing.T) {
+	ctx := context.Background()
+	database := pgtest.Open(t)
+	svc := NewService(database)
+	p, err := svc.Create(ctx, "darius", "correct-horse-battery", false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	longAgent := strings.Repeat("x", 1000)
+	for i := 0; i < maxSessionsPerPerson+5; i++ {
+		if _, _, err := svc.CreateSession(ctx, p, time.Hour, "", longAgent); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sessions, err := svc.ListSessions(ctx, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != maxSessionsPerPerson {
+		t.Fatalf("sessions = %d, want %d", len(sessions), maxSessionsPerPerson)
+	}
+	for _, session := range sessions {
+		if len(session.UserAgent) > maxUserAgentBytes {
+			t.Fatalf("user agent length = %d, want at most %d", len(session.UserAgent), maxUserAgentBytes)
+		}
 	}
 }

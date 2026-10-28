@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
@@ -262,5 +263,28 @@ func TestAllRepositoryTokenIncludesFutureRepositories(t *testing.T) {
 	list, err := svc.ListTokens(ctx, p.ID)
 	if err != nil || len(list) != 1 || !list[0].AllRepositories {
 		t.Fatalf("tokens=%v err=%v", list, err)
+	}
+}
+
+func TestTokensAreCappedPerPerson(t *testing.T) {
+	ctx := context.Background()
+	database := pgtest.Open(t)
+	svc := NewService(database)
+	p, err := svc.Create(ctx, "darius", "correct-horse-battery", false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repos := tokenTestRepos(t, database)
+	for i := 0; i < maxTokensPerPerson+5; i++ {
+		if _, _, err := svc.CreateToken(ctx, p.ID, "token-"+strconv.Itoa(i), ScopeRead, nil, repos); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tokens, err := svc.ListTokens(ctx, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tokens) != maxTokensPerPerson {
+		t.Fatalf("tokens = %d, want %d", len(tokens), maxTokensPerPerson)
 	}
 }

@@ -18,6 +18,12 @@ import (
 	"github.com/mmrzaf/gitman/internal/token"
 )
 
+const (
+	maxSessionsPerPerson = 20
+	maxTokensPerPerson   = 50
+	maxUserAgentBytes    = 512
+)
+
 // Service manages people, their sessions and their access tokens.
 // Methods that change a person take actorID, the person making the
 // change (empty for the command line), and record the change in the
@@ -299,10 +305,27 @@ func (s *Service) CreateSession(ctx context.Context, person *Person, ttl time.Du
 		return "", time.Time{}, fmt.Errorf("generate session token: %w", err)
 	}
 	expiresAt = time.Now().Add(ttl)
-	if err := insertSession(ctx, s.db.Q, token.Hash(plain), person, expiresAt, ip, userAgent); err != nil {
+	userAgent = truncateUserAgent(userAgent)
+	if err := s.db.Tx(ctx, func(tx postgres.Tx) error {
+		if err := insertSession(ctx, tx, token.Hash(plain), person, expiresAt, ip, userAgent); err != nil {
+			return err
+		}
+		return pruneSessions(ctx, tx, person.ID)
+	}); err != nil {
 		return "", time.Time{}, err
 	}
 	return plain, expiresAt, nil
+}
+
+func truncateUserAgent(value string) string {
+	if len(value) <= maxUserAgentBytes {
+		return value
+	}
+	value = value[:maxUserAgentBytes]
+	for len(value) > 0 && !utf8.ValidString(value) {
+		value = value[:len(value)-1]
+	}
+	return value
 }
 
 // SessionPerson resolves a session token to the person it belongs to. A
@@ -436,7 +459,7 @@ func (s *Service) CreateToken(ctx context.Context, personID, name string, scope 
 				return apperr.New(apperr.KindInvalid, "select repositories you can read")
 			}
 		}
-		return nil
+		return pruneTokens(ctx, tx, personID)
 	})
 	if err != nil {
 		return "", nil, err
