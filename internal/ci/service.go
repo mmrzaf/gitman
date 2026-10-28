@@ -124,7 +124,7 @@ func (s *Service) CreateTx(ctx context.Context, tx postgres.Tx, p CreateParams) 
 
 	for i, step := range pl.steps {
 		status := StepSkipped
-		if step.run {
+		if pl.status == StatusQueued && step.run {
 			status = StepPending
 		}
 		if err := insertStep(ctx, tx, run.ID, i, step.name, step.kind, status); err != nil {
@@ -709,7 +709,13 @@ func (s *Service) BindWorkerEngine(ctx context.Context, workerID, engineID, root
 			return err
 		}
 		var incompatible bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM workers WHERE engine_id=$1 AND workspace_root<>$2)`, engineID, root).Scan(&incompatible); err != nil {
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS(
+				SELECT 1 FROM workers
+				WHERE engine_id=$1 AND workspace_root<>$2 AND id<>$4
+				  AND stopped_at IS NULL AND heartbeat_at >= now() - make_interval(secs => $3)
+			)
+		`, engineID, root, WorkerLostAfter.Seconds(), workerID).Scan(&incompatible); err != nil {
 			return err
 		}
 		if incompatible {
@@ -737,17 +743,20 @@ func (s *Service) ConfirmContainersRemoved(ctx context.Context, runID string) er
 // deployments that can map to built tags. It is one snapshot: callers classify
 // and plan from it without re-reading checkouts or the database.
 func (s *Service) ImageFacts(ctx context.Context) (*ImageFacts, error) {
-	pipelines, err := selectRequiredPipelines(ctx, s.db.Q)
+	pipelines, incomplete, err := selectRequiredPipelines(ctx, s.db.Q)
 	if err != nil {
 		return nil, err
 	}
 	facts := NewImageFacts()
+	facts.Incomplete = incomplete
 	repoIDs := map[string]bool{}
 	for _, fact := range pipelines {
 		cfg, err := Parse(fact.Pipeline)
 		if err != nil {
 			// Stored bytes were valid when the run was created; a row that
-			// is not readable now cannot protect or prune anything.
+			// is not readable now may still require images. Treat the
+			// snapshot as incomplete so nothing is pruned.
+			facts.Incomplete = true
 			continue
 		}
 		source := ImageSource{Repo: fact.RepoName, Ref: fact.Source}
@@ -842,7 +851,7 @@ func (s *Service) ImageHosts(ctx context.Context) ([]ImageHost, error) {
 		applyPlan(classified, plan)
 		host := &ImageHost{
 			EngineID: row.EngineID, Hostname: row.Hostname, HasInventory: true, Stale: row.Stale,
-			CollectedAt: row.CollectedAt, Automation: row.Automation, Images: classified, Plan: plan,
+			CollectedAt: row.CollectedAt, Automation: row.Automation, FactsIncomplete: facts.Incomplete, Images: classified, Plan: plan,
 			Cache: ImageCacheState{
 				Size: row.CacheSize, Reclaimable: row.CacheReclaimable,
 				Policy:   ImageCachePolicy{KeepGiB: row.KeepGiB, OlderThanHours: row.OlderHours},
@@ -858,7 +867,7 @@ func (s *Service) ImageHosts(ctx context.Context) ([]ImageHost, error) {
 		}
 		host := byEngine[worker.EngineID]
 		if host == nil {
-			host = &ImageHost{EngineID: worker.EngineID, Hostname: worker.Hostname}
+			host = &ImageHost{EngineID: worker.EngineID, Hostname: worker.Hostname, FactsIncomplete: facts.Incomplete}
 			byEngine[worker.EngineID] = host
 		}
 		if host.Hostname == "" {
@@ -906,19 +915,49 @@ func (s *Service) ImageHost(ctx context.Context, engineID string) (*ImageHost, e
 // QueueImagePrune plans a built-image prune from the current inventory and
 // queues it for the host's workers. An empty plan returns no operation.
 func (s *Service) QueueImagePrune(ctx context.Context, engineID, actorID string) (string, PrunePlan, error) {
+	return s.queueImagePrune(ctx, engineID, actorID, nil)
+}
+
+// QueueImagePruneTargets queues only the targets the operator reviewed. The
+// fresh plan is intersected with the requested ref+ID pairs, so an image that
+// became prunable after the page rendered is never removed unseen.
+func (s *Service) QueueImagePruneTargets(ctx context.Context, engineID, actorID string, requested []ImageTarget) (string, PrunePlan, error) {
+	return s.queueImagePrune(ctx, engineID, actorID, requested)
+}
+
+func (s *Service) queueImagePrune(ctx context.Context, engineID, actorID string, requested []ImageTarget) (string, PrunePlan, error) {
 	host, err := s.freshImageHost(ctx, engineID)
 	if err != nil {
 		return "", PrunePlan{}, err
 	}
-	if len(host.Plan.Remove) == 0 {
-		return "", host.Plan, nil
+	if host.FactsIncomplete {
+		return "", PrunePlan{}, apperr.New(apperr.KindConflict, "Image facts are incomplete; no built image is pruned. Try again after every stored pipeline can be read.")
 	}
-	targets := make([]ImageTarget, 0, len(host.Plan.Remove))
-	for _, image := range host.Plan.Remove {
+	plan := host.Plan
+	if requested != nil {
+		wanted := make(map[string]bool, len(requested))
+		for _, target := range requested {
+			wanted[NormalizeImageReference(target.Ref)+"\x00"+target.ID] = true
+		}
+		plan.Remove = nil
+		plan.ReclaimableBytes = 0
+		for _, image := range host.Plan.Remove {
+			if !wanted[ImageKey(image)] {
+				continue
+			}
+			plan.Remove = append(plan.Remove, image)
+			plan.ReclaimableBytes += image.Size
+		}
+	}
+	if len(plan.Remove) == 0 {
+		return "", plan, nil
+	}
+	targets := make([]ImageTarget, 0, len(plan.Remove))
+	for _, image := range plan.Remove {
 		targets = append(targets, ImageTarget{Ref: image.Ref(), ID: image.ID})
 	}
 	id, err := s.queueImageOperation(ctx, engineID, actorID, ImageOperationPrune, imageOperationPayload{Targets: targets})
-	return id, host.Plan, err
+	return id, plan, err
 }
 
 // QueueImageRemove queues one explicitly named image. Required and in-use
@@ -927,6 +966,9 @@ func (s *Service) QueueImageRemove(ctx context.Context, engineID, ref, actorID s
 	host, err := s.freshImageHost(ctx, engineID)
 	if err != nil {
 		return "", err
+	}
+	if host.FactsIncomplete {
+		return "", apperr.New(apperr.KindConflict, "Image facts are incomplete; no image is removed. Try again after every stored pipeline can be read.")
 	}
 	normalized := NormalizeImageReference(ref)
 	var found *ClassifiedImage

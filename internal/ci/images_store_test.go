@@ -117,6 +117,49 @@ steps:
 	}
 }
 
+func TestImageFactsUseOnlyCurrentHeadPipeline(t *testing.T) {
+	ctx := t.Context()
+	database := pgtest.Open(t)
+	seedRepo(t, database, "r1", "app")
+	for _, query := range []string{
+		`INSERT INTO refs (repo_id, kind, name, commit_hash) VALUES ('r1', 'branch', 'main', 'new')`,
+		`INSERT INTO ref_rules (id, repo_id, kind, pattern, run_on_push) VALUES ('rule1', 'r1', 'branch', 'main', true)`,
+	} {
+		if _, err := database.Pool.Exec(ctx, query); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := database.Pool.Exec(ctx, `
+		INSERT INTO runs (id, repo_id, number, commit_hash, trigger, status, ref_kind, ref_name, pipeline, finished_at)
+		VALUES ('old', 'r1', 1, 'old', 'push', 'passed', 'branch', 'main', $1, now())
+	`, []byte("image: alpine:3.20\nimages:\n  app: {keep: 1}\nsteps:\n  - name: build\n    run: echo hi\n")); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(database)
+	facts, err := svc.ImageFacts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := facts.Built[NormalizeImageRepository("app")]; ok {
+		t.Fatal("an older commit's pipeline leaked into current-head facts")
+	}
+
+	if _, err := database.Pool.Exec(ctx, `
+		INSERT INTO runs (id, repo_id, number, commit_hash, trigger, status, ref_kind, ref_name, pipeline, finished_at)
+		VALUES ('new', 'r1', 2, 'new', 'push', 'passed', 'branch', 'main', $1, now())
+	`, []byte("image: alpine:3.20\nimages:\n  app: {keep: 2}\nsteps:\n  - name: build\n    run: echo hi\n")); err != nil {
+		t.Fatal(err)
+	}
+	facts, err = svc.ImageFacts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := facts.Built[NormalizeImageRepository("app")]
+	if app.Keep != 2 {
+		t.Fatalf("current-head app keep = %d, want 2", app.Keep)
+	}
+}
+
 func TestPublishInventoryReplacesInPlace(t *testing.T) {
 	ctx := t.Context()
 	database := pgtest.Open(t)
@@ -235,5 +278,52 @@ func TestQueueImageOperationsRefuseStaleInventory(t *testing.T) {
 	}
 	if _, err := svc.QueueImageRemove(ctx, "engine-1", "app:1", ""); apperr.KindOf(err) != apperr.KindConflict {
 		t.Fatalf("stale remove error = %v, want conflict", err)
+	}
+}
+
+func TestQueueImagePruneTargetsKeepsOnlyTheReviewedPlan(t *testing.T) {
+	ctx := t.Context()
+	database := pgtest.Open(t)
+	seedRepo(t, database, "r1", "app")
+	for _, query := range []string{
+		`INSERT INTO workers (id, hostname, engine_id) VALUES ('w1', 'host', 'engine-1')`,
+		`INSERT INTO refs (repo_id, kind, name, commit_hash) VALUES ('r1', 'branch', 'main', 'abc')`,
+		`INSERT INTO ref_rules (id, repo_id, kind, pattern, run_on_push) VALUES ('rule1', 'r1', 'branch', 'main', true)`,
+		`INSERT INTO runs (id, repo_id, number, commit_hash, trigger, status, ref_kind, ref_name, pipeline)
+		 VALUES ('run1', 'r1', 1, 'abc', 'push', 'queued', 'branch', 'main', $1)`,
+	} {
+		if query == `INSERT INTO runs (id, repo_id, number, commit_hash, trigger, status, ref_kind, ref_name, pipeline)
+		 VALUES ('run1', 'r1', 1, 'abc', 'push', 'queued', 'branch', 'main', $1)` {
+			if _, err := database.Pool.Exec(ctx, query, []byte("image: alpine:3.20\nimages:\n  app: {keep: 1}\nsteps:\n  - name: build\n    run: echo hi\n")); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		if _, err := database.Pool.Exec(ctx, query); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Now()
+	if err := NewService(database).PublishInventory(ctx, HostInventory{
+		EngineID: "engine-1", WorkerID: "w1", Hostname: "host",
+		Images: []InventoryImage{
+			{Repository: "app", NormalizedRepository: "docker.io/library/app", Tag: "new", ID: "sha256:new", Size: 10, Created: now},
+			{Repository: "app", NormalizedRepository: "docker.io/library/app", Tag: "old", ID: "sha256:old", Size: 10, Created: now.Add(-time.Hour)},
+		},
+		Cache: ImageCachePolicy{KeepGiB: 3, OlderThanHours: 168},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(database)
+	id, plan, err := svc.QueueImagePruneTargets(ctx, "engine-1", "", []ImageTarget{{Ref: "app:old", ID: "sha256:old"}})
+	if err != nil || id == "" || len(plan.Remove) != 1 || plan.Remove[0].Ref() != "app:old" {
+		t.Fatalf("reviewed prune = %q, %+v, %v", id, plan, err)
+	}
+	operation, err := svc.ImageOperation(ctx, id)
+	if err != nil || len(operation.Targets) != 1 || operation.Targets[0].Ref != "app:old" || operation.Targets[0].ID != "sha256:old" {
+		t.Fatalf("queued targets = %+v, %v", operation, err)
+	}
+	if id, plan, err := svc.QueueImagePruneTargets(ctx, "engine-1", "", []ImageTarget{{Ref: "app:new", ID: "sha256:new"}}); err != nil || id != "" || len(plan.Remove) != 0 {
+		t.Fatalf("unreviewed target = %q, %+v, %v", id, plan, err)
 	}
 }

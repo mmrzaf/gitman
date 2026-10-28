@@ -90,7 +90,7 @@ func TestAdminImagesMissingExitsNonZero(t *testing.T) {
 	if err := adminImagesMissing(ctx, env, nil); err == nil {
 		t.Fatal("missing required images did not fail the command")
 	}
-	if got := outputOf(env); !strings.Contains(got, "alpine:3.20") || !strings.Contains(got, "app branch main") {
+	if got := outputOf(env); !strings.Contains(got, "alpine:3.20") || !strings.Contains(got, "app run #1") {
 		t.Fatalf("missing output = %q", got)
 	}
 	if _, err := database.Pool.Exec(ctx, `UPDATE workers SET images = ARRAY['docker.io/library/alpine:3.20']`); err != nil {
@@ -235,5 +235,31 @@ func TestAdminImagesCachePrune(t *testing.T) {
 	}
 	if kind != "cache.prune" || !strings.Contains(payload, `"keep_gib": 5`) || !strings.Contains(payload, `"older_than_hours": 24`) {
 		t.Fatalf("cache operation = %q, %s", kind, payload)
+	}
+}
+
+func TestAdminImagesMissingFailsWhenFactsAreIncomplete(t *testing.T) {
+	env, database, _ := newAdminEnv(t)
+	ctx := t.Context()
+	if _, err := database.Pool.Exec(ctx, `INSERT INTO repos (id, name) VALUES ('r1', 'app')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Pool.Exec(ctx, `
+		INSERT INTO runs (id, repo_id, number, commit_hash, trigger, status, ref_kind, ref_name, pipeline)
+		VALUES ('run1', 'r1', 1, 'abc', 'push', 'queued', 'branch', 'main', $1)
+	`, []byte("image: [")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Pool.Exec(ctx, `
+		INSERT INTO workers (id, hostname, engine_id, ready, readiness_at, heartbeat_at)
+		VALUES ('w1', 'host', 'engine-1', true, now(), now())
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if err := adminImagesMissing(ctx, env, nil); err == nil {
+		t.Fatal("missing-image check passed with incomplete facts")
+	}
+	if got := outputOf(env); !strings.Contains(got, "cannot be trusted") {
+		t.Fatalf("output = %q", got)
 	}
 }

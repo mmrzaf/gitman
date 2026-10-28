@@ -6,6 +6,7 @@ GO := go
 VERSION ?= dev
 GOPROXY ?= https://proxy.golang.org,direct
 LDFLAGS := -s -w -X main.version=$(VERSION)
+GOLANGCI_LINT_VERSION ?= v2.15.0
 
 .DEFAULT_GOAL := help
 
@@ -53,7 +54,7 @@ fmt: ## Format Go files
 	gofmt -w cmd internal
 
 lint: ## Run golangci-lint
-	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2 run --timeout=5m
+	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run --timeout=5m
 
 deps: ## Download and tidy Go modules
 	GOPROXY=$(GOPROXY) $(GO) mod download

@@ -13,6 +13,11 @@ import (
 // pass or a brief database outage without acting on a stale picture.
 const ImageInventoryStaleAfter = 5 * time.Minute
 
+// imageFactsLimit bounds how many stored pipelines one page or worker may
+// parse. Hitting it makes the facts incomplete, and incomplete facts never
+// prune or remove images.
+const imageFactsLimit = 2000
+
 // ImageClass is what an image means to Gitman.
 type ImageClass string
 
@@ -101,6 +106,9 @@ type BuiltPolicy struct {
 type ImageFacts struct {
 	Required map[string]RequiredImage
 	Built    map[string]BuiltPolicy
+	// Incomplete means the pipeline snapshot hit its row limit. The page must
+	// not offer image operations and the planner must not remove anything.
+	Incomplete bool
 }
 
 // NewImageFacts returns empty facts ready to be filled.
@@ -167,6 +175,9 @@ func Classify(images []InventoryImage, facts *ImageFacts) []ClassifiedImage {
 			classified.Class = ImageBuilt
 			classified.Keep = built.Keep
 			classified.Reason = "built by " + sourcesText(built.Sources)
+			if facts.Incomplete {
+				classified.Refusal = "image facts are incomplete; no built image is pruned"
+			}
 			builtByRepository[image.NormalizedRepository] = append(builtByRepository[image.NormalizedRepository], i)
 		}
 		out[i] = classified
@@ -282,6 +293,9 @@ func PlanPrune(images []ClassifiedImage) PrunePlan {
 			image.Refusal = "dangling image; remove it explicitly"
 		case image.Class == ImageOther:
 			image.Refusal = image.Reason
+		case image.Refusal != "":
+			// The classifier already refused it, for example because the
+			// pipeline snapshot was incomplete.
 		case image.Deployed && image.DeployedFallback:
 			image.Refusal = "newest tag kept because the deployed version could not be matched to a tag"
 		case image.Deployed:
@@ -411,18 +425,19 @@ type ImageCacheState struct {
 // ImageHost is one Docker host's images and cache, as the page and CLI show
 // them.
 type ImageHost struct {
-	EngineID     string            `json:"host_id"`
-	Hostname     string            `json:"hostname"`
-	HasInventory bool              `json:"has_inventory"`
-	Stale        bool              `json:"stale"`
-	CollectedAt  time.Time         `json:"collected_at,omitempty"`
-	Automation   string            `json:"automation"`
-	Workers      []HostWorker      `json:"workers"`
-	Images       []ClassifiedImage `json:"images"`
-	Plan         PrunePlan         `json:"plan"`
-	Missing      []MissingImage    `json:"missing,omitempty"`
-	Cache        ImageCacheState   `json:"cache"`
-	Operations   []ImageOperation  `json:"operations,omitempty"`
+	EngineID        string            `json:"host_id"`
+	Hostname        string            `json:"hostname"`
+	HasInventory    bool              `json:"has_inventory"`
+	Stale           bool              `json:"stale"`
+	CollectedAt     time.Time         `json:"collected_at,omitempty"`
+	Automation      string            `json:"automation"`
+	FactsIncomplete bool              `json:"facts_incomplete,omitempty"`
+	Workers         []HostWorker      `json:"workers"`
+	Images          []ClassifiedImage `json:"images"`
+	Plan            PrunePlan         `json:"plan"`
+	Missing         []MissingImage    `json:"missing,omitempty"`
+	Cache           ImageCacheState   `json:"cache"`
+	Operations      []ImageOperation  `json:"operations,omitempty"`
 }
 
 // ImageOperationKind is a durable piece of worker-targeted image work.

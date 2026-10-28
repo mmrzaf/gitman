@@ -175,6 +175,12 @@ func (w *Worker) applyImageTargets(ctx context.Context, targets []ci.ImageTarget
 	if err != nil {
 		return result, fmt.Errorf("read image facts: %w", err)
 	}
+	if facts.Incomplete {
+		for _, target := range targets {
+			result.Results = append(result.Results, ci.ImageResult{Ref: target.Ref, Status: "skipped", Reason: "image facts are incomplete; no image is removed"})
+		}
+		return result, nil
+	}
 	images, _, _, err := w.docker.ImageInventory(ctx)
 	if err != nil {
 		return result, fmt.Errorf("read image inventory: %w", err)
@@ -215,6 +221,19 @@ func (w *Worker) applyImageTargets(ctx context.Context, targets []ci.ImageTarget
 			}
 		} else if ok, reason := ci.PlanRemoveOne(image); !ok {
 			result.Results = append(result.Results, ci.ImageResult{Ref: target.Ref, Status: "skipped", Reason: reason})
+			continue
+		}
+		id, found, err := w.docker.ImageID(ctx, target.Ref)
+		if err != nil {
+			result.Results = append(result.Results, ci.ImageResult{Ref: target.Ref, Status: "failed", Reason: err.Error()})
+			continue
+		}
+		if !found {
+			result.Results = append(result.Results, ci.ImageResult{Ref: target.Ref, Status: "removed", Reason: "already absent"})
+			continue
+		}
+		if id != target.ID {
+			result.Results = append(result.Results, ci.ImageResult{Ref: target.Ref, Status: "skipped", Reason: "the tag now points to a different image"})
 			continue
 		}
 		if err := w.docker.RemoveImage(ctx, target.Ref); err != nil {

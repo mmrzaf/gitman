@@ -35,6 +35,26 @@ function focusKey(region, node) {
   return (fresh) => focusable(fresh)[i] || null;
 }
 
+// scrollState records the panels marked data-live-scroll. A live swap
+// replaces their content, so without this a person reading further down
+// a feed is sent back to the top by an unrelated push.
+function scrollState(region) {
+  const nodes = region.matches("[data-live-scroll]") ? [region] : [];
+  nodes.push(...region.querySelectorAll("[data-live-scroll]"));
+  return nodes.map((node) => [node.dataset.liveScroll, node.scrollTop, node.scrollLeft]);
+}
+
+function restoreScroll(region, state) {
+  for (const [key, top, left] of state) {
+    const node = region.matches(`[data-live-scroll="${CSS.escape(key)}"]`)
+      ? region
+      : region.querySelector(`[data-live-scroll="${CSS.escape(key)}"]`);
+    if (!node) continue;
+    node.scrollTop = top;
+    node.scrollLeft = left;
+  }
+}
+
 function announcements(root) {
   return [...root.querySelectorAll("[data-announce]")].map((node) => node.dataset.announce);
 }
@@ -128,9 +148,11 @@ if (!main || !("EventSource" in window)) {
       const replacement = fresh.querySelector(`[data-live-region="${region.dataset.liveRegion}"]`);
       if (!replacement) continue;
       const focused = region.contains(document.activeElement) ? focusKey(region, document.activeElement) : null;
+      const scrolled = scrollState(region);
       const imported = document.importNode(replacement, true);
       region.replaceWith(imported);
       if (focused) focused(imported)?.focus({ preventScroll: true });
+      restoreScroll(imported, scrolled);
     }
     document.dispatchEvent(new CustomEvent("gitman:refreshed"));
     const changed = announcements(document).filter((words) => !before.includes(words));

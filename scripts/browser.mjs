@@ -79,6 +79,10 @@ const query = (page) => new URL(page.url()).searchParams;
 
   sh(process.env.STOP_WORKER);
   const homeBefore = await home.locator("[data-live-region=repos]").innerText();
+  const timelineScroll = await home.locator("[data-live-region=timeline]").evaluate((el) => {
+    el.scrollTop = 120;
+    return el.scrollTop;
+  });
   sh(process.env.PUSH_SLOW);
 
   const homeUpdated = await until(async () => /#6/.test(await home.locator("[data-live-region=repos]").innerText()));
@@ -103,6 +107,8 @@ const query = (page) => new URL(page.url()).searchParams;
     && /running/i.test(await home.locator("[data-live-region=repos]").innerText()));
   const after = await focused(home);
   check("focus survives a live update", swapped && after?.href === "/demo/runs/6", JSON.stringify(after));
+  const timelineAfter = await home.locator("[data-live-region=timeline]").evaluate((el) => el.scrollTop);
+  check("scroll survives a live update", timelineScroll > 0 && timelineAfter === timelineScroll, `${timelineScroll} → ${timelineAfter}`);
 
   let buildStep = null;
   const sawBuild = await until(async () => {
@@ -173,8 +179,8 @@ const query = (page) => new URL(page.url()).searchParams;
   await page.locator("[role=tab][data-tab=tokens]").focus();
   await page.keyboard.press("ArrowRight");
   check("arrow keys move between tabs and the address follows",
-    (await page.locator("[data-tab=password]").getAttribute("aria-selected")) === "true" && query(page).get("tab") === "password"
-    && (await page.locator("#panel-password").isVisible()) && !(await page.locator("#panel-tokens").isVisible())
+    (await page.locator("[data-tab=sessions]").getAttribute("aria-selected")) === "true" && query(page).get("tab") === "sessions"
+    && (await page.locator("#panel-sessions").isVisible()) && !(await page.locator("#panel-tokens").isVisible())
     && (await focused(page))?.role === "tab");
   await page.goBack();
   check("Back returns to the tab before", (await page.locator("[data-tab=tokens]").getAttribute("aria-selected")) === "true"
@@ -440,6 +446,13 @@ const screens = [
   ["settings-secrets", "/demo/settings?tab=secrets", "#settings-title"],
   ["settings-danger", "/demo/settings?tab=danger", "#settings-title"],
   ["people", "/people", "#people-title"],
+  ["images", "/images", "#images-title"],
+  ["images-built", "/images?tab=built", "#images-title"],
+  ["images-other", "/images?tab=other", "#images-title"],
+  ["workers", "/workers", "#workers-title"],
+  ["sessions", "/sessions", "#sessions-title"],
+  ["operations", "/operations", "#operations-title"],
+  ["changelog", "/changelog", "#changelog-title"],
   ["account", "/me", "#account-title"],
   ["account-password", "/me?tab=password", "#account-title"],
   ["new-token", "/me?dialog=token-new", "#account-title"],

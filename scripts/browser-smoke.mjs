@@ -72,7 +72,7 @@ for (const js of [true, false]) {
    await page.locator('[data-theme-choice=system]').click();
    await page.keyboard.press('Escape');
    await page.locator('[data-tab=tokens]').focus(); await page.keyboard.press('ArrowRight');
-   if (new URL(page.url()).searchParams.get('tab')!=='password') errors.push('keyboard tab navigation');
+   if (new URL(page.url()).searchParams.get('tab')!=='sessions') errors.push('keyboard tab navigation');
    await page.setViewportSize({width:320,height:568});
    await page.goto(`${base}/me`);
    await page.locator('[data-dialog-open=token-new]').click();

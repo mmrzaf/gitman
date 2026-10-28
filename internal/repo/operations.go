@@ -29,6 +29,7 @@ type repositoryIntent struct{ Name, Description, Branch string }
 const (
 	recoveryLockTimeout    = 15 * time.Second
 	recoveryAttemptTimeout = 5 * time.Minute
+	abandonLockTimeout     = 5 * time.Second
 )
 
 var (
@@ -119,10 +120,27 @@ func (s *Service) AbandonOperation(ctx context.Context, opID, actorID, reason st
 	if len(reason) > 1000 {
 		return nil, apperr.New(apperr.KindInvalid, "the reason must be at most 1000 characters")
 	}
+	var repoID string
+	if err := s.db.Q.QueryRow(ctx, `SELECT COALESCE(repo_id, '') FROM repository_operations WHERE id = $1 AND completed_at IS NULL`, opID).Scan(&repoID); err != nil {
+		return nil, postgres.NormalizeNotFound(err)
+	}
+	if repoID == "" {
+		return nil, postgres.ErrNotFound
+	}
+	lockCtx, stopLock := context.WithTimeout(ctx, abandonLockTimeout)
+	unlock, err := s.git.MutationLock(lockCtx, repoID)
+	stopLock()
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			return nil, apperr.New(apperr.KindConflict, "That operation is still active. Wait for it to finish or stop its process before abandoning it.")
+		}
+		return nil, err
+	}
+	defer unlock()
 	ctx, stop := context.WithTimeout(ctx, 30*time.Second)
 	defer stop()
 	var abandoned *Operation
-	err := s.db.Tx(ctx, func(tx postgres.Tx) error {
+	err = s.db.Tx(ctx, func(tx postgres.Tx) error {
 		op := &Operation{}
 		err := tx.QueryRow(ctx, `
 			SELECT id, repo_id, kind, name, COALESCE(actor_id,''), payload, created_at, error
@@ -282,6 +300,12 @@ func (s *Service) RecoverOperations(ctx context.Context, recoverPush func(contex
 			unlock()
 		}
 		if err != nil {
+			// A live operation holding the mutation lock is not a recovery
+			// failure. Leave its error empty so it cannot be abandoned, and
+			// try again on the next pass.
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+				continue
+			}
 			note, stop := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 			_, _ = s.db.Q.Exec(note, `UPDATE repository_operations SET error=$2 WHERE id=$1 AND completed_at IS NULL`, op.ID, err.Error())
 			stop()

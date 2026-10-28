@@ -381,6 +381,10 @@ func historySkip(r *http.Request) int {
 	return n
 }
 
+// maxRawDownloadBytes keeps the web server from streaming an arbitrarily
+// large blob. Larger files are still available through a Git clone.
+const maxRawDownloadBytes = 1 << 30
+
 // fileRaw serves a file's exact bytes, with no page around them. What a
 // repository holds is written by any member, so it is never served as
 // something a browser runs: see setRawHeaders.
@@ -391,6 +395,9 @@ func (a *App) fileRaw(w http.ResponseWriter, r *http.Request, gitRepo *git.Repo,
 	size, err := gitRepo.BlobSize(r.Context(), entry.Hash)
 	if err != nil {
 		return err
+	}
+	if size > maxRawDownloadBytes {
+		return apperr.New(apperr.KindTooLarge, "This file is too large to download from the web. Clone the repository to fetch it.")
 	}
 	sniff := &rawWriter{dst: &deadlineWriter{dst: w, controller: http.NewResponseController(w)}, header: w.Header(), filename: path.Base(entryPath)}
 	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))

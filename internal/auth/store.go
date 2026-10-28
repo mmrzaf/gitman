@@ -120,19 +120,21 @@ func deleteSessionsOf(ctx context.Context, q postgres.Querier, personID string) 
 	return nil
 }
 
-func insertSession(ctx context.Context, q postgres.Querier, tokenHash string, person *Person, expiresAt time.Time, ip, userAgent string) error {
-	tag, err := q.Exec(ctx, `
+func insertSession(ctx context.Context, q postgres.Querier, tokenHash string, person *Person, expiresAt time.Time, ip, userAgent string) (string, error) {
+	var id string
+	err := q.QueryRow(ctx, `
 		INSERT INTO sessions (token_hash, person_id, expires_at, auth_generation, ip, user_agent)
-        SELECT $1, id, $3, auth_generation, $5, $6 FROM people
-        WHERE id = $2 AND auth_generation = $4 AND disabled_at IS NULL AND (bootstrap_expires_at IS NULL OR bootstrap_expires_at > now())
-	`, tokenHash, person.ID, expiresAt, person.Generation, ip, userAgent)
+		SELECT $1, id, $3, auth_generation, $5, $6 FROM people
+		WHERE id = $2 AND auth_generation = $4 AND disabled_at IS NULL AND (bootstrap_expires_at IS NULL OR bootstrap_expires_at > now())
+		RETURNING id
+	`, tokenHash, person.ID, expiresAt, person.Generation, ip, userAgent).Scan(&id)
 	if err != nil {
-		return fmt.Errorf("create session: %w", err)
+		if errors.Is(postgres.NormalizeNotFound(err), postgres.ErrNotFound) {
+			return "", ErrInvalidCredentials
+		}
+		return "", fmt.Errorf("create session: %w", err)
 	}
-	if tag.RowsAffected() != 1 {
-		return ErrInvalidCredentials
-	}
-	return nil
+	return id, nil
 }
 
 func selectSessionIdentity(ctx context.Context, q postgres.Querier, tokenHash string) (*Person, string, error) {
@@ -168,6 +170,7 @@ func selectSessions(ctx context.Context, q postgres.Querier, personID string) ([
 		WHERE sessions.expires_at > now() AND sessions.auth_generation = people.auth_generation
 		  AND people.disabled_at IS NULL AND ($1 = '' OR sessions.person_id = $1)
 		ORDER BY sessions.last_seen_at DESC, sessions.id
+		LIMIT 500
 	`, personID)
 	if err != nil {
 		return nil, fmt.Errorf("list sessions: %w", err)
@@ -182,6 +185,21 @@ func selectSessions(ctx context.Context, q postgres.Querier, personID string) ([
 		sessions = append(sessions, s)
 	}
 	return sessions, rows.Err()
+}
+
+func pruneSessions(ctx context.Context, q postgres.Querier, personID, keepID string) error {
+	_, err := q.Exec(ctx, `
+		DELETE FROM sessions
+		WHERE person_id = $1 AND id <> $3 AND id NOT IN (
+			SELECT id FROM sessions
+			WHERE person_id = $1 AND id <> $3
+			ORDER BY last_seen_at DESC, id DESC LIMIT $2
+		)
+	`, personID, maxSessionsPerPerson-1, keepID)
+	if err != nil {
+		return fmt.Errorf("prune sessions: %w", err)
+	}
+	return nil
 }
 
 func selectSessionByID(ctx context.Context, q postgres.Querier, sessionID string) (*Session, error) {
@@ -231,6 +249,21 @@ func insertToken(ctx context.Context, q postgres.Querier, t *AccessToken, tokenH
 		RETURNING created_at
 	`, t.ID, t.PersonID, t.Name, tokenHash, t.Scope, t.ExpiresAt, generation, t.AllRepositories).Scan(&t.CreatedAt)
 	return postgres.NormalizeWrite(err)
+}
+
+func pruneTokens(ctx context.Context, q postgres.Querier, personID, keepID string) error {
+	_, err := q.Exec(ctx, `
+		DELETE FROM tokens
+		WHERE person_id = $1 AND id <> $3 AND id NOT IN (
+			SELECT id FROM tokens
+			WHERE person_id = $1 AND id <> $3
+			ORDER BY created_at DESC, id DESC LIMIT $2
+		)
+	`, personID, maxTokensPerPerson-1, keepID)
+	if err != nil {
+		return fmt.Errorf("prune tokens: %w", err)
+	}
+	return nil
 }
 
 func selectTokens(ctx context.Context, q postgres.Querier, personID string) ([]AccessToken, error) {

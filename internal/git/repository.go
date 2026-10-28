@@ -120,8 +120,8 @@ func (s *Store) Create(ctx context.Context, repoID, defaultBranch string) error 
 	if LooksLikeCommitHash(defaultBranch) {
 		return fmt.Errorf("default branch %q looks like a commit hash", defaultBranch)
 	}
-	if err := os.MkdirAll(s.root, 0o750); err != nil {
-		return fmt.Errorf("create repository root: %w", err)
+	if err := s.CheckPushCapacity(0); err != nil {
+		return fmt.Errorf("repository storage is below the configured disk reserve: %w", err)
 	}
 	if _, err := os.Stat(path); err == nil {
 		return ErrExists
@@ -139,6 +139,12 @@ func (s *Store) Create(ctx context.Context, repoID, defaultBranch string) error 
 	// that was force-pushed or deleted by mistake can be recovered by an
 	// operator.
 	if _, err := run(ctx, cmdOptions{dir: tmp}, "config", "core.logAllRefUpdates", "always"); err != nil {
+		return fmt.Errorf("configure repository: %w", err)
+	}
+	// Receive-pack runs AutoGC after updating refs. The admission fence covers
+	// the whole request, but disabling the daemon's implicit GC keeps the
+	// managed maintenance path the only one that repacks.
+	if _, err := run(ctx, cmdOptions{dir: tmp}, "config", "receive.autogc", "false"); err != nil {
 		return fmt.Errorf("configure repository: %w", err)
 	}
 	// Hooks are supplied per invocation through core.hooksPath; the

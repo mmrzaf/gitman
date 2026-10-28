@@ -69,8 +69,8 @@ last-minute patch.
 - [ ] **Pagination for repositories with thousands of refs.** Overview and Home
   do per-ref work and share a 15-second page budget; the budget bounds the
   damage but a very large repository can still exceed it.
-- [ ] **Bound raw file downloads.** They take no Git slot and have no size cap
-  beyond what Git serves (`internal/web/browse.go`).
+- [x] **Bound raw file downloads.** The web endpoint refuses a blob over 1 GiB
+  and points to a Git clone; shipped in beta 26 (`internal/web/browse.go`).
 - [ ] **Track containers a `docker: true` step starts itself.** Gitman only
   cleans up step containers it created; child containers are the operator's.
   Documented in the security model rather than guessed at by cleanup.

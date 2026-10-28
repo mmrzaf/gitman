@@ -10,7 +10,7 @@ import (
 	"github.com/mmrzaf/gitman/internal/ci"
 )
 
-func TestImagesPageShowsInventoryMissingCacheAndOperations(t *testing.T) {
+func TestImagesPageShowsInventoryMissingCacheAndTabs(t *testing.T) {
 	app, database, _, admin := setupApp(t)
 	signIn(t, database, admin, "lead", true)
 	ctx := t.Context()
@@ -38,6 +38,7 @@ func TestImagesPageShowsInventoryMissingCacheAndOperations(t *testing.T) {
 			{Repository: "app", NormalizedRepository: "docker.io/library/app", Tag: "new", ID: "sha256:new", Size: 10, Created: now},
 			{Repository: "app", NormalizedRepository: "docker.io/library/app", Tag: "old", ID: "sha256:old", Size: 10, Created: now.Add(-time.Hour)},
 			{Repository: "alpine", NormalizedRepository: "docker.io/library/alpine", Tag: "3.20", ID: "sha256:alpine", Size: 5, Created: now},
+			{Repository: "busybox", NormalizedRepository: "docker.io/library/busybox", Tag: "1", ID: "sha256:busybox", Size: 3, Created: now},
 		},
 		CacheSize: 4 << 30, CacheReclaimable: 1 << 30,
 		Cache: ci.ImageCachePolicy{KeepGiB: 3, OlderThanHours: 168},
@@ -50,19 +51,40 @@ func TestImagesPageShowsInventoryMissingCacheAndOperations(t *testing.T) {
 	}
 
 	resp, body := admin.do(http.MethodGet, "/images", nil, nil)
-	expect(t, resp, body, http.StatusOK, "Images", "host", "engine-1",
-		"Missing required images", "alpine:3.20", "app branch main",
-		"Build cache", "4.0 GiB", "above its 3 GiB cap", "app:old", "prunable",
-		"image.prune", "pending", "Prune built images")
+	expect(t, resp, body, http.StatusOK, "Images", "host",
+		"Missing required images", "alpine:3.20", "app run #1",
+		"Cache", "4.0 GiB", "above its 3 GiB cap", "app:old", "prunable",
+		"Required", "Built", "Other", "Prune built images", "Image operations")
 	if !strings.Contains(body, `href="/images?plan=engine-1"`) {
 		t.Error("the dry-run plan link is missing")
 	}
+	if !strings.Contains(body, `id="panel-built" data-tab-panel="built" hidden`) {
+		t.Error("the built tab should be hidden by default")
+	}
+	if !strings.Contains(body, `id="panel-other" data-tab-panel="other" hidden`) {
+		t.Error("the other tab should be hidden by default")
+	}
+
+	resp, body = admin.do(http.MethodGet, "/images?tab=built", nil, nil)
+	expect(t, resp, body, http.StatusOK, "app:old", "prunable", "within 1", "outside 1", "built by app run #1")
+	if !strings.Contains(body, `href="/images?tab=built" data-tab="built" aria-current="page"`) {
+		t.Error("the built tab should be selected")
+	}
+	if !strings.Contains(body, `id="panel-required" data-tab-panel="required" hidden`) {
+		t.Error("the required tab should be hidden")
+	}
+
+	resp, body = admin.do(http.MethodGet, "/images?tab=other", nil, nil)
+	expect(t, resp, body, http.StatusOK, "busybox:1", "not declared")
+
+	resp, body = admin.do(http.MethodGet, "/operations", nil, nil)
+	expect(t, resp, body, http.StatusOK, "Image operations", "image.prune", "pending")
 
 	resp, body = admin.do(http.MethodGet, "/images?plan=engine-1", nil, nil)
-	expect(t, resp, body, http.StatusOK, "Plan for host", "Would remove", "app:old", "Prune these images", "within the newest 1 tags")
+	expect(t, resp, body, http.StatusOK, "Plan for host", "Would remove", "app:old", "Prune these images", "within the newest 1 tags", `name="target" value="app:old|sha256:old"`)
 	if start := strings.Index(body, "Would remove"); start >= 0 {
 		section := body[start:]
-		if end := strings.Index(section, "Refused"); end >= 0 {
+		if end := strings.Index(section, "protected or undeclared"); end >= 0 {
 			section = section[:end]
 		}
 		if strings.Contains(section, "app:new") {
@@ -74,7 +96,7 @@ func TestImagesPageShowsInventoryMissingCacheAndOperations(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp, body = admin.do(http.MethodGet, "/images", nil, nil)
-	expect(t, resp, body, http.StatusOK, "inventory stale")
+	expect(t, resp, body, http.StatusOK, "Stale")
 }
 
 func TestImagesActionsRequireAdminAndQueueWork(t *testing.T) {
@@ -136,7 +158,58 @@ func TestImagesActionsRequireAdminAndQueueWork(t *testing.T) {
 	}
 
 	resp, _ = admin.do(http.MethodPost, "/images/prune", url.Values{"host": {"engine-1"}}, nil)
-	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/images" {
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/images?tab=built" {
 		t.Fatalf("prune redirect = %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+}
+
+func TestImagesPageDisablesActionsWhenFactsAreIncomplete(t *testing.T) {
+	app, database, _, admin := setupApp(t)
+	signIn(t, database, admin, "lead", true)
+	ctx := t.Context()
+	for _, query := range []string{
+		`INSERT INTO repos (id, name) VALUES ('r1', 'app')`,
+		`INSERT INTO refs (repo_id, kind, name, commit_hash) VALUES ('r1', 'branch', 'main', 'abc')`,
+		`INSERT INTO ref_rules (id, repo_id, kind, pattern, run_on_push) VALUES ('rule1', 'r1', 'branch', 'main', true)`,
+		`INSERT INTO workers (id, hostname, engine_id, ready, readiness_at, heartbeat_at)
+		 VALUES ('w1', 'host', 'engine-1', true, now(), now())`,
+	} {
+		if _, err := database.Pool.Exec(ctx, query); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for id, run := range map[string]struct {
+		number   int
+		pipeline string
+	}{
+		"run1": {1, "image: alpine:3.20\nimages:\n  app: {keep: 1}\nsteps:\n  - name: build\n    run: echo hi\n"},
+		"run2": {2, "image: ["},
+	} {
+		if _, err := database.Pool.Exec(ctx, `
+			INSERT INTO runs (id, repo_id, number, commit_hash, trigger, status, ref_kind, ref_name, pipeline)
+			VALUES ($1, 'r1', $2, 'abc', 'push', 'queued', 'branch', 'main', $3)
+		`, id, run.number, []byte(run.pipeline)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := app.ci.PublishInventory(ctx, ci.HostInventory{
+		EngineID: "engine-1", WorkerID: "w1", Hostname: "host",
+		Images: []ci.InventoryImage{{Repository: "app", NormalizedRepository: "docker.io/library/app", Tag: "old", ID: "sha256:old", Size: 10, Created: time.Now().Add(-time.Hour)}},
+		Cache:  ci.ImageCachePolicy{KeepGiB: 3, OlderThanHours: 168},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, body := admin.do(http.MethodGet, "/images?tab=built", nil, nil)
+	expect(t, resp, body, http.StatusOK, "Image facts are incomplete", "app:old",
+		"image facts are incomplete; no built image is pruned")
+	if strings.Contains(body, `action="/images/remove"`) {
+		t.Error("the page offered an image removal with incomplete facts")
+	}
+	if strings.Contains(body, `href="/images?plan=engine-1"`) {
+		t.Error("the page offered a prune plan with incomplete facts")
+	}
+	if !strings.Contains(body, `action="/images/cache-prune"`) {
+		t.Error("the page hid the cache prune action with incomplete image facts")
 	}
 }

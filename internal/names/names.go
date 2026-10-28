@@ -43,6 +43,12 @@ var reserved = map[string]bool{
 	"robots.txt":  true,
 }
 
+// reservedRepositories are route names that only repositories must avoid;
+// a person may still be named images.
+var reservedRepositories = map[string]bool{
+	"images": true,
+}
+
 // nameCharsPattern accepts a single alphanumeric character, or a run of
 // alphanumerics, dashes and underscores that starts and ends with an
 // alphanumeric character. Length is checked separately by each caller.
@@ -60,7 +66,7 @@ func ValidateRepository(name string) error {
 	if !nameCharsPattern.MatchString(name) {
 		return apperr.New(apperr.KindInvalid, "repository name may only contain letters, numbers, dashes and underscores, and must start and end with a letter or number")
 	}
-	if reserved[strings.ToLower(name)] {
+	if reserved[strings.ToLower(name)] || reservedRepositories[strings.ToLower(name)] {
 		return apperr.New(apperr.KindInvalid, fmt.Sprintf("%q is reserved and cannot be used as a repository name", name))
 	}
 	return nil

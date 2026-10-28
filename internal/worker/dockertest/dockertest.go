@@ -37,6 +37,11 @@ while ! mkdir "$dir/lock" 2>/dev/null; do sleep 0.01; done
 n=$(find "$dir" -maxdepth 1 -type f -name "call-*" | wc -l)
 printf '%s\n' "$@" > "$dir/call-$(printf %03d "$n")"
 rmdir "$dir/lock"
+if [ "${FAKE_DOCKER_INSPECT_FAIL_ONCE:-}" = image ] && [ "$1" = image ] && [ "$2" = inspect ] && [ ! -e "$dir/failed-image-inspect" ]; then
+	: > "$dir/failed-image-inspect"
+	echo "Error response from daemon: No such image" >&2
+	exit 1
+fi
 if [ "$FAKE_DOCKER_HANG" = "$1" ] || [ "$FAKE_DOCKER_HANG" = all ]; then
 	exec sleep 300
 fi
@@ -66,6 +71,7 @@ image)
  fi
  case "$*" in
   *'{{json .}}'*) printf '%s\n' "$FAKE_DOCKER_IMAGE_INSPECT"; exit 0 ;;
+  *'{{.Id}}'*) if [ -n "${FAKE_DOCKER_IMAGE_ID:-}" ]; then printf '%s\n' "$FAKE_DOCKER_IMAGE_ID"; exit 0; fi ;;
  esac
 	eval "wanted=\${$#}"
 	for image in $FAKE_DOCKER_IMAGES; do

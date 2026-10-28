@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/mmrzaf/gitman/internal/activity"
+	"github.com/mmrzaf/gitman/internal/apperr"
 	"github.com/mmrzaf/gitman/internal/postgres"
 	"github.com/mmrzaf/gitman/internal/postgres/pgtest"
 )
@@ -133,6 +134,32 @@ func TestAbandonOperationRequiresAFailureAndUnblocksTheRepository(t *testing.T) 
 	}
 	if _, err := s.AbandonOperation(ctx, "no-such-operation", "", "why"); !errors.Is(err, postgres.ErrNotFound) {
 		t.Fatalf("unknown operation = %v, want postgres.ErrNotFound", err)
+	}
+}
+
+func TestAbandonOperationRefusesWhileTheRepositoryLockIsHeld(t *testing.T) {
+	ctx := context.Background()
+	db := pgtest.Open(t)
+	store := newStore(t)
+	s := NewService(db, store, "")
+	op, err := s.BeginOperation(ctx, "abandon-live", "create", "abandon-live", "", repositoryIntent{Name: "abandon-live", Branch: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Pool.Exec(ctx, `UPDATE repository_operations SET error='permission denied' WHERE id=$1`, op.ID); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := s.git.MutationLock(ctx, op.RepoID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AbandonOperation(ctx, op.ID, "", "directory is corrupt"); apperr.KindOf(err) != apperr.KindConflict {
+		t.Fatalf("abandon while locked = %v, want conflict", err)
+	}
+	unlock()
+	abandoned, err := s.AbandonOperation(ctx, op.ID, "", "directory is corrupt")
+	if err != nil || abandoned == nil {
+		t.Fatalf("abandon after unlock = %+v, %v", abandoned, err)
 	}
 }
 

@@ -141,6 +141,30 @@ func (d *Docker) Available(ctx context.Context) error {
 	return nil
 }
 
+// ImageID returns the current image ID for a reference. It is used right
+// before removing a tag so a retag between inventory and removal cannot
+// delete a different image than the one the operator reviewed.
+func (d *Docker) ImageID(ctx context.Context, ref string) (string, bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	out, err := d.command(ctx, "image", "inspect", "--format", "{{.Id}}", "--", ref).CombinedOutput()
+	if err == nil {
+		id := normalizeImageID(strings.TrimSpace(string(out)))
+		if id == "" {
+			return "", false, fmt.Errorf("docker image inspect %s returned no ID", ref)
+		}
+		return id, true, nil
+	}
+	if ctx.Err() != nil {
+		return "", false, ctx.Err()
+	}
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && strings.Contains(strings.ToLower(string(out)), "no such image") {
+		return "", false, nil
+	}
+	return "", false, fmt.Errorf("docker image inspect %s: %s", ref, strings.TrimSpace(lastLines(string(out), 3)))
+}
+
 // ImageExists reports whether image is present on the Docker host.
 // Gitman never pulls images; a missing image is a setup problem for the
 // operator, not something a run fixes by downloading.
@@ -248,7 +272,8 @@ func (d *Docker) Run(ctx context.Context, spec containerSpec, out io.Writer) (in
 	case err = <-waited:
 	case <-ctx.Done():
 		code, cleanupErr := cleanup(ctx.Err())
-		<-waited
+		// Wait only to reap the process; cleanup reports the cancellation.
+		<-waited //nolint:errcheck // the wait error is the cancellation cleanup returned
 		return code, cleanupErr
 	}
 	if ctx.Err() != nil {
@@ -403,17 +428,10 @@ type systemDFRow struct {
 	Reclaimable string `json:"Reclaimable"`
 }
 
-// ImageInventory lists every tagged and dangling image on the host, the
-// containers that reference each image ID, and the build cache's size. The
-// caller publishes it as the host's latest inventory; it is never used to
-// decide a removal until the worker re-reads it at execution time.
-func (d *Docker) ImageInventory(ctx context.Context) ([]ci.InventoryImage, int64, int64, error) {
-	ctx, cancel := context.WithTimeout(ctx, inventoryTimeout)
-	defer cancel()
-
+func (d *Docker) imageListRows(ctx context.Context) ([]imageListRow, error) {
 	out, err := d.command(ctx, "image", "ls", "--no-trunc", "--digests", "--format", "{{json .}}").Output()
 	if err != nil {
-		return nil, 0, 0, fmt.Errorf("list Docker images: %w", err)
+		return nil, fmt.Errorf("list Docker images: %w", err)
 	}
 	var rows []imageListRow
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
@@ -423,35 +441,72 @@ func (d *Docker) ImageInventory(ctx context.Context) ([]ci.InventoryImage, int64
 		}
 		var row imageListRow
 		if err := json.Unmarshal([]byte(line), &row); err != nil {
-			return nil, 0, 0, fmt.Errorf("decode Docker image list: %w", err)
+			return nil, fmt.Errorf("decode Docker image list: %w", err)
 		}
 		rows = append(rows, row)
 	}
+	return rows, nil
+}
 
+func imageListIDs(rows []imageListRow) []string {
 	ids := make([]string, 0, len(rows))
-	seenID := map[string]bool{}
+	seen := map[string]bool{}
 	for _, row := range rows {
-		if row.ID != "" && !seenID[row.ID] {
-			seenID[row.ID] = true
+		if row.ID != "" && !seen[row.ID] {
+			seen[row.ID] = true
 			ids = append(ids, row.ID)
 		}
 	}
+	return ids
+}
+
+func (d *Docker) inspectImageIDs(ctx context.Context, ids []string) (map[string]imageInspect, error) {
 	inspected := map[string]imageInspect{}
-	if len(ids) > 0 {
-		args := append([]string{"image", "inspect", "--format", "{{json .}}"}, ids...)
-		out, err := d.command(ctx, args...).Output()
-		if err != nil {
-			return nil, 0, 0, fmt.Errorf("inspect Docker images: %w", err)
+	if len(ids) == 0 {
+		return inspected, nil
+	}
+	args := append([]string{"image", "inspect", "--format", "{{json .}}"}, ids...)
+	out, err := d.command(ctx, args...).Output()
+	if err != nil {
+		return nil, fmt.Errorf("inspect Docker images: %w", err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
 		}
-		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-			if strings.TrimSpace(line) == "" {
-				continue
-			}
-			var image imageInspect
-			if err := json.Unmarshal([]byte(line), &image); err != nil {
-				return nil, 0, 0, fmt.Errorf("decode Docker image inspection: %w", err)
-			}
-			inspected[image.ID] = image
+		var image imageInspect
+		if err := json.Unmarshal([]byte(line), &image); err != nil {
+			return nil, fmt.Errorf("decode Docker image inspection: %w", err)
+		}
+		inspected[image.ID] = image
+	}
+	return inspected, nil
+}
+
+// ImageInventory lists every tagged and dangling image on the host, the
+// containers that reference each image ID, and the build cache's size. The
+// caller publishes it as the host's latest inventory; it is never used to
+// decide a removal until the worker re-reads it at execution time.
+func (d *Docker) ImageInventory(ctx context.Context) ([]ci.InventoryImage, int64, int64, error) {
+	ctx, cancel := context.WithTimeout(ctx, inventoryTimeout)
+	defer cancel()
+
+	rows, err := d.imageListRows(ctx)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	inspected, err := d.inspectImageIDs(ctx, imageListIDs(rows))
+	if err != nil {
+		// An image can disappear between `image ls` and `image inspect`.
+		// Re-list once and inspect the new snapshot rather than leaving the
+		// host's inventory stale for every caller.
+		rows, err = d.imageListRows(ctx)
+		if err != nil {
+			return nil, 0, 0, err
+		}
+		inspected, err = d.inspectImageIDs(ctx, imageListIDs(rows))
+		if err != nil {
+			return nil, 0, 0, err
 		}
 	}
 
@@ -553,13 +608,15 @@ func normalizeDigests(digests []string) []string {
 	return normalized
 }
 
-// containerImages returns the image ID of every container, running or stopped.
-func (d *Docker) containerImages(ctx context.Context) (map[string]bool, error) {
+func (d *Docker) containerIDs(ctx context.Context) ([]string, error) {
 	out, err := d.command(ctx, "ps", "-aq", "--no-trunc").Output()
 	if err != nil {
 		return nil, fmt.Errorf("list Docker containers: %w", err)
 	}
-	ids := strings.Fields(string(out))
+	return strings.Fields(string(out)), nil
+}
+
+func (d *Docker) inspectContainerImages(ctx context.Context, ids []string) (map[string]bool, error) {
 	inUse := map[string]bool{}
 	for start := 0; start < len(ids); start += 256 {
 		end := min(start+256, len(ids))
@@ -572,6 +629,28 @@ func (d *Docker) containerImages(ctx context.Context) (map[string]bool, error) {
 			if image := normalizeImageID(strings.TrimSpace(line)); image != "" {
 				inUse[image] = true
 			}
+		}
+	}
+	return inUse, nil
+}
+
+// containerImages returns the image ID of every container, running or stopped.
+func (d *Docker) containerImages(ctx context.Context) (map[string]bool, error) {
+	ids, err := d.containerIDs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	inUse, err := d.inspectContainerImages(ctx, ids)
+	if err != nil {
+		// A container can finish between `ps` and `inspect`; retry once
+		// against a fresh list so transient churn does not freeze inventory.
+		ids, err = d.containerIDs(ctx)
+		if err != nil {
+			return nil, err
+		}
+		inUse, err = d.inspectContainerImages(ctx, ids)
+		if err != nil {
+			return nil, err
 		}
 	}
 	return inUse, nil

@@ -236,23 +236,37 @@ func (w *Worker) drain(ctx context.Context) {
 		if err := w.ci.SetWorkerReadiness(ctx, w.id, true, "Ready", images); err != nil {
 			return
 		}
+		// Take the shared host lock before claiming. An image or cache
+		// operation may hold the exclusive side for a long time; the run
+		// must stay queued rather than be claimed and burn its deadline
+		// waiting for work it cannot start.
+		unlockHost, err := waitHostExecution(ctx, w.cfg.WorkspaceRoot)
+		if err != nil {
+			if ctx.Err() == nil {
+				w.log.Warn("could not reserve the host's image execution lock", "error", err)
+			}
+			return
+		}
 		claim, err := w.ci.ClaimNext(ctx, w.id, w.cfg.DefaultTimeout, images)
 		if err != nil {
+			unlockHost()
 			if ctx.Err() == nil {
 				w.log.Error("could not claim a run", "error", err)
 			}
 			return
 		}
 		if claim == nil {
+			unlockHost()
 			return
 		}
-		w.handle(ctx, claim)
+		w.handle(ctx, claim, unlockHost)
 	}
 }
 
-func (w *Worker) handle(ctx context.Context, claim *ci.Claim) {
+func (w *Worker) handle(ctx context.Context, claim *ci.Claim, releaseHost func()) {
 	w.active.Add(1)
 	defer w.active.Add(-1)
+	defer releaseHost()
 	start := time.Now()
 	log := w.log.With("repo", claim.RepoName, "run", claim.Number)
 	log.Info("run started")
@@ -349,13 +363,8 @@ func (w *Worker) execute(ctx context.Context, claim *ci.Claim, log *slog.Logger)
 		return o
 	}
 	defer unlock()
-	// Image removals and cache pruning take the exclusive side of this
-	// host lock; a run keeps it shared for as long as it may touch Docker.
-	unlockHost, err := waitHostExecution(ctx, w.cfg.WorkspaceRoot)
-	if err != nil {
-		return e.internalFailure("Could not reserve the host's image execution lock", err)
-	}
-	defer unlockHost()
+	// The worker took the shared host lock before claiming this run; image
+	// removals and cache pruning cannot start while the run may touch Docker.
 	if claim.AllowSecrets {
 		read, stopRead := context.WithTimeout(ctx, 10*time.Second)
 		secrets, err := w.repos.RunSecrets(read, claim.RepoID)

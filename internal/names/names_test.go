@@ -15,7 +15,7 @@ func TestValidateRepository(t *testing.T) {
 
 	invalid := []string{
 		"", "-leading-dash", "trailing-dash-", "has a space", "has@sign",
-		"me", "People", "STATIC", strings.Repeat("a", 101),
+		"me", "People", "STATIC", "images", strings.Repeat("a", 101),
 	}
 	for _, name := range invalid {
 		if err := ValidateRepository(name); err == nil {
@@ -25,7 +25,7 @@ func TestValidateRepository(t *testing.T) {
 }
 
 func TestValidateUsername(t *testing.T) {
-	valid := []string{"abc", "darius", "d-a_r99"}
+	valid := []string{"abc", "darius", "d-a_r99", "images"}
 	for _, name := range valid {
 		if err := ValidateUsername(name); err != nil {
 			t.Errorf("ValidateUsername(%q) = %v, want nil", name, err)
@@ -49,7 +49,7 @@ func TestRunFetchUsernameIsReserved(t *testing.T) {
 // TestPageNamesAreReserved keeps a repository from taking the name of a
 // page, which would make one of the two unreachable.
 func TestPageNamesAreReserved(t *testing.T) {
-	for _, name := range []string{"jump", "changelog", "people", "events", "operations", "workers", "sessions"} {
+	for _, name := range []string{"jump", "changelog", "people", "events", "operations", "workers", "sessions", "images"} {
 		if err := ValidateRepository(name); err == nil {
 			t.Errorf("ValidateRepository(%q) = nil; it is a page's address", name)
 		}

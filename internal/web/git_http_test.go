@@ -725,3 +725,17 @@ func TestAllRepositoryTokenStillEnforcesReadAccess(t *testing.T) {
 		t.Fatal("all-repository token bypassed repository permissions")
 	}
 }
+
+func TestCloneURLRedirectRejectsEscapedRepositoryNames(t *testing.T) {
+	database, b := setup(t)
+	signIn(t, database, b, "member", false)
+	for _, path := range []string{"/%2Fevil.example.git", "/%5Cevil.example.git"} {
+		resp, body := b.do(http.MethodGet, path, nil, nil)
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("GET %s = %d, want 404\n%s", path, resp.StatusCode, body)
+		}
+		if location := resp.Header.Get("Location"); location != "" {
+			t.Fatalf("GET %s redirected to %q", path, location)
+		}
+	}
+}

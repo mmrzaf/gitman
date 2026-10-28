@@ -209,3 +209,26 @@ func TestHeartbeatKeepsBeatingWhileCleanupIsStuck(t *testing.T) {
 		t.Fatalf("last heartbeat %s after start; the heartbeat stopped while cleanup was stuck", sinceStart)
 	}
 }
+
+func TestDrainClaimsNothingWhileImageOperationHoldsTheHostLock(t *testing.T) {
+	database := pgtest.Open(t)
+	svc := ci.NewService(database)
+	queueRun(t, database, svc)
+	fake := newFakeDocker(t, "alpine:3.20")
+	root := t.TempDir()
+	unlock, locked, err := hostExecutionLock(root, true)
+	if err != nil || !locked {
+		t.Fatalf("host lock = %v, %v", locked, err)
+	}
+	defer unlock()
+	w := New(Config{WorkspaceRoot: root}, database, svc, nil, fake.docker, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err := svc.RegisterWorker(context.Background(), w.id, "host"); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	w.drain(ctx)
+	if status := runStatus(t, database); status != "queued" {
+		t.Fatalf("run status = %s; want it left queued while the host lock is held", status)
+	}
+}

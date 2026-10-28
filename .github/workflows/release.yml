@@ -20,7 +20,7 @@ concurrency:
 
 env:
   APP_NAME: gitman
-  GOLANGCI_LINT_VERSION: 'v2.13.2'
+  GOLANGCI_LINT_VERSION: 'v2.15.0'
   GOVULNCHECK_VERSION: 'v1.6.0'
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}

@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mmrzaf/gitman/internal/apperr"
 	"github.com/mmrzaf/gitman/internal/auth"
 	"github.com/mmrzaf/gitman/internal/ci"
 	"github.com/mmrzaf/gitman/internal/git"
@@ -271,6 +272,15 @@ func (a *App) gitRPC(svc git.Service) http.HandlerFunc {
 		if !ok {
 			http.Error(w, "Invalid Git-Protocol header.", http.StatusBadRequest)
 			return
+		}
+		if svc == git.ReceivePack {
+			admitted, release, err := a.ci.AdmitMutation(r.Context())
+			if err != nil {
+				http.Error(w, apperr.PublicMessage(err), statusFor(apperr.KindOf(err)))
+				return
+			}
+			defer release()
+			r = r.WithContext(admitted)
 		}
 
 		limit := int64(maxNegotiationBytes)

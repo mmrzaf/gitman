@@ -1,7 +1,8 @@
 # One image for Gitman's web process, worker and Git hooks:
 #
 #   docker run gitman:1.0.0 gitman web
-#   docker run gitman:1.0.0 gitman worker
+#   docker run --user root -v /var/run/docker.sock:/var/run/docker.sock \
+#     -v /srv/gitman:/srv/gitman gitman:1.0.0 gitman worker
 #
 # Base images, the Alpine package mirror and the Go module proxy are build
 # arguments so the image can build behind mirrors:

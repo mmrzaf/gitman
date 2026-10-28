@@ -42,6 +42,33 @@ func TestRetentionSeparatesLogsActiveHeadAndLatestDeployment(t *testing.T) {
 	}
 }
 
+func TestPruneWorkersKeepsDeploymentOwner(t *testing.T) {
+	ctx := t.Context()
+	db := pgtest.Open(t)
+	seedRepo(t, db, "r1", "demo")
+	insertTestRun(t, db, "run", "r1", 1, "branch", "main", "passed", true)
+	for _, query := range []string{
+		`INSERT INTO steps (id, run_id, index, name, status) VALUES ('step', 'run', 0, 'deploy', 'passed')`,
+		`UPDATE runs SET worker_id = 'w-test' WHERE id = 'run'`,
+		`UPDATE workers SET heartbeat_at = now() - interval '30 days' WHERE id = 'w-test'`,
+		`INSERT INTO deployment_targets (repo_id, target, owner_run_id, owner_step_id) VALUES ('r1', 'production', 'run', 'step')`,
+	} {
+		if _, err := db.Pool.Exec(ctx, query); err != nil {
+			t.Fatal(err)
+		}
+	}
+	svc := NewService(db)
+	if n, err := svc.PruneWorkers(ctx, time.Now()); err != nil || n != 0 {
+		t.Fatalf("worker with a deployment owner was pruned: n=%d err=%v", n, err)
+	}
+	if _, err := db.Pool.Exec(ctx, `UPDATE deployment_targets SET owner_run_id = NULL, owner_step_id = NULL WHERE repo_id = 'r1'`); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := svc.PruneWorkers(ctx, time.Now()); err != nil || n != 1 {
+		t.Fatalf("released worker was not pruned: n=%d err=%v", n, err)
+	}
+}
+
 func TestRepositoryLogBudgetAndDuplicateChunks(t *testing.T) {
 	ctx := context.Background()
 	db := pgtest.Open(t)
@@ -69,5 +96,30 @@ func TestRepositoryLogBudgetAndDuplicateChunks(t *testing.T) {
 	var warning string
 	if err := db.Q.QueryRow(ctx, `SELECT log_recording_error FROM steps WHERE id='step'`).Scan(&warning); err != nil || warning == "" {
 		t.Fatalf("quota warning=%q error=%v", warning, err)
+	}
+}
+
+func TestRetentionExpiresStaleImageHostsAndPendingOperations(t *testing.T) {
+	ctx := t.Context()
+	db := pgtest.Open(t)
+	for _, query := range []string{
+		`INSERT INTO image_hosts (host_id, hostname, collected_at) VALUES ('engine-old', 'old-host', now() - interval '40 days')`,
+		`INSERT INTO repository_operations (id, repo_id, kind, name, payload, engine_id)
+		 VALUES ('image-op', NULL, 'image.prune', 'engine-old', '{"targets":[]}', 'engine-old')`,
+	} {
+		if _, err := db.Pool.Exec(ctx, query); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := NewService(db).PruneRetention(ctx, time.Now(), config.DefaultRetention()); err != nil {
+		t.Fatal(err)
+	}
+	var hosts, pending int
+	var cacheError string
+	if err := db.Q.QueryRow(ctx, `SELECT (SELECT count(*) FROM image_hosts), (SELECT count(*) FROM repository_operations WHERE id='image-op' AND completed_at IS NULL), COALESCE((SELECT error FROM repository_operations WHERE id='image-op'), '')`).Scan(&hosts, &pending, &cacheError); err != nil {
+		t.Fatal(err)
+	}
+	if hosts != 0 || pending != 0 || cacheError == "" {
+		t.Fatalf("hosts=%d pending=%d error=%q", hosts, pending, cacheError)
 	}
 }

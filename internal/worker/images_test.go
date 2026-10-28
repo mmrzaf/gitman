@@ -193,6 +193,7 @@ steps:
 	}, "\n"))
 	t.Setenv("FAKE_DOCKER_CONTAINER_IDS", "")
 	t.Setenv("FAKE_DOCKER_CONTAINER_IMAGES", "")
+	t.Setenv("FAKE_DOCKER_IMAGE_ID", imageOld)
 	root := t.TempDir()
 	w := New(Config{WorkspaceRoot: root, ImageCache: config.DefaultImageCache()}, database, svc, nil, fake.docker, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	w.id = "w1"
@@ -294,5 +295,81 @@ func TestImageOperationOnShutdownRecordsInterruption(t *testing.T) {
 	}
 	if finished.Pending() || !strings.Contains(finished.Error, "shut down") {
 		t.Fatalf("interrupted operation = %+v", finished)
+	}
+}
+
+func TestImageInventoryRetriesWhenAnImageDisappears(t *testing.T) {
+	fake := newFakeDocker(t)
+	setImageInventory(t)
+	t.Setenv("FAKE_DOCKER_INSPECT_FAIL_ONCE", "image")
+	images, _, _, err := fake.docker.ImageInventory(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(images) == 0 {
+		t.Fatal("retry produced an empty inventory")
+	}
+}
+
+func TestImageOperationRefusesIncompleteFacts(t *testing.T) {
+	ctx := t.Context()
+	database := pgtest.Open(t)
+	if _, err := database.Pool.Exec(ctx, `INSERT INTO repos (id, name) VALUES ('r1', 'app')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Pool.Exec(ctx, `INSERT INTO workers (id, hostname, engine_id) VALUES ('w1', 'host', 'fake-engine')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Pool.Exec(ctx, `INSERT INTO refs (repo_id, kind, name, commit_hash) VALUES ('r1', 'branch', 'main', 'abc')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Pool.Exec(ctx, `INSERT INTO ref_rules (id, repo_id, kind, pattern, run_on_push) VALUES ('rule1', 'r1', 'branch', 'main', true)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Pool.Exec(ctx, `
+		INSERT INTO runs (id, repo_id, number, commit_hash, trigger, status, ref_kind, ref_name, pipeline)
+		VALUES ('run1', 'r1', 1, 'abc', 'push', 'queued', 'branch', 'main', $1)
+	`, []byte("image: alpine:3.20\nsteps:\n  - name: build\n    run: echo hi\n")); err != nil {
+		t.Fatal(err)
+	}
+	svc := ci.NewService(database)
+	if err := svc.PublishInventory(ctx, ci.HostInventory{
+		EngineID: "fake-engine", WorkerID: "w1", Hostname: "host",
+		Images: []ci.InventoryImage{{Repository: "app", NormalizedRepository: "docker.io/library/app", Tag: "new", ID: imageOne, Size: 1000, Created: time.Now()}},
+		Cache:  ci.ImageCachePolicy{KeepGiB: 3, OlderThanHours: 168},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	id, err := svc.QueueImageRemove(ctx, "fake-engine", "app:new", "")
+	if err != nil || id == "" {
+		t.Fatalf("QueueImageRemove = %q, %v", id, err)
+	}
+	// A stored pipeline that no longer parses makes the image facts
+	// incomplete, even though the operation was queued while they were not.
+	if _, err := database.Pool.Exec(ctx, `
+		INSERT INTO runs (id, repo_id, number, commit_hash, trigger, status, ref_kind, ref_name, pipeline)
+		VALUES ('run2', 'r1', 2, 'abc', 'push', 'queued', 'branch', 'main', $1)
+	`, []byte("image: [")); err != nil {
+		t.Fatal(err)
+	}
+	operation, err := svc.ImageOperation(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := newFakeDocker(t)
+	w := New(Config{WorkspaceRoot: t.TempDir(), ImageCache: config.DefaultImageCache()}, database, svc, nil, fake.docker, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	w.id = "w1"
+	w.executeImageOperation(ctx, operation)
+	operation, err = svc.ImageOperation(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if operation.Pending() || len(operation.Results) != 1 || operation.Results[0].Status != "skipped" {
+		t.Fatalf("operation = %+v, want one recorded skip", operation)
+	}
+	for _, call := range fake.CallsTo(t, "image") {
+		if len(call) > 1 && call[1] == "rm" {
+			t.Fatalf("removed an image with incomplete facts: %v", call)
+		}
 	}
 }

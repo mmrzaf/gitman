@@ -3,6 +3,89 @@
 What changed in each release, for the people who run Gitman. Newest first.
 Each release's section is also its GitHub release notes.
 
+## [1.0.0-beta.26] - 2026-10-28
+
+The last beta before the release candidate: safer image pruning, stronger
+recovery from interrupted work, and bounded accounts, repositories and
+downloads.
+
+**Installation:** this release has no schema change. Existing beta 25
+databases upgrade in place, and rolling back to beta 25 is safe.
+
+### Added
+
+- **Images page by host**: a summary of every Docker host with its inventory
+  freshness, ready and stopped workers, build-cache state and missing required
+  images, followed by **Required**, **Built** and **Other** tabs. Built images
+  have a reviewed prune plan, and image operations are listed on
+  **Operations**. Long refs and reasons stay readable with the keyboard and on
+  a phone.
+- **Full cache state on the command line**: `gitman admin images list` prints
+  the cache policy, last prune, reclaimed bytes and any enforcement error, the
+  same details the Images page shows.
+
+### Changed
+
+- **Image work uses only what was reviewed**: the Images page submits the refs
+  and IDs it showed, and the service intersects them with a fresh plan, so an
+  image that became prunable after the page rendered is never removed unseen.
+  The worker re-reads the inventory and the required set before acting and
+  re-checks a tag's ID immediately before removing it.
+- **Image facts follow the current head**: a run's pipeline bytes are used only
+  while it is the latest run for the current ref, and the snapshot is bounded.
+  Incomplete facts disable built-image pruning and image removal instead of
+  acting on a stale pipeline.
+- **Runs wait for the host**: a worker takes the shared image-execution lock
+  before claiming a run, so a long prune leaves work queued instead of
+  consuming a run's deadline. A stopped worker's old workspace root no longer
+  blocks a new worker on the same host.
+- **Bounded accounts and repositories**: a person keeps at most 20 sessions and
+  50 access tokens, with the oldest removed on creation; stored user agents
+  are truncated to 512 bytes. Anyone signed in can create up to 100
+  repositories and 10 per hour, repository lists are capped, and creating a
+  repository checks the disk reserve first.
+- **Bounded downloads and live work**: raw file views refuse a blob over 1 GiB
+  and point to a Git clone; a scoped live stream discards notices for other
+  runs before re-authorizing; push failures no longer echo internal errors to
+  the pusher.
+- **One linter version**: `make verify` and the release workflow use
+  golangci-lint v2.15.0 from one default, which reads Go 1.27 export data.
+
+### Fixed
+
+- **Interrupted deletions recover**: a pending repository delete whose
+  directory was already removed no longer prevents startup; recovery finishes
+  it instead of refusing to bind storage.
+- **Pushes and backups no longer overlap**: admission is held for the whole
+  receive-pack request, and new repositories disable receive.autogc, so a
+  backup cannot archive a repository while quarantine packs are still moving.
+- **Live pushes cannot be abandoned**: recovery no longer records a
+  mutation-lock timeout as a failure, and abandoning an operation takes the
+  same lock and re-checks its Git receipt first.
+- **Deployment owners survive retention**: a worker that still owns a
+  deployment target is kept, so the documented release path and backups keep
+  working after its run finishes.
+- **Runs rejected at creation have no phantom steps**: a run stopped by the
+  pending-run budget is finished without inserting steps no worker could claim.
+- **Stale image hosts expire**: inventories from decommissioned hosts and
+  their unfinished image operations are cleared after 30 days with a clear
+  error, and log retention works in smaller batches.
+- **Clone redirects are repository-local**: an escaped repository name cannot
+  turn the `.git` clone URL into a protocol-relative redirect off-site.
+- **`images` is a reserved repository name**: the literal `/images` admin route
+  can no longer be shadowed by a repository; the username `images` remains
+  available.
+- **Live pages keep their place**: Home and Repository panels remember their
+  scroll position across a live update, and revoking the session you are using
+  warns that you will be signed out.
+- **Admin pages are in the browser pass**: Images tabs, Workers, Sessions,
+  Operations and What's new are screenshotted and scanned for accessibility,
+  the account smoke check expects the Sessions tab, and archive cancellation
+  is deterministic.
+- Documentation now says which admin commands belong in the web container,
+  which need the worker's Docker socket, and which need a native host, and
+  records the session, token, repository and raw-download limits.
+
 ## [1.0.0-beta.25] - 2026-10-28
 
 The running version and its notes are in the account menu, and image inventory
