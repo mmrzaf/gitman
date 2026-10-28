@@ -6,7 +6,7 @@
     <h1 class="page-title" id="images-title">Images</h1>
     <p class="page-subtitle">Images on each worker host, what needs them, and what can be pruned.</p>
   </div>
-  <div class="page-actions"><a class="btn" href="/operations">Image operations</a></div>
+  <div class="page-actions"><a class="btn" href="/images?tab={{$d.Tab}}">Refresh</a><a class="btn" href="/operations">Image operations</a></div>
 </header>
 
 {{- if $d.Hosts}}
@@ -14,8 +14,8 @@
 {{- with $d.Plan}}
 <section class="panel" aria-labelledby="image-plan-title">
   <header class="panel-header">
-    <h2 class="panel-title" id="image-plan-title">{{template "icon" "warning"}}Plan for {{.Hostname}}</h2>
-    <span class="panel-actions"><a class="btn btn-sm" href="/images">Back to images</a></span>
+    <h2 class="panel-title" id="image-plan-title">{{template "icon" "warning"}}Plan for {{.Hostname}} ({{printf "%.8s" .EngineID}})</h2>
+    <span class="panel-actions"><a class="btn btn-sm" href="/images?tab=built">Back to images</a></span>
   </header>
   {{- if or (not .HasInventory) .Stale .FactsIncomplete}}
   <div class="panel-body"><div class="callout is-queued" role="note">{{template "icon" "warning"}}<p class="callout-body">{{if .FactsIncomplete}}Image facts are incomplete, so no built image can be pruned safely. Reduce the number of stored pipelines and try again.{{else}}This host's inventory is missing or stale. The plan cannot be shown until a worker refreshes it.{{end}}</p></div></div>
@@ -26,14 +26,15 @@
   {{- else}}
   <div class="panel-body">
     <p>Would remove <strong>{{len .Plan.Remove}}</strong> image(s), an estimated <strong>{{bytes .Plan.ReclaimableBytes}}</strong> reclaimable.</p>
-    <ul class="stack-tight">{{range .Plan.Remove}}<li><code>{{.Ref}}</code> · {{bytes .Size}} · {{template "time" .Created}}</li>{{end}}</ul>
+    <ul class="stack-tight">{{range .Plan.Remove}}<li class="ref-line"><code>{{.Ref}}</code> · {{bytes .Size}} · {{template "time" .Created}}</li>{{end}}</ul>
     <details>
       <summary>{{len .Plan.Refuse}} protected or undeclared image(s)</summary>
-      <ul class="stack-tight">{{range .Plan.Refuse}}<li><code>{{.Ref}}</code>: {{.Refusal}}</li>{{else}}<li>None.</li>{{end}}</ul>
+      <ul class="stack-tight">{{range .Plan.Refuse}}<li class="ref-line"><code>{{.Ref}}</code>: {{.Refusal}}</li>{{else}}<li>None.</li>{{end}}</ul>
     </details>
-    <form method="post" action="/images/prune" data-confirm="Prune {{len .Plan.Remove}} built image(s) on {{.Hostname}}?" data-confirm-detail="Only the listed images are removed, and the worker checks every one again before acting. Required, in-use and deployed images stay." data-confirm-action="Prune images">
+    <form method="post" action="/images/prune" data-confirm="Prune {{len .Plan.Remove}} built image(s) on {{.Hostname}} ({{printf "%.8s" .EngineID}})?" data-confirm-detail="Only the selected images are requested. The worker re-checks the current plan and removes nothing else; required, in-use and deployed images stay." data-confirm-action="Prune images">
       <input type="hidden" name="host" value="{{.EngineID}}">
-      <div class="form-actions"><button type="submit" class="btn btn-primary">Prune these images</button> <a class="btn" href="/images">Cancel</a></div>
+      {{range .Plan.Remove}}<input type="hidden" name="target" value="{{.Ref}}|{{.ID}}">{{end}}
+      <div class="form-actions"><button type="submit" class="btn btn-primary">Prune these images</button> <a class="btn" href="/images?tab=built">Cancel</a></div>
     </form>
   </div>
   {{- end}}
@@ -45,13 +46,13 @@
   <div class="table-scroll"><table class="table table-cards table-rich">
     <thead><tr><th scope="col">Host</th><th scope="col">Inventory</th><th scope="col">Workers</th><th scope="col">Cache</th><th scope="col">Missing</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
     <tbody>{{range $d.Hosts}}<tr>
-      <th scope="row" class="table-rowheader"><div class="table-cell"><span class="mono">{{.Hostname}}</span></div></th>
+      <th scope="row" class="table-rowheader"><div class="table-cell"><span class="mono">{{.Hostname}}</span><br><span class="muted mono" title="{{.EngineID}}">{{printf "%.8s" .EngineID}}</span></div></th>
       <td data-label="Inventory"><div class="table-cell">
         {{- if not .HasInventory}}<span class="status is-queued">{{template "icon" "pending"}}No inventory</span>
         {{- else if .Stale}}<span class="status is-queued">{{template "icon" "warning"}}Stale</span>
         {{- else}}{{template "time" .CollectedAt}}{{end}}
       </div></td>
-      <td data-label="Workers"><div class="table-cell">{{if or .ReadyWorkers .StoppedWorkers}}{{.ReadyWorkers}} ready{{if .StoppedWorkers}}, {{.StoppedWorkers}} stopped{{end}}{{else}}No workers{{end}} <a href="/workers">Workers</a></div></td>
+      <td data-label="Workers"><div class="table-cell">{{if or .ReadyWorkers .StoppedWorkers}}{{.ReadyWorkers}} ready{{if .StoppedWorkers}}, {{.StoppedWorkers}} stopped{{end}}{{else}}No workers{{end}} · <a href="/workers">Workers</a></div></td>
       <td data-label="Cache"><div class="table-cell">
         {{- if not .HasInventory}}<span class="muted">No inventory</span>
         {{- else if .Cache.Disabled}}<span class="muted">Enforcement off</span>
@@ -59,20 +60,32 @@
           {{- if .Cache.AboveCap}} <span class="status is-queued">{{template "icon" "warning"}}Above cap</span>{{end}}
           {{- if .Cache.Error}} <span class="status is-failed">{{template "icon" "warning"}}Error</span>{{end}}
         {{- end}}
-        <br><span class="muted">automation {{if .Automation}}{{.Automation}}{{else}}off{{end}}</span>
+        {{- if .HasInventory}}<br><span class="muted">automation {{if .Automation}}{{.Automation}}{{else}}off{{end}}</span>{{end}}
       </div></td>
       <td data-label="Missing"><div class="table-cell">{{if .Missing}}<a href="#missing-{{.EngineID}}"><span class="status is-queued">{{template "icon" "warning"}}{{len .Missing}} missing</span></a>{{else}}<span class="muted">none</span>{{end}}</div></td>
       <td data-label="Actions" class="cell-shrink cell-end"><div class="table-cell"><span class="cluster">
         {{- if and .HasInventory (not .Stale) (not .FactsIncomplete)}}
         <a class="btn btn-sm" href="/images?plan={{.EngineID}}">Prune built images</a>
-        <form method="post" action="/images/cache-prune"><input type="hidden" name="host" value="{{.EngineID}}"><button class="btn btn-sm" type="submit" data-confirm="Prune the build cache on {{.Hostname}}?" data-confirm-detail="This enforces the worker's cache cap and age. It never removes images or containers." data-confirm-action="Prune cache">Prune cache</button></form>
+        <form method="post" action="/images/cache-prune"><input type="hidden" name="host" value="{{.EngineID}}"><input type="hidden" name="tab" value="{{$d.Tab}}"><button class="btn btn-sm" type="submit" data-confirm="Prune the build cache on {{.Hostname}} ({{printf "%.8s" .EngineID}})?" data-confirm-detail="This enforces the worker's cache cap and age. It never removes images or containers." data-confirm-action="Prune cache">Prune cache</button></form>
         {{- end}}
       </span></div></td>
     </tr>{{end}}</tbody>
   </table></div>
+  {{- range $host := $d.Hosts}}{{if $host.HasInventory}}
+  <details class="panel-body">
+    <summary>Cache details for {{$host.Hostname}}</summary>
+    <dl class="facts">
+      <dt>Size</dt><dd>{{bytes $host.Cache.Size}} ({{bytes $host.Cache.Reclaimable}} reclaimable)</dd>
+      <dt>Policy</dt><dd>{{if $host.Cache.Disabled}}Enforcement off{{else}}{{ $host.Cache.Policy.KeepGiB }} GiB, {{ $host.Cache.Policy.OlderThanHours }} hours{{end}}</dd>
+      <dt>Last prune</dt><dd>{{with $host.Cache.PrunedAt}}{{template "time" .}}{{else}}Never{{end}}</dd>
+      <dt>Reclaimed</dt><dd>{{bytes $host.Cache.Reclaimed}}</dd>
+      <dt>Error</dt><dd>{{if $host.Cache.Error}}{{$host.Cache.Error}}{{else}}None{{end}}</dd>
+    </dl>
+  </details>
+  {{- end}}{{end}}
 </section>
 
-{{- range $d.Hosts}}
+{{- range $host := $d.Hosts}}
   {{- if .Cache.Error}}
   <div class="callout is-failed" role="alert">{{template "icon" "warning"}}<div class="callout-body"><p class="callout-title">Build cache on {{.Hostname}}</p><p>{{.Cache.Error}}</p></div></div>
   {{- else if .Cache.AboveCap}}
@@ -82,13 +95,16 @@
   <div class="callout is-failed" role="alert">{{template "icon" "warning"}}<div class="callout-body"><p class="callout-title">Image facts are incomplete on {{.Hostname}}</p><p>Gitman could not read every pipeline that may still need images. Image removal and pruning are disabled until the pipeline snapshot is complete.</p></div></div>
   {{- end}}
   {{- if .Missing}}
-  <div class="callout is-queued" id="missing-{{.EngineID}}" role="note">
+  <div class="callout is-queued" id="missing-{{.EngineID}}" role="note" tabindex="-1">
     {{template "icon" "warning"}}
     <div class="callout-body">
       <p class="callout-title">Missing required images on {{.Hostname}}</p>
-      <p>These images are required by a pipeline that can still run, but no ready worker on this host advertises them. Runs needing them stay queued.</p>
-      <ul class="stack-tight">{{range .Missing}}<li><code>{{.Ref}}</code> — required by {{len .Sources}} pipeline(s)
-        <details><summary>Show pipelines</summary><ul class="stack-tight">{{range .Sources}}<li>{{.String}}</li>{{end}}</ul></details>
+      <p>These images are required by a pipeline that can still run. {{if lt (len .Workers) $host.ReadyWorkers}}They are missing on some ready workers; runs can still be claimed by a worker that has them.{{else}}No ready worker on this host advertises them, so runs needing them stay queued.{{end}}</p>
+      <ul class="stack-tight">{{range .Missing}}<li class="ref-line"><code>{{.Ref}}</code> — required by {{len .Sources}} pipeline(s), missing on {{len .Workers}} of {{$host.ReadyWorkers}} ready worker(s)
+        <details><summary>Show workers and pipelines</summary>
+          <p class="muted">Missing on {{range $i, $w := .Workers}}{{if $i}}, {{end}}<code>{{$w}}</code>{{end}}</p>
+          <ul class="stack-tight">{{range .Sources}}<li>{{.String}}</li>{{end}}</ul>
+        </details>
       </li>{{end}}</ul>
     </div>
   </div>
@@ -102,19 +118,22 @@
 </nav>
 
 <div class="stack" id="panel-required" data-tab-panel="required"{{if ne $d.Tab "required"}} hidden{{end}}>
-  {{- range $d.Hosts}}
+  {{- range $host := $d.Hosts}}
   <section class="panel" aria-labelledby="required-{{.EngineID}}">
     <header class="panel-header"><h2 class="panel-title" id="required-{{.EngineID}}">{{template "icon" "shield"}}{{.Hostname}} · Required</h2></header>
+    {{- if $host.HasInventory}}
+    {{- if $host.Stale}}<div class="panel-body"><p class="muted">This inventory is stale; actions are disabled until the worker refreshes it.</p></div>{{end}}
     <div class="table-scroll"><table class="table table-cards table-rich">
       <thead><tr><th scope="col">Image</th><th scope="col">Size</th><th scope="col">Age</th><th scope="col">In use</th><th scope="col">Reason</th></tr></thead>
       <tbody>{{range .Required}}<tr>
-        <th scope="row" class="table-rowheader cell-truncate" title="{{.Ref}}"><div class="table-cell"><code>{{.Ref}}</code></div></th>
+        <th scope="row" class="table-rowheader cell-truncate" title="{{.Ref}}"><div class="table-cell" tabindex="0"><code>{{.Ref}}</code></div></th>
         <td data-label="Size"><div class="table-cell">{{bytes .Size}}</div></td>
         <td data-label="Age"><div class="table-cell">{{template "time" .Created}}</div></td>
         <td data-label="In use"><div class="table-cell">{{if .InUse}}yes{{else}}no{{end}}</div></td>
-        <td data-label="Reason" class="cell-truncate" title="{{.Reason}}"><div class="table-cell">{{.Reason}}</div></td>
+        <td data-label="Reason" class="cell-truncate" title="{{.Reason}}"><div class="table-cell" tabindex="0">{{.Reason}}</div></td>
       </tr>{{else}}<tr><td colspan="5"><div class="table-cell">No required images.</div></td></tr>{{end}}</tbody>
     </table></div>
+    {{- else}}<div class="panel-body"><p class="muted">Inventory not reported for this host.</p></div>{{end}}
   </section>
   {{- end}}
 </div>
@@ -123,17 +142,20 @@
   {{- range $host := $d.Hosts}}
   <section class="panel" aria-labelledby="built-{{.EngineID}}">
     <header class="panel-header"><h2 class="panel-title" id="built-{{.EngineID}}">{{template "icon" "module"}}{{.Hostname}} · Built</h2></header>
+    {{- if $host.HasInventory}}
+    {{- if $host.Stale}}<div class="panel-body"><p class="muted">This inventory is stale; actions are disabled until the worker refreshes it.</p></div>{{end}}
     <div class="table-scroll"><table class="table table-cards table-rich">
       <thead><tr><th scope="col">Image</th><th scope="col">Size</th><th scope="col">Age</th><th scope="col">State</th><th scope="col">Reason</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
       <tbody>{{range .Built}}<tr>
-        <th scope="row" class="table-rowheader cell-truncate" title="{{.Ref}}"><div class="table-cell"><code>{{.Ref}}</code></div></th>
+        <th scope="row" class="table-rowheader cell-truncate" title="{{.Ref}}"><div class="table-cell" tabindex="0"><code>{{.Ref}}</code></div></th>
         <td data-label="Size"><div class="table-cell">{{bytes .Size}}</div></td>
         <td data-label="Age"><div class="table-cell">{{template "time" .Created}}</div></td>
         <td data-label="State"><div class="table-cell">{{if .WithinKeep}}within {{.Keep}}{{else}}outside {{.Keep}}{{end}}{{if .Prunable}} · prunable{{end}}{{if .Deployed}} · deployed{{if .DeployedFallback}} (newest tag){{end}}{{end}}{{if .InUse}} · in use{{end}}</div></td>
-        <td data-label="Reason" class="cell-truncate" title="{{if .Refusal}}{{.Refusal}}{{else}}{{.Reason}}{{end}}"><div class="table-cell">{{if .Refusal}}{{.Refusal}}{{else}}{{.Reason}}{{end}}</div></td>
-        <td data-label="Actions" class="cell-shrink cell-end"><div class="table-cell">{{if and $host.HasInventory (not $host.Stale) (not .InUse)}}<form method="post" action="/images/remove" data-confirm="Remove {{.Ref}}?" data-confirm-detail="The tag is removed without force. If another tag still uses its image, the image remains." data-confirm-action="Remove image"><input type="hidden" name="host" value="{{$host.EngineID}}"><input type="hidden" name="image" value="{{.Ref}}"><button class="btn btn-sm btn-danger" type="submit">Remove</button></form>{{end}}</div></td>
+        <td data-label="Reason" class="cell-truncate" title="{{if .Refusal}}{{.Refusal}}{{else}}{{.Reason}}{{end}}"><div class="table-cell" tabindex="0">{{if .Refusal}}{{.Refusal}}{{else}}{{.Reason}}{{end}}</div></td>
+        <td data-label="Actions" class="cell-shrink cell-end"><div class="table-cell">{{if and $host.HasInventory (not $host.Stale) (not .InUse)}}<span class="js-only"><form method="post" action="/images/remove" data-confirm="Remove {{.Ref}} from {{$host.Hostname}} ({{printf "%.8s" $host.EngineID}})?" data-confirm-detail="{{if .Deployed}}This tag is currently deployed. {{end}}{{if .WithinKeep}}It is inside the keep window. {{end}}The tag is removed without force. If another tag still uses its image, the image remains." data-confirm-action="{{if .WithinKeep}}Remove anyway{{else}}Remove image{{end}}"><input type="hidden" name="host" value="{{$host.EngineID}}"><input type="hidden" name="tab" value="{{$d.Tab}}"><input type="hidden" name="image" value="{{.Ref}}"><button class="btn btn-sm btn-danger" type="submit">{{if .WithinKeep}}Remove anyway{{else}}Remove{{end}}</button></form></span><span class="no-js-only muted">Use the CLI</span>{{end}}</div></td>
       </tr>{{else}}<tr><td colspan="6"><div class="table-cell">No built images.</div></td></tr>{{end}}</tbody>
     </table></div>
+    {{- else}}<div class="panel-body"><p class="muted">Inventory not reported for this host.</p></div>{{end}}
   </section>
   {{- end}}
 </div>
@@ -142,17 +164,20 @@
   {{- range $host := $d.Hosts}}
   <section class="panel" aria-labelledby="other-{{.EngineID}}">
     <header class="panel-header"><h2 class="panel-title" id="other-{{.EngineID}}">{{template "icon" "tag"}}{{.Hostname}} · Other</h2></header>
+    {{- if $host.HasInventory}}
+    {{- if $host.Stale}}<div class="panel-body"><p class="muted">This inventory is stale; actions are disabled until the worker refreshes it.</p></div>{{end}}
     <div class="table-scroll"><table class="table table-cards table-rich">
       <thead><tr><th scope="col">Image</th><th scope="col">Size</th><th scope="col">Age</th><th scope="col">In use</th><th scope="col">Reason</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
       <tbody>{{range .Other}}<tr>
-        <th scope="row" class="table-rowheader cell-truncate" title="{{.Ref}}"><div class="table-cell"><code>{{.Ref}}</code></div></th>
+        <th scope="row" class="table-rowheader cell-truncate" title="{{.Ref}}"><div class="table-cell" tabindex="0"><code>{{.Ref}}</code></div></th>
         <td data-label="Size"><div class="table-cell">{{bytes .Size}}</div></td>
         <td data-label="Age"><div class="table-cell">{{template "time" .Created}}</div></td>
         <td data-label="In use"><div class="table-cell">{{if .InUse}}yes{{else}}no{{end}}</div></td>
-        <td data-label="Reason" class="cell-truncate" title="{{.Reason}}"><div class="table-cell">{{.Reason}}</div></td>
-        <td data-label="Actions" class="cell-shrink cell-end"><div class="table-cell">{{if and $host.HasInventory (not $host.Stale) (not .InUse)}}<form method="post" action="/images/remove" data-confirm="Remove {{.Ref}}?" data-confirm-detail="The image or tag is removed without force. This is an explicit removal of an image no pipeline declares." data-confirm-action="Remove image"><input type="hidden" name="host" value="{{$host.EngineID}}"><input type="hidden" name="image" value="{{.Ref}}"><button class="btn btn-sm btn-danger" type="submit">Remove</button></form>{{end}}</div></td>
+        <td data-label="Reason" class="cell-truncate" title="{{.Reason}}"><div class="table-cell" tabindex="0">{{.Reason}}</div></td>
+        <td data-label="Actions" class="cell-shrink cell-end"><div class="table-cell">{{if and $host.HasInventory (not $host.Stale) (not .InUse)}}<span class="js-only"><form method="post" action="/images/remove" data-confirm="Remove {{.Ref}} from {{$host.Hostname}} ({{printf "%.8s" $host.EngineID}})?" data-confirm-detail="The image or tag is removed without force. This is an explicit removal of an image no pipeline declares." data-confirm-action="Remove image"><input type="hidden" name="host" value="{{$host.EngineID}}"><input type="hidden" name="tab" value="{{$d.Tab}}"><input type="hidden" name="image" value="{{.Ref}}"><button class="btn btn-sm btn-danger" type="submit">Remove</button></form></span><span class="no-js-only muted">Use the CLI</span>{{end}}</div></td>
       </tr>{{else}}<tr><td colspan="6"><div class="table-cell">No other images.</div></td></tr>{{end}}</tbody>
     </table></div>
+    {{- else}}<div class="panel-body"><p class="muted">Inventory not reported for this host.</p></div>{{end}}
   </section>
   {{- end}}
 </div>

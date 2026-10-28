@@ -81,7 +81,7 @@ func TestImagesPageShowsInventoryMissingCacheAndTabs(t *testing.T) {
 	expect(t, resp, body, http.StatusOK, "Image operations", "image.prune", "pending")
 
 	resp, body = admin.do(http.MethodGet, "/images?plan=engine-1", nil, nil)
-	expect(t, resp, body, http.StatusOK, "Plan for host", "Would remove", "app:old", "Prune these images", "within the newest 1 tags")
+	expect(t, resp, body, http.StatusOK, "Plan for host", "Would remove", "app:old", "Prune these images", "within the newest 1 tags", `name="target" value="app:old|sha256:old"`)
 	if start := strings.Index(body, "Would remove"); start >= 0 {
 		section := body[start:]
 		if end := strings.Index(section, "protected or undeclared"); end >= 0 {
@@ -158,7 +158,7 @@ func TestImagesActionsRequireAdminAndQueueWork(t *testing.T) {
 	}
 
 	resp, _ = admin.do(http.MethodPost, "/images/prune", url.Values{"host": {"engine-1"}}, nil)
-	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/images" {
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/images?tab=built" {
 		t.Fatalf("prune redirect = %d %q", resp.StatusCode, resp.Header.Get("Location"))
 	}
 }
