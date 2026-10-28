@@ -14,6 +14,7 @@ import (
 	"github.com/mmrzaf/gitman/internal/git"
 	"github.com/mmrzaf/gitman/internal/names"
 	"github.com/mmrzaf/gitman/internal/postgres"
+	reposvc "github.com/mmrzaf/gitman/internal/repo"
 )
 
 // homeTimelineLimit and homeInProgressLimit bound the feed and the runs
@@ -106,6 +107,20 @@ func (a *App) buildHomeData(r *http.Request, createForm *form) (homePage, error)
 	if err != nil {
 		return homePage{}, err
 	}
+	// The readable list is bounded; the page being shown may name a
+	// repository beyond that bound. Include it so its row and live data
+	// are present, and keep the rows in name order.
+	known := make(map[string]bool, len(all)+len(list))
+	for _, repo := range all {
+		known[repo.ID] = true
+	}
+	for _, repo := range list {
+		if !known[repo.ID] {
+			all = append(all, repo)
+			known[repo.ID] = true
+		}
+	}
+	slices.SortFunc(all, func(a, b *reposvc.Repo) int { return strings.Compare(a.Name, b.Name) })
 	listed := map[string]bool{}
 	for _, repo := range list {
 		listed[repo.ID] = true
