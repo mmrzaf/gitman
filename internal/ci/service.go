@@ -754,7 +754,9 @@ func (s *Service) ImageFacts(ctx context.Context) (*ImageFacts, error) {
 		cfg, err := Parse(fact.Pipeline)
 		if err != nil {
 			// Stored bytes were valid when the run was created; a row that
-			// is not readable now cannot protect or prune anything.
+			// is not readable now may still require images. Treat the
+			// snapshot as incomplete so nothing is pruned.
+			facts.Incomplete = true
 			continue
 		}
 		source := ImageSource{Repo: fact.RepoName, Ref: fact.Source}
@@ -929,7 +931,7 @@ func (s *Service) queueImagePrune(ctx context.Context, engineID, actorID string,
 		return "", PrunePlan{}, err
 	}
 	if host.FactsIncomplete {
-		return "", PrunePlan{}, apperr.New(apperr.KindConflict, "Image facts are incomplete; no built image is pruned. Try again after the current pipeline snapshot is under the limit.")
+		return "", PrunePlan{}, apperr.New(apperr.KindConflict, "Image facts are incomplete; no built image is pruned. Try again after every stored pipeline can be read.")
 	}
 	plan := host.Plan
 	if requested != nil {
@@ -966,7 +968,7 @@ func (s *Service) QueueImageRemove(ctx context.Context, engineID, ref, actorID s
 		return "", err
 	}
 	if host.FactsIncomplete {
-		return "", apperr.New(apperr.KindConflict, "Image facts are incomplete; no image is removed. Try again after the current pipeline snapshot is under the limit.")
+		return "", apperr.New(apperr.KindConflict, "Image facts are incomplete; no image is removed. Try again after every stored pipeline can be read.")
 	}
 	normalized := NormalizeImageReference(ref)
 	var found *ClassifiedImage

@@ -909,19 +909,21 @@ func selectRequiredPipelines(ctx context.Context, q postgres.Querier) ([]pipelin
 	if err != nil {
 		return nil, false, fmt.Errorf("list required run pipelines: %w", err)
 	}
+	requiredCount := 0
 	for rows.Next() {
 		var fact pipelineFact
 		if err := rows.Scan(&fact.RunID, &fact.RepoID, &fact.RepoName, &fact.Source, &fact.Pipeline); err != nil {
 			rows.Close()
 			return nil, false, fmt.Errorf("scan required run pipeline: %w", err)
 		}
+		requiredCount++
 		add(fact)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return nil, false, fmt.Errorf("list required run pipelines: %w", err)
 	}
-	if len(facts) > imageFactsLimit {
+	if requiredCount > imageFactsLimit {
 		facts = facts[:imageFactsLimit]
 		incomplete = true
 	}
@@ -1006,17 +1008,22 @@ func selectRequiredPipelines(ctx context.Context, q postgres.Querier) ([]pipelin
 		return nil, false, fmt.Errorf("list current-head pipelines per ref: %w", err)
 	}
 	defer rows.Close()
+	matchedCount := 0
 	for rows.Next() {
 		var fact pipelineFact
 		var kind, name string
 		if err := rows.Scan(&fact.RunID, &fact.RepoID, &fact.RepoName, &kind, &name, &fact.Pipeline); err != nil {
 			return nil, false, fmt.Errorf("scan current-head pipeline per ref: %w", err)
 		}
+		matchedCount++
 		fact.Source = kind + " " + name
 		add(fact)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, false, fmt.Errorf("list current-head pipelines per ref: %w", err)
+	}
+	if matchedCount > imageFactsLimit {
+		incomplete = true
 	}
 	if len(facts) > imageFactsLimit {
 		facts = facts[:imageFactsLimit]

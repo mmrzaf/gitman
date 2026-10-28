@@ -175,6 +175,12 @@ func (w *Worker) applyImageTargets(ctx context.Context, targets []ci.ImageTarget
 	if err != nil {
 		return result, fmt.Errorf("read image facts: %w", err)
 	}
+	if facts.Incomplete {
+		for _, target := range targets {
+			result.Results = append(result.Results, ci.ImageResult{Ref: target.Ref, Status: "skipped", Reason: "image facts are incomplete; no image is removed"})
+		}
+		return result, nil
+	}
 	images, _, _, err := w.docker.ImageInventory(ctx)
 	if err != nil {
 		return result, fmt.Errorf("read image inventory: %w", err)

@@ -121,7 +121,11 @@ func adminImagesMissing(ctx context.Context, env *adminEnv, args []string) error
 		worker, image, sources string
 	}
 	var rows []row
+	incomplete := false
 	for _, host := range hosts {
+		if host.FactsIncomplete {
+			incomplete = true
+		}
 		for _, missing := range host.Missing {
 			for _, workerID := range missing.Workers {
 				rows = append(rows, row{worker: host.Hostname + " (" + workerID + ")", image: missing.Ref, sources: imageSources(missing.Sources)})
@@ -129,6 +133,10 @@ func adminImagesMissing(ctx context.Context, env *adminEnv, args []string) error
 		}
 	}
 	if len(rows) == 0 {
+		if incomplete {
+			fmt.Fprintln(env.out, "Image facts are incomplete; the missing-image list cannot be trusted.")
+			return fmt.Errorf("image facts are incomplete")
+		}
 		fmt.Fprintln(env.out, "No required images are missing from ready workers.")
 		return nil
 	}
@@ -138,6 +146,9 @@ func adminImagesMissing(ctx context.Context, env *adminEnv, args []string) error
 		fmt.Fprintf(tw, "%s\t%s\t%s\n", row.worker, row.image, row.sources)
 	}
 	_ = tw.Flush()
+	if incomplete {
+		fmt.Fprintln(env.out, "Image facts are incomplete; this list may miss required images.")
+	}
 	return fmt.Errorf("required images are missing")
 }
 
@@ -277,6 +288,9 @@ func adminImagesRemove(ctx context.Context, env *adminEnv, args []string) error 
 	}
 	if !host.HasInventory || host.Stale {
 		return fmt.Errorf("the image inventory for %s is stale; try again after the worker refreshes it", host.Hostname)
+	}
+	if host.FactsIncomplete {
+		return fmt.Errorf("image facts are incomplete; no image is removed until every stored pipeline can be read")
 	}
 	var found *ci.ClassifiedImage
 	for i := range host.Images {

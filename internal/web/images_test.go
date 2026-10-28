@@ -162,3 +162,54 @@ func TestImagesActionsRequireAdminAndQueueWork(t *testing.T) {
 		t.Fatalf("prune redirect = %d %q", resp.StatusCode, resp.Header.Get("Location"))
 	}
 }
+
+func TestImagesPageDisablesActionsWhenFactsAreIncomplete(t *testing.T) {
+	app, database, _, admin := setupApp(t)
+	signIn(t, database, admin, "lead", true)
+	ctx := t.Context()
+	for _, query := range []string{
+		`INSERT INTO repos (id, name) VALUES ('r1', 'app')`,
+		`INSERT INTO refs (repo_id, kind, name, commit_hash) VALUES ('r1', 'branch', 'main', 'abc')`,
+		`INSERT INTO ref_rules (id, repo_id, kind, pattern, run_on_push) VALUES ('rule1', 'r1', 'branch', 'main', true)`,
+		`INSERT INTO workers (id, hostname, engine_id, ready, readiness_at, heartbeat_at)
+		 VALUES ('w1', 'host', 'engine-1', true, now(), now())`,
+	} {
+		if _, err := database.Pool.Exec(ctx, query); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for id, run := range map[string]struct {
+		number   int
+		pipeline string
+	}{
+		"run1": {1, "image: alpine:3.20\nimages:\n  app: {keep: 1}\nsteps:\n  - name: build\n    run: echo hi\n"},
+		"run2": {2, "image: ["},
+	} {
+		if _, err := database.Pool.Exec(ctx, `
+			INSERT INTO runs (id, repo_id, number, commit_hash, trigger, status, ref_kind, ref_name, pipeline)
+			VALUES ($1, 'r1', $2, 'abc', 'push', 'queued', 'branch', 'main', $3)
+		`, id, run.number, []byte(run.pipeline)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := app.ci.PublishInventory(ctx, ci.HostInventory{
+		EngineID: "engine-1", WorkerID: "w1", Hostname: "host",
+		Images: []ci.InventoryImage{{Repository: "app", NormalizedRepository: "docker.io/library/app", Tag: "old", ID: "sha256:old", Size: 10, Created: time.Now().Add(-time.Hour)}},
+		Cache:  ci.ImageCachePolicy{KeepGiB: 3, OlderThanHours: 168},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, body := admin.do(http.MethodGet, "/images?tab=built", nil, nil)
+	expect(t, resp, body, http.StatusOK, "Image facts are incomplete", "app:old",
+		"image facts are incomplete; no built image is pruned")
+	if strings.Contains(body, `action="/images/remove"`) {
+		t.Error("the page offered an image removal with incomplete facts")
+	}
+	if strings.Contains(body, `href="/images?plan=engine-1"`) {
+		t.Error("the page offered a prune plan with incomplete facts")
+	}
+	if !strings.Contains(body, `action="/images/cache-prune"`) {
+		t.Error("the page hid the cache prune action with incomplete image facts")
+	}
+}

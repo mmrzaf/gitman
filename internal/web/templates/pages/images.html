@@ -18,7 +18,7 @@
     <span class="panel-actions"><a class="btn btn-sm" href="/images?tab=built">Back to images</a></span>
   </header>
   {{- if or (not .HasInventory) .Stale .FactsIncomplete}}
-  <div class="panel-body"><div class="callout is-queued" role="note">{{template "icon" "warning"}}<p class="callout-body">{{if .FactsIncomplete}}Image facts are incomplete, so no built image can be pruned safely. Reduce the number of stored pipelines and try again.{{else}}This host's inventory is missing or stale. The plan cannot be shown until a worker refreshes it.{{end}}</p></div></div>
+  <div class="panel-body"><div class="callout is-queued" role="note">{{template "icon" "warning"}}<p class="callout-body">{{if .FactsIncomplete}}Image facts are incomplete, so no built image can be pruned safely. Try again after Gitman can read every pipeline that may still need images.{{else}}This host's inventory is missing or stale. The plan cannot be shown until a worker refreshes it.{{end}}</p></div></div>
   {{- else if eq (len .Plan.Remove) 0}}
   <div class="panel-body"><p>No built images are prunable right now.</p>
     {{- if .Plan.Refuse}}<p class="muted">{{len .Plan.Refuse}} image(s) are protected or not built by a pipeline.</p>{{end}}
@@ -64,8 +64,8 @@
       </div></td>
       <td data-label="Missing"><div class="table-cell">{{if .Missing}}<a href="#missing-{{.EngineID}}"><span class="status is-queued">{{template "icon" "warning"}}{{len .Missing}} missing</span></a>{{else}}<span class="muted">none</span>{{end}}</div></td>
       <td data-label="Actions" class="cell-shrink cell-end"><div class="table-cell"><span class="cluster">
-        {{- if and .HasInventory (not .Stale) (not .FactsIncomplete)}}
-        <a class="btn btn-sm" href="/images?plan={{.EngineID}}">Prune built images</a>
+        {{- if and .HasInventory (not .Stale)}}
+        {{- if not .FactsIncomplete}}<a class="btn btn-sm" href="/images?plan={{.EngineID}}">Prune built images</a>{{end}}
         <form method="post" action="/images/cache-prune"><input type="hidden" name="host" value="{{.EngineID}}"><input type="hidden" name="tab" value="{{$d.Tab}}"><button class="btn btn-sm" type="submit" data-confirm="Prune the build cache on {{.Hostname}} ({{printf "%.8s" .EngineID}})?" data-confirm-detail="This enforces the worker's cache cap and age. It never removes images or containers." data-confirm-action="Prune cache">Prune cache</button></form>
         {{- end}}
       </span></div></td>
@@ -92,7 +92,7 @@
   <div class="callout is-queued" role="note">{{template "icon" "warning"}}<div class="callout-body"><p class="callout-title">Build cache on {{.Hostname}} is above its cap</p><p>The cache is above its {{.Cache.Policy.KeepGiB}} GiB cap. A build using it can keep it above the cap until the build finishes; the next enforcement retries.</p></div></div>
   {{- end}}
   {{- if .FactsIncomplete}}
-  <div class="callout is-failed" role="alert">{{template "icon" "warning"}}<div class="callout-body"><p class="callout-title">Image facts are incomplete on {{.Hostname}}</p><p>Gitman could not read every pipeline that may still need images. Image removal and pruning are disabled until the pipeline snapshot is complete.</p></div></div>
+  <div class="callout is-failed" role="alert">{{template "icon" "warning"}}<div class="callout-body"><p class="callout-title">Image facts are incomplete on {{.Hostname}}</p><p>Gitman could not read every pipeline that may still need images. Image removal and built-image pruning are disabled until it can.</p></div></div>
   {{- end}}
   {{- if .Missing}}
   <div class="callout is-queued" id="missing-{{.EngineID}}" role="note" tabindex="-1">
@@ -152,7 +152,7 @@
         <td data-label="Age"><div class="table-cell">{{template "time" .Created}}</div></td>
         <td data-label="State"><div class="table-cell">{{if .WithinKeep}}within {{.Keep}}{{else}}outside {{.Keep}}{{end}}{{if .Prunable}} · prunable{{end}}{{if .Deployed}} · deployed{{if .DeployedFallback}} (newest tag){{end}}{{end}}{{if .InUse}} · in use{{end}}</div></td>
         <td data-label="Reason" class="cell-truncate" title="{{if .Refusal}}{{.Refusal}}{{else}}{{.Reason}}{{end}}"><div class="table-cell" tabindex="0">{{if .Refusal}}{{.Refusal}}{{else}}{{.Reason}}{{end}}</div></td>
-        <td data-label="Actions" class="cell-shrink cell-end"><div class="table-cell">{{if and $host.HasInventory (not $host.Stale) (not .InUse)}}<span class="js-only"><form method="post" action="/images/remove" data-confirm="Remove {{.Ref}} from {{$host.Hostname}} ({{printf "%.8s" $host.EngineID}})?" data-confirm-detail="{{if .Deployed}}This tag is currently deployed. {{end}}{{if .WithinKeep}}It is inside the keep window. {{end}}The tag is removed without force. If another tag still uses its image, the image remains." data-confirm-action="{{if .WithinKeep}}Remove anyway{{else}}Remove image{{end}}"><input type="hidden" name="host" value="{{$host.EngineID}}"><input type="hidden" name="tab" value="{{$d.Tab}}"><input type="hidden" name="image" value="{{.Ref}}"><button class="btn btn-sm btn-danger" type="submit">{{if .WithinKeep}}Remove anyway{{else}}Remove{{end}}</button></form></span><span class="no-js-only muted">Use the CLI</span>{{end}}</div></td>
+        <td data-label="Actions" class="cell-shrink cell-end"><div class="table-cell">{{if and $host.HasInventory (not $host.Stale) (not $host.FactsIncomplete) (not .InUse)}}<span class="js-only"><form method="post" action="/images/remove" data-confirm="Remove {{.Ref}} from {{$host.Hostname}} ({{printf "%.8s" $host.EngineID}})?" data-confirm-detail="{{if .Deployed}}This tag is currently deployed. {{end}}{{if .WithinKeep}}It is inside the keep window. {{end}}The tag is removed without force. If another tag still uses its image, the image remains." data-confirm-action="{{if .WithinKeep}}Remove anyway{{else}}Remove image{{end}}"><input type="hidden" name="host" value="{{$host.EngineID}}"><input type="hidden" name="tab" value="{{$d.Tab}}"><input type="hidden" name="image" value="{{.Ref}}"><button class="btn btn-sm btn-danger" type="submit">{{if .WithinKeep}}Remove anyway{{else}}Remove{{end}}</button></form></span><span class="no-js-only muted">Use the CLI</span>{{end}}</div></td>
       </tr>{{else}}<tr><td colspan="6"><div class="table-cell">No built images.</div></td></tr>{{end}}</tbody>
     </table></div>
     {{- else}}<div class="panel-body"><p class="muted">Inventory not reported for this host.</p></div>{{end}}
@@ -174,7 +174,7 @@
         <td data-label="Age"><div class="table-cell">{{template "time" .Created}}</div></td>
         <td data-label="In use"><div class="table-cell">{{if .InUse}}yes{{else}}no{{end}}</div></td>
         <td data-label="Reason" class="cell-truncate" title="{{.Reason}}"><div class="table-cell" tabindex="0">{{.Reason}}</div></td>
-        <td data-label="Actions" class="cell-shrink cell-end"><div class="table-cell">{{if and $host.HasInventory (not $host.Stale) (not .InUse)}}<span class="js-only"><form method="post" action="/images/remove" data-confirm="Remove {{.Ref}} from {{$host.Hostname}} ({{printf "%.8s" $host.EngineID}})?" data-confirm-detail="The image or tag is removed without force. This is an explicit removal of an image no pipeline declares." data-confirm-action="Remove image"><input type="hidden" name="host" value="{{$host.EngineID}}"><input type="hidden" name="tab" value="{{$d.Tab}}"><input type="hidden" name="image" value="{{.Ref}}"><button class="btn btn-sm btn-danger" type="submit">Remove</button></form></span><span class="no-js-only muted">Use the CLI</span>{{end}}</div></td>
+        <td data-label="Actions" class="cell-shrink cell-end"><div class="table-cell">{{if and $host.HasInventory (not $host.Stale) (not $host.FactsIncomplete) (not .InUse)}}<span class="js-only"><form method="post" action="/images/remove" data-confirm="Remove {{.Ref}} from {{$host.Hostname}} ({{printf "%.8s" $host.EngineID}})?" data-confirm-detail="The image or tag is removed without force. This is an explicit removal of an image no pipeline declares." data-confirm-action="Remove image"><input type="hidden" name="host" value="{{$host.EngineID}}"><input type="hidden" name="tab" value="{{$d.Tab}}"><input type="hidden" name="image" value="{{.Ref}}"><button class="btn btn-sm btn-danger" type="submit">Remove</button></form></span><span class="no-js-only muted">Use the CLI</span>{{end}}</div></td>
       </tr>{{else}}<tr><td colspan="6"><div class="table-cell">No other images.</div></td></tr>{{end}}</tbody>
     </table></div>
     {{- else}}<div class="panel-body"><p class="muted">Inventory not reported for this host.</p></div>{{end}}
