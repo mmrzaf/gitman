@@ -217,6 +217,19 @@ func (w *Worker) applyImageTargets(ctx context.Context, targets []ci.ImageTarget
 			result.Results = append(result.Results, ci.ImageResult{Ref: target.Ref, Status: "skipped", Reason: reason})
 			continue
 		}
+		id, found, err := w.docker.ImageID(ctx, target.Ref)
+		if err != nil {
+			result.Results = append(result.Results, ci.ImageResult{Ref: target.Ref, Status: "failed", Reason: err.Error()})
+			continue
+		}
+		if !found {
+			result.Results = append(result.Results, ci.ImageResult{Ref: target.Ref, Status: "removed", Reason: "already absent"})
+			continue
+		}
+		if id != target.ID {
+			result.Results = append(result.Results, ci.ImageResult{Ref: target.Ref, Status: "skipped", Reason: "the tag now points to a different image"})
+			continue
+		}
 		if err := w.docker.RemoveImage(ctx, target.Ref); err != nil {
 			result.Results = append(result.Results, ci.ImageResult{Ref: target.Ref, Status: "failed", Reason: err.Error()})
 			continue

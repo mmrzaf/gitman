@@ -193,6 +193,7 @@ steps:
 	}, "\n"))
 	t.Setenv("FAKE_DOCKER_CONTAINER_IDS", "")
 	t.Setenv("FAKE_DOCKER_CONTAINER_IMAGES", "")
+	t.Setenv("FAKE_DOCKER_IMAGE_ID", imageOld)
 	root := t.TempDir()
 	w := New(Config{WorkspaceRoot: root, ImageCache: config.DefaultImageCache()}, database, svc, nil, fake.docker, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	w.id = "w1"
@@ -294,5 +295,18 @@ func TestImageOperationOnShutdownRecordsInterruption(t *testing.T) {
 	}
 	if finished.Pending() || !strings.Contains(finished.Error, "shut down") {
 		t.Fatalf("interrupted operation = %+v", finished)
+	}
+}
+
+func TestImageInventoryRetriesWhenAnImageDisappears(t *testing.T) {
+	fake := newFakeDocker(t)
+	setImageInventory(t)
+	t.Setenv("FAKE_DOCKER_INSPECT_FAIL_ONCE", "image")
+	images, _, _, err := fake.docker.ImageInventory(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(images) == 0 {
+		t.Fatal("retry produced an empty inventory")
 	}
 }
