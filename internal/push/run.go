@@ -36,7 +36,6 @@ func Explain(out io.Writer, err error) error {
 	if err == nil || errors.Is(err, ErrRejected) {
 		return err
 	}
-	_, _ = fmt.Fprintf(out, "Gitman could not complete this push: %v\n", err)
-	_, _ = fmt.Fprintln(out, "An operator can inspect Operations for pending recovery before retrying.")
+	_, _ = fmt.Fprintln(out, "Gitman could not complete this push. An operator can inspect Operations for pending recovery before retrying.")
 	return err
 }

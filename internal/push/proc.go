@@ -92,7 +92,7 @@ func (h *Hook) ProcReceive(ctx context.Context, in io.Reader, out io.Writer) err
 		return writeErr
 	}
 	if err != nil {
-		h.say("Gitman: %v", err)
+		h.say("Gitman could not complete this push; ask an operator to check the server log.")
 	}
 	// Results already describe rejection. A protocol failure, rather than a
 	// domain rejection, is the reason to terminate the protocol unsuccessfully.

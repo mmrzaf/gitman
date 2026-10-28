@@ -274,7 +274,7 @@ func (h *Hook) refused(ctx context.Context, pc *pushContext, refusals ...refusal
 		return activity.Changed(ctx, tx, pc.repo.ID)
 	})
 	if err != nil {
-		h.say("Gitman could not record this refusal: %v", err)
+		h.say("Gitman could not record this refusal; the push is still refused.")
 	}
 	return ErrRejected
 }
