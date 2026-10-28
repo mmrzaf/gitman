@@ -1,6 +1,14 @@
 {
   "releases": [
     {
+      "version": "1.0.0-beta.27",
+      "releasedOn": "2026-10-28",
+      "items": [
+        "A run page now follows a fast sequence of steps reliably, instead of leaving the output on an earlier step.",
+        "The Images and Workers pages are easier to use with a keyboard and a screen reader."
+      ]
+    },
+    {
       "version": "1.0.0-beta.26",
       "releasedOn": "2026-10-28",
       "items": [

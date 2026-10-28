@@ -52,7 +52,7 @@
         {{- else if .Stale}}<span class="status is-queued">{{template "icon" "warning"}}Stale</span>
         {{- else}}{{template "time" .CollectedAt}}{{end}}
       </div></td>
-      <td data-label="Workers"><div class="table-cell">{{if or .ReadyWorkers .StoppedWorkers}}{{.ReadyWorkers}} ready{{if .StoppedWorkers}}, {{.StoppedWorkers}} stopped{{end}}{{else}}No workers{{end}} · <a href="/workers">Workers</a></div></td>
+      <td data-label="Workers"><div class="table-cell">{{if or .ReadyWorkers .StoppedWorkers}}{{.ReadyWorkers}} ready{{if .StoppedWorkers}}, {{.StoppedWorkers}} stopped{{end}}{{else}}No workers{{end}} · <a class="inline-link" href="/workers">Workers</a></div></td>
       <td data-label="Cache"><div class="table-cell">
         {{- if not .HasInventory}}<span class="muted">No inventory</span>
         {{- else if .Cache.Disabled}}<span class="muted">Enforcement off</span>
