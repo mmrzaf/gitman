@@ -3,6 +3,25 @@
 What changed in each release, for the people who run Gitman. Newest first.
 Each release's section is also its GitHub release notes.
 
+## [1.0.0-beta.28] - 2026-10-28
+
+Beta 28 completes the beta 27 follow-up: live runs keep up with fast step
+changes, and the Images and Workers pages are usable from the keyboard and a
+screen reader.
+
+**Installation:** this release has no schema change. Existing beta 27 and
+beta 26 databases upgrade in place, and rolling back to beta 27 is safe.
+
+### Fixed
+
+- **Run pages follow fast step changes**: a run page refreshes once when its
+  live stream opens, closing the gap between rendering and subscribing. A run
+  that moves through build and test steps quickly no longer leaves the output
+  on an earlier step.
+- **Images and Workers are accessible**: the Workers link in the Images host
+  summary is underlined, and the scrollable Workers table and its Images cell
+  are keyboard-focusable and named for assistive technology.
+
 ## [1.0.0-beta.27] - 2026-10-28
 
 A small follow-up to beta 26 for fast live runs and the admin pages.
