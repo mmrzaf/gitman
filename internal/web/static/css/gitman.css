@@ -1200,6 +1200,8 @@ time { white-space: nowrap; }
 .repo-cell > .muted { font-size: var(--text-xs); font-weight: 400; }
 /* A link among words in a muted cell is not told apart by colour alone. */
 .cell-muted a:not(.btn, .ref, .hash) { text-decoration: underline; }
+/* A link among words anywhere else needs the same distinction. */
+.inline-link { text-decoration: underline; text-underline-offset: 2px; }
 /* A region a live refresh can fill or empty takes no room while empty. */
 .region:empty { display: none; }
 

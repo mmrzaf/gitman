@@ -6,7 +6,7 @@
 </div></header>
 <section class="panel" aria-labelledby="workers-title">
 {{if .Data.Workers}}
-<div class="table-scroll"><table class="table table-cards table-rich">
+<div class="table-scroll" tabindex="0" role="region" aria-label="Worker list"><table class="table table-cards table-rich">
 <thead><tr><th scope="col">Host</th><th scope="col">Readiness</th><th scope="col">Heartbeat</th><th scope="col">Active runs</th><th scope="col">Images</th></tr></thead>
 <tbody>{{range .Data.Workers}}<tr>
 <th scope="row" class="table-rowheader"><div class="table-cell">{{.Hostname}}<br><span class="muted mono">{{.ID}}</span></div></th>
