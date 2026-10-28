@@ -13,7 +13,7 @@
 <td data-label="Readiness"><div class="table-cell">{{if .Ready}}<span class="status is-passed">{{template "icon" "passed"}}Ready</span>{{else}}<span class="status is-queued">{{template "icon" "queued"}}Unavailable</span>{{end}}<p class="muted">{{.Reason}}</p></div></td>
 <td data-label="Heartbeat"><div class="table-cell">{{template "time" .Heartbeat}}{{if .Stopped}}<p>Stopped {{template "time" .Stopped}}</p>{{end}}</div></td>
 <td data-label="Active runs"><div class="table-cell">{{.ActiveRuns}}</div></td>
-<td data-label="Images"><div class="table-cell">{{range .Images}}<code>{{.}}</code><br>{{else}}<span class="muted">No images advertised</span>{{end}}</div></td>
+<td data-label="Images"><div class="table-cell" tabindex="0" role="region" aria-label="Advertised images">{{range .Images}}<code>{{.}}</code><br>{{else}}<span class="muted">No images advertised</span>{{end}}</div></td>
 </tr>{{end}}</tbody></table></div>
 {{else}}<div class="empty"><p class="empty-title">No workers registered</p><p>Start a worker to execute queued pipelines.</p></div>{{end}}
 </section></div>
