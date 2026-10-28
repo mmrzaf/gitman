@@ -59,7 +59,7 @@ sessions, and admins can do the same for anyone under **Sessions**.
 Check an installation at any time without changing it:
 
 ```sh
-docker compose exec web gitman doctor
+docker compose exec worker gitman doctor
 ```
 
 ### Behind a reverse proxy

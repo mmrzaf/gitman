@@ -4,7 +4,9 @@
 
 - There are no anonymous users: every request, over the web or over Git,
   authenticates as a specific person.
-- Anyone signed in can create a repository.
+- Anyone signed in can create up to 100 repositories and 10 per hour.
+- Raw file downloads from the web are capped at 1 GiB; use a Git clone for
+  larger files.
 - An **admin** additionally manages people (add, disable, enable, change
   role) and every repository's settings: description, ref rules, secrets,
   read access, and deletion. A person is disabled, never deleted, so
@@ -20,7 +22,10 @@ in 24 hours. The person must change that password before using the rest of
 the interface or creating tokens. Passwords require at least 12 characters
 and at most 72 UTF-8 bytes. Usernames and repository names are lowercase.
 
-Sessions have an absolute seven-day expiry. Password changes, resets, and
+Sessions have an absolute seven-day expiry. A person keeps at most 20
+sessions and 50 access tokens; creating more removes the oldest. Stored user
+agents are truncated to 512 bytes.
+ Password changes, resets, and
 disabling an account revoke sessions and access tokens. **Revoke all credentials**
 on the account page, or `gitman admin person revoke-all <username>`, also ends
 every session and token while preserving the password. Tokens cover all current and future repositories by default, or selected

@@ -17,8 +17,16 @@ The `gitman` binary picks its role from its first argument.
 
 ## `gitman admin`
 
-Run inside the `web` container in the supported Compose setup:
-`docker compose exec web gitman admin ...`.
+Run database-only admin commands inside the `web` container:
+`docker compose exec web gitman admin person ...`.
+
+Commands that need the Docker socket, such as `admin worker cleanup` and
+`admin images ...`, run in the `worker` container:
+`docker compose exec worker gitman ...`.
+
+`doctor` also needs the Docker socket, so run it in the worker. Maintenance
+backups and restores need `pg_dump`/`pg_restore` and a matching native host;
+run them there, not in the web image.
 
 ```
 gitman admin person add [--admin] <username>
