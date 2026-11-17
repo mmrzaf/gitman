@@ -42,6 +42,12 @@ const (
 	maxRepositoryCreatesHour = 10
 )
 
+// createNameLockKey is shared by live creation and recovery. A recovering
+// creation must not race a different repository claiming the same name.
+func createNameLockKey(name string) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(name)))
+}
+
 // Create adds a repository record and initializes its bare repository.
 // Intent commits before Git changes; recovery completes any interrupted creation.
 func (s *Service) Create(ctx context.Context, name, description, defaultBranch, actorID string) (*Repo, error) {
@@ -79,7 +85,7 @@ func (s *Service) Create(ctx context.Context, name, description, defaultBranch, 
 	var result *Repo
 	err := s.WithMutation(ctx, repoID, func() error {
 		// Reserve the name before touching Git; competing creates share this lock.
-		unlock, err := s.git.MutationLock(ctx, fmt.Sprintf("%x", sha256.Sum256([]byte(name))))
+		unlock, err := s.git.MutationLock(ctx, createNameLockKey(name))
 		if err != nil {
 			return err
 		}
@@ -88,6 +94,13 @@ func (s *Service) Create(ctx context.Context, name, description, defaultBranch, 
 			return postgres.ErrAlreadyExists
 		} else if !errors.Is(err, postgres.ErrNotFound) {
 			return err
+		}
+		var pending bool
+		if err := s.db.Q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM repository_operations WHERE kind='create' AND name=$1 AND completed_at IS NULL)`, name).Scan(&pending); err != nil {
+			return err
+		}
+		if pending {
+			return apperr.New(apperr.KindConflict, "A previous creation of this repository is unfinished. Recover or resolve that operation before reusing the name.")
 		}
 		op, err := s.BeginOperation(ctx, repoID, "create", name, actorID, repositoryIntent{Name: name, Description: description, Branch: defaultBranch})
 		if err != nil {
@@ -445,6 +458,12 @@ func (s *Service) DeleteRule(ctx context.Context, repoID string, kind git.Kind, 
 // first.
 func (s *Service) ListRefs(ctx context.Context, repoID string) ([]IndexedRef, error) {
 	return selectRefs(ctx, s.db.Q, repoID)
+}
+
+// RefsForRepos returns current refs for the given readable repositories,
+// avoiding per-repository database round trips on the Home deployment board.
+func (s *Service) RefsForRepos(ctx context.Context, repoIDs []string) (map[string][]IndexedRef, error) {
+	return selectRefsForRepos(ctx, s.db.Q, repoIDs)
 }
 
 // DefaultHeads returns where the default branch of each of repoIDs points,

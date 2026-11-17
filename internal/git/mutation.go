@@ -58,6 +58,18 @@ func (s *Store) QuarantineOrphans(ctx context.Context, known func(string) (bool,
 			continue
 		}
 		repoID := name[:len(name)-4]
+		if !repoIDPattern.MatchString(repoID) {
+			// Invalid IDs cannot be managed by Gitman, but a stray .git
+			// directory must not make the entire server fail to start.
+			// Move it aside without following it or deleting its contents.
+			if err := os.MkdirAll(filepath.Join(s.root, ".quarantine"), 0750); err != nil {
+				return err
+			}
+			if err := os.Rename(filepath.Join(s.root, name), filepath.Join(s.root, ".quarantine", name+"-"+randomSuffix())); err != nil {
+				return err
+			}
+			continue
+		}
 		unlock, err := s.MutationLock(ctx, repoID)
 		if err != nil {
 			return err
