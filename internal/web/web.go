@@ -5,6 +5,7 @@ package web
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -44,7 +45,11 @@ type App struct {
 	// passwordLimiter counts wrong current-password checks on the
 	// account page, which bcrypt makes worth guessing against.
 	passwordLimiter *loginLimiter
-	handler         http.Handler
+	// Short-lived, one-time credential displays are bound to a browser session.
+	reveals *revealStore
+	// Ephemeral signing key prevents a browser from forging status notices.
+	flashSignKey []byte
+	handler      http.Handler
 	// proxyWarn lets the first request from a private peer without
 	// configured trusted proxies explain the shared rate-limit bucket
 	// once, rather than on every request.
@@ -117,6 +122,7 @@ func New(cfg *config.Config, services Services, log *slog.Logger) (*App, error) 
 		log:             log,
 		limiter:         newLoginLimiter(time.Now),
 		passwordLimiter: newLoginLimiter(time.Now),
+		reveals:         newRevealStore(time.Now),
 		gitSlots:        make(chan struct{}, gitConcurrencyLimit),
 		origin:          public.Scheme + "://" + public.Host,
 		secure:          public.Scheme == "https",
@@ -125,6 +131,10 @@ func New(cfg *config.Config, services Services, log *slog.Logger) (*App, error) 
 
 		pageReadTimeout:  pageReadTimeout,
 		pageWriteTimeout: pageWriteTimeout,
+	}
+	a.flashSignKey = make([]byte, 32)
+	if _, err = rand.Read(a.flashSignKey); err != nil {
+		return nil, fmt.Errorf("generate flash signing key: %w", err)
 	}
 	if a.releases, err = loadReleaseNotes(); err != nil {
 		return nil, err

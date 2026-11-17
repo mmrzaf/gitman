@@ -32,35 +32,32 @@ func setSecurityHeaders(h http.Header, secure bool) {
 	}
 }
 
-// sameOrigin reports whether a request may change state. Safe methods
-// always may. For the rest, browsers say where a request came from — in
-// Sec-Fetch-Site, or failing that in Origin — and a request from any
-// other site is refused. That, with SameSite=Lax session cookies, is the
-// whole cross-site request forgery defense: there are no hidden form
-// tokens to get wrong. A request carrying neither header does not come
-// from a browser, and without a browser there is no forgery to prevent.
+// sameOrigin checks both available browser origin signals for unsafe
+// operations. If neither is supplied, the form is refused: cookies can
+// accompany POST requests from older or unusual browsers, so missing
+// headers are not proof that a request did not come from a browser.
+// Git's token-authenticated HTTP transport is handled separately.
 func (a *App) sameOrigin(r *http.Request) bool {
 	switch r.Method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
 		return true
 	}
-	switch r.Header.Get("Sec-Fetch-Site") {
-	case "same-origin", "none":
-		return true
-	case "":
+	fetch := r.Header.Get("Sec-Fetch-Site")
+	switch fetch {
+	case "same-origin", "none", "":
 	default:
 		return false
 	}
 	origin := r.Header.Get("Origin")
 	if origin == "" {
-		return true
+		return fetch != ""
 	}
 	got, ok := normalizeOrigin(origin)
 	if !ok {
 		return false
 	}
-	want, _ := normalizeOrigin(a.origin)
-	return got == want
+	want, ok := normalizeOrigin(a.origin)
+	return ok && got == want
 }
 
 // normalizeOrigin compares origins without caring about the case of the
@@ -72,6 +69,9 @@ func normalizeOrigin(raw string) (string, bool) {
 		return "", false
 	}
 	scheme := strings.ToLower(parsed.Scheme)
+	if (scheme != "http" && scheme != "https") || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", false
+	}
 	host := strings.ToLower(parsed.Hostname())
 	port := parsed.Port()
 	if port == "" {

@@ -12,8 +12,8 @@ import (
 type peoplePage struct {
 	People []auth.Person
 	Form   *form
-	// Password is a password just generated for Username, shown this
-	// once in the response to the action that made it.
+	// Password is a generated credential shown once on the GET reached
+	// by a refresh-safe redirect after the creation, enable or reset.
 	Username, Password string
 	// Dialog is "person-new" when the page opens with the form to add
 	// someone: asked for by link, or after that form failed.
@@ -30,6 +30,11 @@ func (a *App) renderPeople(w http.ResponseWriter, r *http.Request, status int, p
 		return err
 	}
 	page.People = list
+	if status == http.StatusOK && r.Method == http.MethodGet {
+		if secret, ok := a.consumeCredential(w, r, revealPerson); ok {
+			page.Username, page.Password = secret.username, secret.value
+		}
+	}
 	if page.Password != "" {
 		noStore(w)
 	}
@@ -47,11 +52,16 @@ func (a *App) peopleAdd(w http.ResponseWriter, r *http.Request) error {
 		f.Fail("username", "Enter a username.")
 		return a.renderPeople(w, r, http.StatusUnprocessableEntity, peoplePage{Form: f, Dialog: "person-new"})
 	}
+	role := f.Get("role")
+	if role != "member" && role != "admin" {
+		f.Fail("role", "Choose a valid role.")
+		return a.renderPeople(w, r, http.StatusUnprocessableEntity, peoplePage{Form: f, Dialog: "person-new"})
+	}
 	password, err := auth.GeneratePassword()
 	if err != nil {
 		return err
 	}
-	p, err := a.people.CreateBootstrap(r.Context(), username, password, f.Get("role") == "admin", personFrom(r).ID)
+	p, err := a.people.CreateBootstrap(r.Context(), username, password, role == "admin", personFrom(r).ID)
 	switch {
 	case errors.Is(err, postgres.ErrAlreadyExists):
 		f.Fail("username", "Someone already has that username.")
@@ -61,9 +71,10 @@ func (a *App) peopleAdd(w http.ResponseWriter, r *http.Request) error {
 	case err != nil:
 		return err
 	}
-	// The password is shown in this response, never carried to the next
-	// one in a cookie, and never cached.
-	return a.renderPeople(w, r, http.StatusOK, peoplePage{Form: newForm(nil), Username: p.Username, Password: password})
+	// The redirect makes browser refresh safe; only the next authenticated
+	// GET can consume the generated password.
+	a.showCredential(w, r, revealPerson, p.Username, password, "/people")
+	return nil
 }
 
 // personByUsername resolves the {username} path value, or a not-found
@@ -111,14 +122,19 @@ func (a *App) peopleEnable(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	return a.renderPeople(w, r, http.StatusOK, peoplePage{Form: newForm(nil), Username: p.Username, Password: password})
+	a.showCredential(w, r, revealPerson, p.Username, password, "/people")
+	return nil
 }
 
 func (a *App) peopleRole(w http.ResponseWriter, r *http.Request) error {
 	if err := parseForm(w, r); err != nil {
 		return err
 	}
-	isAdmin := r.PostForm.Get("role") == "admin"
+	role := r.PostForm.Get("role")
+	if role != "member" && role != "admin" {
+		return apperr.New(apperr.KindInvalid, "Choose a valid role.")
+	}
+	isAdmin := role == "admin"
 	return a.personAction(w, r, func(p *auth.Person) (string, error) {
 		role := "a member"
 		if isAdmin {
@@ -147,5 +163,6 @@ func (a *App) peopleResetPassword(w http.ResponseWriter, r *http.Request) error 
 	if err := a.people.ResetPassword(r.Context(), p.ID, password, personFrom(r).ID); err != nil {
 		return err
 	}
-	return a.renderPeople(w, r, http.StatusOK, peoplePage{Form: newForm(nil), Username: p.Username, Password: password})
+	a.showCredential(w, r, revealPerson, p.Username, password, "/people")
+	return nil
 }

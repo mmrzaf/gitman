@@ -27,7 +27,7 @@
               <details class="menu" data-menu>
                 <summary class="btn btn-ghost btn-icon btn-sm" aria-label="Actions for {{.Username}}">{{template "icon" "more"}}</summary>
                 <div class="menu-list">
-                  <form method="post" action="/people/{{.Username}}/role">
+                  <form method="post" action="/people/{{.Username}}/role" data-confirm="Change the role of {{.Username}}?" data-confirm-detail="{{if .IsAdmin}}They will lose administrator access.{{else}}They will gain administrator access to all repositories, people and server settings.{{end}}" data-confirm-action="Change role" data-confirm-tone="primary">
                     {{- if .IsAdmin}}
                     <input type="hidden" name="role" value="member">
                     <button type="submit" class="menu-item">{{template "icon" "person"}}Make a member</button>
@@ -72,6 +72,7 @@
         <legend>Role</legend>
         <label class="choice"><input type="radio" name="role" value="member"{{if ne ($d.Form.Get "role") "admin"}} checked{{end}}><span class="choice-label">Member</span></label>
         <label class="choice"><input type="radio" name="role" value="admin"{{if eq ($d.Form.Get "role") "admin"}} checked{{end}}><span class="choice-label">Admin</span></label>
+        {{with index $d.Form.Errors "role"}}<p class="field-error" role="alert">{{.}}</p>{{end}}
       </fieldset>
       <p class="field-hint">A password is generated and shown once.</p>
     </div>

@@ -77,17 +77,31 @@ func TestMeTokens(t *testing.T) {
 	}
 
 	resp, body := b.do(http.MethodPost, "/me/tokens", url.Values{"name": {"laptop"}, "scope": {"write"}, "expires": {"30"}, "repositories_scope": {"selected"}, "repositories": {"token-repo"}}, nil)
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/me" {
+		t.Fatalf("new token POST = %d %q, want refresh-safe redirect", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	if strings.Contains(body, "Your new token") {
+		t.Fatal("POST exposed token in its response")
+	}
+	resp, body = b.do(http.MethodGet, "/me", nil, nil)
 	expect(t, resp, body, http.StatusOK, "Your new token", "laptop", "write")
 	if cc := resp.Header.Get("Cache-Control"); cc != "no-store" {
-		t.Errorf("the page showing a new token has Cache-Control %q, want no-store", cc)
+		t.Errorf("page showing a new token has Cache-Control %q, want no-store", cc)
 	}
 	start := strings.Index(body, `data-copy="`) + len(`data-copy="`)
 	end := strings.Index(body[start:], `"`)
 	plain := body[start : start+end]
-	if plain == "" {
+	if plain == "" || start < len(`data-copy="`) || end < 0 {
 		t.Fatal("no token value found in the reveal")
 	}
+	resp, body = b.do(http.MethodGet, "/me", nil, nil)
+	expect(t, resp, body, http.StatusOK, "laptop")
+	if strings.Contains(body, "Your new token") || strings.Contains(body, plain) {
+		t.Fatal("credential reveal repeated on refresh")
+	}
 
+	resp, body = b.do(http.MethodPost, "/me/tokens", url.Values{"name": {"unexpected"}, "scope": {"owner"}}, nil)
+	expect(t, resp, body, http.StatusUnprocessableEntity, "Choose a valid token scope.")
 	resp, body = b.do(http.MethodPost, "/me/tokens", url.Values{"name": {""}, "scope": {"read"}}, nil)
 	expect(t, resp, body, http.StatusUnprocessableEntity, "Enter a name.")
 
@@ -140,9 +154,16 @@ func TestPeopleManagement(t *testing.T) {
 	// A generated password is shown once, in the response to the action
 	// that made it, and kept out of every cache.
 	resp, body := b.do(http.MethodPost, "/people", url.Values{"username": {"sara"}, "role": {"member"}}, nil)
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/people" {
+		t.Fatalf("add person POST = %d %q, want PRG", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	if strings.Contains(body, "Password for sara") {
+		t.Fatal("password exposed in POST")
+	}
+	resp, body = b.do(http.MethodGet, "/people", nil, nil)
 	expect(t, resp, body, http.StatusOK, "Password for sara")
 	if cc := resp.Header.Get("Cache-Control"); cc != "no-store" {
-		t.Errorf("a page showing a password has Cache-Control %q, want no-store", cc)
+		t.Errorf("page showing password has Cache-Control %q, want no-store", cc)
 	}
 	resp, body = b.do(http.MethodGet, "/people", nil, nil)
 	expect(t, resp, body, http.StatusOK, "sara")
@@ -150,9 +171,19 @@ func TestPeopleManagement(t *testing.T) {
 		t.Error("the password was shown again on the next page")
 	}
 
+	resp, body = b.do(http.MethodPost, "/people", url.Values{"username": {"stranger"}, "role": {"superuser"}}, nil)
+	expect(t, resp, body, http.StatusUnprocessableEntity, "Choose a valid role.")
+	if _, err := auth.NewService(database).GetByUsername(context.Background(), "stranger"); err == nil {
+		t.Fatal("invalid role created a person")
+	}
 	resp, body = b.do(http.MethodPost, "/people", url.Values{"username": {"sara"}, "role": {"member"}}, nil)
 	expect(t, resp, body, http.StatusUnprocessableEntity, "already has that username")
 
+	resp, body = b.do(http.MethodPost, "/people/sara/role", url.Values{"role": {"superuser"}}, nil)
+	expect(t, resp, body, http.StatusUnprocessableEntity, "Choose a valid role.")
+	if mustPerson(t, database, "sara").IsAdmin {
+		t.Fatal("invalid role escalated permissions")
+	}
 	resp, _ = b.do(http.MethodPost, "/people/sara/role", url.Values{"role": {"admin"}}, nil)
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("promote: %d", resp.StatusCode)
@@ -167,11 +198,27 @@ func TestPeopleManagement(t *testing.T) {
 	resp, body = b.do(http.MethodGet, "/people", nil, nil)
 	expect(t, resp, body, http.StatusOK, "disabled")
 
-	resp, body = b.do(http.MethodPost, "/people/sara/enable", url.Values{}, nil)
+	resp, _ = b.do(http.MethodPost, "/people/sara/enable", url.Values{}, nil)
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("enable = %d, want redirect", resp.StatusCode)
+	}
+	resp, body = b.do(http.MethodGet, "/people", nil, nil)
 	expect(t, resp, body, http.StatusOK, "Password for sara")
+	_, body = b.do(http.MethodGet, "/people", nil, nil)
+	if strings.Contains(body, "Password for sara") {
+		t.Fatal("enable reveal persisted on refresh")
+	}
 
-	resp, body = b.do(http.MethodPost, "/people/sara/reset-password", url.Values{}, nil)
+	resp, _ = b.do(http.MethodPost, "/people/sara/reset-password", url.Values{}, nil)
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("reset = %d, want redirect", resp.StatusCode)
+	}
+	resp, body = b.do(http.MethodGet, "/people", nil, nil)
 	expect(t, resp, body, http.StatusOK, "Password for sara")
+	_, body = b.do(http.MethodGet, "/people", nil, nil)
+	if strings.Contains(body, "Password for sara") {
+		t.Fatal("reset reveal persisted on refresh")
+	}
 
 	// Resetting one's own password here would sign this session out
 	// before the new password could be shown.
@@ -456,7 +503,11 @@ func TestJumpPage(t *testing.T) {
 func TestMeTokenDefaultsToAllRepositoriesAndValidatesSelection(t *testing.T) {
 	db, b := setup(t)
 	signIn(t, db, b, "darius", false)
-	resp, body := b.do(http.MethodPost, "/me/tokens", url.Values{"name": {"laptop"}}, nil)
+	resp, _ := b.do(http.MethodPost, "/me/tokens", url.Values{"name": {"laptop"}}, nil)
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("token POST = %d", resp.StatusCode)
+	}
+	resp, body := b.do(http.MethodGet, "/me", nil, nil)
 	expect(t, resp, body, http.StatusOK, "Your new token", "All repositories")
 	tokens, err := auth.NewService(db).ListTokens(t.Context(), mustPerson(t, db, "darius").ID)
 	if err != nil || len(tokens) != 1 || !tokens[0].AllRepositories {

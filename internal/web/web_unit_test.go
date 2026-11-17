@@ -64,7 +64,11 @@ func TestSameOrigin(t *testing.T) {
 		{"scheme differs", http.MethodPost, map[string]string{"Origin": "http://git.example.com"}, false},
 		{"other port", http.MethodPost, map[string]string{"Origin": "https://git.example.com:8443"}, false},
 		{"origin with credentials", http.MethodPost, map[string]string{"Origin": "https://user@git.example.com"}, false},
-		{"no browser headers", http.MethodPost, nil, true},
+		{"no browser headers", http.MethodPost, nil, false},
+		{"conflicting headers", http.MethodPost, map[string]string{"Sec-Fetch-Site": "same-origin", "Origin": "https://evil.example"}, false},
+		{"null origin", http.MethodPost, map[string]string{"Origin": "null"}, false},
+		{"origin with a path", http.MethodPost, map[string]string{"Origin": "https://git.example.com/other"}, false},
+		{"origin with a query", http.MethodPost, map[string]string{"Origin": "https://git.example.com?x=1"}, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -256,7 +260,7 @@ func TestSlowRequestBodiesAreCutOff(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	fmt.Fprint(conn, "POST /login HTTP/1.1\r\nHost: gitman.test\r\nContent-Type: application/x-www-form-urlencoded\r\n"+
+	fmt.Fprint(conn, "POST /login HTTP/1.1\r\nHost: gitman.test\r\nSec-Fetch-Site: same-origin\r\nContent-Type: application/x-www-form-urlencoded\r\n"+
 		"Content-Length: 1000\r\n\r\nusername=a")
 	start := time.Now()
 	_ = conn.SetReadDeadline(start.Add(5 * time.Second))
