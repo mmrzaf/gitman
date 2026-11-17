@@ -23,14 +23,13 @@ import (
 const (
 	homeTimelineLimit   = 30
 	homeInProgressLimit = 50
-	// attentionLimit bounds the rows of "Needs attention"; the rest are
-	// counted. refusedWindow is how far back a refused push still does.
-	attentionLimit = 6
-	refusedWindow  = 7 * 24 * time.Hour
+	// A short refusal window keeps old denied pushes from lingering in Home.
+	attentionRefusalLimit = 6
+	refusedWindow         = 7 * 24 * time.Hour
 )
 
-// homeRepo is a repository in Home's list: what landed last on its default
-// branch and how that ran.
+// homeRepo is a repository in Home's list, with its default-branch
+// commit and its most recent run on any branch or tag.
 type homeRepo struct {
 	Name          string
 	Description   string
@@ -38,28 +37,28 @@ type homeRepo struct {
 	// Head is the latest commit of the default branch; nil until it is
 	// pushed.
 	Head *git.Commit
-	// Run is the default branch's latest run, and Running every run in
-	// progress, of any ref.
+	// Run is the most recent run on any ref; Running includes currently
+	// active runs on other refs.
 	Run     *ci.Summary
 	Running []ci.Summary
 }
 
-// homeDeployment is what is live on one target of one repository, and how
-// far the default branch has gone since.
+// homeDeployment is what is live on one target of one repository, compared
+// with the ref that produced the deployment.
 type homeDeployment struct {
 	Comparison commitComparison
 	Repo       string
 	Target     string
 	Live       ci.Deployment
-	// Behind is how many commits the default branch has that the target
-	// lacks, and SinceURL compares them; both are empty when it is up to
-	// date.
+	// Behind is how many commits the deployment's source ref has that this
+	// target lacks. A removed source ref has no comparison.
 	Behind   int
 	SinceURL string
 }
 
 // attention is one thing on Home that wants a look: what, and where to go.
 type attention struct {
+	Key string // Identifies the current condition for a browser-local dismissal.
 	// Icon names the icon shown with it.
 	Icon string
 	Text string
@@ -71,12 +70,9 @@ type homePage struct {
 	After, Next string
 	Repos       []homeRepo
 	Deployments []homeDeployment
-	// Attention are the things that want a look; AttentionMore counts those
-	// the list leaves out.
-	Attention     []attention
-	AttentionMore int
-	Timeline      []activity.Entry
-	CreateForm    *form
+	Attention   []attention
+	Timeline    []activity.Entry
+	CreateForm  *form
 	// Dialog is the dialog the page opens with: "new-repo" when asked for
 	// by link, or when a creation failed.
 	Dialog string
@@ -94,36 +90,9 @@ func (a *App) buildHomeData(r *http.Request, createForm *form) (homePage, error)
 	ctx := r.Context()
 	person := personFrom(r)
 	after := r.URL.Query().Get("after")
-	list, err := a.repos.ListReadablePage(ctx, person.ID, person.IsAdmin, after, 26)
-	if err != nil {
-		return homePage{}, err
-	}
-	next := ""
-	if len(list) > 25 {
-		next = list[24].Name
-		list = list[:25]
-	}
 	all, err := a.repos.ListReadable(ctx, person.ID, person.IsAdmin)
 	if err != nil {
 		return homePage{}, err
-	}
-	// The readable list is bounded; the page being shown may name a
-	// repository beyond that bound. Include it so its row and live data
-	// are present, and keep the rows in name order.
-	known := make(map[string]bool, len(all)+len(list))
-	for _, repo := range all {
-		known[repo.ID] = true
-	}
-	for _, repo := range list {
-		if !known[repo.ID] {
-			all = append(all, repo)
-			known[repo.ID] = true
-		}
-	}
-	slices.SortFunc(all, func(a, b *reposvc.Repo) int { return strings.Compare(a.Name, b.Name) })
-	listed := map[string]bool{}
-	for _, repo := range list {
-		listed[repo.ID] = true
 	}
 	readableIDs := make([]string, len(all))
 	for i, repo := range all {
@@ -137,7 +106,7 @@ func (a *App) buildHomeData(r *http.Request, createForm *form) (homePage, error)
 	if err != nil {
 		return homePage{}, err
 	}
-	latestRuns, err := a.ci.LatestDefaultHeadRuns(ctx, readableIDs)
+	latestRuns, err := a.ci.LatestRunsForRepos(ctx, readableIDs)
 	if err != nil {
 		return homePage{}, err
 	}
@@ -149,11 +118,49 @@ func (a *App) buildHomeData(r *http.Request, createForm *form) (homePage, error)
 	if err != nil {
 		return homePage{}, err
 	}
-	refused, err := a.activity.RefusedSince(ctx, readableIDs, a.now().Add(-refusedWindow), attentionLimit)
+	refused, err := a.activity.RefusedSince(ctx, readableIDs, a.now().Add(-refusedWindow), attentionRefusalLimit)
 	if err != nil {
 		return homePage{}, err
 	}
 
+	// Sort by meaningful repository activity: pushes, runs and deployments.
+	// Names only break ties. "after" anchors pagination to the last shown repo.
+	activityAt, err := a.repos.LastActivityForRepos(ctx, readableIDs)
+	if err != nil {
+		return homePage{}, err
+	}
+	slices.SortFunc(all, func(a, b *reposvc.Repo) int {
+		if atA, atB := activityAt[a.ID], activityAt[b.ID]; !atA.Equal(atB) {
+			if atA.After(atB) {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(a.Name, b.Name)
+	})
+	start := 0
+	if after != "" {
+		found := false
+		for i, repo := range all {
+			if repo.Name == after {
+				start = i + 1
+				found = true
+				break
+			}
+		}
+		if !found {
+			after = ""
+		}
+	}
+	end := min(start+25, len(all))
+	listed := make(map[string]bool, end-start)
+	for _, repo := range all[start:end] {
+		listed[repo.ID] = true
+	}
+	next := ""
+	if end < len(all) {
+		next = all[end-1].Name
+	}
 	page := homePage{CreateForm: createForm, Timeline: feed, After: after, Next: next}
 	running := map[string][]ci.Summary{}
 	for _, run := range inProgress {
@@ -174,7 +181,16 @@ func (a *App) buildHomeData(r *http.Request, createForm *form) (homePage, error)
 			if n := blocked[ci.BlockMissingImages]; n > 0 {
 				text = fmt.Sprintf("%d queued run%s cannot start: no ready worker has the required images.", n, plural(n))
 			}
-			item := attention{Icon: "queued", Text: text}
+			// A new queued run changes the dismissal key, so a new blocker
+			// can draw attention even after an earlier one was ignored.
+			queuedIDs := make([]string, 0, len(inProgress))
+			for _, run := range inProgress {
+				if run.Status == ci.StatusQueued {
+					queuedIDs = append(queuedIDs, run.ID)
+				}
+			}
+			slices.Sort(queuedIDs)
+			item := attention{Key: "queued:" + strings.Join(queuedIDs, ","), Icon: "queued", Text: text}
 			if person.IsAdmin {
 				item.URL = "/workers"
 			}
@@ -187,26 +203,35 @@ func (a *App) buildHomeData(r *http.Request, createForm *form) (homePage, error)
 		byRepo[d.RepoID] = append(byRepo[d.RepoID], d)
 	}
 
+	// Deployment comparisons need the actual source branch or tag, not a
+	// repository's default branch. Fetch those heads in one database query.
+	var sourceRefs map[string][]reposvc.IndexedRef
+	if len(live) > 0 {
+		sourceRefs, err = a.repos.RefsForRepos(ctx, readableIDs)
+		if err != nil {
+			return homePage{}, err
+		}
+	}
 	var failed, behind []attention
 	for _, repo := range all {
 		row := homeRepo{Name: repo.Name, Description: repo.Description, DefaultBranch: repo.DefaultBranch, Running: running[repo.Name]}
 		if run, ok := latestRuns[repo.ID]; ok {
 			row.Run = &run
 			if run.Status == ci.StatusFailed {
-				failed = append(failed, attention{Icon: "failed", URL: runPath(repo.Name, run.Number),
-					Text: fmt.Sprintf("%s: the latest run of %s failed.", repo.Name, repo.DefaultBranch)})
+				failed = append(failed, attention{Key: "run:" + run.ID, Icon: "failed", URL: runPath(repo.Name, run.Number),
+					Text: fmt.Sprintf("%s: run #%d of %s %s failed.", repo.Name, run.Number, run.RefKind, run.RefName)})
 			}
 		}
 		head, pushed := heads[repo.ID]
 		var gitRepo *git.Repo
-		if pushed {
-			if len(byRepo[repo.ID]) > 0 {
-				if gitRepo, err = a.repos.Open(repo); err != nil {
-					// A repository that cannot be read is not worth losing Home for.
-					a.log.Warn("could not open a repository for Home", "repo", repo.Name, "error", err)
-					gitRepo = nil
-				}
+		if len(byRepo[repo.ID]) > 0 {
+			if gitRepo, err = a.repos.Open(repo); err != nil {
+				// A repository that cannot be read is not worth losing Home for.
+				a.log.Warn("could not open a repository for Home", "repo", repo.Name, "error", err)
+				gitRepo = nil
 			}
+		}
+		if pushed {
 			row.Head = head.Head
 			if row.Head == nil {
 				row.Head = &git.Commit{Hash: head.Commit, Subject: "Commit metadata unavailable"}
@@ -216,29 +241,25 @@ func (a *App) buildHomeData(r *http.Request, createForm *form) (homePage, error)
 			page.Repos = append(page.Repos, row)
 		}
 
-		var deployedHashes []string
-		for _, d := range byRepo[repo.ID] {
-			deployedHashes = append(deployedHashes, d.Commit)
+		if len(byRepo[repo.ID]) == 0 {
+			continue
 		}
-		comparisons := compareDeployments(ctx, gitRepo, head.Commit, deployedHashes)
+		comparisons := compareDeploymentTargets(ctx, gitRepo, sourceRefs[repo.ID], byRepo[repo.ID])
 		for _, d := range byRepo[repo.ID] {
-			dep := homeDeployment{Repo: repo.Name, Target: d.Target, Live: d, Comparison: comparisons[d.Commit]}
-			if pushed && gitRepo != nil && d.Commit != head.Commit {
-				dep.Behind = dep.Comparison.Ahead
-				if dep.Behind > 0 {
-					dep.SinceURL = compareURL(repo.Name, d.Commit, repo.DefaultBranch)
-					behind = append(behind, attention{Icon: "compare", URL: dep.SinceURL,
-						Text: fmt.Sprintf("%s: %s is %d commit%s behind %s.", repo.Name, d.Target, dep.Behind, plural(dep.Behind), repo.DefaultBranch)})
-				}
+			dep := homeDeployment{Repo: repo.Name, Target: d.Target, Live: d, Comparison: comparisons[d.Target]}
+			if d.SourceName != "" && dep.Comparison.State != "unknown" && dep.Comparison.State != "equal" {
+				dep.SinceURL = compareURL(repo.Name, d.Commit, d.SourceName)
 			}
-			if dep.Comparison.State == "ahead" || dep.Comparison.State == "diverged" {
-				dep.SinceURL = compareURL(repo.Name, d.Commit, repo.DefaultBranch)
+			dep.Behind = dep.Comparison.Ahead
+			if dep.Behind > 0 {
+				behind = append(behind, attention{Key: fmt.Sprintf("deploy:%s:%s:%s", repo.ID, d.Target, d.Commit), Icon: "compare", URL: dep.SinceURL,
+					Text: fmt.Sprintf("%s: %s is %d commit%s behind %s %s.", repo.Name, d.Target, dep.Behind, plural(dep.Behind), d.SourceKind, d.SourceName)})
 			}
 			page.Deployments = append(page.Deployments, dep)
 		}
 	}
 	items = append(items, failed...)
-	items = append(items, behind...)
+	// Recent rejected pushes require action ahead of routine deployment drift.
 	for _, push := range refused {
 		who := push.Actor
 		if who == "" {
@@ -251,12 +272,10 @@ func (a *App) buildHomeData(r *http.Request, createForm *form) (homePage, error)
 		if !strings.HasSuffix(text, ".") {
 			text += "."
 		}
-		items = append(items, attention{Icon: "warning", URL: "/" + push.RepoName + "/activity", Text: text})
+		items = append(items, attention{Key: fmt.Sprintf("refusal:%s:%d", push.RepoName, push.At.UnixNano()), Icon: "warning", URL: "/" + push.RepoName + "/activity", Text: text})
 	}
+	items = append(items, behind...)
 	page.Attention = items
-	if len(items) > attentionLimit {
-		page.Attention, page.AttentionMore = items[:attentionLimit], len(items)-attentionLimit
-	}
 	return page, nil
 }
 

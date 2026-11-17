@@ -27,6 +27,36 @@ func (s *Service) ListReadablePage(ctx context.Context, personID string, admin b
 	return result, rows.Err()
 }
 
+// LastActivityForRepos reports the most recent meaningful work for each
+// repository. Home uses this to show active projects first, without a
+// configurable sort order or a new database column.
+func (s *Service) LastActivityForRepos(ctx context.Context, repoIDs []string) (map[string]time.Time, error) {
+	rows, err := s.db.Q.Query(ctx, `
+        SELECT repos.id, GREATEST(
+            repos.created_at,
+            COALESCE((SELECT MAX(updated_at) FROM refs WHERE repo_id = repos.id), repos.created_at),
+            COALESCE((SELECT MAX(created_at) FROM pushes WHERE repo_id = repos.id), repos.created_at),
+            COALESCE((SELECT MAX(queued_at) FROM runs WHERE repo_id = repos.id), repos.created_at),
+            COALESCE((SELECT MAX(created_at) FROM deployments WHERE repo_id = repos.id), repos.created_at)
+        )
+        FROM repos WHERE id = ANY($1)
+    `, repoIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	activity := make(map[string]time.Time, len(repoIDs))
+	for rows.Next() {
+		var id string
+		var at time.Time
+		if err := rows.Scan(&id, &at); err != nil {
+			return nil, err
+		}
+		activity[id] = at
+	}
+	return activity, rows.Err()
+}
+
 func storeCommitMetadata(ctx context.Context, tx postgres.Tx, repoID string, hashes []string, read func(string) (string, string, string, time.Time, error)) error {
 	rows, err := tx.Query(ctx, `SELECT hash FROM commit_metadata WHERE repo_id=$1 AND hash=ANY($2)`, repoID, hashes)
 	if err != nil {

@@ -36,14 +36,12 @@ type refRow struct {
 // FullName is the row's full ref name, what the "Run" form posts.
 func (r refRow) FullName() string { return git.FullName(r.Kind, r.Name) }
 
-// targetView is what is live on a target, and where to see what the default
-// branch has gained since.
+// targetView is what is live on a target, with its actual deployment source.
 type targetView struct {
 	Comparison commitComparison
 	ci.Deployment
-	// Behind is how many commits the default branch has that this target
-	// lacks, and SinceURL compares them; both are empty when the default
-	// branch is at what is live, or is not pushed yet.
+	// Behind is how many commits its source ref has that this target lacks.
+	// SinceURL is empty when no comparison is available.
 	Behind   int
 	SinceURL string
 }
@@ -161,21 +159,17 @@ func (a *App) repository(w http.ResponseWriter, r *http.Request) error {
 	// How far each target is behind needs Git, and is left out, not failed
 	// on, when Git cannot give it: the page is worth showing without it.
 	var gitRepo *git.Repo
-	if defaultHead != "" {
+	if defaultHead != "" || len(targets) > 0 {
 		if gitRepo, err = a.repos.Open(repo); err != nil {
 			a.log.Warn("could not open a repository for its overview", "repo", repo.Name, "error", err)
 			gitRepo = nil
 		}
 	}
-	var countedHashes, deployedHashes []string
+	var countedHashes []string
 	for _, row := range page.Branches {
 		if !row.IsDefault {
 			countedHashes = append(countedHashes, row.Commit)
 		}
-	}
-	for _, d := range targets {
-		countedHashes = append(countedHashes, d.Commit)
-		deployedHashes = append(deployedHashes, d.Commit)
 	}
 	var counts map[string]git.Divergence
 	if gitRepo != nil {
@@ -189,19 +183,12 @@ func (a *App) repository(w http.ResponseWriter, r *http.Request) error {
 			page.Branches[i].Divergence = &d
 		}
 	}
-	comparisons := comparisonsFromCounts(defaultHead, deployedHashes, counts)
+	comparisons := compareDeploymentTargets(ctx, gitRepo, indexed, targets)
 	for _, d := range targets {
-		view := targetView{Deployment: d, Comparison: comparisons[d.Commit]}
-		if gitRepo != nil && defaultHead != d.Commit {
-			// A target whose commit Git can no longer count from is shown
-			// without a count; the comparison still says what it can.
-			view.Behind = view.Comparison.Ahead
-			if view.Behind > 0 {
-				view.SinceURL = compareURL(repo.Name, d.Commit, repo.DefaultBranch)
-			}
-		}
-		if view.Comparison.State == "ahead" || view.Comparison.State == "diverged" {
-			view.SinceURL = compareURL(repo.Name, d.Commit, repo.DefaultBranch)
+		view := targetView{Deployment: d, Comparison: comparisons[d.Target]}
+		view.Behind = view.Comparison.Ahead
+		if d.SourceName != "" && view.Comparison.State != "unknown" && view.Comparison.State != "equal" {
+			view.SinceURL = compareURL(repo.Name, d.Commit, d.SourceName)
 		}
 		page.Targets = append(page.Targets, view)
 	}

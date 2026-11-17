@@ -5,7 +5,10 @@
 
 package ci
 
-import "time"
+import (
+	"github.com/mmrzaf/gitman/internal/git"
+	"time"
+)
 
 // Deployment is one shipped version.
 type Deployment struct {
@@ -13,6 +16,10 @@ type Deployment struct {
 	Target  string
 	Version string
 	Commit  string
+	// SourceKind and SourceName identify the ref that ran the deployment.
+	// They remain available after the originating run is pruned.
+	SourceKind git.Kind
+	SourceName string
 	// RunNumber is zero when the run that shipped it has since been
 	// removed by retention.
 	RunNumber int64
