@@ -278,38 +278,6 @@ func (a *App) commitRows(r *http.Request, repo *reposvc.Repo, commits []*git.Com
 	return rows, nil
 }
 
-// compareSeparator divides the two refs of a comparison's old address.
-// "..." can never appear inside a real ref name — ValidateName rejects ".."
-// outright — so splitting on it is always unambiguous, even when a ref on
-// either side itself contains a slash.
-const compareSeparator = "..."
-
-// compareRedirect sends /{repo}/compare/{base}...{head}, where beta 21
-// compared two refs, to the same comparison among the commits. It resolves
-// the repository first, so to someone who cannot read it, it is not found
-// rather than redirected.
-func (a *App) compareRedirect(w http.ResponseWriter, r *http.Request) error {
-	repo, err := a.repoByName(r)
-	if err != nil {
-		return err
-	}
-	crange := r.PathValue("crange")
-	if crange == "" {
-		http.Redirect(w, r, commitsAddress(repo.Name, nil), http.StatusMovedPermanently)
-		return nil
-	}
-	sep := strings.Index(crange, compareSeparator)
-	if sep < 0 {
-		return notFound("A comparison needs two refs, separated by \"...\", e.g. main...develop.")
-	}
-	base, head := crange[:sep], crange[sep+len(compareSeparator):]
-	if base == "" || head == "" {
-		return notFound("A comparison needs a ref on each side of \"...\".")
-	}
-	http.Redirect(w, r, compareURL(repo.Name, base, head), http.StatusMovedPermanently)
-	return nil
-}
-
 // orderedRefs puts refs in the order a list of them is read in: the default
 // branch, then the other branches by name, then tags, newest version first.
 func orderedRefs(refs []reposvc.IndexedRef, defaultBranch string) []reposvc.IndexedRef {

@@ -3,7 +3,6 @@ package web
 import (
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/mmrzaf/gitman/internal/apperr"
@@ -13,16 +12,6 @@ import (
 // workersURL is where image actions return: the one page that shows workers
 // and images together.
 const workersURL = "/workers"
-
-// imagesView keeps /images links working: images live on the Workers page.
-func (a *App) imagesView(w http.ResponseWriter, r *http.Request) error {
-	target := workersURL
-	if plan := r.URL.Query().Get("plan"); plan != "" {
-		target += "?plan=" + url.QueryEscape(plan) + "#plan"
-	}
-	http.Redirect(w, r, target, http.StatusSeeOther)
-	return nil
-}
 
 func (a *App) imagesPrune(w http.ResponseWriter, r *http.Request) error {
 	if err := parseForm(w, r); err != nil {

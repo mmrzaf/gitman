@@ -118,11 +118,6 @@ func (f *matrixFixture) routes() []struct {
 		{"comparison", http.MethodGet, func(r string) string { return "/" + r + "/commits?base=" + f.commit[:10] + "&ref=main" }},
 		{"commit view", http.MethodGet, func(r string) string { return "/" + r + "/commit/" + f.commit[:10] }},
 		{"activity", http.MethodGet, func(r string) string { return "/" + r + "/activity" }},
-		{"old history tab address", http.MethodGet, func(r string) string { return "/" + r + "@main/README.md?tab=history" }},
-		{"old compare address", http.MethodGet, func(r string) string {
-			return "/" + r + "/compare/" + f.commit[:10] + "..." + f.commit[:10]
-		}},
-		{"compare", http.MethodGet, func(r string) string { return "/" + r + "/compare" }},
 		{"archive", http.MethodGet, func(r string) string { return "/" + r + "/archive/main.tar.gz" }},
 		{"archive of a commit", http.MethodGet, func(r string) string { return "/" + r + "/archive/" + f.commit + ".zip" }},
 		{"tree-paths", http.MethodGet, func(r string) string { return "/" + r + "/tree-paths?ref=main" }},

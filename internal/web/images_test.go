@@ -57,10 +57,6 @@ func TestImagesPageShowsInventoryMissingCacheAndTabs(t *testing.T) {
 	if !strings.Contains(body, `href="/workers?plan=engine-1#plan"`) {
 		t.Error("the dry-run plan link is missing")
 	}
-	resp, _ = admin.do(http.MethodGet, "/images?plan=engine-1", nil, nil)
-	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/workers?plan=engine-1#plan" {
-		t.Errorf("/images redirect = %d %q", resp.StatusCode, resp.Header.Get("Location"))
-	}
 
 	resp, body = admin.do(http.MethodGet, "/operations", nil, nil)
 	expect(t, resp, body, http.StatusOK, "Image operations", "image.prune", "pending")
