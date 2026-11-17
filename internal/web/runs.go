@@ -35,9 +35,9 @@ type runPage struct {
 	LogOpen  bool
 	Duration time.Duration
 	Now      time.Time
-	// NoWorker reports that the run is queued with no worker online to
-	// claim it: it waits until one starts.
-	NoWorker bool
+	// Block is why a queued run is not starting; nil when it is only
+	// waiting its turn.
+	Block *ci.Blocker
 }
 
 // logLine is one numbered line of a step's output. Numbers count from
@@ -203,11 +203,11 @@ func (a *App) runView(w http.ResponseWriter, r *http.Request) error {
 		page.Duration = end.Sub(*run.StartedAt).Round(time.Second)
 	}
 	if run.Status == ci.StatusQueued {
-		online, err := a.ci.AnyWorkerReadyForRun(r.Context(), run.ID)
+		block, err := a.ci.QueuedBlock(r.Context(), run.ID)
 		if err != nil {
 			return err
 		}
-		page.NoWorker = !online
+		page.Block = block
 	}
 	if page.Selected != nil && page.Selected.LogsExpiredAt == nil && r.Header.Get("X-Gitman-Refresh") != "regions" {
 		tail, err := a.ci.LogTail(r.Context(), page.Selected.ID)

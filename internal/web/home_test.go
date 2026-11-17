@@ -124,7 +124,7 @@ func TestHomeNeedsAttention(t *testing.T) {
 	        VALUES ('r3', $1, 3, $2, 'branch', 'main', 'manual', $3, 'queued')`, repo.ID, head, person.ID)
 	insert(`UPDATE workers SET stopped_at = now()`)
 	resp, body = b.do(http.MethodGet, "/", nil, nil)
-	expect(t, resp, body, http.StatusOK, "Runs are waiting for a ready worker.")
+	expect(t, resp, body, http.StatusOK, "1 queued run cannot start: no ready worker is available.")
 }
 
 func TestOverviewHasBranchesTagsAndTheRunStrip(t *testing.T) {

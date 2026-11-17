@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"slices"
 	"strings"
 
 	"github.com/mmrzaf/gitman/internal/activity"
@@ -424,13 +423,19 @@ func (h *Hook) recordPush(ctx context.Context, pc *pushContext, records []update
 	for i, run := range created {
 		h.reportRun(pc.repo.Name, createdFor[i], run)
 	}
-	if slices.ContainsFunc(created, func(run *ci.Created) bool { return run.Status == ci.StatusQueued }) {
-		// Only advice: the push and its runs are already recorded, so a
-		// failed check leaves the notice out rather than failing a push
-		// that succeeded.
-		if online, err := h.CI.AnyWorkerReady(ctx); err == nil && !online {
-			h.say("Gitman: no worker is ready, so queued runs wait until one is available.")
+	// Only advice: the push and its runs are already recorded, so a failed
+	// check leaves the notice out rather than failing a push that succeeded.
+	told := map[string]bool{}
+	for _, run := range created {
+		if run.Status != ci.StatusQueued {
+			continue
 		}
+		block, err := h.CI.QueuedBlock(ctx, run.ID)
+		if err != nil || block == nil || told[block.Message()] {
+			continue
+		}
+		told[block.Message()] = true
+		h.say("Gitman: run #%d will wait. %s", run.Number, block.Message())
 	}
 	for _, rec := range notRun {
 		if rec.Decision.MatchedRule == nil {

@@ -165,6 +165,14 @@ func checkDatabase(ctx context.Context, d *doctor, cfg *config.Config) {
 	} else {
 		d.ok("workers", "%d registered, %d ready", len(workers), ready)
 	}
+	blocked, err := ci.NewService(database).QueuedBlockCounts(connectCtx)
+	if err != nil {
+		d.fail("queued runs", "%v", err)
+		return
+	}
+	if n := blocked[ci.BlockMissingImages]; n > 0 {
+		d.warn("queued runs", "%d cannot start: no ready worker has their required images; they end after %d hours queued", n, int(ci.MaxQueueWait.Hours()))
+	}
 }
 
 func checkDocker(ctx context.Context, d *doctor) {

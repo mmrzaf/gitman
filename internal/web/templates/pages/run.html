@@ -105,10 +105,10 @@
     <p class="callout-body">{{$run.Reason}}</p>
   </div>
   {{- end}}
-  {{- if .Data.NoWorker}}
+  {{- if .Data.Block}}
   <div class="callout run-reason is-queued" role="note">
     {{template "icon" "queued"}}
-    <p class="callout-body">No ready worker has this run’s required images. It stays queued until one is available.</p>
+    <p class="callout-body">{{.Data.Block.Message}}</p>
   </div>
   {{- end}}
 </header>{{end}}

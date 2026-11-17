@@ -669,18 +669,18 @@ func TestQueuedRunSaysNoWorkerIsOnline(t *testing.T) {
 	signIn(t, e.db, b, "lead", true)
 	_, cred := e.person("lead", true, auth.ScopeWrite)
 	e.saveRule(reposvc.Rule{Kind: git.KindBranch, Pattern: "main", PushPolicy: reposvc.PushEveryone, RunOnPush: true})
-	const notice = "No ready worker"
+	const notice = "No worker has registered"
 
 	e.initWork(cred)
 	e.commit(".gitman.yml", "image: alpine:3.20\nsteps:\n  - name: test\n    run: echo test\n")
 	out := e.mustGit(e.work, "push", "origin", "main")
-	if !strings.Contains(out, "run #1 queued for branch main") || !strings.Contains(out, "no worker is ready, so queued runs wait until one is available") {
+	if !strings.Contains(out, "run #1 queued for branch main") || !strings.Contains(out, "run #1 will wait. No worker has registered") {
 		t.Fatalf("push output does not say the run waits for a worker:\n%s", out)
 	}
 	resp, body := b.do(http.MethodGet, "/demo/runs/1", nil, nil)
 	expect(t, resp, body, http.StatusOK, notice)
 	resp, body = b.do(http.MethodGet, "/", nil, nil)
-	expect(t, resp, body, http.StatusOK, "Needs attention", "Runs are waiting for a ready worker.")
+	expect(t, resp, body, http.StatusOK, "Needs attention", "1 queued run cannot start: no ready worker is available.")
 
 	if err := ci.NewService(e.db).RegisterWorker(context.Background(), "w1", "host"); err != nil {
 		t.Fatal(err)
@@ -691,12 +691,12 @@ func TestQueuedRunSaysNoWorkerIsOnline(t *testing.T) {
 	for _, path := range []string{"/demo/runs/1", "/"} {
 		resp, body = b.do(http.MethodGet, path, nil, nil)
 		expect(t, resp, body, http.StatusOK)
-		if strings.Contains(body, notice) || strings.Contains(body, "Runs are waiting for a ready worker.") {
+		if strings.Contains(body, notice) || strings.Contains(body, "cannot start: no ready worker") {
 			t.Errorf("%s still says no worker is online while one is", path)
 		}
 	}
 	e.commit("a.txt", "a\n")
-	if out := e.mustGit(e.work, "push", "origin", "main"); strings.Contains(out, "no worker is ready") {
+	if out := e.mustGit(e.work, "push", "origin", "main"); strings.Contains(out, "will wait") {
 		t.Errorf("push says no worker is online while one is:\n%s", out)
 	}
 }

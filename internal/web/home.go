@@ -161,12 +161,20 @@ func (a *App) buildHomeData(r *http.Request, createForm *form) (homePage, error)
 	}
 	var items []attention
 	if slices.ContainsFunc(inProgress, func(run ci.Summary) bool { return run.Status == ci.StatusQueued }) {
-		online, err := a.ci.AnyWorkerReady(ctx)
+		blocked, err := a.ci.QueuedBlockCounts(ctx)
 		if err != nil {
 			return homePage{}, err
 		}
-		if !online {
-			item := attention{Icon: "queued", Text: "Runs are waiting for a ready worker."}
+		total := 0
+		for _, n := range blocked {
+			total += n
+		}
+		if total > 0 {
+			text := fmt.Sprintf("%d queued run%s cannot start: no ready worker is available.", total, plural(total))
+			if n := blocked[ci.BlockMissingImages]; n > 0 {
+				text = fmt.Sprintf("%d queued run%s cannot start: no ready worker has the required images.", n, plural(n))
+			}
+			item := attention{Icon: "queued", Text: text}
 			if person.IsAdmin {
 				item.URL = "/workers"
 			}
