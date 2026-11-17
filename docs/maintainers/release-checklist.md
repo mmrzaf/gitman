@@ -19,6 +19,10 @@ Releases are cut by pushing a tag matching `v*` (e.g. `v1.0.0`,
    ```sh
    make verify
    ```
+   With Docker and `alpine:3.20` available, also run the host checks in
+   [`scripts/README.md`](../../scripts/README.md): `e2e.sh`, `multiworker.sh`,
+   `backup-test.sh`, `browser-smoke.sh`, and `upgrade-test.sh` against the
+   previous release's binary. CI runs them on every push.
 4. Tag and push:
    ```sh
    git tag v1.2.3

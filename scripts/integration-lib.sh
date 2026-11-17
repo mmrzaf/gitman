@@ -50,7 +50,11 @@ integration_init() {
   createdb "$DATABASE"
   DATABASE_CREATED=1
   step 'build'
-  (cd "$ROOT" && go build -o "$BIN" ./cmd/gitman)
+  if [[ -n ${GITMAN_INTEGRATION_BIN:-} ]]; then
+    install -m 0755 "$GITMAN_INTEGRATION_BIN" "$BIN"
+  else
+    (cd "$ROOT" && go build -o "$BIN" ./cmd/gitman)
+  fi
   if curl -sf --max-time 1 "$BASE/healthz" >/dev/null; then fail "port $PORT is occupied"; fi
   "$BIN" web >"$RUN/web.log" 2>&1 & echo $! >"$RUN/web.pid"
   wait_for 30 curl -sf --max-time 1 "$BASE/readyz" -o /dev/null
@@ -59,7 +63,7 @@ integration_init() {
 integration_cleanup() {
   local result=$?
   trap - EXIT
-  for file in "$RUN/worker.pid" "$RUN/web.pid"; do
+  for file in "$RUN"/*.pid; do
     if [[ -f "$file" ]]; then
       local pid; pid=$(cat "$file")
       kill "$pid" 2>/dev/null || true

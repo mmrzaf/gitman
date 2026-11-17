@@ -99,6 +99,15 @@ jobs:
         run: scripts/backup-test.sh
       - name: Real Docker integration
         run: scripts/e2e.sh
+      - name: Two workers on one Docker host
+        run: scripts/multiworker.sh
+      - name: Upgrade from the previous release
+        run: |
+          git fetch --force --tags origin
+          previous=$(git tag --list 'v*' --sort=-v:refname | head -1)
+          git worktree add "$RUNNER_TEMP/previous" "$previous"
+          (cd "$RUNNER_TEMP/previous" && go build -o "$RUNNER_TEMP/gitman-previous" ./cmd/gitman)
+          GITMAN_OLD_BIN="$RUNNER_TEMP/gitman-previous" scripts/upgrade-test.sh
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:

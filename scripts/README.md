@@ -11,6 +11,13 @@ Logs and screenshots remain in the printed temporary artifacts directory.
   raw-file security headers and recovery after a killed worker. The lost-worker
   fixture is deliberately aged past the five-minute threshold to avoid a long
   sleep; assertions check the resulting run state and container cleanup.
+- `multiworker.sh`: two workers on one Docker host take six runs exactly once
+  each and both do work; a run needing an image no worker has stays queued
+  while its page and `gitman doctor` name the image. Default port: 18084.
+- `upgrade-test.sh`: set `GITMAN_OLD_BIN` to a previous release's binary. An
+  installation it made (run history and output, tokens) must survive running
+  the current binary on the same database and data directory, which must then
+  run a new pipeline. Default port: 18083.
 - `browser.sh` and `browser.mjs`: real Docker execution with live page updates,
   keyboard interactions, axe accessibility checks, mobile layouts, both themes,
   JavaScript and plain HTML fallbacks. Default port: 18081.
