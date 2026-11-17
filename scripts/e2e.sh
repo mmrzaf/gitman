@@ -67,7 +67,9 @@ curl -s -b "$JAR" "$BASE/demo/runs/1/log?step=2" | tee "$RUN/ship.log"
 grep -q "shipping .* to staging" "$RUN/ship.log" || fail "ship step output missing"
 repo_page=$(curl -s -b "$JAR" "$BASE/demo")
 echo "$repo_page" | grep -q '<th scope="row" class="table-rowheader"><div class="table-cell">staging</div></th>' || fail "deployment not shown on the repository page"
+echo "$repo_page" | grep -q 'vs branch main' || fail "deployment source branch not shown on repository overview"
 curl -s -b "$JAR" "$BASE/" | grep -q '<td data-label="Target"><div class="table-cell">staging</div></td>' || fail "deployment not shown on Home"
+curl -s -b "$JAR" "$BASE/" | grep -q 'vs branch main' || fail "deployment source branch not shown on Home"
 curl -s -b "$JAR" "$BASE/demo/runs/1" | grep -q '<dt>version</dt>' || fail "summary missing"
 
 step "raw HTML is served as plain text in a sandbox"

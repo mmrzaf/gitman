@@ -34,7 +34,7 @@ services:
     # worker always use the compose network.
     ports:
       - "127.0.0.1:${GITMAN_DATABASE_PORT:-5433}:5432"
-    volumes: [database:/var/lib/postgresql/data]
+    volumes: [database:/var/lib/postgresql]
     mem_limit: ${GITMAN_DATABASE_MEMORY_LIMIT:-1g}
     logging:
       driver: json-file

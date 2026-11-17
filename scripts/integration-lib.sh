@@ -58,7 +58,7 @@ integration_init() {
   if curl -sf --max-time 1 "$BASE/healthz" >/dev/null; then fail "port $PORT is occupied"; fi
   "$BIN" web >"$RUN/web.log" 2>&1 & echo $! >"$RUN/web.pid"
   wait_for 30 curl -sf --max-time 1 "$BASE/readyz" -o /dev/null
-  echo "Artifacts: $RUN"
+  echo "Disposable test workspace: $RUN"
 }
 integration_cleanup() {
   local result=$?
@@ -71,7 +71,7 @@ integration_cleanup() {
     fi
   done
   if [[ ${DATABASE_CREATED:-0} == 1 ]]; then dropdb "$DATABASE" || result=1; fi
-  # Keep logs/screenshots on success and failure for inspection, never credentials.
+  # Never leave plaintext test credentials or cloned repositories behind.
   rm -f "$RUN/admin.txt" "$RUN/cookies"
   if [[ -n ${GITMAN_INTEGRATION_ARTIFACTS:-} ]]; then
     mkdir -p "$GITMAN_INTEGRATION_ARTIFACTS"
@@ -79,11 +79,12 @@ integration_cleanup() {
     evidence="$GITMAN_INTEGRATION_ARTIFACTS/$(basename "$RUN")"
     mkdir -p "$evidence"
     # Publish evidence only, not binaries, database snapshots or workspaces.
-    for file in "$RUN"/*.log "$RUN"/push-*.txt "$RUN"/worker-cleanup.txt; do
+    for file in "$RUN"/*.log; do
       [[ ! -f "$file" ]] || cp "$file" "$evidence/"
     done
     [[ ! -d "$RUN/screenshots" ]] || cp -R "$RUN/screenshots" "$evidence/"
   fi
+  rm -rf -- "$RUN"
   exit "$result"
 }
 start_worker() {

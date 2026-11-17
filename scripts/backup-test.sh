@@ -81,6 +81,15 @@ wait "$(cat "$RUN/web.pid")" || true
 dropdb "$DATABASE"
 createdb "$DATABASE"
 export GITMAN_DATA_DIR="$RUN/restored"
+# Before accepting a snapshot, reject a different decryption key without
+# applying the dump or creating repository files.
+original_key=$GITMAN_SECRET_KEY
+export GITMAN_SECRET_KEY="$(openssl rand -base64 32)"
+if "$BIN" restore "$RUN/snapshot" >"$RUN/wrong-key.log" 2>&1; then
+  fail 'restore accepted a different encryption key'
+fi
+export GITMAN_SECRET_KEY=$original_key
+[[ $(psql -X -d "$DATABASE" -tAc "SELECT count(*) FROM pg_tables WHERE schemaname='public'") == 0 ]] || fail 'rejected restore changed database'
 "$BIN" restore "$RUN/snapshot"
 "$BIN" web >>"$RUN/web.log" 2>&1 & echo $! >"$RUN/web.pid"
 wait_for 30 curl -sf --max-time 1 "$BASE/readyz" -o /dev/null

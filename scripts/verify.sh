@@ -6,8 +6,12 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 command -v git >/dev/null || { echo "git is required for the test suite" >&2; exit 1; }
 [[ -z $(gofmt -l cmd internal) ]] || { gofmt -l cmd internal; exit 1; }
 bash -n scripts/*.sh
+scripts/check-js-syntax.sh
 if command -v shellcheck >/dev/null; then
-  shellcheck -x scripts/*.sh
+  shellcheck -S error -x scripts/*.sh
+elif [[ ${GITMAN_REQUIRE_SHELLCHECK:-0} == 1 ]]; then
+  echo 'ShellCheck is required for CI and tagged releases' >&2
+  exit 1
 fi
 go mod tidy -diff
 bash scripts/check-docs-links.sh
