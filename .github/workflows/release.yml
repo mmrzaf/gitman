@@ -55,7 +55,7 @@ jobs:
           fi
 
           if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "Release version must look like v1.2.3 or v1.2.3-beta.12: $version" >&2
+            echo "Release version must look like v1.2.3 or v1.2.3-rc.1: $version" >&2
             exit 1
           fi
 
@@ -107,9 +107,17 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - name: Install required shell lint tool
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
       - name: Verify source
         env:
           VERSION: ${{ needs.release-metadata.outputs.version }}
+          GITMAN_REQUIRE_SHELLCHECK: '1'
         run: scripts/verify.sh
 
   verify-integration:
@@ -181,10 +189,16 @@ jobs:
           sudo apt-get install -y postgresql-client-18
           echo /usr/lib/postgresql/18/bin >> "$GITHUB_PATH"
           docker pull alpine:3.20
+      - name: Fresh installation and authenticated Git transport
+        run: scripts/clean-install-test.sh
       - name: Backup and restore round trip
         run: scripts/backup-test.sh
       - name: Real Docker integration
         run: scripts/e2e.sh
+      - name: Two workers sharing one Docker host
+        run: scripts/multiworker.sh
+      - name: Isolated production Compose installation
+        run: scripts/compose-smoke.sh
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
@@ -336,7 +350,7 @@ jobs:
   docker-image:
     name: Publish Docker image
     runs-on: ubuntu-latest
-    needs: [release-metadata, verify-source, verify-integration, verify-browser]
+    needs: [release-metadata, stage-release]
     permissions:
       contents: read
       packages: write
@@ -369,8 +383,6 @@ jobs:
             latest=false
           tags: |
             type=semver,pattern={{version}},value=${{ needs.release-metadata.outputs.version }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ needs.release-metadata.outputs.version }},enable=${{ needs.release-metadata.outputs.prerelease == 'false' }}
-            type=raw,value=latest,enable=${{ needs.release-metadata.outputs.prerelease == 'false' }}
 
       - name: Build and push multi-arch image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
@@ -387,6 +399,17 @@ jobs:
             APK_MIRROR=${{ env.APK_MIRROR }}
             GOPROXY=${{ env.GOPROXY }}
             VERSION=${{ needs.release-metadata.outputs.version }}
+
+      - name: Verify published versioned image
+        shell: bash
+        env:
+          VERSION: ${{ needs.release-metadata.outputs.clean_version }}
+        run: |
+          set -euo pipefail
+          ref="${REGISTRY}/${IMAGE_NAME}:${VERSION}"
+          docker buildx imagetools inspect "$ref" | tee "$RUNNER_TEMP/manifest.txt"
+          grep -q 'linux/amd64' "$RUNNER_TEMP/manifest.txt"
+          grep -q 'linux/arm64' "$RUNNER_TEMP/manifest.txt"
 
   docker-archive:
     name: Build Docker archive
@@ -426,10 +449,10 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
-  create-release:
-    name: Create GitHub release
+  stage-release:
+    name: Validate artifacts and stage draft release
     runs-on: ubuntu-latest
-    needs: [release-metadata, build-binaries, source-archive, docker-image, docker-archive]
+    needs: [release-metadata, build-binaries, source-archive, docker-archive]
     permissions:
       contents: write
     steps:
@@ -437,11 +460,10 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ needs.release-metadata.outputs.version }}
-
-      - name: Take the release notes from CHANGELOG.md
-        shell: bash
+      - name: Extract release notes
         env:
           CLEAN_VERSION: ${{ needs.release-metadata.outputs.clean_version }}
+        shell: bash
         run: |
           set -euo pipefail
           awk -v heading="## [${CLEAN_VERSION}]" '
@@ -453,27 +475,90 @@ jobs:
             echo "CHANGELOG.md has no section for ${CLEAN_VERSION}" >&2
             exit 1
           fi
-
-      - name: Download release artifacts
+      - name: Download all distributables
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: release-*
           path: release
           merge-multiple: true
-
-      - name: Create checksums
+      - name: Verify release tooling
+        run: scripts/release-artifacts-test.sh
+      - name: Check all release assets and offline Docker image
+        env:
+          VERSION: ${{ needs.release-metadata.outputs.version }}
+          CLEAN_VERSION: ${{ needs.release-metadata.outputs.clean_version }}
         shell: bash
         run: |
           set -euo pipefail
-          cd release
-          sha256sum -- * | sort -k2 > SHA256SUMS
-          ls -la
-
-      - name: Publish GitHub Release
+          (cd release && sha256sum -- * | sort -k2 > SHA256SUMS)
+          scripts/verify-release-artifacts.sh "$VERSION" release
+          docker load -i "release/gitman-docker-image-linux-amd64-${CLEAN_VERSION}.tar.gz"
+          test "$(docker run --rm "gitman:${CLEAN_VERSION}" gitman version)" = "gitman ${VERSION}"
+      - name: Refuse to overwrite a published release on rerun
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.release-metadata.outputs.version }}
+        run: |
+          set -euo pipefail
+          if draft=$(gh release view "$VERSION" --json isDraft --jq '.isDraft' 2>/dev/null); then
+            if [[ "$draft" != true ]]; then
+              echo "${VERSION} is already published; do not restage it as a draft" >&2
+              exit 1
+            fi
+          fi
+      - name: Stage checked assets in a draft release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           tag_name: ${{ needs.release-metadata.outputs.version }}
           name: Gitman ${{ needs.release-metadata.outputs.version }}
           prerelease: ${{ needs.release-metadata.outputs.prerelease }}
+          draft: true
           body_path: ${{ runner.temp }}/notes.md
           files: release/*
+
+  create-release:
+    name: Publish verified release
+    runs-on: ubuntu-latest
+    needs: [release-metadata, stage-release, docker-image]
+    permissions:
+      contents: write
+    steps:
+      - name: Publish the staged GitHub Release
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
+        with:
+          tag_name: ${{ needs.release-metadata.outputs.version }}
+          name: Gitman ${{ needs.release-metadata.outputs.version }}
+          prerelease: ${{ needs.release-metadata.outputs.prerelease }}
+          draft: false
+
+  promote-tags:
+    name: Promote stable floating Docker tags
+    runs-on: ubuntu-latest
+    concurrency:
+      group: gitman-ghcr-floating-tags
+      cancel-in-progress: false
+    if: needs.release-metadata.outputs.prerelease == 'false'
+    needs: [release-metadata, create-release]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.release-metadata.outputs.version }}
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify floating-tag safeguards
+        run: scripts/promote-floating-tags-test.sh
+      - name: Promote existing multi-arch manifest without rebuilding
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.release-metadata.outputs.version }}
+        run: scripts/promote-floating-tags.sh "$VERSION" "${REGISTRY}/${IMAGE_NAME}"
