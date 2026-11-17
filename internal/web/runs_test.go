@@ -185,6 +185,20 @@ func TestLogLinesThatLookLikeFailuresAreMarked(t *testing.T) {
 	if _, err := regexp.Compile("(?i)" + runPage{}.ErrorPattern()); err != nil {
 		t.Fatalf("the pattern handed to the page's script does not compile: %v", err)
 	}
+	for _, testcase := range []struct {
+		line string
+		want bool
+	}{
+		{"ModuleNotFoundError: No module named 'app.workers'", true},
+		{"TypeError: missing argument", true},
+		{"Traceback (most recent call last):", true},
+		{"INFO: build complete", false},
+		{"errors.New is fine", false},
+	} {
+		if got := errorLine.MatchString(testcase.line); got != testcase.want {
+			t.Errorf("error match %q = %t, want %t", testcase.line, got, testcase.want)
+		}
+	}
 }
 
 // TestEventStreamStripsTerminalEscapes is streamed output with colour

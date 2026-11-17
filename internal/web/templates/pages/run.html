@@ -23,6 +23,7 @@
       <span class="live js-only" data-live-status data-state="connecting" role="status">{{template "icon" "live"}}<span data-live-label>Connecting…</span></span>
       {{- end}}
       {{- with $sel}}
+      <button type="button" class="btn btn-ghost btn-sm js-only log-error-jump" data-log-error-jump hidden aria-label="Jump to the next possible error in the output" title="Jump to a highlighted error">{{template "icon" "warning"}}<span data-log-error-label>Error lines</span></button>
       <button type="button" class="btn btn-ghost btn-icon btn-sm js-only" data-log-wrap aria-pressed="false" aria-label="Wrap long lines" title="Wrap long lines">{{template "icon" "wrap"}}</button>
       <button type="button" class="btn btn-ghost btn-icon btn-sm js-only" data-log-jump="start" aria-label="Jump to the first line" title="Jump to the first line">{{template "icon" "arrow-up"}}</button>
       <button type="button" class="btn btn-ghost btn-icon btn-sm js-only" data-log-jump="end" aria-label="Jump to the last line" title="Jump to the last line">{{template "icon" "arrow-down"}}</button>
@@ -33,7 +34,7 @@
     {{- with $sel}}
     <div class="lines log" data-log data-log-step="{{.ID}}" data-log-after="{{$.Data.LogAfter}}" data-log-status="{{.Status}}" data-log-open="{{$.Data.LogOpen}}"
          data-error-pattern="{{$.Data.ErrorPattern}}" tabindex="0" role="log" aria-label="Output of {{.Name}}">
-      {{if .LogRecordingError}}<p class="log-note">Output incomplete: {{.LogRecordingError}}</p>{{end}}
+      {{if .LogRecordingError}}<p class="log-note log-note-warning" role="status">{{template "icon" "warning"}} Output incomplete: {{.LogRecordingError}}</p>{{end}}
       {{- if $.Data.LogCut}}
       <p class="log-note">Only the end of this output is shown. <a href="/{{$repo.Name}}/runs/{{$run.Number}}/log?step={{.Index}}">Open the whole output</a>.</p>
       {{- end}}

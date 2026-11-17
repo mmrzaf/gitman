@@ -216,6 +216,14 @@ const query = (page) => new URL(page.url()).searchParams;
   check("Escape closes a menu and returns focus to its button", !(await page.locator("details[data-menu][open]").count())
     && (await summary.evaluate((el) => el === document.activeElement)));
 
+  // Role changes get the same explicit confirmation as destructive actions.
+  await summary.click();
+  await page.locator("details[open] .menu-list").getByRole("menuitem", { name: "Make an admin" }).click();
+  const roleConfirm = page.locator("dialog[role=alertdialog]");
+  check("granting administrator access requires confirmation",
+    await roleConfirm.isVisible() && /administrator access/i.test(await roleConfirm.innerText()));
+  await roleConfirm.getByRole("button", { name: "Cancel" }).click();
+
   // The theme switch in the account menu.
   await page.goto(`${base}/`);
   const themeOf = () => page.evaluate(() => ({ attr: document.documentElement.dataset.theme ?? "", bg: getComputedStyle(document.body).backgroundColor }));
@@ -239,6 +247,8 @@ const query = (page) => new URL(page.url()).searchParams;
 
   // Dialogs keep the address too.
   await page.goto(`${base}/`);
+  check("repositories without descriptions do not repeat placeholder metadata",
+    !(await page.locator("[data-live-region=repos]").innerText()).includes("No description."));
   const opener = page.locator("[data-dialog-open=new-repo]");
   await opener.focus();
   await page.keyboard.press("Enter");
@@ -307,6 +317,13 @@ const query = (page) => new URL(page.url()).searchParams;
   const log = page.locator("[data-log]");
   check("a failed step's log opens at its end", await log.evaluate((el) => el.scrollTop > 0 && el.scrollHeight - el.scrollTop - el.clientHeight < 30));
   check("the lines that failed are marked", /FAIL/.test(await page.locator("[data-log] .line.is-error").first().innerText()));
+  const errorJump = page.locator("[data-log-error-jump]");
+  check("a failed log offers error-line navigation", await errorJump.isVisible());
+  await errorJump.click();
+  const selectedError = page.locator("[data-log] .line.is-current-error");
+  const selectedID = await selectedError.getAttribute("id");
+  check("error navigation focuses the line and makes it linkable",
+    !!selectedID && page.url().endsWith(`#${selectedID}`) && await selectedError.evaluate((el) => el === document.activeElement));
   await page.click("[data-log-wrap]");
   check("long lines wrap on request", (await page.locator("[data-log-wrap]").getAttribute("aria-pressed")) === "true"
     && (await log.evaluate((el) => el.classList.contains("is-wrapped"))));
@@ -557,6 +574,18 @@ for (const scheme of ["light", "dark"]) {
   await wheel.context.close();
 }
 
+// The full Activity page must not abbreviate event descriptions to one line.
+{
+  const { context, page } = await signedIn();
+  await page.goto(`${base}/demo/activity`);
+  const feedStyle = await page.locator(".feed-text").first().evaluate((el) => ({
+    whiteSpace: getComputedStyle(el).whiteSpace,
+    overflow: getComputedStyle(el).overflow,
+  }));
+  check("full Activity entries wrap instead of truncating", feedStyle.whiteSpace === "normal" && feedStyle.overflow === "visible", JSON.stringify(feedStyle));
+  await context.close();
+}
+
 // ---- Phone width: nothing scrolls sideways but what is meant to --------
 {
   const { context, page } = await signedIn({ viewport: { width: 390, height: 844 } });
@@ -567,6 +596,14 @@ for (const scheme of ["light", "dark"]) {
     if (width > 390) wide.push(`${name} ${width}px`);
   }
   check("no screen scrolls sideways at phone width", wide.length === 0, wide.join(", "));
+  await page.goto(`${base}/demo/settings`);
+  const activeTab = page.locator("[data-repo-nav] [aria-current=page]");
+  const visibleTab = await activeTab.evaluate((el) => {
+    const nav = el.closest("[data-repo-nav]").getBoundingClientRect();
+    const tab = el.getBoundingClientRect();
+    return tab.left >= nav.left - 1 && tab.right <= nav.right + 1;
+  });
+  check("the selected repository tab is visible on phones", visibleTab);
   await context.close();
 }
 

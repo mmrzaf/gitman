@@ -65,7 +65,7 @@
       <a class="repobar-name truncate" href="/{{.Repo.Name}}">{{.Repo.Name}}</a>
       {{- with .Repo.Description}}<span class="repobar-description truncate">{{.}}</span>{{end}}
     </div>
-    <nav class="repobar-nav" aria-label="Repository">
+    <nav class="repobar-nav" aria-label="Repository" data-repo-nav>
       <a class="repobar-link" href="/{{.Repo.Name}}"{{if eq .Section "overview"}} aria-current="page"{{end}}>{{template "icon" "repo"}}Overview</a>
       <a class="repobar-link" href="{{refURL .Repo.Name .Repo.DefaultBranch ""}}"{{if eq .Section "files"}} aria-current="page"{{end}}>{{template "icon" "folder"}}Files</a>
       <a class="repobar-link" href="/{{.Repo.Name}}/activity"{{if eq .Section "activity"}} aria-current="page"{{end}}>{{template "icon" "history"}}Activity</a>

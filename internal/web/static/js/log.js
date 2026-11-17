@@ -18,12 +18,49 @@ if (log) {
   const errorLine = new RegExp(log.dataset.errorPattern, "i");
   const latest = document.querySelector("[data-log-latest]");
   const wrap = document.querySelector("[data-log-wrap]");
+  const errorJump = document.querySelector("[data-log-error-jump]");
+  const errorLabel = errorJump?.querySelector("[data-log-error-label]");
   const raw = document.querySelector("[data-log-raw]");
   const lines = log.getElementsByClassName("line");
   let tail = lines[lines.length - 1] || null;
   let last = tail ? Number(tail.id.slice(1)) : 0;
   // open: the last line has no newline yet, so output continues it.
   let open = log.dataset.logOpen === "true";
+  let highlighted = [...log.querySelectorAll(".line.is-error")];
+  let activeError = null;
+
+  // Only the displayed log lines are counted. Older lines may have been
+  // omitted by the server or dropped locally to keep a busy log responsive.
+  function updateErrors() {
+    highlighted = highlighted.filter((line) => line.isConnected && line.classList.contains("is-error"));
+    if (activeError && !highlighted.includes(activeError)) {
+      activeError.classList.remove("is-current-error");
+      activeError = null;
+    }
+    if (!errorJump) return;
+    errorJump.hidden = highlighted.length === 0;
+    if (errorLabel) errorLabel.textContent = `Errors (${highlighted.length})`;
+    errorJump.title = "Jump to the next highlighted error in the displayed output";
+  }
+
+  function jumpToError() {
+    updateErrors();
+    if (!highlighted.length) return;
+    const next = highlighted[(highlighted.indexOf(activeError) + 1) % highlighted.length];
+    activeError?.classList.remove("is-current-error");
+    activeError = next;
+    next.classList.add("is-current-error");
+    next.tabIndex = -1;
+    // Scroll the log, not the whole document or the fixed run layout.
+    const target = next.getBoundingClientRect();
+    const viewport = log.getBoundingClientRect();
+    log.scrollTop += target.top - viewport.top - log.clientHeight * 0.3;
+    next.focus({ preventScroll: true });
+    following = false;
+    const url = new URL(location.href);
+    url.hash = next.id;
+    history.replaceState(history.state, "", url);
+  }
 
   const atEnd = () => log.scrollHeight - log.scrollTop - log.clientHeight < 24;
   const toEnd = () => { log.scrollTop = log.scrollHeight; };
@@ -68,8 +105,13 @@ if (log) {
       }
     });
     open = parts[parts.length - 1] !== "";
-    for (const line of touched) line.classList.toggle("is-error", errorLine.test(textOf(line)));
+    for (const line of touched) {
+      const marked = errorLine.test(textOf(line));
+      line.classList.toggle("is-error", marked);
+      if (marked && !highlighted.includes(line)) highlighted.push(line);
+    }
     trim();
+    updateErrors();
     if (following) toEnd();
     else if (latest) latest.hidden = false;
   }
@@ -93,6 +135,9 @@ if (log) {
     follow();
     log.focus({ preventScroll: true });
   });
+
+  updateErrors();
+  errorJump?.addEventListener("click", jumpToError);
 
   on("click", "[data-log-jump]", (event, button) => {
     if (button.dataset.logJump === "end") follow();

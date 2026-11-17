@@ -52,7 +52,10 @@ type logLine struct {
 // errorLinePattern picks out lines that look like a failure — the ones
 // worth finding first in a long log. The Run page hands it to its script,
 // which marks lines streamed in later the same way.
-const errorLinePattern = `(?i)(\berror\b|\bfail(ed|ure)?\b|\bpanic\b|\bfatal\b)`
+// Catch conventional error words and typed exception names such as
+// ModuleNotFoundError: or TypeError:. A visual match is a navigation hint,
+// not a claim that the step actually failed.
+const errorLinePattern = `(?i)(\b(error|failed|failure|panic|fatal|exception|traceback)\b|\bFAIL:|\b[A-Za-z][A-Za-z0-9_]*(Error|Exception):)`
 
 var errorLine = regexp.MustCompile(errorLinePattern)
 
