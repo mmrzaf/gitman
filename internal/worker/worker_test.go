@@ -51,6 +51,39 @@ func TestRetryBrieflyGivesUpAfterItsAttemptsAreExhausted(t *testing.T) {
 	}
 }
 
+// An outage at shutdown must not make a worker wait through every retry
+// delay once the shutdown budget has expired.
+func TestRetryBrieflyHonorsCancellationBetweenAttempts(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	calls := 0
+	start := time.Now()
+	err := retryBriefly(ctx, 5, time.Second, func(context.Context) error {
+		calls++
+		cancel()
+		return errors.New("database unavailable")
+	})
+	if !errors.Is(err, context.Canceled) || calls != 1 {
+		t.Fatalf("retry after cancel: calls=%d, err=%v", calls, err)
+	}
+	if time.Since(start) > 200*time.Millisecond {
+		t.Fatal("retry waited after cancellation")
+	}
+}
+
+func TestRetryBrieflyDoesNotCallOperationWithExpiredContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	calls := 0
+	err := retryBriefly(ctx, 4, time.Second, func(context.Context) error {
+		calls++
+		return nil
+	})
+	if !errors.Is(err, context.Canceled) || calls != 0 {
+		t.Fatalf("expired retry: calls=%d, err=%v", calls, err)
+	}
+}
+
 // TestFinishStoresAValidSummary keeps the worker's finish path preserving a
 // valid summary when it records the run's end.
 func TestFinishStoresAValidSummary(t *testing.T) {
