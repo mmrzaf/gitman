@@ -4,11 +4,12 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/mmrzaf/gitman/internal/ci"
 	"github.com/mmrzaf/gitman/internal/git"
+	reposvc "github.com/mmrzaf/gitman/internal/repo"
 )
 
-// commitComparison describes the default branch relative to a recorded
-// deployment. Unknown never masquerades as equality.
+// commitComparison describes a source ref relative to a recorded deployment. Unknown never masquerades as equality.
 type commitComparison struct {
 	State         string
 	Ahead, Behind int
@@ -60,4 +61,38 @@ func compareDeployments(ctx context.Context, repository *git.Repo, head string, 
 		counts, _ = repository.Divergences(ctx, head, deployed)
 	}
 	return comparisonsFromCounts(head, deployed, counts)
+}
+
+// compareDeploymentTargets compares each deployed commit to the current head
+// of the ref that actually produced it. Grouping by source ref avoids a
+// separate Git history walk for each target. Deleted refs stay unknown.
+func compareDeploymentTargets(ctx context.Context, repository *git.Repo, refs []reposvc.IndexedRef, deployments []ci.Deployment) map[string]commitComparison {
+	result := make(map[string]commitComparison, len(deployments))
+	heads := make(map[string]string, len(refs))
+	for _, ref := range refs {
+		heads[string(ref.Kind)+"/"+ref.Name] = ref.Commit
+	}
+	groups := map[string][]ci.Deployment{}
+	for _, deployment := range deployments {
+		result[deployment.Target] = commitComparison{State: "unknown"}
+		if deployment.SourceName == "" {
+			continue
+		}
+		key := string(deployment.SourceKind) + "/" + deployment.SourceName
+		if heads[key] != "" {
+			groups[key] = append(groups[key], deployment)
+		}
+	}
+
+	for key, group := range groups {
+		hashes := make([]string, 0, len(group))
+		for _, d := range group {
+			hashes = append(hashes, d.Commit)
+		}
+		compared := compareDeployments(ctx, repository, heads[key], hashes)
+		for _, d := range group {
+			result[d.Target] = compared[d.Commit]
+		}
+	}
+	return result
 }

@@ -33,9 +33,10 @@ export GITMAN_PUBLIC_URL=https://git.example.com
 ./gitman worker      # elsewhere, or as a second process; needs Docker
 ```
 
-Migrations run automatically on start; there's no separate migrate step
-required (`gitman admin migrate` exists for running them by hand if
-needed).
+Start with an empty PostgreSQL database and data directory. Migrations run
+automatically on start; `gitman admin migrate` is available for explicit
+application. Applied migrations remain immutable after publication; subsequent
+schema changes use new numbered migrations.
 
 If `worker` runs outside of Compose, it needs the same view of
 `GITMAN_DATA_DIR` that `web` has, and a Docker daemon it can reach — see

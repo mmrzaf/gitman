@@ -128,7 +128,7 @@ func checkDatabase(ctx context.Context, d *doctor, cfg *config.Config) {
 
 	status, err := database.MigrationStatus(connectCtx)
 	if err != nil {
-		d.fail("schema", "%v; run gitman admin migrate", err)
+		d.fail("schema", "%v", err)
 		return
 	}
 	switch {
@@ -164,6 +164,14 @@ func checkDatabase(ctx context.Context, d *doctor, cfg *config.Config) {
 		d.warn("workers", "%d registered, none ready (%s)", len(workers), reason)
 	} else {
 		d.ok("workers", "%d registered, %d ready", len(workers), ready)
+	}
+	blocked, err := ci.NewService(database).QueuedBlockCounts(connectCtx)
+	if err != nil {
+		d.fail("queued runs", "%v", err)
+		return
+	}
+	if n := blocked[ci.BlockMissingImages]; n > 0 {
+		d.warn("queued runs", "%d cannot start: no ready worker has their required images", n)
 	}
 }
 

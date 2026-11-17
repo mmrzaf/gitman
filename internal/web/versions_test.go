@@ -50,8 +50,9 @@ func TestADeploymentShowsItsVersionOnlyWhenItIsNotTheCommit(t *testing.T) {
 	      VALUES ('r1', $1, 1, $2, 'branch', 'main', 'push', $3, 'passed', 'staging', 'w1', now(), now()),
 	             ('r2', $1, 2, $4, 'tag', 'v1.0.0', 'push', $3, 'passed', 'production', 'w1', now(), now())`,
 		repo.ID, main, person.ID, tagged)
-	exec(`INSERT INTO deployments (id, repo_id, target, version, commit_hash, run_id, person_id)
-	      VALUES ('d1', $1, 'staging', $2, $3, 'r1', $5), ('d2', $1, 'production', 'v1.0.0', $4, 'r2', $5)`,
+	exec(`INSERT INTO deployments (id, repo_id, target, version, commit_hash, run_id, person_id, source_kind, source_name)
+	      VALUES ('d1', $1, 'staging', $2, $3, 'r1', $5, 'branch', 'main'),
+	             ('d2', $1, 'production', 'v1.0.0', $4, 'r2', $5, 'tag', 'v1.0.0')`,
 		repo.ID, main[:12], main, tagged, person.ID)
 
 	resp, body := b.do(http.MethodGet, "/waiotech", nil, nil)

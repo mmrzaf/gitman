@@ -14,8 +14,10 @@ archive="${prefix}.tar.gz"
 files="$(git ls-tree -r --name-only HEAD)"
 
 while IFS= read -r path; do
+  # .env.example is documentation; no other environment file belongs in a release.
+  [[ "$path" == .env.example ]] && continue
   case "$path" in
-    .data/*|data/*|bin/*|dist/*|coverage.out|coverage.html|.env|*/.env|*.sqlite|*.sqlite-*|*.db|*.log)
+    .data/*|data/*|gitman-qa/*|*/.data/*|bin/*|dist/*|coverage.out|coverage.html|.env|*/.env|.env.*|*/.env.*|*.sqlite|*.sqlite-*|*.db|*.log|*.dump|*.pem|*.key)
       echo "refusing runtime file in source archive: $path" >&2
       exit 1
       ;;

@@ -115,7 +115,7 @@
                 <th scope="row" class="table-rowheader"><div class="table-cell">{{.Target}}</div></th>
                 <td data-label="Deployment commit" class="cell-shrink"><div class="table-cell">{{if ownVersion .Version .Commit}}<span class="version">{{.Version}}</span> {{end}}{{template "commit" (commitModel $repo.Name .Commit)}}</div></td>
                 <td data-label="Deployed" class="cell-muted"><div class="table-cell">{{template "time" .At}}{{if .Person}} by {{.Person}}{{end}}{{if .RunNumber}} <a href="/{{$repo.Name}}/runs/{{.RunNumber}}">#{{.RunNumber}}</a>{{end}}</div></td>
-                <td data-label="Comparison" class="cell-shrink"><div class="table-cell">{{if .SinceURL}}<a href="{{.SinceURL}}">{{.Comparison.Label}}</a>{{else}}<span class="muted">{{.Comparison.Label}}</span>{{end}}</div></td>
+                <td data-label="Comparison" class="cell-shrink"><div class="table-cell">{{if .SinceURL}}<a href="{{.SinceURL}}">{{.Comparison.Label}}</a>{{else}}<span class="muted">{{.Comparison.Label}}</span>{{end}}{{if .SourceName}} <span class="muted">vs {{.SourceKind}} {{.SourceName}}</span>{{end}}</div></td>
               </tr>
             {{- end}}
             </tbody>

@@ -286,13 +286,28 @@ func (s *Service) RecoverOperations(ctx context.Context, recoverPush func(contex
 			var pending bool
 			err = s.db.Q.QueryRow(attempt, `SELECT completed_at IS NULL FROM repository_operations WHERE id=$1`, op.ID).Scan(&pending)
 			if err == nil && pending {
-				if op.Kind == "push" {
+				switch op.Kind {
+				case "push":
 					if recoverPush == nil {
 						err = errors.New("push recovery is unavailable")
 					} else {
 						err = recoverPush(attempt, op)
 					}
-				} else {
+				case "create":
+					// Match live Create's lock order: repository ID, then name.
+					// Without the name lock, a live creator can observe no row
+					// and no pending intent just as recovery completes, then
+					// create an orphan with the same name.
+					var p repositoryIntent
+					if err = json.Unmarshal(op.Payload, &p); err == nil {
+						var unlockName func()
+						unlockName, err = s.git.MutationLock(attempt, createNameLockKey(p.Name))
+						if err == nil {
+							err = s.applyRepositoryOperation(attempt, op)
+							unlockName()
+						}
+					}
+				default:
 					err = s.applyRepositoryOperation(attempt, op)
 				}
 			}

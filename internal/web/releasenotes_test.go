@@ -41,7 +41,7 @@ func TestNewestReleaseNotesMatchTheChangelog(t *testing.T) {
 }
 
 func TestParseReleaseNotesRejectsMalformedNotes(t *testing.T) {
-	valid := `{"version":"1.0.0-beta.2","releasedOn":"2026-02-01","items":["b"]},{"version":"1.0.0-beta.1","releasedOn":"2026-01-01","items":["a"]}`
+	valid := `{"version":"1.0.0-rc.2","releasedOn":"2026-02-01","items":["b"]},{"version":"1.0.0-rc.1","releasedOn":"2026-01-01","items":["a"]}`
 	if _, err := parseReleaseNotes([]byte(`{"releases":[` + valid + `]}`)); err != nil {
 		t.Fatalf("valid notes: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestParseReleaseNotesRejectsMalformedNotes(t *testing.T) {
 	}
 }
 
-// Two releases can ship on one day, as beta 23 and beta 24 did.
+// Two releases can ship on one day, without ordering them by release date alone.
 func TestParseReleaseNotesAcceptsReleasesOnTheSameDay(t *testing.T) {
 	notes, err := parseReleaseNotes([]byte(`{"releases":[
 		{"version":"1.0.1","releasedOn":"2026-01-01","items":["b"]},
@@ -74,9 +74,9 @@ func TestParseReleaseNotesAcceptsReleasesOnTheSameDay(t *testing.T) {
 
 func TestReleaseNotesForPicksTheRunningVersion(t *testing.T) {
 	notes, err := parseReleaseNotes([]byte(`{"releases":[
-		{"version":"1.0.0-beta.3","releasedOn":"2026-03-01","items":["c"]},
-		{"version":"1.0.0-beta.2","releasedOn":"2026-02-01","items":["b"]},
-		{"version":"1.0.0-beta.1","releasedOn":"2026-01-01","items":["a"]}]}`))
+		{"version":"1.0.0-rc.3","releasedOn":"2026-03-01","items":["c"]},
+		{"version":"1.0.0-rc.2","releasedOn":"2026-02-01","items":["b"]},
+		{"version":"1.0.0-rc.1","releasedOn":"2026-01-01","items":["a"]}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,12 +86,12 @@ func TestReleaseNotesForPicksTheRunningVersion(t *testing.T) {
 		exact       bool
 		earlierWant []string
 	}{
-		{"v1.0.0-beta.3", "1.0.0-beta.3", true, []string{"1.0.0-beta.2", "1.0.0-beta.1"}},
-		{"1.0.0-beta.2", "1.0.0-beta.2", true, []string{"1.0.0-beta.1"}},
-		{"v1.0.0-beta.1", "1.0.0-beta.1", true, nil},
-		{"dev", "1.0.0-beta.3", false, []string{"1.0.0-beta.2", "1.0.0-beta.1"}},
-		{"", "1.0.0-beta.3", false, []string{"1.0.0-beta.2", "1.0.0-beta.1"}},
-		{"v9.9.9", "1.0.0-beta.3", false, []string{"1.0.0-beta.2", "1.0.0-beta.1"}},
+		{"v1.0.0-rc.3", "1.0.0-rc.3", true, []string{"1.0.0-rc.2", "1.0.0-rc.1"}},
+		{"1.0.0-rc.2", "1.0.0-rc.2", true, []string{"1.0.0-rc.1"}},
+		{"v1.0.0-rc.1", "1.0.0-rc.1", true, nil},
+		{"dev", "1.0.0-rc.3", false, []string{"1.0.0-rc.2", "1.0.0-rc.1"}},
+		{"", "1.0.0-rc.3", false, []string{"1.0.0-rc.2", "1.0.0-rc.1"}},
+		{"v9.9.9", "1.0.0-rc.3", false, []string{"1.0.0-rc.2", "1.0.0-rc.1"}},
 	} {
 		current, exact, earlier := releaseNotesFor(notes, tc.version)
 		var got []string
@@ -107,12 +107,12 @@ func TestReleaseNotesForPicksTheRunningVersion(t *testing.T) {
 
 func TestNormalizeVersion(t *testing.T) {
 	for in, want := range map[string]string{
-		"v1.0.0-beta.24": "1.0.0-beta.24",
-		"V1.0.0":         "1.0.0",
-		" 1.0.0 ":        "1.0.0",
-		"dev":            "dev",
-		"v":              "v",
-		"":               "",
+		"v1.0.0-rc.24": "1.0.0-rc.24",
+		"V1.0.0":       "1.0.0",
+		" 1.0.0 ":      "1.0.0",
+		"dev":          "dev",
+		"v":            "v",
+		"":             "",
 	} {
 		if got := normalizeVersion(in); got != want {
 			t.Errorf("normalizeVersion(%q) = %q, want %q", in, got, want)

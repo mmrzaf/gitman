@@ -293,6 +293,7 @@ func (w *Worker) handle(ctx context.Context, claim *ci.Claim, releaseHost func()
 const (
 	stopAttempts   = 4
 	stopRetryDelay = 2 * time.Second
+	stopTimeout    = 30 * time.Second
 )
 
 // stop records the worker stopping, retrying briefly against a database
@@ -300,7 +301,8 @@ const (
 // attempt. It takes ctx without its cancellation, since Run's context
 // has already ended by the time this runs.
 func (w *Worker) stop(ctx context.Context) {
-	ctx = context.WithoutCancel(ctx)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), stopTimeout)
+	defer cancel()
 	op := func(c context.Context) error { return w.ci.StopWorker(c, w.id) }
 	if err := retryBriefly(ctx, stopAttempts, stopRetryDelay, op); err != nil {
 		w.log.Warn("could not record the worker stopping", "error", err)
@@ -312,11 +314,20 @@ func (w *Worker) stop(ctx context.Context) {
 func retryBriefly(ctx context.Context, attempts int, delay time.Duration, op func(context.Context) error) error {
 	var err error
 	for attempt := 1; attempt <= attempts; attempt++ {
+		if err = ctx.Err(); err != nil {
+			return err
+		}
 		if err = op(ctx); err == nil {
 			return nil
 		}
 		if attempt < attempts {
-			time.Sleep(delay)
+			wait := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				wait.Stop()
+				return ctx.Err()
+			case <-wait.C:
+			}
 		}
 	}
 	return err

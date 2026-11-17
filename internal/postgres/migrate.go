@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"crypto/sha256"
 	"embed"
 	"fmt"
 	"io/fs"
@@ -9,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 //go:embed migrations/*.sql
@@ -20,9 +23,10 @@ var migrationFiles embed.FS
 const migrationLockKey int64 = 0x676974_6d616e // "gitman"
 
 type migration struct {
-	version int64
-	name    string
-	sql     string
+	version  int64
+	name     string
+	sql      string
+	checksum string
 }
 
 // MigrationInfo names one applied, pending or newer-than-this-binary
@@ -42,6 +46,66 @@ type MigrationStatus struct {
 	DatabaseAhead []MigrationInfo
 }
 
+// migrationSchemaReader is the query surface shared by pooled and locked
+// connections. Unknown schemas are refused without mutation.
+type migrationSchemaReader interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+// inspectMigrationSchema rejects unsupported schemas before the migration
+// ledger is created. An existing installation must have a valid migration ledger.
+func inspectMigrationSchema(ctx context.Context, q migrationSchemaReader) (bool, error) {
+	var present bool
+	if err := q.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM pg_catalog.pg_class c
+			JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+			WHERE n.nspname = current_schema()
+			  AND c.relname = 'schema_migrations' AND c.relkind IN ('r', 'p')
+		)
+	`).Scan(&present); err != nil {
+		return false, fmt.Errorf("inspect migration ledger: %w", err)
+	}
+	if !present {
+		var populated bool
+		if err := q.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM pg_catalog.pg_class c
+				JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+				WHERE n.nspname = current_schema()
+				  AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
+			)
+		`).Scan(&populated); err != nil {
+			return false, fmt.Errorf("inspect existing schema: %w", err)
+		}
+		if populated {
+			return false, fmt.Errorf("database schema is not empty and has no migration ledger; use an empty database or restore a compatible backup")
+		}
+		return false, nil
+	}
+	var hasChecksum bool
+	if err := q.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_schema = current_schema()
+			  AND table_name = 'schema_migrations' AND column_name = 'checksum'
+		)
+	`).Scan(&hasChecksum); err != nil {
+		return false, fmt.Errorf("inspect migration ledger columns: %w", err)
+	}
+	if !hasChecksum {
+		return false, fmt.Errorf("migration ledger is missing a checksum column; this database format is unsupported")
+	}
+	return true, nil
+}
+
+func validateAppliedMigration(m migration, name, checksum string) error {
+	if name != m.name || checksum != m.checksum {
+		return fmt.Errorf("migration %d differs from the Gitman binary (recorded as %s); do not reuse or edit an applied migration", m.version, name)
+	}
+	return nil
+}
+
 // MigrationStatus reports the schema's relationship to this binary.
 func (d *DB) MigrationStatus(ctx context.Context) (*MigrationStatus, error) {
 	migrations, err := loadMigrations()
@@ -53,26 +117,30 @@ func (d *DB) MigrationStatus(ctx context.Context) (*MigrationStatus, error) {
 		known[m.version] = m
 	}
 	status := &MigrationStatus{}
-	var present bool
-	if err := d.Q.QueryRow(ctx, `SELECT to_regclass('schema_migrations') IS NOT NULL`).Scan(&present); err != nil {
-		return nil, fmt.Errorf("check schema_migrations: %w", err)
+	present, err := inspectMigrationSchema(ctx, d.Q)
+	if err != nil {
+		return nil, err
 	}
 	applied := make(map[int64]bool, len(migrations))
 	if present {
-		rows, err := d.Q.Query(ctx, `SELECT version, name FROM schema_migrations ORDER BY version`)
+		rows, err := d.Q.Query(ctx, `SELECT version, name, checksum FROM schema_migrations ORDER BY version`)
 		if err != nil {
 			return nil, fmt.Errorf("read applied migrations: %w", err)
 		}
 		for rows.Next() {
 			var version int64
-			var name string
-			if err := rows.Scan(&version, &name); err != nil {
+			var name, checksum string
+			if err := rows.Scan(&version, &name, &checksum); err != nil {
 				rows.Close()
 				return nil, fmt.Errorf("scan applied migration: %w", err)
 			}
 			applied[version] = true
 			info := MigrationInfo{Version: version, Name: name}
-			if _, ok := known[version]; ok {
+			if migration, ok := known[version]; ok {
+				if err := validateAppliedMigration(migration, name, checksum); err != nil {
+					rows.Close()
+					return nil, err
+				}
 				status.Applied = append(status.Applied, info)
 			} else {
 				status.DatabaseAhead = append(status.DatabaseAhead, info)
@@ -117,7 +185,10 @@ func loadMigrations() ([]migration, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read migration %s: %w", entry.Name(), err)
 		}
-		migrations = append(migrations, migration{version: version, name: entry.Name(), sql: string(content)})
+		migrations = append(migrations, migration{
+			version: version, name: entry.Name(), sql: string(content),
+			checksum: fmt.Sprintf("%x", sha256.Sum256(content)),
+		})
 	}
 
 	sort.Slice(migrations, func(i, j int) bool { return migrations[i].version < migrations[j].version })
@@ -163,36 +234,48 @@ func (d *DB) Migrate(ctx context.Context) error {
 		}
 	}()
 
-	if _, err := conn.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS schema_migrations (
-			version    bigint PRIMARY KEY,
-			name       text NOT NULL,
-			applied_at timestamptz NOT NULL DEFAULT now()
-		)
-	`); err != nil {
-		return fmt.Errorf("create schema_migrations: %w", err)
+	present, err := inspectMigrationSchema(ctx, conn)
+	if err != nil {
+		return err
+	}
+	if !present {
+		if _, err := conn.Exec(ctx, `
+			CREATE TABLE schema_migrations (
+				version bigint PRIMARY KEY,
+				name text NOT NULL,
+				checksum text NOT NULL,
+				applied_at timestamptz NOT NULL DEFAULT now()
+			)
+		`); err != nil {
+			return fmt.Errorf("create schema_migrations: %w", err)
+		}
 	}
 
 	applied := make(map[int64]bool)
-	known := make(map[int64]bool, len(migrations))
+	known := make(map[int64]migration, len(migrations))
 	for _, m := range migrations {
-		known[m.version] = true
+		known[m.version] = m
 	}
-	rows, err := conn.Query(ctx, `SELECT version, name FROM schema_migrations ORDER BY version`)
+	rows, err := conn.Query(ctx, `SELECT version, name, checksum FROM schema_migrations ORDER BY version`)
 	if err != nil {
 		return fmt.Errorf("read applied migrations: %w", err)
 	}
 	for rows.Next() {
 		var version int64
-		var name string
-		if err := rows.Scan(&version, &name); err != nil {
+		var name, checksum string
+		if err := rows.Scan(&version, &name, &checksum); err != nil {
 			rows.Close()
 			return fmt.Errorf("scan applied migration: %w", err)
 		}
 		applied[version] = true
-		if !known[version] {
+		migration, ok := known[version]
+		if !ok {
 			rows.Close()
 			return fmt.Errorf("database schema is ahead of this Gitman binary: migration %d (%s) is not embedded here; run a newer binary or restore a backup made by this version", version, name)
+		}
+		if err := validateAppliedMigration(migration, name, checksum); err != nil {
+			rows.Close()
+			return err
 		}
 	}
 	rows.Close()
@@ -212,7 +295,7 @@ func (d *DB) Migrate(ctx context.Context) error {
 			_ = tx.Rollback(ctx)
 			return fmt.Errorf("apply migration %s: %w", m.name, err)
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO schema_migrations (version, name) VALUES ($1, $2)`, m.version, m.name); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO schema_migrations (version, name, checksum) VALUES ($1, $2, $3)`, m.version, m.name, m.checksum); err != nil {
 			_ = tx.Rollback(ctx)
 			return fmt.Errorf("record migration %s: %w", m.name, err)
 		}

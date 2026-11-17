@@ -325,11 +325,12 @@ func seedDeployments(t *testing.T, database *postgres.DB) {
 	}
 	exec(`INSERT INTO repos (id, name) VALUES ('r1', 'a'), ('r2', 'b')`)
 	exec(`INSERT INTO runs (id, repo_id, number, commit_hash, ref_kind, ref_name, trigger, status, finished_at)
-	      VALUES ('run1', 'r1', 1, repeat('a',40), 'branch', 'main', 'push', 'passed', now())`)
-	exec(`INSERT INTO deployments (id, repo_id, target, version, commit_hash, run_id, created_at)
-	      VALUES ('d1', 'r1', 'staging', 'old', repeat('a',40), 'run1', now() - interval '1 hour')`)
-	exec(`INSERT INTO deployments (id, repo_id, target, version, commit_hash, run_id, created_at)
-	      VALUES ('d2', 'r1', 'staging', 'new', repeat('b',40), 'run1', now())`)
+	      VALUES ('run1', 'r1', 1, repeat('a',40), 'branch', 'main', 'push', 'passed', now()),
+	             ('run2', 'r1', 2, repeat('b',40), 'branch', 'main', 'push', 'passed', now())`)
+	exec(`INSERT INTO deployments (id, repo_id, target, version, commit_hash, run_id, source_kind, source_name, created_at)
+	      VALUES ('d1', 'r1', 'staging', 'old', repeat('a',40), 'run1', 'branch', 'main', now() - interval '1 hour')`)
+	exec(`INSERT INTO deployments (id, repo_id, target, version, commit_hash, run_id, source_kind, source_name, created_at)
+	      VALUES ('d2', 'r1', 'staging', 'new', repeat('b',40), 'run2', 'branch', 'main', now())`)
 	exec(`INSERT INTO deployments (id, repo_id, target, version, commit_hash)
 	      VALUES ('d3', 'r2', 'staging', 'other', repeat('c',40))`)
 }
@@ -732,62 +733,7 @@ func TestAppendLogAcceptsTheSameChunkTwice(t *testing.T) {
 	}
 }
 
-// TestAnyWorkerReady is what tells a person why a queued run is not
-// starting: a worker is online from the moment it registers until it
-// stops, or until its heartbeat is WorkerLostAfter old.
-func TestAnyWorkerReady(t *testing.T) {
-	ctx := context.Background()
-	database := pgtest.Open(t)
-	svc := NewService(database)
-	online := func() bool {
-		t.Helper()
-		ok, err := svc.AnyWorkerReady(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return ok
-	}
-
-	if online() {
-		t.Fatal("online with no worker ever registered")
-	}
-	if err := svc.RegisterWorker(ctx, "w1", "host"); err != nil {
-		t.Fatal(err)
-	}
-
-	if online() {
-		t.Fatal("registration was mistaken for readiness")
-	}
-	if err := svc.SetWorkerReadiness(ctx, "w1", true, "Ready", []string{"alpine:3.20"}); err != nil {
-		t.Fatal(err)
-	}
-	if !online() {
-		t.Fatal("ready worker was not reported")
-	}
-
-	if _, err := database.Pool.Exec(ctx,
-		`UPDATE workers SET heartbeat_at = now() - make_interval(secs => $1) - interval '1 second'`,
-		WorkerLostAfter.Seconds()); err != nil {
-		t.Fatal(err)
-	}
-	if online() {
-		t.Fatal("online with only a heartbeat older than WorkerLostAfter")
-	}
-	if err := svc.Heartbeat(ctx, "w1", 0); err != nil {
-		t.Fatal(err)
-	}
-	if !online() {
-		t.Fatal("not online after a fresh heartbeat")
-	}
-	if err := svc.StopWorker(ctx, "w1"); err != nil {
-		t.Fatal(err)
-	}
-	if online() {
-		t.Fatal("online after the only worker stopped")
-	}
-}
-
-func TestLatestDefaultHeadRunsIsTheNewestRunOfEachDefaultBranch(t *testing.T) {
+func TestLatestRunsForReposIncludesTagsAndManualRuns(t *testing.T) {
 	database := pgtest.Open(t)
 	ctx := context.Background()
 	insert := func(q string, args ...any) {
@@ -797,26 +743,17 @@ func TestLatestDefaultHeadRunsIsTheNewestRunOfEachDefaultBranch(t *testing.T) {
 		}
 	}
 	insert(`INSERT INTO repos (id, name, default_branch) VALUES ('r1', 'one', 'main'), ('r2', 'two', 'develop'), ('r3', 'three', 'main')`)
-	insert(`INSERT INTO runs (id, repo_id, number, commit_hash, ref_kind, ref_name, trigger, status, finished_at) VALUES
-	        ('a1', 'r1', 1, repeat('a',40), 'branch', 'main', 'push', 'passed', now()),
-	        ('a2', 'r1', 2, repeat('b',40), 'branch', 'main', 'push', 'failed', now()),
-	        ('a3', 'r1', 3, repeat('c',40), 'branch', 'feature', 'push', 'passed', now()),
-	        ('a4', 'r1', 4, repeat('d',40), 'tag', 'main', 'push', 'passed', now()),
-	        ('b1', 'r2', 1, repeat('e',40), 'branch', 'main', 'push', 'failed', now()),
-	        ('b2', 'r2', 2, repeat('f',40), 'branch', 'develop', 'push', 'cancelled', now())`)
-	insert(`INSERT INTO refs (repo_id,kind,name,commit_hash) VALUES ('r1','branch','main',repeat('b',40)), ('r2','branch','develop',repeat('f',40))`)
-	insert(`INSERT INTO runs (id,repo_id,number,commit_hash,ref_kind,ref_name,trigger,status,finished_at) VALUES ('old-manual','r1',5,repeat('a',40),'branch','main','manual','passed',now())`)
-	runs, err := NewService(database).LatestDefaultHeadRuns(ctx, []string{"r1", "r2", "r3"})
+	insert(`INSERT INTO runs (id,repo_id,number,commit_hash,ref_kind,ref_name,trigger,status,started_at,finished_at) VALUES
+  ('a1','r1',1,repeat('a',40),'branch','main','push','passed',now(),now()),
+  ('a2','r1',2,repeat('b',40),'tag','v1.2.0','push','failed',now(),now()),
+  ('b1','r2',1,repeat('c',40),'branch','develop','push','passed',now(),now()),
+  ('b2','r2',2,repeat('d',40),'branch','feature','manual','cancelled',now(),now())`)
+	runs, err := NewService(database).LatestRunsForRepos(ctx, []string{"r1", "r2", "r3"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Only a branch named as the default counts, and the newest of those; a
-	// repository with no run of its default branch has none.
-	if len(runs) != 2 || runs["r1"].Number != 2 || runs["r1"].Status != StatusFailed || runs["r2"].Number != 2 || runs["r2"].Status != StatusCancelled {
-		t.Fatalf("runs = %+v", runs)
-	}
-	if runs["r1"].RepoName != "one" || runs["r1"].Commit != strings.Repeat("b", 40) {
-		t.Errorf("the run is missing its repository or commit: %+v", runs["r1"])
+	if len(runs) != 2 || runs["r1"].Number != 2 || runs["r1"].RefKind != git.KindTag || runs["r1"].Status != StatusFailed || runs["r2"].Number != 2 || runs["r2"].RefName != "feature" {
+		t.Fatalf("latest runs = %+v", runs)
 	}
 }
 

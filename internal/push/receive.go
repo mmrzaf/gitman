@@ -76,6 +76,24 @@ func ParseUpdates(r io.Reader) ([]Update, error) {
 	return updates, nil
 }
 
+// nestedRefConflict finds a branch/tag that Git's ref storage cannot
+// represent alongside ref. Names are sorted for deterministic diagnostics.
+// Git cannot atomically delete a parent and create a child in one update-ref
+// transaction, so the check includes refs scheduled for deletion as well.
+func nestedRefConflict(ref string, occupied []string) string {
+	for i := strings.LastIndexByte(ref, '/'); i >= len("refs/heads/"); i = strings.LastIndexByte(ref[:i], '/') {
+		if _, found := slices.BinarySearch(occupied, ref[:i]); found {
+			return ref[:i]
+		}
+	}
+	prefix := ref + "/"
+	i, _ := slices.BinarySearch(occupied, prefix)
+	if i < len(occupied) && strings.HasPrefix(occupied[i], prefix) {
+		return occupied[i]
+	}
+	return ""
+}
+
 // Hook serves one push's hooks.
 type Hook struct {
 	// DB runs the push-recording transaction, which spans the repo and ci
@@ -164,30 +182,67 @@ func (h *Hook) ValidatePush(ctx context.Context, updates []Update) error {
 		kind git.Kind
 		name string
 	}
-	present := make(map[key]bool, len(existing))
+	present := make(map[key]bool, len(existing)+len(updates))
+	// Keep original names occupied even when they are being deleted by this
+	// push: the Git files ref backend cannot swap a/b for a in one atomic
+	// transaction. Without this preflight Gitman would journal an intent
+	// that can never complete and block all future pushes to this repo.
+	occupied := make(map[string]bool, len(existing)+len(updates))
 	for _, r := range existing {
 		present[key{r.Kind, r.Name}] = true
+		occupied[git.FullName(r.Kind, r.Name)] = true
 	}
 	for _, u := range updates {
-		if u.Kind == "" {
+		kind, name, ok := git.SplitFullName(u.Ref)
+		if !ok || u.Kind != kind || u.Name != name {
 			continue
 		}
 		if u.IsDelete() {
-			delete(present, key{u.Kind, u.Name})
+			delete(present, key{kind, name})
 		} else {
-			present[key{u.Kind, u.Name}] = true
+			present[key{kind, name}] = true
+			occupied[u.Ref] = true
 		}
 	}
+	occupiedNames := make([]string, 0, len(occupied))
+	for name := range occupied {
+		occupiedNames = append(occupiedNames, name)
+	}
+	slices.Sort(occupiedNames)
 
 	var rejections []refusal
 	reject := func(u Update, format string, args ...any) {
 		rejections = append(rejections, refusal{ref: u.Ref, reason: fmt.Sprintf(format, args...)})
 	}
 
+	if len(updates) > maxUpdates {
+		reject(Update{}, "a push may update at most %d refs", maxUpdates)
+	}
+	seen := make(map[string]bool, len(updates))
 	for _, u := range updates {
-		if u.Kind == "" {
+		kind, name, ok := git.SplitFullName(u.Ref)
+		if !ok {
 			reject(u, "only branches (refs/heads/) and tags (refs/tags/) can be pushed")
 			continue
+		}
+		if u.Kind != kind || u.Name != name || !git.IsHash(u.Old) || !git.IsHash(u.New) || len(u.Old) != len(u.New) {
+			reject(u, "malformed ref update")
+			continue
+		}
+		if seen[u.Ref] {
+			reject(u, "the same ref is updated more than once in this push")
+			continue
+		}
+		seen[u.Ref] = true
+		if u.Old == u.New {
+			reject(u, "old and new commit IDs are identical")
+			continue
+		}
+		if !u.IsDelete() {
+			if other := nestedRefConflict(u.Ref, occupiedNames); other != "" {
+				reject(u, "ref conflicts with %s; push the deletion separately if replacing a branch or tag with a nested name", other)
+				continue
+			}
 		}
 		if u.IsCreate() && !u.IsDelete() {
 			if err := git.ValidateName(u.Name); err != nil {
@@ -424,13 +479,19 @@ func (h *Hook) recordPush(ctx context.Context, pc *pushContext, records []update
 	for i, run := range created {
 		h.reportRun(pc.repo.Name, createdFor[i], run)
 	}
-	if slices.ContainsFunc(created, func(run *ci.Created) bool { return run.Status == ci.StatusQueued }) {
-		// Only advice: the push and its runs are already recorded, so a
-		// failed check leaves the notice out rather than failing a push
-		// that succeeded.
-		if online, err := h.CI.AnyWorkerReady(ctx); err == nil && !online {
-			h.say("Gitman: no worker is ready, so queued runs wait until one is available.")
+	// Only advice: the push and its runs are already recorded, so a failed
+	// check leaves the notice out rather than failing a push that succeeded.
+	told := map[string]bool{}
+	for _, run := range created {
+		if run.Status != ci.StatusQueued {
+			continue
 		}
+		block, err := h.CI.QueuedBlock(ctx, run.ID)
+		if err != nil || block == nil || told[block.Message()] {
+			continue
+		}
+		told[block.Message()] = true
+		h.say("Gitman: run #%d will wait. %s", run.Number, block.Message())
 	}
 	for _, rec := range notRun {
 		if rec.Decision.MatchedRule == nil {

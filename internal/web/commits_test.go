@@ -332,8 +332,8 @@ func TestOverviewHasNoTabsAndLinksToWhatIsNotDeployed(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	exec(`INSERT INTO deployments (id, repo_id, target, version, commit_hash, person_id)
-	      VALUES ('d1', $1, 'production', 'v1.0.0', $2, $4), ('d2', $1, 'staging', $3, $5, $4)`,
+	exec(`INSERT INTO deployments (id, repo_id, target, version, commit_hash, person_id, source_kind, source_name)
+	      VALUES ('d1', $1, 'production', 'v1.0.0', $2, $4, 'branch', 'main'), ('d2', $1, 'staging', $3, $5, $4, 'branch', 'main')`,
 		repo.ID, old, head[:12], person.ID, head)
 
 	resp, body := b.do(http.MethodGet, "/waiotech", nil, nil)
@@ -431,8 +431,8 @@ func TestColumnsFollowWhatThereIs(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := database.Pool.Exec(ctx, `
-		INSERT INTO deployments (id, repo_id, target, version, commit_hash, run_id, person_id)
-		VALUES ('d1', $1, 'staging', 'v1', $2, 'r1', $3)`, repo.ID, head, person.ID); err != nil {
+		INSERT INTO deployments (id, repo_id, target, version, commit_hash, run_id, person_id, source_kind, source_name)
+		VALUES ('d1', $1, 'staging', 'v1', $2, 'r1', $3, 'branch', 'main')`, repo.ID, head, person.ID); err != nil {
 		t.Fatal(err)
 	}
 	resp, body = b.do(http.MethodGet, "/waiotech", nil, nil)
@@ -505,7 +505,7 @@ func TestTagsAreNewestVersionFirst(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"v2.0.0-beta.2", "v2.0.0-beta.10", "v2.0.0-beta.9", "v2.0.0-beta.1"} {
+	for _, name := range []string{"v2.0.0-rc.2", "v2.0.0-rc.10", "v2.0.0-rc.9", "v2.0.0-rc.1"} {
 		runGit(t, bare, "tag", name, "main")
 	}
 	syncRepoRefs(t, database, store, repo.ID)
@@ -513,7 +513,7 @@ func TestTagsAreNewestVersionFirst(t *testing.T) {
 	resp, body := b.do(http.MethodGet, "/waiotech", nil, nil)
 	expect(t, resp, body, http.StatusOK)
 	at := func(s string) int { return strings.Index(body, `aria-label="Run tag `+s+`"`) }
-	newestFirst := []string{"v2.0.0-beta.10", "v2.0.0-beta.9", "v2.0.0-beta.2", "v2.0.0-beta.1", "v1.0.0"}
+	newestFirst := []string{"v2.0.0-rc.10", "v2.0.0-rc.9", "v2.0.0-rc.2", "v2.0.0-rc.1", "v1.0.0"}
 	for i := 1; i < len(newestFirst); i++ {
 		if at(newestFirst[i-1]) < 0 || at(newestFirst[i-1]) > at(newestFirst[i]) {
 			t.Errorf("Overview tag %s is not before %s", newestFirst[i-1], newestFirst[i])
@@ -521,7 +521,7 @@ func TestTagsAreNewestVersionFirst(t *testing.T) {
 	}
 	// And so are the choices a picker offers.
 	_, body = b.do(http.MethodGet, "/waiotech/commits", nil, nil)
-	first := strings.Index(body, `<option value="v2.0.0-beta.10">tag`)
+	first := strings.Index(body, `<option value="v2.0.0-rc.10">tag`)
 	last := strings.Index(body, `<option value="v1.0.0">tag`)
 	if first < 0 || last < 0 || first > last || strings.Index(body, `<option value="main">branch`) > first {
 		t.Errorf("the picker's refs are not branches, then tags newest first")
@@ -539,19 +539,19 @@ func TestABulkPushIsOneLineOfActivity(t *testing.T) {
 	e.mustGit(e.work, "push", "--quiet", "origin", "main")
 	refs := []string{}
 	for i := 1; i <= 8; i++ {
-		e.mustGit(e.work, "tag", fmt.Sprintf("v1.0.0-beta.%d", i))
-		refs = append(refs, fmt.Sprintf("v1.0.0-beta.%d", i))
+		e.mustGit(e.work, "tag", fmt.Sprintf("v1.0.0-rc.%d", i))
+		refs = append(refs, fmt.Sprintf("v1.0.0-rc.%d", i))
 	}
 	e.mustGit(e.work, append([]string{"push", "--quiet", "origin"}, refs...)...)
 
 	b := signInTo(t, e, "darius")
 	resp, body := b.do(http.MethodGet, "/demo/activity", nil, nil)
 	text := stripTags(body)
-	expect(t, resp, body, http.StatusOK, "v1.0.0-beta.8", "v1.0.0-beta.7", "v1.0.0-beta.6")
+	expect(t, resp, body, http.StatusOK, "v1.0.0-rc.8", "v1.0.0-rc.7", "v1.0.0-rc.6")
 	if !strings.Contains(text, "darius created 8 tags") || !strings.Contains(text, "and 5 more") {
 		t.Errorf("the push reads:\n%s", text)
 	}
-	if strings.Contains(text, "v1.0.0-beta.1 ") || strings.Count(text, "created") > 3 {
+	if strings.Contains(text, "v1.0.0-rc.1 ") || strings.Count(text, "created") > 3 {
 		t.Errorf("the push is listed tag by tag:\n%s", text)
 	}
 }

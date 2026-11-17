@@ -53,7 +53,7 @@ func TestWorkerCleanupCommandIsRegistered(t *testing.T) {
 	}
 }
 
-func TestBeta23AdminCommandsAreRegistered(t *testing.T) {
+func TestAdminCommandsAreRegistered(t *testing.T) {
 	for group, action := range map[string]string{
 		"worker":    "release",
 		"operation": "abandon",

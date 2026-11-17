@@ -14,12 +14,30 @@ type RefChange struct{ Ref, Old, New string }
 
 // CheckRefChanges checks exact object identities, including annotated tag objects.
 // Callers hold the repository mutation lock until application finishes.
-func (r *Repo) CheckRefChanges(ctx context.Context, changes []RefChange) error {
+// validateRefChanges rejects malformed or contradictory transactions before a
+// durable intent or receipt is written. The public push validator supplies
+// human-readable reasons; this is a second invariant at the Git boundary.
+func validateRefChanges(changes []RefChange) error {
+	seen := make(map[string]bool, len(changes))
 	for _, change := range changes {
-		kind, name, ok := SplitFullName(change.Ref)
-		if !ok || ValidateName(name) != nil || !IsHash(change.Old) || !IsHash(change.New) {
-			return fmt.Errorf("invalid ref change")
+		_, name, ok := SplitFullName(change.Ref)
+		if !ok || ValidateName(name) != nil || !IsHash(change.Old) || !IsHash(change.New) || len(change.Old) != len(change.New) || change.Old == change.New {
+			return fmt.Errorf("invalid ref change %q", change.Ref)
 		}
+		if seen[change.Ref] {
+			return fmt.Errorf("duplicate ref change %q", change.Ref)
+		}
+		seen[change.Ref] = true
+	}
+	return nil
+}
+
+func (r *Repo) CheckRefChanges(ctx context.Context, changes []RefChange) error {
+	if err := validateRefChanges(changes); err != nil {
+		return err
+	}
+	for _, change := range changes {
+		kind, name, _ := SplitFullName(change.Ref)
 		current, err := r.RefOID(ctx, kind, name)
 		if errors.Is(err, ErrNotFound) && IsZeroHash(change.Old) {
 			continue
@@ -40,6 +58,14 @@ func (r *Repo) CheckRefChanges(ctx context.Context, changes []RefChange) error {
 func (r *Repo) ApplyOperation(ctx context.Context, operationID string, changes []RefChange, commits []string, payload []byte) error {
 	if !repoIDPattern.MatchString(operationID) {
 		return fmt.Errorf("invalid operation ID")
+	}
+	if err := validateRefChanges(changes); err != nil {
+		return err
+	}
+	for _, commit := range commits {
+		if !IsHash(commit) || IsZeroHash(commit) {
+			return fmt.Errorf("invalid retained commit")
+		}
 	}
 	opts := r.opts()
 	opts.stdin = bytes.NewReader(payload)

@@ -47,6 +47,13 @@ host execution lock and image work the exclusive side, so neither overlaps the
 other; maintenance stops new claims. Workers enforce a bounded build-cache
 policy by default.
 
+Image administration is separate from pipeline execution inside the existing
+packages: CI image state and its PostgreSQL queries are in `service_images.go`
+and `store_images.go`; worker host image enumeration and pruning are in
+`docker_images.go`. Worker readiness and reconciliation live in
+`service_workers.go`. These are internal organization boundaries, not separate
+processes or new public APIs.
+
 ## Read paths
 
 Server-rendered pages use typed partial views and database read models. Home is

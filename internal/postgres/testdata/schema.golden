@@ -16,6 +16,8 @@ column deployments.repo_id text null=NO default=
 column deployments.target text null=NO default=
 column deployments.version text null=NO default=
 column deployments.commit_hash text null=NO default=
+column deployments.source_kind text null=NO default=''::text
+column deployments.source_name text null=NO default=''::text
 column deployments.run_id text null=YES default=
 column deployments.person_id text null=YES default=
 column deployments.created_at timestamp with time zone null=NO default=now()
@@ -156,6 +158,7 @@ column runs.started_at timestamp with time zone null=YES default=
 column runs.finished_at timestamp with time zone null=YES default=
 column schema_migrations.version bigint null=NO default=
 column schema_migrations.name text null=NO default=
+column schema_migrations.checksum text null=NO default=
 column schema_migrations.applied_at timestamp with time zone null=NO default=now()
 column secrets.id text null=NO default=
 column secrets.repo_id text null=NO default=

@@ -28,7 +28,7 @@ func TestRepositoryPipelineBuildsOnlyTags(t *testing.T) {
 	if running := runningSteps(cfg, git.KindBranch, "develop"); len(running) != 0 {
 		t.Fatalf("develop push runs %v, want no self-hosted steps", running)
 	}
-	assertStringSlicesEqual(t, runningSteps(cfg, git.KindTag, "v1.0.0-beta.23"), []string{"build image"})
+	assertStringSlicesEqual(t, runningSteps(cfg, git.KindTag, "v1.0.0-rc.23"), []string{"build image"})
 	if len(cfg.Steps) != 1 || !strings.Contains(cfg.Steps[0].Run, `docker run --rm "$image" gitman version`) {
 		t.Fatal("repository tag pipeline must smoke-check the built Gitman image")
 	}

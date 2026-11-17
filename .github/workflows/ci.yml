@@ -44,7 +44,16 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - name: Install required shell lint tool
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
       - name: Verify source
+        env:
+          GITMAN_REQUIRE_SHELLCHECK: '1'
         run: scripts/verify.sh
 
   integration:
@@ -99,6 +108,12 @@ jobs:
         run: scripts/backup-test.sh
       - name: Real Docker integration
         run: scripts/e2e.sh
+      - name: Two workers on one Docker host
+        run: scripts/multiworker.sh
+      - name: Isolated production Compose installation
+        run: scripts/compose-smoke.sh
+      - name: Fresh installation and authenticated Git transport
+        run: scripts/clean-install-test.sh
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:

@@ -442,7 +442,7 @@ func TestForRepoGroupsABulkPush(t *testing.T) {
 	exec(`INSERT INTO pushes (id, repo_id, person_id, created_at) VALUES ('big', 'r1', 'p1', $1)`, base)
 	for i := 1; i <= 12; i++ {
 		exec(`INSERT INTO push_updates (id, push_id, kind, name, old_commit, new_commit, is_create)
-		      VALUES ($1, 'big', 'tag', $2, repeat('0',40), repeat('a',40), true)`, fmt.Sprintf("t%02d", i), fmt.Sprintf("v1.0.0-beta.%d", i))
+		      VALUES ($1, 'big', 'tag', $2, repeat('0',40), repeat('a',40), true)`, fmt.Sprintf("t%02d", i), fmt.Sprintf("v1.0.0-rc.%d", i))
 	}
 	for _, name := range []string{"a", "b", "c"} {
 		exec(`INSERT INTO push_updates (id, push_id, kind, name, old_commit, new_commit, is_create)
@@ -477,7 +477,7 @@ func TestForRepoGroupsABulkPush(t *testing.T) {
 	if bulk == nil || bulk.Count != 12 || bulk.Change != Created || bulk.RefKind != git.KindTag || bulk.Actor != "darius" {
 		t.Fatalf("the bulk line = %+v", bulk)
 	}
-	if strings.Join(bulk.Names, " ") != "v1.0.0-beta.12 v1.0.0-beta.11 v1.0.0-beta.10" {
+	if strings.Join(bulk.Names, " ") != "v1.0.0-rc.12 v1.0.0-rc.11 v1.0.0-rc.10" {
 		t.Errorf("the bulk line names %v, want the newest three versions", bulk.Names)
 	}
 	for _, e := range entries {

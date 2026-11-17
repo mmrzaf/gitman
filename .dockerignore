@@ -2,6 +2,8 @@
 .github
 .data
 .env
+.env.*
+!.env.example
 bin
 dist
 testdata

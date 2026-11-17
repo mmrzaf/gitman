@@ -111,6 +111,7 @@
         <legend>Access</legend>
         <label class="choice"><input type="radio" name="scope" value="read"{{if ne ($d.TokenForm.Get "scope") "write"}} checked{{end}}><span class="choice-label">Read</span><span class="choice-hint">Clone and fetch.</span></label>
         <label class="choice"><input type="radio" name="scope" value="write"{{if eq ($d.TokenForm.Get "scope") "write"}} checked{{end}}><span class="choice-label">Read and write</span><span class="choice-hint">Also push, where the ref rules allow.</span></label>
+        {{with index $d.TokenForm.Errors "scope"}}<p class="field-error" role="alert">{{.}}</p>{{end}}
       </fieldset>
       <fieldset class="choices">
         <legend>Repositories</legend>

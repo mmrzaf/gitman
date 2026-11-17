@@ -3,6 +3,8 @@ package web
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"embed"
 	"encoding/base64"
 	"encoding/json"
@@ -498,7 +500,7 @@ func (a *App) redirect(w http.ResponseWriter, r *http.Request, target string, ki
 		if err == nil && len(data) <= maxFlashBytes {
 			http.SetCookie(w, &http.Cookie{
 				Name:     a.flashCookie(),
-				Value:    base64.RawURLEncoding.EncodeToString(data),
+				Value:    a.signedFlash(data),
 				Path:     "/",
 				MaxAge:   60,
 				HttpOnly: true,
@@ -522,8 +524,8 @@ func (a *App) withFlash(w http.ResponseWriter, r *http.Request) *http.Request {
 		Name: a.flashCookie(), Value: "", Path: "/", MaxAge: -1,
 		HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteLaxMode,
 	})
-	data, err := base64.RawURLEncoding.DecodeString(cookie.Value)
-	if err != nil || len(data) > maxFlashBytes {
+	data, ok := a.verifyFlash(cookie.Value)
+	if !ok || len(data) > maxFlashBytes {
 		return r
 	}
 	var f flash
@@ -536,6 +538,36 @@ func (a *App) withFlash(w http.ResponseWriter, r *http.Request) *http.Request {
 		return r
 	}
 	return r.WithContext(context.WithValue(r.Context(), flashKey{}, &f))
+}
+
+// signedFlash produces a browser-safe, authenticated status notice.
+// The key is process-local: a pending notice may be lost after restart,
+// but nobody can forge a "successful" operation by editing a cookie.
+func (a *App) signedFlash(data []byte) string {
+	mac := hmac.New(sha256.New, a.flashSignKey)
+	_, _ = mac.Write(data)
+	return base64.RawURLEncoding.EncodeToString(data) + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func (a *App) verifyFlash(value string) ([]byte, bool) {
+	encoded, signature, ok := strings.Cut(value, ".")
+	if !ok || len(value) > maxFlashBytes*2 {
+		return nil, false
+	}
+	data, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil || len(data) > maxFlashBytes {
+		return nil, false
+	}
+	sig, err := base64.RawURLEncoding.DecodeString(signature)
+	if err != nil {
+		return nil, false
+	}
+	mac := hmac.New(sha256.New, a.flashSignKey)
+	_, _ = mac.Write(data)
+	if !hmac.Equal(sig, mac.Sum(nil)) {
+		return nil, false
+	}
+	return data, true
 }
 
 func flashFrom(r *http.Request) *flash {

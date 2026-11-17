@@ -170,6 +170,14 @@ func TestSignInFlow(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatal("a refused cross-site logout signed the person out")
 	}
+	resp, body = b.do(http.MethodPost, "/logout", url.Values{}, map[string]string{"Sec-Fetch-Site": ""})
+	expect(t, resp, body, http.StatusForbidden, "another site")
+	resp, body = b.do(http.MethodPost, "/logout", url.Values{}, map[string]string{"Origin": "https://evil.example"})
+	expect(t, resp, body, http.StatusForbidden, "another site")
+	resp, _ = b.do(http.MethodGet, "/", nil, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatal("bad-origin request signed out the user")
+	}
 
 	stale := *session
 	resp, _ = b.do(http.MethodPost, "/logout", url.Values{}, nil)

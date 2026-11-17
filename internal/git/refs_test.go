@@ -154,7 +154,7 @@ func TestSplitFullNameRejectsOtherNamespaces(t *testing.T) {
 
 func TestVersionLessReadsNumbersAsNumbers(t *testing.T) {
 	ordered := []string{
-		"beta", "v1", "v1.0.0-beta.2", "v1.0.0-beta.9", "v1.0.0-beta.10", "v1.0.0-beta.21", "v1.0.0-rc1", "v1.2", "v1.10", "v2",
+		"rc", "v1", "v1.0.0-rc.2", "v1.0.0-rc.9", "v1.0.0-rc.10", "v1.0.0-rc.21", "v1.0.0-rc1", "v1.2", "v1.10", "v2",
 	}
 	for i, a := range ordered {
 		for j, b := range ordered {

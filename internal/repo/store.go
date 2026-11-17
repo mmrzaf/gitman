@@ -291,6 +291,34 @@ func selectRefs(ctx context.Context, q postgres.Querier, repoID string) ([]Index
 	return refs, rows.Err()
 }
 
+// selectRefsForRepos returns indexed refs in one query for a permitted set of
+// repositories. The caller must pass only repositories the person may read.
+func selectRefsForRepos(ctx context.Context, q postgres.Querier, repoIDs []string) (map[string][]IndexedRef, error) {
+	refs := make(map[string][]IndexedRef)
+	if len(repoIDs) == 0 {
+		return refs, nil
+	}
+	rows, err := q.Query(ctx, `
+        SELECT r.repo_id,r.kind,r.name,r.commit_hash,r.updated_at,r.updated_by,COALESCE(p.username,'')
+        FROM refs r LEFT JOIN people p ON p.id=r.updated_by
+        WHERE r.repo_id = ANY($1)
+        ORDER BY r.repo_id,r.updated_at DESC,r.kind,r.name
+    `, repoIDs)
+	if err != nil {
+		return nil, fmt.Errorf("list repository refs: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var repoID string
+		var ref IndexedRef
+		if err := rows.Scan(&repoID, &ref.Kind, &ref.Name, &ref.Commit, &ref.UpdatedAt, &ref.UpdatedBy, &ref.UpdatedByUsername); err != nil {
+			return nil, fmt.Errorf("scan repository ref: %w", err)
+		}
+		refs[repoID] = append(refs[repoID], ref)
+	}
+	return refs, rows.Err()
+}
+
 // selectDefaultHeads returns, for each of repoIDs whose default branch has
 // been pushed, where that branch points, keyed by repository.
 func selectDefaultHeads(ctx context.Context, q postgres.Querier, repoIDs []string) (map[string]IndexedRef, error) {

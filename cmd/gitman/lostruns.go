@@ -13,7 +13,7 @@ import (
 // whose worker has gone silent.
 const lostRunSweepInterval = time.Minute
 
-// runLostRunSweep is the web process's backstop for a run whose worker
+// runLostRunSweep is the web process's periodic backstop for a run whose worker
 // stopped and never came back: normally a restarted worker fails its
 // dead predecessor's runs itself, on the same schedule, so this only
 // matters when no worker ever restarts. It waits out ci.WorkerLostAfter

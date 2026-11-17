@@ -1,4 +1,4 @@
-# Backups, recovery and upgrades
+# Backups, recovery and future upgrades
 
 A backup is one maintenance snapshot of PostgreSQL and the bare Git repositories.
 Keep the encryption key separately. A database dump and repository archive taken
@@ -92,40 +92,30 @@ mutation lock, so pushes wait rather than fail. Monitor disk space:
 the configured free reserve pauses pushes and claims (5 GiB by default), and
 active executions enforce a configured workspace budget (10 GiB by default). These are monitored limits, not filesystem quotas.
 
-## Upgrading in place
+## New installation
 
-Back up first — a failed upgrade is recovered by restoring that snapshot, not by
-downgrading the database.
+Create a new, empty PostgreSQL database and data directory. Gitman initializes
+its schema on startup. Create an administrator and configure repositories,
+permissions, and tokens using the normal CLI or web interface.
 
-1. Enable maintenance and finish or resolve everything `status` lists, then take
-   a backup as above. Keep `GITMAN_SECRET_KEY` separately.
-2. Replace the binary or rebuild the image. For the Compose setup:
+For recoverable data, use the maintenance backup and restore process above.
+Do not copy bare repository directories independently of their database
+metadata: their internal IDs are linked to database records.
 
-   ```sh
-   docker compose build --pull
-   docker compose up -d
-   ```
+## Upgrading
 
-   `up` recreates only the containers whose image or configuration changed. Web
-   and worker run pending migrations on start; a binary refuses to start if the
-   database schema is newer than the migrations it embeds, rather than serving
-   against a schema it does not understand.
-3. Run `gitman doctor` (see the [CLI reference](../reference/cli.md)) and check
-   the web and worker logs. Sign in, open a repository, and confirm its history,
-   run logs, secrets and deployment records before resuming.
-4. `gitman admin maintenance disable`.
+Versioned migrations and advisory locking apply any new schema changes.
+When upgrading a supported installation:
 
-If the new version fails, restore the backup into a fresh database and data
-directory with the previous Gitman version, then point the service at it. Do not
-try to reverse a migration or run an older binary against the newer schema.
+1. Take a consistent maintenance backup with the encryption key kept separately.
+2. Resolve active work, then replace the binary/image and restart web and worker.
+   Pending migrations apply under the shared PostgreSQL advisory lock.
+3. Check `gitman doctor`, browser access, Git refs, secrets, history and worker
+   readiness before resuming operations.
+4. If verification fails, restore the backup **with its matching old binary**
+   into a separate, empty database and data directory. Do not reverse SQL
+   migrations in place.
 
-**Upgrade promise:** in-place upgrades are supported from any 1.0 release
-candidate to 1.0 final, and between later 1.x releases, as long as the release
-notes do not say otherwise. Beta schemas are not kept compatible with earlier
-betas; restore a matching backup when moving between beta versions.
-
-## Schema changes
-
-The schema has one current baseline and ordinary versioned migrations. There are
-no legacy schema detectors, adapters or compatibility migrations. Test subsequent
-schema changes against a restored snapshot before replacing the running version.
+Applied migrations have stable filenames and SQL fingerprints; never edit one
+that has shipped. Add a new numbered migration for subsequent schema changes
+and test it against a restored snapshot before deployment.

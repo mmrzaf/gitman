@@ -40,11 +40,15 @@ func (a *App) meView(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	a.render(w, r, http.StatusOK, "me", "Your account", mePage{Repositories: repositories,
+	page := mePage{Repositories: repositories,
 		Tokens: tokens, Sessions: sessions, CurrentSession: sessionIDFrom(r),
 		PasswordForm: newForm(nil), TokenForm: newForm(nil),
 		Tab: tabFrom(r, "tokens", "sessions", "password"), Dialog: dialogFrom(r, "token-new"),
-	})
+	}
+	if secret, ok := a.consumeCredential(w, r, revealToken); ok {
+		page.NewToken, page.Tab = secret.value, "tokens"
+	}
+	a.render(w, r, http.StatusOK, "me", "Your account", page)
 	return nil
 }
 
@@ -139,9 +143,12 @@ func (a *App) meCreateToken(w http.ResponseWriter, r *http.Request) error {
 	person := personFrom(r)
 	f := newForm(r.PostForm)
 	name := f.Get("name")
-	scope := auth.ScopeRead
-	if f.Get("scope") == "write" {
-		scope = auth.ScopeWrite
+	scope := auth.Scope(f.Get("scope"))
+	if scope == "" {
+		scope = auth.ScopeRead
+	}
+	if scope != auth.ScopeRead && scope != auth.ScopeWrite {
+		f.Fail("scope", "Choose a valid token scope.")
 	}
 	var ttl *time.Duration
 	switch f.Get("expires") {
@@ -188,19 +195,7 @@ func (a *App) meCreateToken(w http.ResponseWriter, r *http.Request) error {
 	case err != nil:
 		return err
 	}
-	tokens, err := a.people.ListTokens(r.Context(), person.ID)
-	if err != nil {
-		return err
-	}
-	// The token is shown in this response only, and kept out of caches.
-	noStore(w)
-	repositories, err := a.repos.ListReadable(r.Context(), person.ID, person.IsAdmin)
-	if err != nil {
-		return err
-	}
-	a.render(w, r, http.StatusOK, "me", "Your account", mePage{Repositories: repositories,
-		Tokens: tokens, PasswordForm: newForm(nil), TokenForm: newForm(nil), NewToken: plain, Tab: "tokens",
-	})
+	a.showCredential(w, r, revealToken, "", plain, "/me")
 	return nil
 }
 

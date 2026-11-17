@@ -57,7 +57,7 @@
     {{- end}}
   </div>
   {{- with $d.LastChanged}}
-  <p class="panel-footer last-change">{{template "icon" "commit"}} Last changed in {{template "commit" (commitModel $repo.Name .Hash)}} by {{template "person" .Author.Name}} {{template "time" .Committer.When}} — <span class="truncate">{{.Subject}}</span></p>
+  <p class="panel-footer last-change">{{template "icon" "commit"}} Last changed in {{template "commit" (commitModel $repo.Name .Hash)}} by {{template "person" .Author.Name}} {{template "time" .Committer.When}} — <span class="truncate" title="{{.Subject}}">{{.Subject}}</span></p>
   {{- end}}
   {{- if $d.IsDir}}
   {{- if $d.Entries}}

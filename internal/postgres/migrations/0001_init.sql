@@ -17,7 +17,12 @@ CREATE TABLE sessions (
     person_id  text NOT NULL REFERENCES people(id) ON DELETE CASCADE,
     auth_generation bigint NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
-    expires_at timestamptz NOT NULL
+    expires_at timestamptz NOT NULL,
+    -- Public session identifiers are independent of the private cookie hash.
+    id uuid NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+    last_seen_at timestamptz NOT NULL DEFAULT now(),
+    ip text NOT NULL DEFAULT '',
+    user_agent text NOT NULL DEFAULT ''
 );
 
 CREATE INDEX idx_sessions_person ON sessions(person_id);
@@ -259,6 +264,8 @@ CREATE TABLE steps (
     UNIQUE (run_id, index)
 );
 
+CREATE INDEX idx_steps_logs_pending ON steps(logs_expired_at) WHERE logs_expired_at IS NULL;
+
 -- A target owner is released only after confirmed termination. Heartbeat
 -- expiry never grants another deployment permission to start.
 CREATE TABLE deployment_targets (
@@ -301,6 +308,11 @@ CREATE TABLE deployments (
     target      text NOT NULL,
     version     text NOT NULL,
     commit_hash text NOT NULL,
+    -- The actual branch or tag that supplied this deployment. Preserve it
+    -- independently of runs, since run retention can remove the source run.
+    source_kind text NOT NULL DEFAULT '' CHECK (source_kind IN ('', 'branch', 'tag')),
+    source_name text NOT NULL DEFAULT '',
+    CHECK ((source_kind = '') = (source_name = '')),
     -- Deployments outlive the runs that made them: retention prunes old
     -- runs, while the latest target record survives deployment retention.
     run_id      text,
@@ -339,7 +351,9 @@ CREATE TABLE events (
     person_id  text REFERENCES people(id) ON DELETE SET NULL,
     action     text NOT NULL,
     detail     text NOT NULL DEFAULT '',
-    created_at timestamptz NOT NULL DEFAULT now()
+    created_at timestamptz NOT NULL DEFAULT now(),
+    -- Person administration and repository deletion are admin-only events.
+    admin_only boolean NOT NULL DEFAULT false
 );
 
 CREATE INDEX idx_events_repo_created ON events(repo_id, created_at DESC);
@@ -438,17 +452,52 @@ CREATE CONSTRAINT TRIGGER token_grants_complete AFTER INSERT OR UPDATE OR DELETE
 -- independently from repository rows so deletion can be reconciled after a crash.
 CREATE TABLE repository_operations (
     id text PRIMARY KEY,
-    repo_id text NOT NULL,
-    kind text NOT NULL CHECK (kind IN ('create','delete','head','push')),
+    -- Image/cache operations target an engine and deliberately have no repo.
+    repo_id text,
+    kind text NOT NULL CONSTRAINT repository_operations_kind_check
+        CHECK (kind IN ('create', 'delete', 'head', 'push', 'image.remove', 'image.prune', 'cache.prune')),
     name text NOT NULL DEFAULT '',
     payload jsonb NOT NULL,
     actor_id text,
     created_at timestamptz NOT NULL DEFAULT now(),
     completed_at timestamptz,
-    error text NOT NULL DEFAULT ''
+    error text NOT NULL DEFAULT '',
+    engine_id text NOT NULL DEFAULT '',
+    worker_id text REFERENCES workers(id) ON DELETE SET NULL,
+    claimed_at timestamptz,
+    attempts integer NOT NULL DEFAULT 0,
+    result jsonb,
+    CONSTRAINT repository_operations_target_check
+        CHECK ((kind IN ('image.remove', 'image.prune', 'cache.prune')) = (repo_id IS NULL))
 );
-CREATE UNIQUE INDEX repository_operations_pending_repo ON repository_operations(repo_id) WHERE completed_at IS NULL;
-CREATE UNIQUE INDEX repository_operations_pending_name ON repository_operations(name) WHERE kind = 'create' AND completed_at IS NULL;
+CREATE UNIQUE INDEX repository_operations_pending_repo ON repository_operations(repo_id)
+    WHERE completed_at IS NULL AND repo_id IS NOT NULL;
+CREATE UNIQUE INDEX repository_operations_pending_name ON repository_operations(name)
+    WHERE kind = 'create' AND completed_at IS NULL;
+CREATE INDEX idx_repository_operations_completed ON repository_operations(completed_at)
+    WHERE completed_at IS NOT NULL;
+CREATE INDEX idx_repository_operations_image_pending ON repository_operations(engine_id, created_at)
+    WHERE completed_at IS NULL AND kind IN ('image.remove', 'image.prune', 'cache.prune');
+CREATE INDEX idx_repository_operations_image_recent ON repository_operations(engine_id, created_at DESC)
+    WHERE kind IN ('image.remove', 'image.prune', 'cache.prune');
+
+-- Inventory is shared by all workers connected to the same Docker engine.
+CREATE TABLE image_hosts (
+    host_id text PRIMARY KEY,
+    worker_id text REFERENCES workers(id) ON DELETE SET NULL,
+    hostname text NOT NULL DEFAULT '',
+    collected_at timestamptz NOT NULL DEFAULT now(),
+    images jsonb NOT NULL DEFAULT '[]'::jsonb,
+    cache_size_bytes bigint NOT NULL DEFAULT 0,
+    cache_reclaimable_bytes bigint NOT NULL DEFAULT 0,
+    cache_keep_gib integer NOT NULL DEFAULT 0,
+    cache_older_than_hours integer NOT NULL DEFAULT 0,
+    cache_disabled boolean NOT NULL DEFAULT false,
+    automation_mode text NOT NULL DEFAULT 'off',
+    cache_pruned_at timestamptz,
+    cache_reclaimed_bytes bigint NOT NULL DEFAULT 0,
+    cache_error text NOT NULL DEFAULT ''
+);
 
 CREATE TABLE repository_storage (
  repo_id text PRIMARY KEY REFERENCES repos(id) ON DELETE CASCADE,

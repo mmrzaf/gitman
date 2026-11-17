@@ -48,7 +48,6 @@ func (a *App) register(mux *http.ServeMux) {
 	mux.Handle("GET /operations", a.page(admin, a.operationsView))
 	mux.Handle("POST /operations/recover", a.page(admin, a.operationsRecover))
 	mux.Handle("GET /workers", a.page(admin, a.workersView))
-	mux.Handle("GET /images", a.page(admin, a.imagesView))
 	mux.Handle("POST /images/prune", a.page(admin, a.imagesPrune))
 	mux.Handle("POST /images/cache-prune", a.page(admin, a.imagesCachePrune))
 	mux.Handle("POST /images/remove", a.page(admin, a.imagesRemove))
@@ -75,8 +74,6 @@ func (a *App) register(mux *http.ServeMux) {
 	mux.Handle("GET /{repo}/runs/{n}/log", a.stream(member, a.runLog))
 	mux.Handle("POST /{repo}/runs/{n}/cancel", a.page(member, a.runCancel))
 	mux.Handle("POST /{repo}/runs/{n}/again", a.page(member, a.runAgain))
-	mux.Handle("GET /{repo}/compare", a.page(member, a.compareRedirect))
-	mux.Handle("GET /{repo}/compare/{crange...}", a.page(member, a.compareRedirect))
 	mux.Handle("GET /{repo}/tree-paths", a.page(member, a.treePaths))
 	// Settings routes are registered at member, not admin, level: the
 	// admin requirement is checked inside each handler, after resolving

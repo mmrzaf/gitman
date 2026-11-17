@@ -58,7 +58,7 @@
             <thead><tr>
               <th scope="col">Repository</th>
               <th scope="col">Latest on the default branch</th>
-              {{- if $run}}<th scope="col">Run</th>{{end}}
+              {{- if $run}}<th scope="col">Last run</th>{{end}}
             </tr></thead>
             <tbody>
             {{- range .Data.Repos}}
@@ -66,7 +66,7 @@
                 <th scope="row" class="table-rowheader"><div class="table-cell">
                   <span class="cell-stack repo-cell">
                     <a href="/{{.Name}}">{{.Name}}</a>
-                    <span class="muted">{{with .Description}}{{.}}{{else}}No description.{{end}}</span>
+                    {{with .Description}}<span class="muted repo-description" title="{{.}}">{{.}}</span>{{end}}
                   </span>
                 </div></th>
                 <td data-label="Latest on the default branch" class="cell-truncate"><div class="table-cell">
@@ -82,7 +82,7 @@
                 <td data-label="Run" class="cell-shrink"><div class="table-cell">
                   {{- $name := .Name}}
 
-                  {{with .Run}}<a class="run-ref" href="/{{$name}}/runs/{{.Number}}">{{template "status" .Status}}<span>#{{.Number}}</span></a>{{else}}<span class="muted">No run for this commit</span>{{end}}
+                  {{with .Run}}<span class="cell-stack"><a class="run-ref" href="/{{$name}}/runs/{{.Number}}">{{template "status" .Status}}<span>#{{.Number}}</span></a><span class="muted run-origin">{{.RefKind}} {{.RefName}}</span></span>{{else}}<span class="muted">—<span class="visually-hidden"> No runs yet</span></span>{{end}}
                   {{$headRun := .Run}}{{range .Running}}{{if or (not $headRun) (ne .ID $headRun.ID)}}<div class="cluster"><span class="muted">In progress: {{.RefKind}} {{.RefName}}</span><a class="run-ref" href="/{{$name}}/runs/{{.Number}}">{{template "status" .Status}}<span>#{{.Number}}</span></a></div>{{end}}{{end}}
                 </div></td>
                 {{- end}}
@@ -92,7 +92,12 @@
           </table>
         </div>
         {{- else}}
-        {{template "empty" (emptyModel "repo" "No repositories yet" "" false)}}
+        <div class="empty">
+          {{template "icon" "repo"}}
+          <p class="empty-title">No repositories yet</p>
+          <p>Create a repository to start pushing code and running pipelines.</p>
+          <p><a class="btn btn-primary" href="/?dialog=new-repo" data-dialog-open="new-repo">{{template "icon" "plus"}}New repository</a></p>
+        </div>
         {{- end}}
       </div>
     {{if or .Data.After .Data.Next}}<nav class="panel-footer cluster" aria-label="Repository pages">{{if .Data.After}}<a class="btn" href="{{.Data.PageURL ""}}">First page</a>{{end}}{{if .Data.Next}}<a class="btn" href="{{.Data.PageURL .Data.Next}}">More repositories</a>{{end}}</nav>{{end}}
@@ -117,7 +122,7 @@
                 <td data-label="Target"><div class="table-cell">{{.Target}}</div></td>
                 <td data-label="Deployment commit" class="cell-shrink"><div class="table-cell">{{if ownVersion .Live.Version .Live.Commit}}<span class="version">{{.Live.Version}}</span> {{end}}{{template "commit" (commitModel .Repo .Live.Commit)}}</div></td>
                 <td data-label="Deployed" class="cell-muted"><div class="table-cell">{{template "time" .Live.At}}{{if .Live.Person}} by {{.Live.Person}}{{end}}{{if .Live.RunNumber}} <a href="/{{.Repo}}/runs/{{.Live.RunNumber}}">#{{.Live.RunNumber}}</a>{{end}}</div></td>
-                <td data-label="Comparison" class="cell-shrink"><div class="table-cell">{{if .SinceURL}}<a href="{{.SinceURL}}">{{.Comparison.Label}}</a>{{else}}<span class="muted">{{.Comparison.Label}}</span>{{end}}</div></td>
+                <td data-label="Comparison" class="cell-shrink"><div class="table-cell">{{if .SinceURL}}<a href="{{.SinceURL}}">{{.Comparison.Label}}</a>{{else}}<span class="muted">{{.Comparison.Label}}</span>{{end}}{{if .Live.SourceName}} <span class="muted">vs {{.Live.SourceKind}} {{.Live.SourceName}}</span>{{end}}</div></td>
               </tr>
             {{- end}}
             </tbody>
@@ -128,16 +133,16 @@
         {{- end}}
       </div>
     </section>{{end}}
-{{define "region-home-attention"}}<section class="panel fit fit-auto attention{{if .Data.Attention}} is-alert{{end}}" aria-labelledby="attention-title" data-live-region="attention">
-      <header class="panel-header"><h2 class="panel-title" id="attention-title">{{template "icon" "warning"}}Needs attention</h2></header>
+{{define "region-home-attention"}}<section class="panel fit fit-auto attention{{if .Data.Attention}} is-alert{{end}}" aria-labelledby="attention-title" data-live-region="attention" data-attention-owner="{{if .Person}}{{.Person.ID}}{{end}}">
+      <header class="panel-header"><h2 class="panel-title" id="attention-title">{{template "icon" "warning"}}Needs attention</h2><span class="panel-actions js-only"><button class="btn btn-sm btn-ghost" type="button" data-attention-toggle hidden>Show ignored</button></span></header>
       <div class="panel-scroll" data-live-scroll="attention">
         {{- if .Data.Attention}}
         <ul class="attention-list">
           {{- range .Data.Attention}}
-          <li class="attention-item">{{template "icon" .Icon}}{{if .URL}}<a href="{{.URL}}">{{.Text}}</a>{{else}}<span>{{.Text}}</span>{{end}}</li>
+          <li class="attention-item" data-attention-key="{{.Key}}">{{template "icon" .Icon}}{{if .URL}}<a href="{{.URL}}">{{.Text}}</a>{{else}}<span>{{.Text}}</span>{{end}}<button class="attention-dismiss js-only" type="button" data-attention-dismiss>Ignore</button></li>
           {{- end}}
         </ul>
-        {{- if .Data.AttentionMore}}<p class="panel-footer">And {{.Data.AttentionMore}} more.</p>{{end}}
+        <div class="empty" data-attention-empty hidden><p class="empty-title">Nothing needs attention</p></div>
         {{- else}}
         {{template "empty" (emptyModel "" "Nothing needs attention" "" true)}}
         {{- end}}

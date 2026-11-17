@@ -244,17 +244,6 @@ func (a *App) files(w http.ResponseWriter, r *http.Request, name, refAndPath str
 		return nil
 	}
 
-	// A file's history lives in History, filtered to its path; this is
-	// where the old History tab's addresses lead.
-	if r.URL.Query().Get("tab") == "history" {
-		target := commitsURL(repo.Name, res.Name, res.Path)
-		if skip := historySkip(r); skip > 0 {
-			target += "&skip=" + strconv.Itoa(skip)
-		}
-		http.Redirect(w, r, target, http.StatusMovedPermanently)
-		return nil
-	}
-
 	page := filesPage{
 		repoFrame: repoFrame{Repo: repo, Section: "files"},
 		Ref:       res.Name, Commit: res.Commit, Path: res.Path,

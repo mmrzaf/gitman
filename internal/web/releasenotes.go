@@ -74,8 +74,7 @@ func parseReleaseNotes(data []byte) ([]releaseNote, error) {
 	return file.Releases, nil
 }
 
-// normalizeVersion drops the leading v a tag build carries, so v1.0.0-beta.24
-// and 1.0.0-beta.24 name the same release.
+// normalizeVersion removes the leading v from version tags for matching.
 func normalizeVersion(version string) string {
 	version = strings.TrimSpace(version)
 	if len(version) > 1 && (version[0] == 'v' || version[0] == 'V') && version[1] >= '0' && version[1] <= '9' {

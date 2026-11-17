@@ -15,12 +15,13 @@ cp .env.example .env
 docker compose up --build -d
 ```
 
-Start with an empty database and data directory; migrations apply the current schema.
+Install into an **empty PostgreSQL database and data directory**. Gitman
+applies its embedded SQL migrations automatically.
 
 Create the first admin; the command prints their generated password:
 
 ```sh
-docker compose exec web gitman admin person add --admin darius
+docker compose exec web gitman admin person add --admin alice
 ```
 
 Sign in at `http://localhost:8080` (or your configured public HTTPS domain),
@@ -30,7 +31,7 @@ under your username, top right of every page). Git uses your username and
 that token as the password:
 
 ```sh
-git clone https://git.example.com/waiotech.git
+git clone https://git.example.com/example-app.git
 ```
 
 A read token can clone and fetch; pushing needs a write token.

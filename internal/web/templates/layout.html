@@ -33,7 +33,6 @@
         <p class="menu-heading" aria-hidden="true">Signed in as <strong>{{.Person.Username}}</strong>{{if .Person.IsAdmin}} · admin{{end}}</p>
         {{- if .Person.IsAdmin}}
         <a class="menu-item" href="/workers"{{if eq .Name "workers"}} aria-current="page"{{end}}>{{template "icon" "play"}}Workers</a>
-        <a class="menu-item" href="/images"{{if eq .Name "images"}} aria-current="page"{{end}}>{{template "icon" "repo"}}Images</a>
         <a class="menu-item" href="/people"{{if eq .Name "people"}} aria-current="page"{{end}}>{{template "icon" "person"}}People</a>
         <a class="menu-item" href="/sessions"{{if eq .Name "sessions"}} aria-current="page"{{end}}>{{template "icon" "monitor"}}Sessions</a>
         <div class="menu-separator" role="separator"></div>
@@ -66,7 +65,7 @@
       <a class="repobar-name truncate" href="/{{.Repo.Name}}">{{.Repo.Name}}</a>
       {{- with .Repo.Description}}<span class="repobar-description truncate">{{.}}</span>{{end}}
     </div>
-    <nav class="repobar-nav" aria-label="Repository">
+    <nav class="repobar-nav" aria-label="Repository" data-repo-nav>
       <a class="repobar-link" href="/{{.Repo.Name}}"{{if eq .Section "overview"}} aria-current="page"{{end}}>{{template "icon" "repo"}}Overview</a>
       <a class="repobar-link" href="{{refURL .Repo.Name .Repo.DefaultBranch ""}}"{{if eq .Section "files"}} aria-current="page"{{end}}>{{template "icon" "folder"}}Files</a>
       <a class="repobar-link" href="/{{.Repo.Name}}/activity"{{if eq .Section "activity"}} aria-current="page"{{end}}>{{template "icon" "history"}}Activity</a>

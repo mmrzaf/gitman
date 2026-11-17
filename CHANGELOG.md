@@ -3,6 +3,27 @@
 What changed in each release, for the people who run Gitman. Newest first.
 Each release's section is also its GitHub release notes.
 
+## Unreleased
+
+## [1.0.0] - 2026-11-17
+
+Gitman's first stable release establishes a clean database schema and a
+consistent self-hosted Git and Docker CI/CD experience. It preserves the
+existing Git, pipeline, worker and permissions architecture.
+
+### Changed
+
+- Consolidated the initial PostgreSQL schema for new installations; future
+  releases add numbered migrations rather than changing shipped SQL.
+- Improved Git ref admission, repository-operation recovery, deployment source
+  tracking, and worker shutdown behavior.
+- Made credential creation and reset refresh-safe, with one-time display;
+  tightened validation and status-message authenticity.
+- Improved repository navigation, activity readability and error-line
+  navigation within pipeline logs.
+- Removed obsolete upgrade paths, compatibility redirects and automatic
+  expiration of queued runs waiting for required Docker images.
+
 ## [1.0.0-beta.28] - 2026-10-28
 
 Beta 28 completes the beta 27 follow-up: live runs keep up with fast step
