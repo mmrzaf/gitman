@@ -43,6 +43,23 @@ func TestMigrateAppliesEverythingAndIsIdempotent(t *testing.T) {
 	if want := migrations[len(migrations)-1].version; version != want {
 		t.Fatalf("schema version = %d, want %d", version, want)
 	}
+	var count int
+	if err := database.Pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != len(migrations) {
+		t.Fatalf("migration rows = %d, want %d", count, len(migrations))
+	}
+	for _, m := range migrations {
+		var name, checksum string
+		if err := database.Pool.QueryRow(ctx, `SELECT name, checksum FROM schema_migrations WHERE version = $1`, m.version).Scan(&name, &checksum); err != nil {
+			t.Fatal(err)
+		}
+		if name != m.name || checksum != m.checksum {
+			t.Fatalf("migration %d ledger mismatch: %q/%q", m.version, name, checksum)
+		}
+	}
+
 }
 
 func TestConcurrentMigrate(t *testing.T) {

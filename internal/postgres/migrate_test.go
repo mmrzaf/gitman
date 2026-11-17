@@ -34,10 +34,10 @@ func TestParseMigrationVersion(t *testing.T) {
 func TestLoadMigrationsAreOrderedAndUnique(t *testing.T) {
 	migrations, err := loadMigrations()
 	if err != nil {
-		t.Fatalf("loadMigrations: %v", err)
+		t.Fatal(err)
 	}
 	if len(migrations) == 0 {
-		t.Fatal("expected at least one migration")
+		t.Fatal("no migrations embedded")
 	}
 	seen := make(map[int64]bool, len(migrations))
 	for i, m := range migrations {
@@ -46,7 +46,29 @@ func TestLoadMigrationsAreOrderedAndUnique(t *testing.T) {
 		}
 		seen[m.version] = true
 		if i > 0 && migrations[i-1].version >= m.version {
-			t.Fatalf("migrations are not strictly ordered at index %d", i)
+			t.Fatalf("migrations not ordered at index %d", i)
+		}
+		if len(m.checksum) != 64 {
+			t.Fatalf("missing SHA-256 checksum for %s", m.name)
+		}
+	}
+}
+
+func TestAppliedMigrationCannotBeRenamedOrModified(t *testing.T) {
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := migrations[0]
+	if err := validateAppliedMigration(m, m.name, m.checksum); err != nil {
+		t.Fatalf("valid migration rejected: %v", err)
+	}
+	for _, c := range []struct{ name, checksum string }{
+		{m.name + ".changed", m.checksum},
+		{m.name, "tampered"},
+	} {
+		if err := validateAppliedMigration(m, c.name, c.checksum); err == nil {
+			t.Fatalf("changed migration %q/%q accepted", c.name, c.checksum)
 		}
 	}
 }

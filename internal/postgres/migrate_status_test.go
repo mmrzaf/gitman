@@ -18,7 +18,7 @@ func TestMigrationStatusReportsAppliedPendingAndAhead(t *testing.T) {
 	if len(status.Applied) == 0 || len(status.Pending) != 0 || len(status.DatabaseAhead) != 0 {
 		t.Fatalf("fresh status = %+v", status)
 	}
-	if _, err := database.Pool.Exec(ctx, `INSERT INTO schema_migrations (version, name) VALUES (999, '999_from_the_future.sql')`); err != nil {
+	if _, err := database.Pool.Exec(ctx, `INSERT INTO schema_migrations (version, name, checksum) VALUES (999, '999_from_the_future.sql', 'future')`); err != nil {
 		t.Fatal(err)
 	}
 	status, err = database.MigrationStatus(ctx)
