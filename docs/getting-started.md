@@ -15,7 +15,8 @@ cp .env.example .env
 docker compose up --build -d
 ```
 
-Start with an empty database and data directory; migrations apply the current schema.
+Install into an **empty PostgreSQL database and data directory**. Gitman
+applies its embedded SQL migrations automatically.
 
 Create the first admin; the command prints their generated password:
 

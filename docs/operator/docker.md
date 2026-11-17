@@ -221,3 +221,18 @@ an nginx `proxy_read_timeout` or `proxy_send_timeout` of a few minutes is not.
 
 Use an empty database and data directory for a new installation. See
 [Configuration](configuration.md) and [Backups and recovery](backups-and-upgrades.md).
+
+## Deployment success and source comparisons
+
+Gitman records a deployment only after an explicit deploy step completes
+successfully (exit status 0). This means the deployment **script succeeded**;
+it does not by itself prove that the application remains healthy. If a service
+must pass a health check before its deployment is recorded, place that check
+at the end of the deploy script and exit nonzero on failure. Gitman does not
+automatically repeat a deployment after a worker is lost.
+
+Home and Repository Overview compare each live target with the actual branch
+or tag that created the deployment, not always the repository's default branch.
+Gitman retains this source information when an old run is pruned. If the source
+ref is removed, the comparison is unavailable until a later deployment
+establishes a live source ref again.

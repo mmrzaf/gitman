@@ -31,7 +31,10 @@ docker compose up --build -d
 
 Web is available at `http://localhost:8080`. For public HTTPS, configure
 `GITMAN_DOMAIN` and use the [production Compose example](docs/operator/docker.md).
-The schema has one current baseline and ordinary versioned migrations.
+The schema is initialized from versioned SQL migrations in a new, empty
+PostgreSQL database. Future schema changes are applied through new numbered
+migrations. See [installation](docs/getting-started.md) and
+[backup and recovery](docs/operator/backups-and-upgrades.md).
 
 Create the first admin; the command prints their password:
 
@@ -345,7 +348,8 @@ host's images and build cache, and why runs are waiting appear together in
 limits. See [architecture](docs/architecture.md) and
 [configuration](docs/operator/configuration.md).
 
-The schema has one current baseline and ordinary versioned migrations.
+Migrations are immutable after application; subsequent releases add
+numbered migrations. See [new installation requirements](docs/operator/backups-and-upgrades.md#new-installation).
 
 ## Developing
 

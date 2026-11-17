@@ -8,20 +8,20 @@ an admin with `gitman admin person add`.
 
 ## Home
 
-Two lists on the left: every repository you can read, with its description,
-the latest commit on its default branch and how that ran (or the run in
-progress); and **Deployed**, one row for every target something is live on,
-with how many commits the default branch has gained since. On the right, a
-feed of what has been happening, under **Needs attention** when something
-does. Anyone signed in can create a new repository from here; there are no
-organizations or namespaces, just one flat list of what's readable to you.
+Repositories appear in order of recent activity (pushes, runs and deployments),
+with the most active first. Each row shows the latest default-branch commit and
+the latest pipeline run **on any branch or tag**, including its source ref.
+**Deployed** lists each live target and compares it against the ref that
+produced the deployment.
 
-**Needs attention** appears only when something does:
+**Needs attention** shows failed latest runs, blocked queues, recently refused
+pushes and deployments behind their source refs. Select **Ignore** to dismiss
+an item in this browser; **Show ignored** lets you restore it. Dismissals
+survive reloads but do not change the state for other browsers or accounts.
+A new failed run or deployment appears as a new item.
 
-- the latest run of a default branch failed;
-- runs are queued and no worker is online;
-- a target is behind its default branch;
-- a push was refused in the last week, with the reason.
+The Activity feed records recent work, and any signed-in user can create a
+repository. There are no organizations or namespaces.
 
 ## A repository
 

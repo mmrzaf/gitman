@@ -148,7 +148,8 @@ Flags go before the positional arguments.
   [Troubleshooting](../troubleshooting.md).
 - `admin migrate` runs pending database migrations by hand; normally
   unnecessary, since `web` and `worker` both run migrations automatically
-  on start. A binary refuses to start against a schema newer than its own
-  migrations.
+  on start. Gitman requires an empty database or a compatible
+  migration ledger; unrecognized schemas are rejected without modification.
+  A binary also refuses unknown newer or modified applied migrations.
 - `gitman doctor` is read-only and safe beside a live web or worker. It
   exits 0 with only warnings, and 1 if any check fails.

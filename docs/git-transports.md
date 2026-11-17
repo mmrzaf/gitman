@@ -24,10 +24,35 @@ would a personal access token on any other Git host.
 
 ## Push behavior
 
-A push is rejected before anything is written if a matching ref rule
-forbids it (who may push, whether force-push or deletion is allowed). If
-the ref's rule allows running the pipeline, `web`'s `proc-receive` hook
-queues a run and the push output prints a link to it.
+A push is rejected **before changing Git refs or creating a durable
+operation** when a ref rule forbids it (who may push, whether force-push or
+deletion is allowed), or when its updates are invalid. Gitman rejects the
+whole push rather than partially accepting a batch.
+
+Branches and tags live in separate Git namespaces, but names *within the
+same namespace* cannot be both a parent and a child: `topic` and
+`topic/child` cannot both be branches. Even deleting `topic` while creating
+`topic/child` in the same atomic push is rejected by Git's files ref backend;
+do those as **two separate pushes**. Duplicate updates to one ref, unchanged
+old/new object IDs and mixed SHA-1/SHA-256 object IDs are also rejected.
+These checks prevent malformed pushes from leaving an unfinishable repository
+operation.
+
+If a ref rule enables a pipeline, `web`'s `proc-receive` hook queues a run
+and the push output prints a link to it.
+
+### After an interrupted push
+
+Gitman first records a durable push intent, then atomically applies all Git
+ref changes together with a receipt, then commits its database push record,
+ref index and queued runs. A crash or PostgreSQL outage between the last two
+steps can cause Git to tell the client the push did not finish even though the
+refs were already changed. **Do not automatically force-push or repeat a
+possibly completed deployment.** Gitman replays the receipt during recovery,
+records the missing database rows once, and never executes pipeline steps as
+part of that recovery. If reconciliation fails, the operation remains visible
+and new mutations to that repository are blocked until an operator resolves
+it. See [Recovery](operator/backups-and-upgrades.md#restore).
 
 ## Large clones and pushes
 
