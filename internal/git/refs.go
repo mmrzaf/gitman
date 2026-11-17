@@ -204,7 +204,7 @@ func SelectPattern(patterns []string, name string) int {
 }
 
 // VersionLess orders names the way a person reads versions: runs of digits
-// compare as numbers, so "v1.0.0-beta.9" comes before "v1.0.0-beta.10", and
+// compare as numbers, so "v1.0.0-rc.9" comes before "v1.0.0-rc.10", and
 // everything else compares as text. Names that read the same, such as "v01"
 // and "v1", fall back to plain text order, so the order is always total.
 func VersionLess(a, b string) bool {

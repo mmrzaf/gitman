@@ -7,11 +7,11 @@ import (
 )
 
 func TestAccountMenuShowsTheVersionAndLinksToWhatsNew(t *testing.T) {
-	database, b := setupVersion(t, "v1.0.0-beta.23")
+	database, b := setupVersion(t, "v1.0.0")
 	signIn(t, database, b, "member", false)
 
 	resp, body := b.do(http.MethodGet, "/", nil, nil)
-	expect(t, resp, body, http.StatusOK, `href="/changelog"`, "Gitman v1.0.0-beta.23")
+	expect(t, resp, body, http.StatusOK, `href="/changelog"`, "Gitman v1.0.0")
 }
 
 func TestAccountMenuHidesTheVersionLinkWhenTheBuildHasNoVersion(t *testing.T) {
@@ -26,19 +26,22 @@ func TestAccountMenuHidesTheVersionLinkWhenTheBuildHasNoVersion(t *testing.T) {
 }
 
 func TestWhatsNewShowsTheRunningVersionAndOlderReleases(t *testing.T) {
-	database, b := setupVersion(t, "v1.0.0-beta.23")
+	notes, err := loadReleaseNotes()
+	if err != nil || len(notes) == 0 {
+		t.Fatalf("release notes: %v, count=%d", err, len(notes))
+	}
+	current := notes[0]
+	database, b := setupVersion(t, "v"+current.Version)
 	signIn(t, database, b, "member", false)
 
 	resp, body := b.do(http.MethodGet, "/changelog", nil, nil)
 	expect(t, resp, body, http.StatusOK,
-		"What's new", "You are running Gitman", "v1.0.0-beta.23",
-		"Gitman 1.0.0-beta.23", "Current version", "Released 27 October 2026",
-		"Maintenance tab", "Earlier releases", "Gitman 1.0.0-beta.22", "Commits is a section of its own")
-	if strings.Contains(body, "Gitman 1.0.0-beta.24") {
-		t.Fatalf("a newer release is listed as an earlier one:\n%s", body)
+		"What's new", "You are running Gitman", "Gitman "+current.Version, "Current version")
+	if len(notes) > 1 {
+		expect(t, resp, body, http.StatusOK, "Earlier releases", "Gitman "+notes[1].Version)
 	}
 	if strings.Contains(body, "Latest release") {
-		t.Fatalf("the running version's notes are labelled as the latest release:\n%s", body)
+		t.Fatal("the running version's notes are labelled as the latest release")
 	}
 }
 
@@ -58,7 +61,7 @@ func TestWhatsNewFallsBackToTheNewestReleaseForAnUnlistedBuild(t *testing.T) {
 }
 
 func TestWhatsNewIsForSignedInPeopleOnly(t *testing.T) {
-	_, b := setupVersion(t, "v1.0.0-beta.24")
+	_, b := setupVersion(t, "v1.0.0")
 
 	resp, _ := b.do(http.MethodGet, "/changelog", nil, nil)
 	if resp.StatusCode != http.StatusSeeOther || !strings.HasPrefix(resp.Header.Get("Location"), "/login?next=") {

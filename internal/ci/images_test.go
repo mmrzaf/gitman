@@ -141,7 +141,7 @@ func TestClassifyKeepTiesAreDeterministic(t *testing.T) {
 	facts.Built[NormalizeImageRepository("app")] = BuiltPolicy{Keep: 1}
 	images := []InventoryImage{
 		inventoryImage("app", "alpha", "sha256:a", at),
-		inventoryImage("app", "beta", "sha256:b", at),
+		inventoryImage("app", "rc", "sha256:b", at),
 	}
 	classified := Classify(images, facts)
 	if classified[0].WithinKeep == classified[1].WithinKeep {
