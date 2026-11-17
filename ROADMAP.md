@@ -50,10 +50,9 @@ release candidate from being called one.
 Found during the beta 23 audit; each needs a design or a decision, not a
 last-minute patch.
 
-- [ ] **Bound queued runs that no worker can ever claim.** A run whose
-  required images no worker has stays queued forever; there is no TTL
-  (`internal/ci/store.go`, `claimNextRun`). Decide whether to fail it after a
-  deadline, notify an admin, or both.
+- [x] **Bound queued runs that no worker can ever claim.** A run waiting 24
+  hours for images no ready worker has now ends as failed with the images
+  named; runs waiting for workers to return stay queued.
 - [ ] **Retention for stored pipeline bytes and push payloads.** `runs.pipeline`
   and `repository_operations.payload` stay for the full audit window even after
   the run or operation finishes. Retention prunes the surrounding rows but not

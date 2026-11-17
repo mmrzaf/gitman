@@ -3,6 +3,34 @@
 What changed in each release, for the people who run Gitman. Newest first.
 Each release's section is also its GitHub release notes.
 
+## Unreleased
+
+### Added
+
+- **Blocked runs are explained**: a queued run's page, Home and
+  `gitman doctor` say why it is not starting: no worker, workers offline, a
+  worker not ready (with its reason), instance maintenance, or images no ready
+  worker has.
+- **Queued runs expire**: a run that waited 24 hours only because no ready
+  worker has its images ends as failed, naming them. Runs waiting for workers
+  to come back are never expired. `admin worker cleanup` applies the expiry
+  on demand. No schema change.
+
+### Changed
+
+- **Release rehearsals are scripts**: `scripts/multiworker.sh` (two workers on
+  one Docker host, plus a blocked run) and `scripts/upgrade-test.sh` (upgrade a
+  previous release's installation in place) join the end-to-end, backup and
+  browser checks, and CI runs them.
+- **One Workers page**: Workers and Images are merged. It opens with four
+  tiles (workers, queue, required images, build cache) and a short list of
+  what needs attention, then one card per Docker host holding its workers,
+  build cache, missing images and collapsible image tables, with the prune
+  plan and recent operations on the same page. `/images` redirects to it.
+  Stopped workers are summarised rather than listed.
+- **Examples are operator-neutral**: the documentation and `.env.example` no
+  longer carry a sample username, project or data path.
+
 ## [1.0.0-beta.28] - 2026-10-28
 
 Beta 28 completes the beta 27 follow-up: live runs keep up with fast step
