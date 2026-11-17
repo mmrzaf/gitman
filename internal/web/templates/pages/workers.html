@@ -1,20 +1,173 @@
 {{define "content"}}
+{{$d := .Data}}
 <div class="page">
-<header class="page-header"><div class="page-header-text">
-  <h1 class="page-title" id="workers-title">Workers</h1>
-  <p class="page-subtitle">A heartbeat shows that the process is alive. Ready workers have Docker, disk capacity and current image inventories.</p>
-</div></header>
-<section class="panel" aria-labelledby="workers-title">
-{{if .Data.Workers}}
-<div class="table-scroll" tabindex="0" role="region" aria-label="Worker list"><table class="table table-cards table-rich">
-<thead><tr><th scope="col">Host</th><th scope="col">Readiness</th><th scope="col">Heartbeat</th><th scope="col">Active runs</th><th scope="col">Images</th></tr></thead>
-<tbody>{{range .Data.Workers}}<tr>
-<th scope="row" class="table-rowheader"><div class="table-cell">{{.Hostname}}<br><span class="muted mono">{{.ID}}</span></div></th>
-<td data-label="Readiness"><div class="table-cell">{{if .Ready}}<span class="status is-passed">{{template "icon" "passed"}}Ready</span>{{else}}<span class="status is-queued">{{template "icon" "queued"}}Unavailable</span>{{end}}<p class="muted">{{.Reason}}</p></div></td>
-<td data-label="Heartbeat"><div class="table-cell">{{template "time" .Heartbeat}}{{if .Stopped}}<p>Stopped {{template "time" .Stopped}}</p>{{end}}</div></td>
-<td data-label="Active runs"><div class="table-cell">{{.ActiveRuns}}</div></td>
-<td data-label="Images"><div class="table-cell" tabindex="0" role="region" aria-label="Advertised images">{{range .Images}}<code>{{.}}</code><br>{{else}}<span class="muted">No images advertised</span>{{end}}</div></td>
-</tr>{{end}}</tbody></table></div>
-{{else}}<div class="empty"><p class="empty-title">No workers registered</p><p>Start a worker to execute queued pipelines.</p></div>{{end}}
-</section></div>
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title" id="workers-title">Workers</h1>
+    <p class="page-subtitle">Workers, their Docker hosts and the images on them. Gitman never pulls images; put them on the host.</p>
+  </div>
+  <div class="page-actions"><a class="btn" href="/operations">Operations</a></div>
+</header>
+
+<div class="stack">
+<ul class="tiles" aria-label="Summary">
+  <li class="tile {{if eq $d.Workers 0}}is-failed{{else if eq $d.ReadyWorkers 0}}is-failed{{else if lt $d.ReadyWorkers $d.Workers}}is-queued{{else}}is-passed{{end}}">
+    <span class="tile-label">Workers</span>
+    <span class="tile-value">{{$d.ReadyWorkers}}<span class="tile-of"> / {{$d.Workers}} ready</span></span>
+    <span class="tile-note">{{if eq $d.Workers 0}}None registered{{else}}{{len $d.Hosts}} Docker host{{if ne (len $d.Hosts) 1}}s{{end}}{{end}}</span>
+  </li>
+  <li class="tile {{if $d.Blocked}}is-queued{{end}}">
+    <span class="tile-label">Queue</span>
+    <span class="tile-value">{{$d.Queued}}<span class="tile-of"> queued</span></span>
+    <span class="tile-note">{{if $d.Blocked}}{{$d.Blocked}} cannot start{{else}}Nothing is blocked{{end}}</span>
+  </li>
+  <li class="tile {{if $d.Missing}}is-queued{{end}}">
+    <span class="tile-label">Required images</span>
+    <span class="tile-value">{{if $d.Missing}}{{$d.Missing}}<span class="tile-of"> missing</span>{{else}}All present{{end}}</span>
+    <span class="tile-note">{{if $d.Missing}}Pipelines need them on a worker host{{else}}Every pipeline can find its images{{end}}</span>
+  </li>
+  <li class="tile">
+    <span class="tile-label">Build cache</span>
+    <span class="tile-value">{{if $d.CacheCap}}{{bytes $d.CacheUsed}}<span class="tile-of"> of {{bytes $d.CacheCap}}</span>{{else}}{{bytes $d.CacheUsed}}{{end}}</span>
+    <span class="tile-note">Rebuildable; trimmed automatically</span>
+  </li>
+</ul>
+
+{{- if $d.Attention}}
+<section class="panel attention is-alert" aria-labelledby="needs-title">
+  <header class="panel-header"><h2 class="panel-title" id="needs-title">{{template "icon" "warning"}}Needs attention <span class="count">{{len $d.Attention}}</span></h2></header>
+  <ul class="attention-list">
+    {{- range $d.Attention}}
+    <li class="attention-item">{{template "icon" .Icon}}{{if .URL}}<a href="{{.URL}}">{{.Text}}</a>{{else}}<span>{{.Text}}</span>{{end}}</li>
+    {{- end}}
+  </ul>
+</section>
+{{- end}}
+
+{{- with $d.Plan}}
+<section class="panel" id="plan" aria-labelledby="plan-title">
+  <header class="panel-header">
+    <h2 class="panel-title" id="plan-title">{{template "icon" "trash"}}Prune plan for {{.Hostname}}</h2>
+    <span class="panel-actions"><a class="btn btn-sm" href="/workers">Close</a></span>
+  </header>
+  {{- if or (not .HasInventory) .Stale .FactsIncomplete}}
+  <div class="panel-body"><p class="muted">{{if .FactsIncomplete}}Image facts are incomplete, so no built image can be pruned safely. Try again once Gitman can read every pipeline that may still need images.{{else}}This host's inventory is missing or stale. A worker must refresh it before a plan can be shown.{{end}}</p></div>
+  {{- else if eq (len .Plan.Remove) 0}}
+  <div class="panel-body"><p>No built images are prunable right now.</p>{{if .Plan.Refuse}}<p class="muted">{{len .Plan.Refuse}} image(s) are protected or not built by a pipeline.</p>{{end}}</div>
+  {{- else}}
+  <div class="panel-body stack">
+    <p>This would remove <strong>{{len .Plan.Remove}}</strong> image(s), about <strong>{{bytes .Plan.ReclaimableBytes}}</strong>. Required, running and deployed images are never removed.</p>
+    <ul class="stack-tight">{{range .Plan.Remove}}<li class="ref-line"><code>{{.Ref}}</code> · {{bytes .Size}} · {{template "time" .Created}}</li>{{end}}</ul>
+    <details><summary>{{len .Plan.Refuse}} protected or undeclared image(s)</summary>
+      <ul class="stack-tight">{{range .Plan.Refuse}}<li class="ref-line"><code>{{.Ref}}</code>: {{.Refusal}}</li>{{else}}<li>None.</li>{{end}}</ul>
+    </details>
+    <form method="post" action="/images/prune" data-confirm="Prune {{len .Plan.Remove}} built image(s) on {{.Hostname}}?" data-confirm-detail="Only these images are requested. The worker re-checks the current plan and removes nothing else." data-confirm-action="Prune images">
+      <input type="hidden" name="host" value="{{.EngineID}}">
+      {{range .Plan.Remove}}<input type="hidden" name="target" value="{{.Ref}}|{{.ID}}">{{end}}
+      <div class="form-actions"><button type="submit" class="btn btn-primary">Prune these images</button> <a class="btn" href="/workers">Cancel</a></div>
+    </form>
+  </div>
+  {{- end}}
+</section>
+{{- end}}
+
+{{- range $host := $d.Hosts}}
+<section class="panel host" id="host-{{.EngineID}}" aria-labelledby="title-{{.EngineID}}">
+  <header class="panel-header">
+    <h2 class="panel-title" id="title-{{.EngineID}}">{{template "icon" "monitor"}}{{.Hostname}} <span class="muted mono" title="{{.EngineID}}">{{printf "%.8s" .EngineID}}</span></h2>
+    <span class="panel-actions">
+      {{- if not .HasInventory}}<span class="status is-queued">{{template "icon" "pending"}}No inventory</span>
+      {{- else if .Stale}}<span class="status is-queued">{{template "icon" "warning"}}Inventory stale</span>
+      {{- else}}<span class="muted">Inventory {{template "time" .CollectedAt}}</span>{{end}}
+    </span>
+  </header>
+
+  <div class="host-grid">
+    <div class="host-block">
+      <h3 class="host-heading">Worker processes</h3>
+      <ul class="rows">
+        {{- range .Procs}}
+        <li class="row">
+          <span class="row-main">
+            {{if .Ready}}<span class="status is-passed">{{template "icon" "passed"}}Ready</span>{{else}}<span class="status is-queued">{{template "icon" "queued"}}Unavailable</span>{{end}}
+            <span class="row-text"><span class="mono" title="{{.ID}}">{{printf "%.8s" .ID}}</span>{{if not .Ready}} <span class="muted">· {{.Reason}}</span>{{end}}</span>
+          </span>
+          <span class="row-meta muted">{{if .Stopped}}stopped {{template "time" .Stopped}}{{else}}seen {{template "time" .Heartbeat}}{{end}} · {{if .ActiveRuns}}running a pipeline{{else}}idle{{end}}</span>
+        </li>
+        {{- else}}<li class="row muted">No worker is running on this host.</li>{{end}}
+      </ul>
+      {{- if .Stopped}}<p class="muted host-note">{{.Stopped}} earlier worker{{if ne .Stopped 1}}s{{end}} stopped.</p>{{end}}
+    </div>
+
+    <div class="host-block">
+      <h3 class="host-heading">Build cache</h3>
+      {{- if not .HasInventory}}<p class="muted">No inventory yet.</p>
+      {{- else if .Cache.Disabled}}<p class="muted">{{bytes .Cache.Size}} used · automatic trimming is off.</p>
+      {{- else}}
+      <progress class="meter{{if or .Cache.AboveCap .Cache.Error}} is-queued{{end}}" max="{{.CacheCap}}" value="{{.CacheUsed}}" aria-label="Build cache used of its cap">{{bytes .CacheUsed}}</progress>
+      <p class="host-note"><strong>{{bytes .Cache.Size}}</strong> of {{.Cache.Policy.KeepGiB}} GiB{{if .Cache.AboveCap}} <span class="status is-queued">{{template "icon" "warning"}}Over cap</span>{{end}}{{if .Cache.Error}} <span class="status is-failed">{{template "icon" "warning"}}Failed</span>{{end}}</p>
+      <p class="muted host-note">{{with .Cache.PrunedAt}}Last trimmed {{template "time" .}}, freed {{bytes $host.Cache.Reclaimed}}.{{else}}Not trimmed yet.{{end}}</p>
+      {{- end}}
+      {{- if and .HasInventory (not .Stale)}}
+      <form method="post" action="/images/cache-prune"><input type="hidden" name="host" value="{{.EngineID}}"><button class="btn btn-sm" type="submit" data-confirm="Trim the build cache on {{.Hostname}}?" data-confirm-detail="This enforces the cache cap and age. It never removes images or containers." data-confirm-action="Trim cache">Trim cache now</button></form>
+      {{- end}}
+    </div>
+  </div>
+
+  {{- if .Missing}}
+  <div class="host-missing">
+    {{template "icon" "warning"}}
+    <div>
+      <strong>Missing on this host</strong>
+      <ul class="stack-tight">{{range .Missing}}<li class="ref-line"><code>{{.Ref}}</code> <span class="muted">needed by {{len .Sources}} pipeline{{if ne (len .Sources) 1}}s{{end}}: {{range $i, $s := .Sources}}{{if $i}}, {{end}}{{$s.String}}{{end}}</span></li>{{end}}</ul>
+      <p class="muted">Pull or build {{if eq (len .Missing) 1}}it{{else}}them{{end}} on the Docker host. Runs that need {{if eq (len .Missing) 1}}it{{else}}them{{end}} wait, then end after 24 hours.</p>
+    </div>
+  </div>
+  {{- end}}
+
+  <div class="host-images">
+    <div class="host-images-head">
+      <h3 class="host-heading">Images</h3>
+      {{- if and .HasInventory (not .Stale) (not .FactsIncomplete)}}<a class="btn btn-sm" href="/workers?plan={{.EngineID}}#plan">Review prune plan</a>{{end}}
+    </div>
+    {{- if .HasInventory}}
+    {{- range .Groups}}
+    <details class="image-group">
+      <summary><span>{{.Title}}</span> <span class="count">{{len .Images}}</span></summary>
+      {{- if .Images}}
+      <div class="table-scroll" tabindex="0" role="region" aria-label="{{.Title}} on {{$host.Hostname}}"><table class="table table-cards table-rich">
+        <thead><tr><th scope="col">Image</th><th scope="col">Size</th><th scope="col">Created</th><th scope="col">Why</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+        <tbody>{{$kind := .Kind}}{{range .Images}}<tr>
+          <th scope="row" class="table-rowheader cell-truncate" title="{{.Ref}}"><div class="table-cell" tabindex="0"><code>{{.Ref}}</code></div></th>
+          <td data-label="Size"><div class="table-cell">{{bytes .Size}}</div></td>
+          <td data-label="Created"><div class="table-cell">{{template "time" .Created}}</div></td>
+          <td data-label="Why" class="cell-truncate" title="{{if .Refusal}}{{.Refusal}}{{else}}{{.Reason}}{{end}}"><div class="table-cell" tabindex="0">{{if .Prunable}}<span class="chip chip-accent">prunable</span> {{end}}{{if .InUse}}<span class="chip">in use</span> {{end}}{{if .Deployed}}<span class="chip">deployed</span> {{end}}{{if .Refusal}}{{.Refusal}}{{else}}{{.Reason}}{{end}}</div></td>
+          <td data-label="Actions" class="cell-shrink cell-end"><div class="table-cell">{{if and (ne $kind "required") $host.HasInventory (not $host.Stale) (not $host.FactsIncomplete) (not .InUse)}}<span class="js-only"><form method="post" action="/images/remove" data-confirm="Remove {{.Ref}} from {{$host.Hostname}}?" data-confirm-detail="{{if .Deployed}}This tag is currently deployed. {{end}}{{if .WithinKeep}}It is inside the keep window. {{end}}The tag is removed without force; an image another tag uses remains." data-confirm-action="Remove image"><input type="hidden" name="host" value="{{$host.EngineID}}"><input type="hidden" name="image" value="{{.Ref}}"><button class="btn btn-sm btn-danger" type="submit">Remove</button></form></span><span class="no-js-only muted">Use the CLI</span>{{end}}</div></td>
+        </tr>{{end}}</tbody>
+      </table></div>
+      {{- else}}<p class="muted image-empty">None.</p>{{end}}
+    </details>
+    {{- end}}
+    {{- else}}<p class="muted">No inventory reported. A worker publishes it within a minute of starting.</p>{{end}}
+  </div>
+</section>
+{{- else}}
+{{template "empty" (emptyModel "monitor" "No worker hosts yet" "Start a worker; its Docker host and images appear here within a minute." false)}}
+{{- end}}
+
+{{- if $d.Unbound}}
+<section class="panel" aria-labelledby="unbound-title">
+  <header class="panel-header"><h2 class="panel-title" id="unbound-title">{{template "icon" "pending"}}Workers not attached to a Docker host</h2></header>
+  <ul class="rows">{{range $d.Unbound}}<li class="row"><span class="row-main"><span class="status is-queued">{{template "icon" "queued"}}Unavailable</span><span class="row-text"><span class="mono" title="{{.ID}}">{{printf "%.8s" .ID}}</span> on {{.Hostname}} <span class="muted">· {{.Reason}}</span></span></span><span class="row-meta muted">{{if .Stopped}}stopped {{template "time" .Stopped}}{{else}}seen {{template "time" .Heartbeat}}{{end}}</span></li>{{end}}</ul>
+</section>
+{{- end}}
+
+{{- if $d.Ops}}
+<section class="panel" aria-labelledby="ops-title">
+  <header class="panel-header"><h2 class="panel-title" id="ops-title">{{template "icon" "history"}}Recent image operations</h2><span class="panel-actions"><a class="btn btn-sm" href="/operations">All operations</a></span></header>
+  <ul class="rows">{{range $d.Ops}}<li class="row"><span class="row-main">{{if .Pending}}<span class="status is-queued">{{template "icon" "queued"}}pending</span>{{else if .Failed}}<span class="status is-failed">{{template "icon" "cancelled"}}errors</span>{{else}}<span class="status is-passed">{{template "icon" "passed"}}done</span>{{end}}<span class="row-text">{{.Kind}}{{if .Actor}} <span class="muted">by {{.Actor}}</span>{{end}}{{if .ReclaimedBytes}} <span class="muted">· {{bytes .ReclaimedBytes}} freed</span>{{end}}</span></span><span class="row-meta muted">{{template "time" .CreatedAt}}</span></li>{{end}}</ul>
+</section>
+{{- end}}
+</div>
+</div>
 {{end}}

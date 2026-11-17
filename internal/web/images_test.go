@@ -50,39 +50,27 @@ func TestImagesPageShowsInventoryMissingCacheAndTabs(t *testing.T) {
 		t.Fatalf("QueueImagePrune = %q, %v", operation, err)
 	}
 
-	resp, body := admin.do(http.MethodGet, "/images", nil, nil)
-	expect(t, resp, body, http.StatusOK, "Images", "host",
-		"Missing required images", "alpine:3.20", "app run #1",
-		"Cache", "4.0 GiB", "above its 3 GiB cap", "app:old", "prunable",
-		"Required", "Built", "Other", "Prune built images", "Image operations")
-	if !strings.Contains(body, `href="/images?plan=engine-1"`) {
+	resp, body := admin.do(http.MethodGet, "/workers", nil, nil)
+	expect(t, resp, body, http.StatusOK, "Workers", "Missing on this host", "alpine:3.20", "app run #1",
+		"Build cache", "4.0 GiB", "Over cap", "app:old", "prunable",
+		"Required by pipelines", "Built by pipelines", "Other images", "Review prune plan", "busybox:1", "not declared")
+	if !strings.Contains(body, `href="/workers?plan=engine-1#plan"`) {
 		t.Error("the dry-run plan link is missing")
 	}
-	if !strings.Contains(body, `id="panel-built" data-tab-panel="built" hidden`) {
-		t.Error("the built tab should be hidden by default")
+	resp, _ = admin.do(http.MethodGet, "/images?plan=engine-1", nil, nil)
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/workers?plan=engine-1#plan" {
+		t.Errorf("/images redirect = %d %q", resp.StatusCode, resp.Header.Get("Location"))
 	}
-	if !strings.Contains(body, `id="panel-other" data-tab-panel="other" hidden`) {
-		t.Error("the other tab should be hidden by default")
-	}
-
-	resp, body = admin.do(http.MethodGet, "/images?tab=built", nil, nil)
-	expect(t, resp, body, http.StatusOK, "app:old", "prunable", "within 1", "outside 1", "built by app run #1")
-	if !strings.Contains(body, `href="/images?tab=built" data-tab="built" aria-current="page"`) {
-		t.Error("the built tab should be selected")
-	}
-	if !strings.Contains(body, `id="panel-required" data-tab-panel="required" hidden`) {
-		t.Error("the required tab should be hidden")
-	}
-
-	resp, body = admin.do(http.MethodGet, "/images?tab=other", nil, nil)
-	expect(t, resp, body, http.StatusOK, "busybox:1", "not declared")
 
 	resp, body = admin.do(http.MethodGet, "/operations", nil, nil)
 	expect(t, resp, body, http.StatusOK, "Image operations", "image.prune", "pending")
 
-	resp, body = admin.do(http.MethodGet, "/images?plan=engine-1", nil, nil)
-	expect(t, resp, body, http.StatusOK, "Plan for host", "Would remove", "app:old", "Prune these images", "within the newest 1 tags", `name="target" value="app:old|sha256:old"`)
-	if start := strings.Index(body, "Would remove"); start >= 0 {
+	resp, body = admin.do(http.MethodGet, "/workers", nil, nil)
+	expect(t, resp, body, http.StatusOK, "Recent image operations", "image.prune", "pending")
+
+	resp, body = admin.do(http.MethodGet, "/workers?plan=engine-1", nil, nil)
+	expect(t, resp, body, http.StatusOK, "Prune plan for host", "This would remove", "app:old", "Prune these images", "within the newest 1 tags", `name="target" value="app:old|sha256:old"`)
+	if start := strings.Index(body, "This would remove"); start >= 0 {
 		section := body[start:]
 		if end := strings.Index(section, "protected or undeclared"); end >= 0 {
 			section = section[:end]
@@ -95,8 +83,8 @@ func TestImagesPageShowsInventoryMissingCacheAndTabs(t *testing.T) {
 	if _, err := database.Pool.Exec(ctx, `UPDATE image_hosts SET collected_at = now() - interval '10 minutes'`); err != nil {
 		t.Fatal(err)
 	}
-	resp, body = admin.do(http.MethodGet, "/images", nil, nil)
-	expect(t, resp, body, http.StatusOK, "Stale")
+	resp, body = admin.do(http.MethodGet, "/workers", nil, nil)
+	expect(t, resp, body, http.StatusOK, "Inventory stale")
 }
 
 func TestImagesActionsRequireAdminAndQueueWork(t *testing.T) {
@@ -121,7 +109,7 @@ func TestImagesActionsRequireAdminAndQueueWork(t *testing.T) {
 		{"member", member},
 		{"signed out", signedOut},
 	} {
-		resp, body := who.b.do(http.MethodGet, "/images", nil, nil)
+		resp, body := who.b.do(http.MethodGet, "/workers", nil, nil)
 		if who.name == "member" {
 			expect(t, resp, body, http.StatusForbidden, "Only admins")
 		} else if resp.StatusCode != http.StatusSeeOther {
@@ -141,7 +129,7 @@ func TestImagesActionsRequireAdminAndQueueWork(t *testing.T) {
 	}
 
 	resp, _ = admin.do(http.MethodPost, "/images/cache-prune", url.Values{"host": {"engine-1"}}, nil)
-	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/images" {
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/workers" {
 		t.Fatalf("cache prune = %d %q", resp.StatusCode, resp.Header.Get("Location"))
 	}
 	var kind string
@@ -158,7 +146,7 @@ func TestImagesActionsRequireAdminAndQueueWork(t *testing.T) {
 	}
 
 	resp, _ = admin.do(http.MethodPost, "/images/prune", url.Values{"host": {"engine-1"}}, nil)
-	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/images?tab=built" {
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/workers" {
 		t.Fatalf("prune redirect = %d %q", resp.StatusCode, resp.Header.Get("Location"))
 	}
 }
@@ -200,13 +188,12 @@ func TestImagesPageDisablesActionsWhenFactsAreIncomplete(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resp, body := admin.do(http.MethodGet, "/images?tab=built", nil, nil)
-	expect(t, resp, body, http.StatusOK, "Image facts are incomplete", "app:old",
-		"image facts are incomplete; no built image is pruned")
+	resp, body := admin.do(http.MethodGet, "/workers", nil, nil)
+	expect(t, resp, body, http.StatusOK, "image facts are incomplete", "app:old")
 	if strings.Contains(body, `action="/images/remove"`) {
 		t.Error("the page offered an image removal with incomplete facts")
 	}
-	if strings.Contains(body, `href="/images?plan=engine-1"`) {
+	if strings.Contains(body, `href="/workers?plan=engine-1#plan"`) {
 		t.Error("the page offered a prune plan with incomplete facts")
 	}
 	if !strings.Contains(body, `action="/images/cache-prune"`) {

@@ -732,61 +732,6 @@ func TestAppendLogAcceptsTheSameChunkTwice(t *testing.T) {
 	}
 }
 
-// TestAnyWorkerReady is what tells a person why a queued run is not
-// starting: a worker is online from the moment it registers until it
-// stops, or until its heartbeat is WorkerLostAfter old.
-func TestAnyWorkerReady(t *testing.T) {
-	ctx := context.Background()
-	database := pgtest.Open(t)
-	svc := NewService(database)
-	online := func() bool {
-		t.Helper()
-		ok, err := svc.AnyWorkerReady(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return ok
-	}
-
-	if online() {
-		t.Fatal("online with no worker ever registered")
-	}
-	if err := svc.RegisterWorker(ctx, "w1", "host"); err != nil {
-		t.Fatal(err)
-	}
-
-	if online() {
-		t.Fatal("registration was mistaken for readiness")
-	}
-	if err := svc.SetWorkerReadiness(ctx, "w1", true, "Ready", []string{"alpine:3.20"}); err != nil {
-		t.Fatal(err)
-	}
-	if !online() {
-		t.Fatal("ready worker was not reported")
-	}
-
-	if _, err := database.Pool.Exec(ctx,
-		`UPDATE workers SET heartbeat_at = now() - make_interval(secs => $1) - interval '1 second'`,
-		WorkerLostAfter.Seconds()); err != nil {
-		t.Fatal(err)
-	}
-	if online() {
-		t.Fatal("online with only a heartbeat older than WorkerLostAfter")
-	}
-	if err := svc.Heartbeat(ctx, "w1", 0); err != nil {
-		t.Fatal(err)
-	}
-	if !online() {
-		t.Fatal("not online after a fresh heartbeat")
-	}
-	if err := svc.StopWorker(ctx, "w1"); err != nil {
-		t.Fatal(err)
-	}
-	if online() {
-		t.Fatal("online after the only worker stopped")
-	}
-}
-
 func TestLatestDefaultHeadRunsIsTheNewestRunOfEachDefaultBranch(t *testing.T) {
 	database := pgtest.Open(t)
 	ctx := context.Background()

@@ -1216,6 +1216,45 @@ time { white-space: nowrap; }
 .run-pill { display: inline-flex; align-items: center; gap: var(--sp-1); height: 26px; padding: 0 var(--sp-2); border-radius: var(--radius-full); border: 1px solid var(--status-border, var(--border)); background: var(--status-bg, var(--surface-2)); color: var(--status, var(--muted)); font-size: var(--text-xs); font-weight: var(--weight-bold); }
 .run-pill:hover { text-decoration: none; filter: brightness(0.96); }
 
+/* ---- Workers and images ------------------------------------------- */
+
+.tiles { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--sp-3); }
+.tile { display: grid; gap: 2px; align-content: start; padding: var(--sp-3) var(--sp-4); border: 1px solid var(--status-border, var(--border)); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-sm); }
+.tile-label { color: var(--muted); font-size: var(--text-xs); font-weight: var(--weight-bold); text-transform: uppercase; letter-spacing: 0.04em; }
+.tile-value { font-size: var(--text-2xl); font-weight: var(--weight-bold); line-height: var(--leading-tight); color: var(--status, var(--text)); overflow-wrap: anywhere; }
+.tile-of { font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--muted); }
+.tile-note { color: var(--muted); font-size: var(--text-sm); }
+.host-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.host-block { display: grid; gap: var(--sp-2); align-content: start; padding: var(--sp-4); }
+.host-block + .host-block { border-left: 1px solid var(--border); }
+.host-heading { font-size: var(--text-xs); color: var(--muted); font-weight: var(--weight-bold); text-transform: uppercase; letter-spacing: 0.04em; }
+.host-note { font-size: var(--text-sm); }
+.host-block form { margin-top: var(--sp-1); }
+.rows { list-style: none; margin: 0; padding: 0; display: grid; }
+.row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: var(--sp-1) var(--sp-3); padding: var(--sp-2) 0; border-bottom: 1px solid var(--border); font-size: var(--text-sm); }
+.row:last-child { border-bottom: 0; }
+.panel > .rows { padding: 0 var(--sp-4); }
+.row-main { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; }
+.row-text { min-width: 0; overflow-wrap: anywhere; }
+.row-meta { font-size: var(--text-xs); }
+.meter { appearance: none; -webkit-appearance: none; width: 100%; height: 8px; border: 0; border-radius: var(--radius-full); background: var(--surface-sunken); overflow: hidden; }
+.meter::-webkit-progress-bar { background: var(--surface-sunken); }
+.meter::-webkit-progress-value { background: var(--accent); border-radius: var(--radius-full); }
+.meter::-moz-progress-bar { background: var(--accent); border-radius: var(--radius-full); }
+.meter.is-queued::-webkit-progress-value { background: var(--queued); }
+.meter.is-queued::-moz-progress-bar { background: var(--queued); }
+.host-missing { display: flex; gap: var(--sp-3); margin: 0 var(--sp-4) var(--sp-4); padding: var(--sp-3) var(--sp-4); border: 1px solid var(--queued-border); border-radius: var(--radius); background: var(--queued-bg); }
+.host-missing > .icon { margin-top: 2px; color: var(--queued); }
+.host-missing > div { display: grid; gap: var(--sp-2); min-width: 0; }
+.host-images { border-top: 1px solid var(--border); padding: var(--sp-3) var(--sp-4) var(--sp-4); display: grid; gap: var(--sp-2); }
+.host-images-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); }
+.image-group { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); }
+.image-group > summary { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-3); cursor: pointer; font-weight: var(--weight-medium); }
+.image-group[open] > summary { border-bottom: 1px solid var(--border); }
+.image-group .table-scroll { background: var(--surface); }
+.image-empty { padding: var(--sp-3); }
+@media (max-width: 640px) { .host-block + .host-block { border-left: 0; border-top: 1px solid var(--border); } }
+
 /* ---- Paths and breadcrumbs ---------------------------------------- */
 
 .path {

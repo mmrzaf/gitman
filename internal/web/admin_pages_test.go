@@ -22,7 +22,6 @@ func TestAdminOnlyPagesRequireAnAdmin(t *testing.T) {
 	}{
 		{"/operations", "Repository recovery"},
 		{"/workers", "Workers"},
-		{"/images", "Images"},
 		{"/sessions", "Sessions"},
 	} {
 		t.Run(page.path, func(t *testing.T) {
@@ -135,4 +134,22 @@ func TestAccountPageMarksAndRevokesItsOwnSessions(t *testing.T) {
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("the other session still works: %d", resp.StatusCode)
 	}
+}
+
+func TestWorkersPageSummarizesBlockedQueuedRuns(t *testing.T) {
+	database, admin := setup(t)
+	signIn(t, database, admin, "lead", true)
+	ctx := context.Background()
+	for _, q := range []string{
+		`INSERT INTO repos (id, name, default_branch) VALUES ('r1', 'demo', 'main')`,
+		`INSERT INTO runs (id, repo_id, number, commit_hash, ref_kind, ref_name, trigger, status, required_images)
+		 VALUES ('run1', 'r1', 1, repeat('a', 40), 'branch', 'main', 'push', 'queued', '{docker.io/library/alpine:3.20}')`,
+		`INSERT INTO workers (id, hostname, ready, readiness_reason, readiness_at, images) VALUES ('w1', 'build-host', true, 'Ready', now(), '{other:1}')`,
+	} {
+		if _, err := database.Pool.Exec(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resp, body := admin.do(http.MethodGet, "/workers", nil, nil)
+	expect(t, resp, body, http.StatusOK, "1 queued run: No ready worker has the required image docker.io/library/alpine:3.20", "Operations")
 }

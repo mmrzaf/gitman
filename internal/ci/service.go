@@ -412,13 +412,6 @@ const WorkerLostAfter = 5 * time.Minute
 // declaring a worker lost fails its running runs.
 const WorkerReadyAfter = time.Minute
 
-// AnyWorkerReady reports whether any worker is running: one that has
-// not stopped and has sent a heartbeat within WorkerLostAfter. Without
-// one, a queued run waits until a worker starts.
-func (s *Service) AnyWorkerReady(ctx context.Context) (bool, error) {
-	return selectAnyWorkerReady(ctx, s.db.Q, WorkerReadyAfter)
-}
-
 // FailLostRuns fails every running run whose worker stopped, or has not
 // sent a heartbeat in the last staleAfter, and returns how many it
 // failed. Runs are never retried automatically: a run that shipped
@@ -640,9 +633,13 @@ func (s *Service) SetWorkerReadiness(ctx context.Context, workerID string, ready
 	return err
 }
 
+// WorkerStatus is a worker as the Workers page shows it. Ready and Online are
+// judged by the database clock: Online means the worker has not stopped and
+// has heartbeated within WorkerReadyAfter, Ready additionally that its last
+// readiness check passed and is recent.
 type WorkerStatus struct {
 	ID, Hostname, Reason string
-	Ready                bool
+	Ready, Online        bool
 	Heartbeat            time.Time
 	Stopped              *time.Time
 	Images               []string
@@ -651,7 +648,20 @@ type WorkerStatus struct {
 }
 
 func (s *Service) Workers(ctx context.Context) ([]WorkerStatus, error) {
-	rows, err := s.db.Q.Query(ctx, `SELECT id, hostname, ready AND stopped_at IS NULL AND heartbeat_at >= now() - make_interval(secs => $1) AND readiness_at >= now() - make_interval(secs => $1), CASE WHEN stopped_at IS NOT NULL THEN 'Stopped' WHEN heartbeat_at < now() - make_interval(secs => $1) THEN 'Heartbeat is stale' WHEN readiness_at IS NULL OR readiness_at < now() - make_interval(secs => $1) THEN 'Readiness has not been checked recently' ELSE readiness_reason END, heartbeat_at, stopped_at, images, active_runs, engine_id FROM workers ORDER BY started_at DESC LIMIT 100`, WorkerReadyAfter.Seconds())
+	return selectWorkers(ctx, s.db.Q)
+}
+
+func selectWorkers(ctx context.Context, q postgres.Querier) ([]WorkerStatus, error) {
+	rows, err := q.Query(ctx, `
+		SELECT id, hostname,
+		       ready AND stopped_at IS NULL AND heartbeat_at >= now() - make_interval(secs => $1) AND readiness_at >= now() - make_interval(secs => $1),
+		       stopped_at IS NULL AND heartbeat_at >= now() - make_interval(secs => $1),
+		       CASE WHEN stopped_at IS NOT NULL THEN 'Stopped'
+		            WHEN heartbeat_at < now() - make_interval(secs => $1) THEN 'Heartbeat is stale'
+		            WHEN readiness_at IS NULL OR readiness_at < now() - make_interval(secs => $1) THEN 'Readiness has not been checked recently'
+		            ELSE readiness_reason END,
+		       heartbeat_at, stopped_at, images, active_runs, engine_id
+		FROM workers ORDER BY started_at DESC LIMIT 100`, WorkerReadyAfter.Seconds())
 	if err != nil {
 		return nil, err
 	}
@@ -659,18 +669,12 @@ func (s *Service) Workers(ctx context.Context) ([]WorkerStatus, error) {
 	var workers []WorkerStatus
 	for rows.Next() {
 		var w WorkerStatus
-		if err := rows.Scan(&w.ID, &w.Hostname, &w.Ready, &w.Reason, &w.Heartbeat, &w.Stopped, &w.Images, &w.ActiveRuns, &w.EngineID); err != nil {
+		if err := rows.Scan(&w.ID, &w.Hostname, &w.Ready, &w.Online, &w.Reason, &w.Heartbeat, &w.Stopped, &w.Images, &w.ActiveRuns, &w.EngineID); err != nil {
 			return nil, err
 		}
 		workers = append(workers, w)
 	}
 	return workers, rows.Err()
-}
-
-func (s *Service) AnyWorkerReadyForRun(ctx context.Context, runID string) (bool, error) {
-	var ready bool
-	err := s.db.Q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM workers w JOIN runs r ON r.id = $1 WHERE w.ready AND w.stopped_at IS NULL AND w.heartbeat_at >= now() - make_interval(secs => $2) AND w.readiness_at >= now() - make_interval(secs => $2) AND r.required_images <@ w.images)`, runID, WorkerReadyAfter.Seconds()).Scan(&ready)
-	return ready, err
 }
 
 // RecoverStepExit stores a retained daemon receipt without starting anything.
