@@ -5,21 +5,9 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"time"
 
-	"github.com/mmrzaf/gitman/internal/apperr"
 	"github.com/mmrzaf/gitman/internal/postgres"
 )
-
-// MaxQueueWait is how long a run may stay queued while the only thing missing
-// is an image no ready worker has. Nothing but an operator can fix that, so
-// after this long the run ends instead of waiting forever. A run queued
-// because no worker is online is never expired: workers come back, and the run
-// is still wanted when they do.
-const MaxQueueWait = 24 * time.Hour
-
-// maxQueueWaitText is MaxQueueWait as people read it.
-var maxQueueWaitText = fmt.Sprintf("%d hours", int(MaxQueueWait.Hours()))
 
 // BlockKind says why a queued run cannot start.
 type BlockKind string
@@ -45,9 +33,6 @@ type Blocker struct {
 	Missing []string
 	// Detail is the readiness reason of an unhealthy worker.
 	Detail string
-	// Permanent reports that the condition will not clear by itself: an
-	// operator must put the images on a worker host.
-	Permanent bool
 }
 
 // Message is the one-sentence explanation shown to people.
@@ -67,8 +52,7 @@ func (b Blocker) Message() string {
 		return msg + ". The run starts when it is ready."
 	case BlockMissingImages:
 		return "No ready worker has the required " + plural(len(b.Missing), "image") + " " + strings.Join(b.Missing, ", ") +
-			". Make " + pluralPronoun(len(b.Missing)) + " available on a worker host; the run starts then, or ends after " +
-			maxQueueWaitText + " queued."
+			". Make " + pluralPronoun(len(b.Missing)) + " available on a worker host to start the run."
 	}
 	return ""
 }
@@ -89,8 +73,7 @@ func pluralPronoun(n int) string {
 
 // classifyBlock decides why a queued run needing required cannot start on
 // workers, or returns nil when some ready worker could take it. Workers that
-// are not ready are judged by their last known images and never make a run
-// permanently blocked: an unready worker's inventory may simply be unreadable.
+// are not ready are judged by their last known images: an unready worker's inventory may simply be unreadable.
 func classifyBlock(required []string, workers []WorkerStatus, maintenance bool) *Blocker {
 	if maintenance {
 		return &Blocker{Kind: BlockMaintenance}
@@ -124,7 +107,7 @@ func classifyBlock(required []string, workers []WorkerStatus, maintenance bool) 
 				best = missing
 			}
 		}
-		return &Blocker{Kind: BlockMissingImages, Missing: best, Permanent: true}
+		return &Blocker{Kind: BlockMissingImages, Missing: best}
 	}
 	if online != nil {
 		return notReady(*online)
@@ -194,7 +177,7 @@ func (s *Service) QueuedCount(ctx context.Context) (int, error) {
 func (s *Service) QueuedBlockGroups(ctx context.Context) ([]BlockGroup, error) {
 	index := map[string]int{}
 	var groups []BlockGroup
-	err := s.eachQueuedBlock(ctx, s.db.Q, 0, func(id string, b *Blocker) error {
+	err := s.eachQueuedBlock(ctx, s.db.Q, func(id string, b *Blocker) error {
 		if b == nil {
 			return nil
 		}
@@ -222,7 +205,7 @@ func (s *Service) QueuedBlockGroups(ctx context.Context) ([]BlockGroup, error) {
 // dashboard or a doctor check. Runs only waiting their turn are not counted.
 func (s *Service) QueuedBlockCounts(ctx context.Context) (map[BlockKind]int, error) {
 	counts := map[BlockKind]int{}
-	err := s.eachQueuedBlock(ctx, s.db.Q, 0, func(_ string, b *Blocker) error {
+	err := s.eachQueuedBlock(ctx, s.db.Q, func(_ string, b *Blocker) error {
 		if b != nil {
 			counts[b.Kind]++
 		}
@@ -231,8 +214,8 @@ func (s *Service) QueuedBlockCounts(ctx context.Context) (map[BlockKind]int, err
 	return counts, err
 }
 
-// eachQueuedBlock classifies every queued run queued for at least olderThan.
-func (s *Service) eachQueuedBlock(ctx context.Context, q postgres.Querier, olderThan time.Duration, fn func(runID string, b *Blocker) error) error {
+// eachQueuedBlock classifies currently queued runs.
+func (s *Service) eachQueuedBlock(ctx context.Context, q postgres.Querier, fn func(runID string, b *Blocker) error) error {
 	workers, err := selectWorkers(ctx, q)
 	if err != nil {
 		return err
@@ -243,8 +226,8 @@ func (s *Service) eachQueuedBlock(ctx context.Context, q postgres.Querier, older
 	}
 	rows, err := q.Query(ctx, `
 		SELECT id, required_images FROM runs
-		WHERE status = 'queued' AND queued_at <= now() - make_interval(secs => $1)
-		ORDER BY queued_at, id LIMIT 1000`, olderThan.Seconds())
+		WHERE status = 'queued'
+		ORDER BY queued_at, id LIMIT 1000`)
 	if err != nil {
 		return fmt.Errorf("list queued runs: %w", err)
 	}
@@ -271,61 +254,4 @@ func (s *Service) eachQueuedBlock(ctx context.Context, q postgres.Querier, older
 		}
 	}
 	return nil
-}
-
-// ExpireBlockedRuns fails queued runs that have waited MaxQueueWait for images
-// no ready worker has, and returns how many it ended. Each is judged and
-// ended in one transaction with its row locked, so a worker that gains the
-// image or claims the run first wins, and a run is never both expired and
-// started. Runs blocked only by workers being down are left queued.
-func (s *Service) ExpireBlockedRuns(ctx context.Context) (int, error) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	ctx, release, err := s.db.AdmitMutation(ctx)
-	if err != nil {
-		if apperr.KindOf(err) == apperr.KindUnavailable {
-			return 0, nil
-		}
-		return 0, err
-	}
-	defer release()
-	var expired int
-	err = s.db.Tx(ctx, func(tx postgres.Tx) error {
-		expired = 0
-		var due []string
-		blockers := map[string]*Blocker{}
-		if err := s.eachQueuedBlock(ctx, tx, MaxQueueWait, func(id string, b *Blocker) error {
-			if b != nil && b.Permanent {
-				due = append(due, id)
-				blockers[id] = b
-			}
-			return nil
-		}); err != nil {
-			return err
-		}
-		for _, id := range due {
-			reason := fmt.Sprintf("Expired after %s queued: no ready worker had the required %s %s.",
-				maxQueueWaitText, plural(len(blockers[id].Missing), "image"), strings.Join(blockers[id].Missing, ", "))
-			var locked string
-			err := tx.QueryRow(ctx, `SELECT id FROM runs WHERE id = $1 AND status = 'queued' FOR UPDATE SKIP LOCKED`, id).Scan(&locked)
-			if err != nil {
-				if postgres.NormalizeNotFound(err) == postgres.ErrNotFound {
-					continue
-				}
-				return err
-			}
-			if _, err := tx.Exec(ctx, `UPDATE runs SET status = 'failed', reason = $2, finished_at = now() WHERE id = $1`, id, truncateReason(reason)); err != nil {
-				return fmt.Errorf("expire run: %w", err)
-			}
-			if err := settleOpenSteps(ctx, tx, id, StepFailed, StepSkipped); err != nil {
-				return err
-			}
-			if err := notify(ctx, tx, NotifyChannel, id); err != nil {
-				return err
-			}
-			expired++
-		}
-		return nil
-	})
-	return expired, err
 }

@@ -777,10 +777,6 @@ func adminWorkerCleanup(ctx context.Context, env *adminEnv, args []string) error
 	if err != nil {
 		return err
 	}
-	expired, err := env.ci.ExpireBlockedRuns(ctx)
-	if err != nil {
-		return err
-	}
 	docker, err := newDocker(ctx, env.ci, env.dockerBinary)
 	if err != nil {
 		return err
@@ -789,7 +785,7 @@ func adminWorkerCleanup(ctx context.Context, env *adminEnv, args []string) error
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(env.out, "Failed %d runs, expired %d blocked runs, removed %d containers and %d workspaces.\n", failed, expired, containers, workspaces)
+	fmt.Fprintf(env.out, "Failed %d runs, removed %d containers and %d workspaces.\n", failed, containers, workspaces)
 	return nil
 }
 

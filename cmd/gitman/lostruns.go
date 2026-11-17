@@ -13,9 +13,7 @@ import (
 // whose worker has gone silent.
 const lostRunSweepInterval = time.Minute
 
-// runLostRunSweep is the web process's periodic sweep. It also ends queued
-// runs whose required images no ready worker has had for ci.MaxQueueWait.
-// Its lost-run half is the backstop for a run whose worker
+// runLostRunSweep is the web process's periodic backstop for a run whose worker
 // stopped and never came back: normally a restarted worker fails its
 // dead predecessor's runs itself, on the same schedule, so this only
 // matters when no worker ever restarts. It waits out ci.WorkerLostAfter
@@ -41,13 +39,6 @@ func runLostRunSweep(ctx context.Context, database *postgres.DB, runs *ci.Servic
 					}
 				} else if n > 0 {
 					log.Warn("failed runs whose worker stopped responding", "runs", n)
-				}
-				if n, err := runs.ExpireBlockedRuns(ctx); err != nil {
-					if ctx.Err() == nil {
-						log.Warn("could not expire blocked runs", "error", err)
-					}
-				} else if n > 0 {
-					log.Warn("expired queued runs no worker could ever start", "runs", n)
 				}
 			}
 		}

@@ -53,7 +53,7 @@ func TestWorkerCleanupCommandIsRegistered(t *testing.T) {
 	}
 }
 
-func TestBeta23AdminCommandsAreRegistered(t *testing.T) {
+func TestAdminCommandsAreRegistered(t *testing.T) {
 	for group, action := range map[string]string{
 		"worker":    "release",
 		"operation": "abandon",
@@ -121,7 +121,7 @@ func TestAdminWorkerCleanupFailsLostRunsBeforeRemovingLeftovers(t *testing.T) {
 	if status != "failed" {
 		t.Errorf("run status = %q, want failed", status)
 	}
-	if got := out.String(); got != "Failed 1 runs, expired 0 blocked runs, removed 1 containers and 1 workspaces.\n" {
+	if got := out.String(); got != "Failed 1 runs, removed 1 containers and 1 workspaces.\n" {
 		t.Errorf("output = %q", got)
 	}
 	instance, err := ciService.InstanceID(ctx)
