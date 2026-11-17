@@ -11,8 +11,8 @@ Use your Gitman username and an access token (from **Access tokens**, or
 `gitman admin token create`) as the HTTP password:
 
 ```sh
-git clone https://git.example.com/waiotech.git
-Username: darius
+git clone https://git.example.com/example-app.git
+Username: alice
 Password: <access token>
 ```
 

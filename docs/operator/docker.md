@@ -7,7 +7,7 @@ a database password and an absolute host data directory, then run:
 
 ```sh
 docker compose up --build -d
-docker compose exec web gitman admin person add --admin darius
+docker compose exec web gitman admin person add --admin alice
 ```
 
 Web listens on `127.0.0.1:8080` by default. PostgreSQL is published only on
@@ -48,6 +48,24 @@ has no HTTP endpoint: its liveness is its process, and Compose restarts it if
 that exits. A worker that stops heartbeating has its runs failed after five
 minutes even if the container itself is gone.
 
+## Workers, Docker hosts and images
+
+- A **worker** is a `gitman worker` process. It runs one run at a time and is
+  *ready* while it is alive, can reach Docker, has disk above the reserve and
+  has reported its images within the last minute.
+- A **Docker host** is the daemon a worker uses. Workers on one host share its
+  images, its build cache and one inventory.
+- A pipeline **requires** its `image` plus everything under `requires:`. A run
+  starts on a ready worker that has all of them. Gitman never pulls: you
+  provide images by pulling or building them on the host.
+- A run that cannot start says why on its page, Home, **Workers** and
+  `gitman doctor`: no worker, workers away, a worker not ready, maintenance, or
+  missing images. Only the missing-images case ends by itself, after 24 hours.
+- **Gitman manages only what it can account for**: the images pipelines declare
+  under `images:` (keeping the newest few) and its own build cache. Required
+  images, deployed versions and anything a container uses are never removed;
+  everything else on the host is yours.
+
 ## Disk use and images
 
 Every pipeline run executes in images that must already exist on the worker
@@ -57,7 +75,7 @@ knows which `repo:tag` images are its own and how many of each to keep.
 
 Each worker publishes its host's inventory to PostgreSQL: every tagged image,
 every dangling image, the containers that use each image, and the build cache's
-size and reclaimable size. The admin **Images** page and
+size and reclaimable size. The admin **Workers** page and
 `gitman admin images list` show that inventory per Docker host (workers sharing
 one host share one inventory). An inventory older than five minutes is marked
 stale, and no prune or removal acts on it.
@@ -108,7 +126,7 @@ gitman admin images remove [--confirm] <worker-id> <image>
 
 `prune` and `remove` are dry runs without `--confirm`. Confirmed work is queued
 as a durable operation for the owning worker and appears on **Operations**.
-The **Images** page links to it; the worker re-reads the inventory and the
+The **Workers** page lists recent ones and links to it; the worker re-reads the inventory and the
 required set before acting, and skips anything that became required, in use or
 deployed. A removal uses `docker image rm` without `--force`, so it removes a
 tag rather than an image another tag still uses, and it refuses an image a
@@ -147,7 +165,7 @@ default, separately from image automation.
   `GITMAN_IMAGE_CACHE_MAX_AGE_HOURS` and `GITMAN_IMAGE_CACHE_ENABLED`. Turning
   enforcement off is an explicit choice, not the default, and leaves the cache
   to the daemon and the operator.
-- **See what it did:** the **Images** page and `images list` show cache size,
+- **See what it did:** the **Workers** page and `images list` show cache size,
   reclaimable size, the policy, when enforcement last ran, what it reclaimed and
   any error. A cache still above its cap is shown as a warning, and a failure is
   recorded in Activity. A failed prune (daemon unreachable, a build holding
@@ -169,7 +187,7 @@ The page's **Prune cache** action applies the worker's current policy.
 
 ### Disk is filling up
 
-1. Open **Images** (or `gitman admin images list`) and find the host.
+1. Open **Workers** (or `gitman admin images list`) and find the host.
 2. Check the build cache first. If it is above its cap or has a recorded error,
    run `gitman admin images prune --cache --confirm`.
 3. Review prunable built images and run `gitman admin images prune --confirm`.
@@ -183,7 +201,7 @@ The page's **Prune cache** action applies the worker's current policy.
 
 A run stuck in the queue because an image is missing is a different problem:
 `gitman admin images missing` names the image and the pipelines that require it,
-and the **Images** page shows the same under **Missing required images**. Make
+and the **Workers** page shows the same under **Missing on this host**. Make
 the image present on that worker's Docker host — pull or build it there — and
 the worker advertises it on its next readiness check. Gitman will not pull it.
 

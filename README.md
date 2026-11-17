@@ -36,7 +36,7 @@ The schema has one current baseline and ordinary versioned migrations.
 Create the first admin; the command prints their password:
 
 ```sh
-docker compose exec web gitman admin person add --admin darius
+docker compose exec web gitman admin person add --admin alice
 ```
 
 Sign in at `http://localhost:8080` (or your configured HTTPS address), change
@@ -46,7 +46,7 @@ username at the top right of every page. Git uses your username and that
 token as the password:
 
 ```sh
-git clone https://git.example.com/waiotech.git
+git clone https://git.example.com/example-app.git
 ```
 
 A read token can clone and fetch; pushing needs a write token. Tokens cover all
@@ -242,10 +242,10 @@ container it starts on the host's Docker:
   run: |
     docker run --rm \
       --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
-      --mount type=bind,src=/srv/apps/waiotech,dst=/srv/apps/waiotech \
-      --workdir /srv/apps/waiotech \
+      --mount type=bind,src=/srv/apps/example-app,dst=/srv/apps/example-app \
+      --workdir /srv/apps/example-app \
       docker:29-cli sh -ec "
-        sed -i 's#^APP_IMAGE=.*#APP_IMAGE=waiotech:$GITMAN_VERSION#' .env
+        sed -i 's#^APP_IMAGE=.*#APP_IMAGE=example-app:$GITMAN_VERSION#' .env
         docker compose up -d"
 ```
 
@@ -257,8 +257,8 @@ container it starts on the host's Docker:
   when: production
   run: |
     echo "$REGISTRY_TOKEN" | docker login registry.example.com -u deploy --password-stdin
-    docker build -t registry.example.com/waiotech:"$GITMAN_VERSION" .
-    docker push registry.example.com/waiotech:"$GITMAN_VERSION"
+    docker build -t registry.example.com/example-app:"$GITMAN_VERSION" .
+    docker push registry.example.com/example-app:"$GITMAN_VERSION"
 ```
 
 **Deploy over SSH**, with the private key and `known_hosts` stored as
@@ -271,7 +271,7 @@ secrets (a secret's value may be multi-line, such as a whole key file):
   run: |
     install -m 600 -D /dev/stdin ~/.ssh/id_ed25519 <<< "$DEPLOY_KEY"
     install -m 644 -D /dev/stdin ~/.ssh/known_hosts <<< "$KNOWN_HOSTS"
-    ssh deploy@app.example.com "cd /srv/apps/waiotech && git pull && ./restart.sh"
+    ssh deploy@app.example.com "cd /srv/apps/example-app && git pull && ./restart.sh"
 ```
 
 **Upload a build output with curl**:
@@ -279,9 +279,9 @@ secrets (a secret's value may be multi-line, such as a whole key file):
 ```yaml
 - name: upload
   run: |
-    go build -o bin/waiotech .
-    curl -fsS -H "Authorization: Bearer $UPLOAD_TOKEN" -T bin/waiotech \
-      https://artifacts.example.com/waiotech/"$GITMAN_VERSION"
+    go build -o bin/example-app .
+    curl -fsS -H "Authorization: Bearer $UPLOAD_TOKEN" -T bin/example-app \
+      https://artifacts.example.com/example-app/"$GITMAN_VERSION"
 ```
 
 Check a pipeline file before pushing it:
@@ -339,9 +339,9 @@ See [backups and recovery](docs/operator/backups-and-upgrades.md).
 Workers preserve execution receipts until recording commits. Recovery confirms
 termination before releasing deployment ownership, and never reruns scripts.
 Pending repository operations are visible in **Operations**, which also lists
-durable image removals and cache prunes; worker readiness and local image
-inventory appear in **Workers**, and the full classified inventory and
-build-cache state are on **Images**. Logs have independent age and size
+durable image removals and cache prunes; worker readiness, each Docker
+host's images and build cache, and why runs are waiting appear together in
+**Workers**. Logs have independent age and size
 limits. See [architecture](docs/architecture.md) and
 [configuration](docs/operator/configuration.md).
 

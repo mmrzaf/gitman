@@ -108,7 +108,9 @@ Flags go before the positional arguments.
   `admin repo gc` runs `git gc` under the repository mutation lock and
   records the result in Activity. Pushes to that repository wait while it
   runs. Both are also on the repository's Settings → Maintenance tab.
-- `admin worker cleanup` reclaims step containers and workspaces left
+- `admin worker cleanup` fails runs of lost workers, ends queued runs that
+  have waited 24 hours for images no ready worker has, and reclaims step
+  containers and workspaces left
   behind by a worker that was killed outright (SIGKILL, OOM) rather than
   shut down normally. See [Troubleshooting](../troubleshooting.md).
 - `admin worker release --confirm` is for a worker whose host is gone for

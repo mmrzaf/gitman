@@ -214,8 +214,9 @@ is bounded separately by the image and build-cache management described in
 containers are still the pipeline's responsibility.
 
 Workers advertise current image inventories. Runs stay queued when no worker
-has every required image. The admin **Workers** page distinguishes readiness
-from a heartbeat and shows readiness failures and available images; **Images**
-shows the full classified inventory and the build-cache policy. Image removal
+has every required image, and end as failed after 24 hours if no ready worker
+has them. The admin **Workers** page distinguishes readiness
+from a heartbeat and shows, per Docker host, readiness failures, the classified
+image inventory and the build-cache policy. Image removal
 and cache pruning are admin actions executed by the worker that owns the host,
 never by the web process.

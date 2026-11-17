@@ -161,7 +161,8 @@ tag's commit, on a worker. It starts in one of three ways:
 
 A run waits in the queue until a ready worker claims it. A worker runs one
 run at a time; when no worker is online or none has every image the run
-needs, the run's page and Home say so.
+needs, the run's page and Home say so and name the reason. A run waiting only
+for an image no ready worker has ends as failed after 24 hours queued.
 
 A run's page shows each step, its output, and whether it passed. From
 there you can:
@@ -194,9 +195,8 @@ Under your username, top-right of every page:
 
 Admins additionally see **People**, to add, disable, enable, and change
 the role of accounts, **Sessions**, to list and revoke any browser
-session, **Workers**, for readiness and heartbeats, and **Images**, for each
-Docker host's image inventory, missing required images, build-cache policy and
-pruning. **Operations** shows unfinished work, including image removals. People
+session, **Workers**, for worker readiness, each Docker host's images and
+build cache, missing required images, blocked runs and pruning. **Operations** shows unfinished work, including image removals. People
 are disabled, never deleted, so their name stays attached to what they did.
 
 See [Security model](operator/security.md) for how ref rules and roles

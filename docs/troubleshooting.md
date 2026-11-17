@@ -2,18 +2,27 @@
 
 ## A run stays queued
 
-A queued run waits for a worker to claim it. When no worker is ready,
-the run's page, Home and the output of `git push` say so: start one
-(`gitman worker`, or `make run-worker` from a checkout), and it claims
-the run at once. A worker counts as ready while it is not stopped, has
+A queued run waits for a worker to claim it. When it cannot start, the
+run's page, Home and the output of `git push` name the cause. With no worker
+ready, start one (`gitman worker`, or `make run-worker` from a checkout) and it
+claims the run at once. A worker counts as ready while it is not stopped, has
 heartbeated and rechecked readiness within the last minute, and advertises
 every image the run requires. A running run is failed only after five
 minutes without a heartbeat; readiness and loss deliberately use different
 thresholds.
 
+The run's page names the cause: no worker registered, every worker stopped
+or silent, a worker online but not ready (with its readiness reason), the
+instance in maintenance, or a missing image. All but the last clear on their
+own when a worker comes back, so those runs wait indefinitely. A run waiting
+only for images no ready worker has ends as failed after 24 hours queued, with
+the missing images in its reason; start it again once the image is present.
+`gitman admin worker cleanup` applies that expiry on demand, and
+`gitman doctor` counts such runs.
+
 If a worker is ready but the run still waits, a required image is missing.
 `gitman admin images missing` names it and the pipelines that require it, and
-the **Images** page shows the same under **Missing required images**. Make the
+the **Workers** page shows the same under **Missing on this host**. Make the
 image present on that worker's Docker host; Gitman never pulls it.
 
 ## A run is stuck / its worker seems gone
@@ -83,8 +92,8 @@ can't do.
 ## A pipeline step can't find an image
 
 Gitman never pulls images. A run whose `image` or `requires` image is
-missing stays queued, with the run page saying no ready worker advertises
-it. Make the image present on the worker's Docker host — pull or build it
+missing stays queued, with the run page naming it, and ends as failed after 24
+hours. Make the image present on the worker's Docker host — pull or build it
 there — and the next claim picks the run up. Execution checks again before
 the first step, so an image removed between claim and start fails the run
 with a message naming it.
