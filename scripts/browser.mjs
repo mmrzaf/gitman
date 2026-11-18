@@ -79,10 +79,22 @@ const query = (page) => new URL(page.url()).searchParams;
 
   sh(process.env.STOP_WORKER);
   const homeBefore = await home.locator("[data-live-region=repos]").innerText();
-  const timelineScroll = await home.locator("[data-live-region=timeline]").evaluate((el) => {
-    el.scrollTop = 120;
+  // Whether the Activity panel overflows depends on its content and the
+  // attention panel above it. Give this check a scrollable viewport so it
+  // exercises scroll restoration, rather than failing when nothing can scroll.
+  // A constructable stylesheet persists across region swaps and works with
+  // Gitman's style-src 'self' CSP (which blocks inline <style> injection).
+  await home.evaluate(() => {
+    const sheet = new CSSStyleSheet();
+    sheet.replaceSync('[data-live-region="timeline"] { height: 96px !important; max-height: 96px !important; flex: 0 0 96px !important; overflow-y: auto !important; }');
+    document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+  });
+  const timeline = home.locator("[data-live-region=timeline]");
+  const timelineScroll = await timeline.evaluate((el) => {
+    el.scrollTop = Math.min(120, el.scrollHeight - el.clientHeight);
     return el.scrollTop;
   });
+  const timelineBefore = await timeline.elementHandle();
   sh(process.env.PUSH_SLOW);
 
   const homeUpdated = await until(async () => /#6/.test(await home.locator("[data-live-region=repos]").innerText()));
@@ -107,8 +119,15 @@ const query = (page) => new URL(page.url()).searchParams;
     && /running/i.test(await home.locator("[data-live-region=repos]").innerText()));
   const after = await focused(home);
   check("focus survives a live update", swapped && after?.href === "/demo/runs/6", JSON.stringify(after));
-  const timelineAfter = await home.locator("[data-live-region=timeline]").evaluate((el) => el.scrollTop);
-  check("scroll survives a live update", timelineScroll > 0 && timelineAfter === timelineScroll, `${timelineScroll} → ${timelineAfter}`);
+  const timelineReplaced = !(await timelineBefore.evaluate((el) => el.isConnected));
+  const timelineAfter = await timeline.evaluate((el) => el.scrollTop);
+  check("scroll survives a live update", timelineScroll > 0 && timelineReplaced && timelineAfter === timelineScroll,
+    `${timelineScroll} → ${timelineAfter} (replaced: ${timelineReplaced})`);
+  await home.evaluate(() => {
+    document.adoptedStyleSheets = document.adoptedStyleSheets.filter(
+      (sheet) => sheet.cssRules[0]?.selectorText !== '[data-live-region="timeline"]',
+    );
+  });
 
   let buildStep = null;
   const sawBuild = await until(async () => {
