@@ -51,10 +51,10 @@ actual_checksums=$(awk '{print $2}' "$dir/SHA256SUMS" | sed 's/^\*//' | LC_ALL=C
 # data or secrets belong in a distributable archive.
 source_archive="$dir/gitman-${clean}.tar.gz"
 source_list=$(tar -tzf "$source_archive") || { echo 'unreadable source archive' >&2; exit 1; }
-printf '%s\n' "$source_list" | grep -Fxq "gitman-${clean}/go.mod" || {
+grep -Fxq "gitman-${clean}/go.mod" <<<"$source_list" || {
   echo 'missing go.mod in source archive' >&2; exit 1;
 }
-printf '%s\n' "$source_list" | grep -Eq "^gitman-${clean}/internal/postgres/migrations/[0-9]+_[^/]+\.sql$" || {
+grep -Eq "^gitman-${clean}/internal/postgres/migrations/[0-9]+_[^/]+\.sql$" <<<"$source_list" || {
   echo 'source archive missing SQL migrations' >&2; exit 1;
 }
 while IFS= read -r item; do

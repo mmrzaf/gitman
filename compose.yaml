@@ -14,10 +14,12 @@ x-app: &app
   volumes:
     # Step containers mount host paths, so this absolute path must match.
     - ${GITMAN_DATA_DIR:?Set an absolute data directory}:${GITMAN_DATA_DIR}
+    # Use the Compose tmpfs mount type, not a comma-separated tmpfs string:
+    # the latter can be misparsed as multiple mount paths by Docker Compose.
     - type: tmpfs
       target: /tmp
       tmpfs:
-        size: 268435456
+        size: 268435456 # 256 MiB; Docker defaults to noexec,nosuid,nodev
   security_opt: [no-new-privileges:true]
   pids_limit: 512
   logging:
@@ -34,6 +36,8 @@ services:
       POSTGRES_DB: gitman
       POSTGRES_USER: gitman
       POSTGRES_PASSWORD: ${GITMAN_DATABASE_PASSWORD:?Set a URL-safe database password}
+    # Loopback only, for host-side pg_dump/pg_restore and psql. Web and
+    # worker always use the compose network.
     ports:
       - "127.0.0.1:${GITMAN_DATABASE_PORT:-5433}:5432"
     volumes: [database:/var/lib/postgresql]

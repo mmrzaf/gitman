@@ -51,6 +51,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y shellcheck
+      - name: Verify release-note consistency
+        run: node scripts/check-release-metadata.mjs
       - name: Verify source
         env:
           GITMAN_REQUIRE_SHELLCHECK: '1'

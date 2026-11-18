@@ -5,6 +5,20 @@ Each release's section is also its GitHub release notes.
 
 ## Unreleased
 
+## [1.0.2] - 2026-11-18
+
+Gitman 1.0.2 fixes the release and installation workflow. There are no
+application behavior or database schema changes.
+
+### Fixed
+
+- Corrected the Docker Compose temporary-filesystem mount so Docker can start
+  the production services without interpreting mount flags as paths.
+- Validated changelog and in-app release notes against the requested version
+  before running expensive release builds or attempting publication.
+- Made source-archive verification resilient to shell pipeline termination on
+  larger archives.
+
 ## [1.0.0] - 2026-11-17
 
 Gitman's first stable release establishes a clean database schema and a

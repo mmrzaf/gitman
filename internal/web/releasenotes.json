@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "version": "1.0.2",
+      "releasedOn": "2026-11-18",
+      "items": [
+        "Fixed the production Docker Compose temporary-filesystem mount so containers start reliably.",
+        "Release publication validates matching changelog and in-app release notes before building distributables.",
+        "Source-archive verification now works reliably with large archive listings."
+      ]
+    },
+    {
       "version": "1.0.0",
       "releasedOn": "2026-11-17",
       "items": [
