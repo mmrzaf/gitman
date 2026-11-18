@@ -19,15 +19,18 @@ printf 'gitman v1.0.0\n'
 SCRIPT
 chmod +x "$run/release/gitman_linux_amd64" "$run/release/gitman_linux_arm64"
 checksums() {
-  (cd "$run/release" && sha256sum -- gitman_linux_amd64 gitman_linux_arm64 gitman-1.0.0.tar.gz gitman-docker-image-linux-amd64-1.0.0.tar.gz | sort -k2 > SHA256SUMS)
+	(cd "$run/release" && sha256sum -- gitman_linux_amd64 gitman_linux_arm64 gitman-1.0.0.tar.gz gitman-docker-image-linux-amd64-1.0.0.tar.gz | sort -k2 >SHA256SUMS)
 }
 reject() {
-  if "$root/scripts/verify-release-artifacts.sh" v1.0.0 "$run/release" >"$run/rejection.log" 2>&1; then
-    echo "release artifact checker accepted $1" >&2
-    exit 1
-  fi
+	if "$root/scripts/verify-release-artifacts.sh" v1.0.0 "$run/release" >"$run/rejection.log" 2>&1; then
+		echo "release artifact checker accepted $1" >&2
+		exit 1
+	fi
 }
 checksums
+"$root/scripts/verify-release-artifacts.sh" v1.0.0 "$run/release"
+# Artifact transports drop the execute bit; the verifier must still smoke-test it.
+chmod -x "$run/release/gitman_linux_amd64" "$run/release/gitman_linux_arm64"
 "$root/scripts/verify-release-artifacts.sh" v1.0.0 "$run/release"
 printf 'tamper\n' >>"$run/release/gitman_linux_arm64"
 reject 'tampered binary'
