@@ -5,6 +5,17 @@ Each release's section is also its GitHub release notes.
 
 ## Unreleased
 
+## [1.0.4] - 2026-11-18
+
+Gitman 1.0.4 makes release artifact verification independent of file modes.
+There are no application behavior or database schema changes.
+
+### Fixed
+
+- The release artifact validator now runs the shipped binary from a temporary
+  copy, so it verifies a downloaded artifact set whose execute bit was dropped
+  in transit instead of failing with "Permission denied".
+
 ## [1.0.3] - 2026-11-18
 
 Gitman 1.0.3 makes the browser check for scroll restoration on live pages
