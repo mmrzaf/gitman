@@ -71,6 +71,26 @@ jobs:
             echo "prerelease=$prerelease"
           } >>"$GITHUB_OUTPUT"
 
+      # Validate the actual tagged commit before starting expensive release jobs.
+      - name: Checkout release tag for metadata validation
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ steps.meta.outputs.version }}
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - name: Validate release metadata and offline publication checks
+        shell: bash
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          node scripts/check-release-metadata.mjs "$VERSION"
+          scripts/release-artifacts-test.sh
+          scripts/promote-floating-tags-test.sh
+
   verify-source:
     name: Verify source
     runs-on: ubuntu-latest
@@ -481,8 +501,6 @@ jobs:
           pattern: release-*
           path: release
           merge-multiple: true
-      - name: Verify release tooling
-        run: scripts/release-artifacts-test.sh
       - name: Check all release assets and offline Docker image
         env:
           VERSION: ${{ needs.release-metadata.outputs.version }}
@@ -554,8 +572,6 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Verify floating-tag safeguards
-        run: scripts/promote-floating-tags-test.sh
       - name: Promote existing multi-arch manifest without rebuilding
         shell: bash
         env:
