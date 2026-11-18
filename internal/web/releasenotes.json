@@ -1,6 +1,13 @@
 {
   "releases": [
     {
+      "version": "1.0.3",
+      "releasedOn": "2026-11-18",
+      "items": [
+        "No user-facing changes: this release fixes a flaky browser check for scroll restoration on live pages."
+      ]
+    },
+    {
       "version": "1.0.2",
       "releasedOn": "2026-11-18",
       "items": [

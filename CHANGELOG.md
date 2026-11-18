@@ -5,6 +5,18 @@ Each release's section is also its GitHub release notes.
 
 ## Unreleased
 
+## [1.0.3] - 2026-11-18
+
+Gitman 1.0.3 makes the browser check for scroll restoration on live pages
+reliable. There are no application behavior or database schema changes.
+
+### Fixed
+
+- The scroll-restoration check in the browser acceptance suite now gives the
+  Activity panel a scrollable viewport under the site's content-security
+  policy, and confirms the panel was actually replaced before asserting its
+  scroll position. It no longer fails when the panel has nothing to scroll.
+
 ## [1.0.2] - 2026-11-18
 
 Gitman 1.0.2 fixes the release and installation workflow. There are no
