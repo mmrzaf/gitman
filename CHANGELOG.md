@@ -5,6 +5,22 @@ Each release's section is also its GitHub release notes.
 
 ## Unreleased
 
+## [1.1.1] - 2026-11-24
+
+Gitman 1.1.1 fixes build-cache enforcement when the Docker client has no
+buildx plugin and removes horizontal scrolling from Home's repository and
+deployment panels.
+
+### Fixed
+
+- Build-cache enforcement probes the Docker client and uses
+  `--max-used-space` when it is available, otherwise the legacy
+  `--keep-storage` ceiling. The image does not bundle buildx, so the previous
+  flag failed on every worker.
+- Home's repository table and the deployment panels on Home and a repository's
+  Overview use fixed, wrapping columns instead of a horizontal scroller, at
+  every width from 320 to 1920 pixels.
+
 ## [1.1.0] - 2026-11-24
 
 Gitman 1.1.0 fixes build-cache enforcement on Docker 29, restores deployment
