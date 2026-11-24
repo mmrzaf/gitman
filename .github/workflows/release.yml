@@ -24,7 +24,7 @@ env:
   GOVULNCHECK_VERSION: 'v1.6.0'
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  GO_IMAGE: golang:1.27-alpine
+  GO_IMAGE: golang:1.27.4-alpine
   RUNTIME_IMAGE: alpine:3.24
   DOCKER_CLI_IMAGE: docker:29-cli
   APK_MIRROR: https://dl-cdn.alpinelinux.org/alpine

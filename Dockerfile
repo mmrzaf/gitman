@@ -8,14 +8,14 @@
 # arguments so the image can build behind mirrors:
 #
 #   docker build \
-#     --build-arg GO_IMAGE=registry.example.com/library/golang:1.27-alpine \
+#     --build-arg GO_IMAGE=registry.example.com/library/golang:1.27.4-alpine \
 #     --build-arg RUNTIME_IMAGE=registry.example.com/library/alpine:3.24 \
 #     --build-arg DOCKER_CLI_IMAGE=registry.example.com/library/docker:29-cli \
 #     --build-arg APK_MIRROR=https://alpine.example.com/alpine \
 #     --build-arg GOPROXY=https://goproxy.example.com,direct \
 #     --build-arg VERSION=v1.0.0 \
 #     -t gitman:1.0.0 .
-ARG GO_IMAGE=golang:1.27-alpine
+ARG GO_IMAGE=golang:1.27.4-alpine
 ARG RUNTIME_IMAGE=alpine:3.24
 # The worker's docker client. Taken from the Docker project's own image,
 # whose client is a static binary that runs on any base.

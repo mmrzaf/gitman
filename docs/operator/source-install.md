@@ -20,7 +20,7 @@ make build VERSION=1.0.0
 make install          # installs to /usr/local/bin
 ```
 
-Requires Go 1.27.
+Requires Go 1.27.4 or newer (security patch GO-2026-6859).
 
 ## Running
 
