@@ -67,8 +67,10 @@ func TestPlanFailures(t *testing.T) {
 			"at least one step",
 		},
 		"docker not allowed": {
-			CreateParams{Commit: commit, RefKind: git.KindBranch, RefName: "main",
-				Pipeline: []byte("image: docker:29-cli\ndocker: true\nsteps:\n  - name: b\n    run: docker build .\n")},
+			CreateParams{
+				Commit: commit, RefKind: git.KindBranch, RefName: "main",
+				Pipeline: []byte("image: docker:29-cli\ndocker: true\nsteps:\n  - name: b\n    run: docker build .\n"),
+			},
 			"no rule allows Docker for branch main",
 		},
 		"shipping not allowed": {
@@ -169,6 +171,68 @@ func TestCreateNumbersAndSupersedes(t *testing.T) {
 	}
 	if status != "running" {
 		t.Fatalf("running run became %s after a newer push", status)
+	}
+}
+
+func TestQueuedBlockCountsCanBeScopedToReadableRepos(t *testing.T) {
+	ctx := t.Context()
+	database := pgtest.Open(t)
+	for _, repo := range []struct{ id, name string }{{"r1", "one"}, {"r2", "two"}} {
+		if _, err := database.Pool.Exec(ctx, `INSERT INTO repos (id, name) VALUES ($1, $2)`, repo.id, repo.name); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.Pool.Exec(ctx, `
+			INSERT INTO runs (id, repo_id, number, commit_hash, ref_kind, ref_name, trigger, status, required_images)
+			VALUES ($1, $2, 1, repeat('a', 40), 'branch', 'main', 'push', 'queued', '{}')
+		`, repo.id+"-run", repo.id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	all, err := NewService(database).QueuedBlockCounts(ctx)
+	if err != nil || all[BlockNoWorkers] != 2 {
+		t.Fatalf("global counts = %+v, %v; want two no-worker blocks", all, err)
+	}
+	scoped, err := NewService(database).QueuedBlockCountsForRepos(ctx, []string{"r1"})
+	if err != nil || scoped[BlockNoWorkers] != 1 {
+		t.Fatalf("scoped counts = %+v, %v; want one", scoped, err)
+	}
+}
+
+func TestInadmissibleRunDoesNotSupersedeQueuedWork(t *testing.T) {
+	ctx := t.Context()
+	database := pgtest.Open(t)
+	seedRepo(t, database, "r1", "demo")
+	queued := CreateParams{
+		RepoID: "r1", Commit: strings.Repeat("a", 40), RefKind: git.KindBranch, RefName: "main",
+		Trigger: TriggerPush, Pipeline: []byte("image: alpine:3.20\nsteps:\n  - name: build\n    run: echo hi\n"),
+	}
+	var first *Created
+	if err := database.Tx(ctx, func(tx postgres.Tx) error {
+		var err error
+		first, err = NewService(database).CreateTx(ctx, tx, queued)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// A manual run on a ref with no Docker rule is failed at creation. It
+	// must not cancel the queued push run it was supposed to replace.
+	failed := CreateParams{
+		RepoID: "r1", Commit: strings.Repeat("b", 40), RefKind: git.KindBranch, RefName: "main",
+		Trigger: TriggerManual, Decision: repo.Decision{CanPush: true},
+		Pipeline: []byte("image: docker:29-cli\ndocker: true\nsteps:\n  - name: b\n    run: docker build .\n"),
+	}
+	if err := database.Tx(ctx, func(tx postgres.Tx) error {
+		_, err := NewService(database).CreateTx(ctx, tx, failed)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var status string
+	if err := database.Pool.QueryRow(ctx, `SELECT status FROM runs WHERE id = $1`, first.ID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "queued" {
+		t.Fatalf("inadmissible run cancelled queued work: first run is %s", status)
 	}
 }
 

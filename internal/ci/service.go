@@ -128,13 +128,18 @@ func (s *Service) CreateTx(ctx context.Context, tx postgres.Tx, p CreateParams) 
 		}
 	}
 
-	superseded, err := supersedeQueued(ctx, tx, p.RepoID, p.RefKind, p.RefName, run.Number, fmt.Sprintf("Superseded by #%d.", run.Number))
-	if err != nil {
-		return nil, err
-	}
-	for _, runID := range superseded {
-		if err := notifyRun(ctx, tx, runID); err != nil {
+	// A run that was never admitted must not cancel queued work: a manual
+	// run on a ref with no Docker rule, or a push rejected by the pending
+	// budget, would otherwise kill the run it was meant to replace.
+	if pl.status == StatusQueued && p.Trigger != TriggerManual {
+		superseded, err := supersedeQueued(ctx, tx, p.RepoID, p.RefKind, p.RefName, run.Number, fmt.Sprintf("Superseded by #%d.", run.Number))
+		if err != nil {
 			return nil, err
+		}
+		for _, runID := range superseded {
+			if err := notifyRun(ctx, tx, runID); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if err := notifyRun(ctx, tx, run.ID); err != nil {

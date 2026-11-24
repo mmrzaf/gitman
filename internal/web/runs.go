@@ -131,8 +131,10 @@ func (a *App) runs(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	page := runsPage{repoFrame: repoFrame{Repo: repo, Section: "runs"}, Runs: runs, Before: before,
-		Runnable: runnable, Dialog: dialogFrom(r, "run-new")}
+	page := runsPage{
+		repoFrame: repoFrame{Repo: repo, Section: "runs"}, Runs: runs, Before: before,
+		Runnable: runnable, Dialog: dialogFrom(r, "run-new"),
+	}
 	if len(runnable) == 0 {
 		page.Dialog = ""
 	}
@@ -246,7 +248,6 @@ func (a *App) runLog(w http.ResponseWriter, r *http.Request) error {
 	if step.LogsExpiredAt != nil {
 		return apperr.New(apperr.KindNotFound, "This output expired under the log retention policy.")
 	}
-	setRawHeaders(w.Header(), "text/plain; charset=utf-8", fmt.Sprintf("%s-%d-%s.log", repo.Name, run.Number, safeFileName(step.Name)))
 	out := &deadlineWriter{dst: w, controller: http.NewResponseController(w)}
 	after := -1
 	started := false
@@ -261,7 +262,13 @@ func (a *App) runLog(w http.ResponseWriter, r *http.Request) error {
 			a.log.Warn("log download failed", "step", step.ID, "error", err)
 			return nil
 		}
+		setHeaders := func() {
+			setRawHeaders(w.Header(), "text/plain; charset=utf-8", fmt.Sprintf("%s-%d-%s.log", repo.Name, run.Number, safeFileName(step.Name)))
+		}
 		for _, c := range chunks {
+			if !started {
+				setHeaders()
+			}
 			started = true
 			if _, err := out.Write([]byte(c.Content)); err != nil {
 				return nil
@@ -269,6 +276,9 @@ func (a *App) runLog(w http.ResponseWriter, r *http.Request) error {
 			after = c.Sequence
 		}
 		if len(chunks) < 256 {
+			if !started {
+				setHeaders()
+			}
 			return nil
 		}
 	}
@@ -342,6 +352,7 @@ func (a *App) runnableRefs(r *http.Request, repo *reposvc.Repo) ([]runnableRef, 
 	}
 	return runnableRefsFor(r, repo, indexed, rules), nil
 }
+
 func runnableRefsFor(r *http.Request, repo *reposvc.Repo, indexed []reposvc.IndexedRef, rules []reposvc.Rule) []runnableRef {
 	person := personFrom(r)
 	var branches, tags []runnableRef
@@ -349,8 +360,10 @@ func runnableRefsFor(r *http.Request, repo *reposvc.Repo, indexed []reposvc.Inde
 		if !reposvc.Evaluate(rules, ref.Kind, ref.Name, person.ID, person.IsAdmin, repo.DefaultPushPolicy, repo.DefaultPushPeople).CanPush {
 			continue
 		}
-		rr := runnableRef{Kind: ref.Kind, Name: ref.Name, FullName: git.FullName(ref.Kind, ref.Name),
-			IsDefault: ref.Kind == git.KindBranch && ref.Name == repo.DefaultBranch}
+		rr := runnableRef{
+			Kind: ref.Kind, Name: ref.Name, FullName: git.FullName(ref.Kind, ref.Name),
+			IsDefault: ref.Kind == git.KindBranch && ref.Name == repo.DefaultBranch,
+		}
 		if ref.Kind == git.KindTag {
 			tags = append(tags, rr)
 		} else {
@@ -420,6 +433,22 @@ func (a *App) startRun(w http.ResponseWriter, r *http.Request, repo *reposvc.Rep
 	gitRepo, err := a.repos.Open(repo)
 	if err != nil {
 		return err
+	}
+	data, problem, err := ci.LoadPipeline(r.Context(), gitRepo, commit)
+	if err != nil {
+		return err
+	}
+	if status, reason := ci.Preview(ci.CreateParams{
+		RepoID: repo.ID, Commit: commit, RefKind: kind, RefName: name,
+		Trigger: ci.TriggerManual, PersonID: person.ID, Decision: decision,
+		Pipeline: data, PipelineProblem: problem,
+	}); status == ci.StatusFailed {
+		// A missing or invalid pipeline is still recorded as a failed run:
+		// the person needs the record and the push path reports the same
+		// reason. Only a rule/decision failure is refused before creation.
+		if _, parseErr := ci.Parse(data); parseErr == nil {
+			return apperr.New(apperr.KindInvalid, "Run not started: "+reason+" Add a rule in Settings → Ref rules, or choose a ref whose rule allows it.")
+		}
 	}
 	run, err := a.ci.Start(r.Context(), ci.StartParams{
 		RepoID: repo.ID, Git: gitRepo, Commit: commit, RefKind: kind, RefName: name,

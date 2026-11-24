@@ -22,7 +22,7 @@ func TestDeploymentComparisonUsesActualSourceNotDefault(t *testing.T) {
 	if got["staging"].State != "equal" {
 		t.Fatalf("staging comparison = %+v", got["staging"])
 	}
-	if got["production"].State != "unknown" {
+	if got["production"].State != "missing_ref" {
 		t.Fatalf("deleted release tag comparison = %+v", got["production"])
 	}
 }

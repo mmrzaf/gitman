@@ -168,7 +168,7 @@ func (a *App) buildHomeData(r *http.Request, createForm *form) (homePage, error)
 	}
 	var items []attention
 	if slices.ContainsFunc(inProgress, func(run ci.Summary) bool { return run.Status == ci.StatusQueued }) {
-		blocked, err := a.ci.QueuedBlockCounts(ctx)
+		blocked, err := a.ci.QueuedBlockCountsForRepos(ctx, readableIDs)
 		if err != nil {
 			return homePage{}, err
 		}
@@ -177,9 +177,18 @@ func (a *App) buildHomeData(r *http.Request, createForm *form) (homePage, error)
 			total += n
 		}
 		if total > 0 {
-			text := fmt.Sprintf("%d queued run%s cannot start: no ready worker is available.", total, plural(total))
-			if n := blocked[ci.BlockMissingImages]; n > 0 {
-				text = fmt.Sprintf("%d queued run%s cannot start: no ready worker has the required images.", n, plural(n))
+			text := fmt.Sprintf("%d queued run%s cannot start.", total, plural(total))
+			switch {
+			case blocked[ci.BlockMaintenance] > 0:
+				text += " The instance is in maintenance mode."
+			case blocked[ci.BlockMissingImages] > 0:
+				text += " No ready worker has the required images."
+			case blocked[ci.BlockOffline] > 0:
+				text += " Every worker is stopped or not responding."
+			case blocked[ci.BlockUnhealthy] > 0:
+				text += " A worker is online but not ready."
+			case blocked[ci.BlockNoWorkers] > 0:
+				text += " No worker has registered."
 			}
 			// A new queued run changes the dismissal key, so a new blocker
 			// can draw attention even after an earlier one was ignored.
@@ -218,8 +227,10 @@ func (a *App) buildHomeData(r *http.Request, createForm *form) (homePage, error)
 		if run, ok := latestRuns[repo.ID]; ok {
 			row.Run = &run
 			if run.Status == ci.StatusFailed {
-				failed = append(failed, attention{Key: "run:" + run.ID, Icon: "failed", URL: runPath(repo.Name, run.Number),
-					Text: fmt.Sprintf("%s: run #%d of %s %s failed.", repo.Name, run.Number, run.RefKind, run.RefName)})
+				failed = append(failed, attention{
+					Key: "run:" + run.ID, Icon: "failed", URL: runPath(repo.Name, run.Number),
+					Text: fmt.Sprintf("%s: run #%d of %s %s failed.", repo.Name, run.Number, run.RefKind, run.RefName),
+				})
 			}
 		}
 		head, pushed := heads[repo.ID]
@@ -252,8 +263,10 @@ func (a *App) buildHomeData(r *http.Request, createForm *form) (homePage, error)
 			}
 			dep.Behind = dep.Comparison.Ahead
 			if dep.Behind > 0 {
-				behind = append(behind, attention{Key: fmt.Sprintf("deploy:%s:%s:%s", repo.ID, d.Target, d.Commit), Icon: "compare", URL: dep.SinceURL,
-					Text: fmt.Sprintf("%s: %s is %d commit%s behind %s %s.", repo.Name, d.Target, dep.Behind, plural(dep.Behind), d.SourceKind, d.SourceName)})
+				behind = append(behind, attention{
+					Key: fmt.Sprintf("deploy:%s:%s:%s", repo.ID, d.Target, d.Commit), Icon: "compare", URL: dep.SinceURL,
+					Text: fmt.Sprintf("%s: %s is %d commit%s behind %s %s.", repo.Name, d.Target, dep.Behind, plural(dep.Behind), d.SourceKind, d.SourceName),
+				})
 			}
 			page.Deployments = append(page.Deployments, dep)
 		}

@@ -680,7 +680,7 @@ func TestQueuedRunSaysNoWorkerIsOnline(t *testing.T) {
 	resp, body := b.do(http.MethodGet, "/demo/runs/1", nil, nil)
 	expect(t, resp, body, http.StatusOK, notice)
 	resp, body = b.do(http.MethodGet, "/", nil, nil)
-	expect(t, resp, body, http.StatusOK, "Needs attention", "1 queued run cannot start: no ready worker is available.")
+	expect(t, resp, body, http.StatusOK, "Needs attention", "1 queued run cannot start. No worker has registered.")
 
 	if err := ci.NewService(e.db).RegisterWorker(context.Background(), "w1", "host"); err != nil {
 		t.Fatal(err)
@@ -691,7 +691,7 @@ func TestQueuedRunSaysNoWorkerIsOnline(t *testing.T) {
 	for _, path := range []string{"/demo/runs/1", "/"} {
 		resp, body = b.do(http.MethodGet, path, nil, nil)
 		expect(t, resp, body, http.StatusOK)
-		if strings.Contains(body, notice) || strings.Contains(body, "cannot start: no ready worker") {
+		if strings.Contains(body, notice) || strings.Contains(body, "cannot start. No worker") {
 			t.Errorf("%s still says no worker is online while one is", path)
 		}
 	}

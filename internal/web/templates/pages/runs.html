@@ -20,7 +20,7 @@
             </optgroup>
           </select>
         </span>
-        <p class="field-hint" id="f-run-ref-hint">Runs its latest commit, as a push would: with its rule's target, secrets and Docker.</p>
+        <p class="field-hint" id="f-run-ref-hint">Runs its latest commit with the rule for this ref. A ref with no matching rule cannot use Docker, secrets or deployments.</p>
       </div>
     </div>
     <footer class="dialog-footer"><button type="button" class="btn js-only" data-dialog-close>Cancel</button><button type="submit" class="btn btn-primary">Start run</button></footer>

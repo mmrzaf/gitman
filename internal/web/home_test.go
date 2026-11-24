@@ -124,7 +124,7 @@ func TestHomeNeedsAttention(t *testing.T) {
 	        VALUES ('r4', $1, 4, $2, 'branch', 'main', 'manual', $3, 'queued')`, repo.ID, head, person.ID)
 	insert(`UPDATE workers SET stopped_at = now()`)
 	resp, body = b.do(http.MethodGet, "/", nil, nil)
-	expect(t, resp, body, http.StatusOK, "1 queued run cannot start: no ready worker is available.")
+	expect(t, resp, body, http.StatusOK, "1 queued run cannot start. Every worker is stopped or not responding.")
 }
 
 // A recently active project appears before alphabetically earlier projects,
