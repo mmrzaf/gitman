@@ -560,6 +560,27 @@ for (const scheme of ["light", "dark"]) {
   }
   await context.close();
 
+  // Long deployment comparisons and ref names must wrap inside the panel
+  // instead of forcing it to scroll sideways.
+  const longRows = await signedIn({ viewport: { width: 1920, height: 900 } });
+  for (const path of ["/", "/demo"]) {
+    await longRows.page.goto(base + path);
+    const fit = await longRows.page.evaluate(() => {
+      const cells = [...document.querySelectorAll(".deployments-table td[data-label='Comparison'] .table-cell")];
+      for (const cell of cells) {
+        cell.append(" 573 commits not deployed vs branch develop-feature/reconciliation-across-payment-providers-and-currencies");
+      }
+      const run = document.querySelector(".home-repos .run-origin");
+      if (run) run.textContent = "branch feature/reconciliation-across-payment-providers-and-currencies";
+      const overflowing = [...document.querySelectorAll(".deployments-scroll, .page-home .panel-scroll, .page-repository .panel-scroll")]
+        .filter((el) => el.scrollWidth > el.clientWidth + 1)
+        .map((el) => `${el.className} +${el.scrollWidth - el.clientWidth}px`);
+      return { rows: cells.length, overflowing };
+    });
+    check(`long deployment rows fit at 1920px: ${path}`, fit.rows > 0 && fit.overflowing.length === 0, JSON.stringify(fit));
+  }
+  await longRows.context.close();
+
   // A wheel over a table cell must scroll the fitted panel around it, even
   // when the cell is itself a scroll container with nothing to scroll.
   // Cells used to trap the wheel because of overscroll-behavior: contain.

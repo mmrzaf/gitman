@@ -841,12 +841,67 @@ time { white-space: nowrap; }
 .table .cell-end { text-align: right; }
 /* The cell that gives way when a row is too wide, never below what reads. */
 .table .cell-truncate { max-width: 0; min-width: 11rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Home's last-run column is content, not a 1%-wide shrink column: the
-   shift status and ref need room, and an internally scrolling cell clips
-   them at the panel edge. The card layout below 641px keeps width: auto. */
+/* Dashboard tables fit their panel with fixed, wrapping columns; the card
+   layout below 641px takes over. */
 @media (min-width: 641px) {
-  .table.home-repos .home-run { width: 13rem; min-width: 13rem; }
-  .table.home-repos .home-run .table-cell { overflow: hidden; }
+  .page-home .table-scroll,
+  .deployments-scroll { overflow-x: hidden; }
+  .page-home .table.home-repos,
+  :is(.page-home, .page-repository) .table.deployments-table { table-layout: fixed; }
+
+  .page-home .table.home-repos thead th:nth-child(1) { width: 22%; }
+  .page-home .table.home-repos thead th:nth-child(2) { width: 54%; }
+  .page-home .table.home-repos thead th:nth-child(3) { width: 24%; }
+
+  .page-home .table.deployments-table thead th:nth-child(1) { width: 15%; }
+  .page-home .table.deployments-table thead th:nth-child(2) { width: 10%; }
+  .page-home .table.deployments-table thead th:nth-child(3) { width: 17%; }
+  .page-home .table.deployments-table thead th:nth-child(4) { width: 20%; }
+  .page-home .table.deployments-table thead th:nth-child(5) { width: 38%; }
+
+  .page-repository .table.deployments-table thead th:nth-child(1) { width: 18%; }
+  .page-repository .table.deployments-table thead th:nth-child(2) { width: 22%; }
+  .page-repository .table.deployments-table thead th:nth-child(3) { width: 24%; }
+  .page-repository .table.deployments-table thead th:nth-child(4) { width: 36%; }
+
+  .page-home .table.home-repos thead th,
+  :is(.page-home, .page-repository) .table.deployments-table thead th {
+    height: auto;
+    min-height: 34px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .page-home .table.home-repos tbody th,
+  .page-home .table.home-repos tbody td,
+  :is(.page-home, .page-repository) .table.deployments-table tbody th,
+  :is(.page-home, .page-repository) .table.deployments-table tbody td { height: auto; }
+  .page-home .table.home-repos .table-cell,
+  :is(.page-home, .page-repository) .table.deployments-table .table-cell {
+    height: auto;
+    min-width: 0;
+    overflow: visible;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .page-home .table.home-repos .cell-stack > * {
+    white-space: normal;
+    overflow: visible;
+    overflow-wrap: anywhere;
+  }
+  .page-home .table.home-repos .cell-truncate {
+    max-width: none;
+    min-width: 0;
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+  }
+  .page-home .table.home-repos .home-run,
+  :is(.page-home, .page-repository) .table.deployments-table .cell-shrink {
+    width: auto;
+    min-width: 0;
+    white-space: normal;
+  }
+  .page-home .table.home-repos .home-run .table-cell > .cluster { flex-wrap: wrap; }
 }
 .table .cell-muted { color: var(--muted); }
 .table .cell-actions { display: inline-flex; align-items: center; gap: var(--sp-1); }
@@ -1512,6 +1567,7 @@ h1.path { font-size: var(--text-xl); letter-spacing: -0.01em; }
   .fit-auto { flex: 0 1 auto; min-height: 0; max-height: 45%; }
   .fit-4 { flex: 4 1 0; }
   .fit > .panel-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+  .page-home .fit > .panel-scroll { overflow-x: hidden; }
   .fit > .panel-scroll > .empty { min-height: 100%; align-content: center; padding: var(--sp-3) var(--sp-4); gap: var(--sp-1); }
   .fit > .panel-scroll > .empty .icon { display: none; }
   .fit .feed-scroll { max-height: none; }

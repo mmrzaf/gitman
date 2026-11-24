@@ -23,7 +23,7 @@ for (const js of [true, false]) {
     if (result.violations.length) errors.push(`${theme} ${path}: ${JSON.stringify(result.violations.map(v=>({id:v.id,nodes:v.nodes.map(n=>n.target)})))}`);
    }
    await page.screenshot({path:`${shots}/${js?'js':'nojs'}-${theme}-${i}.png`,fullPage:true});
-   for (const width of [320, 390, 768, 1024]) {
+   for (const width of [320, 390, 768, 1024, 1440, 1920]) {
     await page.setViewportSize({width,height:844});
     const layoutErrors = await page.evaluate(() => {
      const problems = [];
@@ -33,6 +33,11 @@ for (const js of [true, false]) {
        return el.checkVisibility() && box.right > innerWidth + 1;
       }).slice(0, 6).map(el => `${el.tagName}.${el.className}`);
       problems.push(`page overflow: ${overflowing.join(', ')}`);
+     }
+     for (const panel of document.querySelectorAll('.page-home .panel-scroll, .page-home .table-scroll')) {
+      if (panel.checkVisibility() && panel.scrollWidth > panel.clientWidth + 1) {
+       problems.push(`panel overflow: ${panel.className} ${panel.scrollWidth}>${panel.clientWidth}`);
+      }
      }
      if (innerWidth <= 640) {
       for (const cell of document.querySelectorAll('.table-cards .cell-shrink')) {
@@ -94,4 +99,4 @@ for (const js of [true, false]) {
 }
 await browser.close();
 if (errors.length) throw Error(errors.join('\n'));
-console.log(`PASS: ${pages.length} screens, both themes, 320/390/768/1024/1440px, JS/no-JS, axe and keyboard/theme/dialog checks`);
+console.log(`PASS: ${pages.length} screens, both themes, 320/390/768/1024/1440/1920px, JS/no-JS, axe and keyboard/theme/dialog checks`);
