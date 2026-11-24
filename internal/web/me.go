@@ -18,6 +18,9 @@ type mePage struct {
 	PasswordForm *form
 	TokenForm    *form
 	NewToken     string
+	// Bootstrap hides token and session actions until the person changes
+	// the temporary password.
+	Bootstrap bool
 	// CurrentSession is the ID of the session making this request.
 	CurrentSession string
 	// Tab is "tokens", "sessions" or "password"; Dialog is "token-new" or
@@ -40,10 +43,15 @@ func (a *App) meView(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	page := mePage{Repositories: repositories,
-		Tokens: tokens, Sessions: sessions, CurrentSession: sessionIDFrom(r),
+	page := mePage{
+		Repositories: repositories,
+		Tokens:       tokens, Sessions: sessions, CurrentSession: sessionIDFrom(r),
 		PasswordForm: newForm(nil), TokenForm: newForm(nil),
 		Tab: tabFrom(r, "tokens", "sessions", "password"), Dialog: dialogFrom(r, "token-new"),
+		Bootstrap: person.BootstrapExpiresAt != nil,
+	}
+	if page.Bootstrap {
+		page.Tab, page.Dialog = "password", ""
 	}
 	if secret, ok := a.consumeCredential(w, r, revealToken); ok {
 		page.NewToken, page.Tab = secret.value, "tokens"
@@ -112,6 +120,10 @@ func (a *App) reRenderMe(w http.ResponseWriter, r *http.Request, page mePage) er
 	if err != nil {
 		return err
 	}
+	page.Bootstrap = personFrom(r).BootstrapExpiresAt != nil
+	if page.Bootstrap {
+		page.Tab, page.Dialog = "password", ""
+	}
 	a.render(w, r, http.StatusUnprocessableEntity, "me", "Your account", page)
 	return nil
 }
@@ -129,7 +141,7 @@ func (a *App) meRevokeSession(w http.ResponseWriter, r *http.Request) error {
 	message := "Revoked that session."
 	if session.ID == sessionIDFrom(r) {
 		a.clearSessionCookie(w)
-		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		a.redirect(w, r, "/login", flashSuccess, "You have been signed out.")
 		return nil
 	}
 	a.redirect(w, r, "/me?tab=sessions", flashSuccess, message)

@@ -85,7 +85,7 @@ func TestMeTokens(t *testing.T) {
 	}
 	resp, body = b.do(http.MethodGet, "/me", nil, nil)
 	expect(t, resp, body, http.StatusOK, "Your new token", "laptop", "write")
-	if cc := resp.Header.Get("Cache-Control"); cc != "no-store" {
+	if cc := resp.Header.Get("Cache-Control"); cc != "private, no-store" {
 		t.Errorf("page showing a new token has Cache-Control %q, want no-store", cc)
 	}
 	start := strings.Index(body, `data-copy="`) + len(`data-copy="`)
@@ -140,6 +140,44 @@ func mustPerson(t *testing.T, database *postgres.DB, username string) *auth.Pers
 	return p
 }
 
+func TestSigningYourselfOutClearsTheSessionCookie(t *testing.T) {
+	database, b := setup(t)
+	signIn(t, database, b, "lead", true)
+	ctx := context.Background()
+	_, currentID, err := auth.NewService(database).SessionIdentity(ctx, b.cookies["gitman_session"].Value)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Revoking the session making the request must clear its cookie on the
+	// same response; a later request would also sign out, but only after a
+	// round trip that still sends the dead cookie.
+	resp, body := b.do(http.MethodPost, "/me/sessions/"+currentID+"/revoke", url.Values{}, nil)
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/login" {
+		t.Fatalf("revoke own session = %d %q\n%s", resp.StatusCode, resp.Header.Get("Location"), body)
+	}
+	if _, kept := b.cookies["gitman_session"]; kept {
+		t.Fatal("revoking the current session left its cookie in the browser")
+	}
+
+	// Disabling your own account has the same shape, once another admin
+	// exists so it is allowed.
+	admin := newBrowser(t, b.server)
+	if resp, body := login(admin, "lead", "correct-horse-battery", "/"); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("sign in again as lead: %d\n%s", resp.StatusCode, body)
+	}
+	if _, err := auth.NewService(database).Create(ctx, "sara", "correct-horse-battery", true, ""); err != nil {
+		t.Fatal(err)
+	}
+	resp, body = admin.do(http.MethodPost, "/people/lead/disable", url.Values{}, nil)
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/login" {
+		t.Fatalf("disable own account = %d %q\n%s", resp.StatusCode, resp.Header.Get("Location"), body)
+	}
+	if _, kept := admin.cookies["gitman_session"]; kept {
+		t.Fatal("disabling your own account left its cookie in the browser")
+	}
+}
+
 func TestPeopleRequiresAdmin(t *testing.T) {
 	database, b := setup(t)
 	signIn(t, database, b, "darius", false)
@@ -162,7 +200,7 @@ func TestPeopleManagement(t *testing.T) {
 	}
 	resp, body = b.do(http.MethodGet, "/people", nil, nil)
 	expect(t, resp, body, http.StatusOK, "Password for sara")
-	if cc := resp.Header.Get("Cache-Control"); cc != "no-store" {
+	if cc := resp.Header.Get("Cache-Control"); cc != "private, no-store" {
 		t.Errorf("page showing password has Cache-Control %q, want no-store", cc)
 	}
 	resp, body = b.do(http.MethodGet, "/people", nil, nil)

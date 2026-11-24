@@ -168,6 +168,7 @@
           {{- $visibility := $af.Get "visibility"}}
           <label class="choice"><input type="radio" name="visibility" value="everyone"{{if or (eq $visibility "") (eq $visibility "everyone")}} checked{{end}}><span class="choice-label">Everyone</span><span class="choice-hint">Anyone who can sign in.</span></label>
           <label class="choice"><input type="radio" name="visibility" value="restricted"{{if eq $visibility "restricted"}} checked{{end}}><span class="choice-label">Restricted</span><span class="choice-hint">Only its readers and admins.</span></label>
+          {{with index $af.Errors "visibility"}}<p class="field-error" role="alert">{{.}}</p>{{end}}
         </fieldset>
         <fieldset class="choices choices-inline" data-show-when="visibility=restricted">
           <legend>Readers</legend>
@@ -276,6 +277,7 @@
       <legend>Applies to</legend>
       <label class="choice"><input type="radio" name="kind" value="branch"{{if ne ($f.Get "kind") "tag"}} checked{{end}}><span class="choice-label">{{template "icon" "branch"}} Branches</span></label>
       <label class="choice"><input type="radio" name="kind" value="tag"{{if eq ($f.Get "kind") "tag"}} checked{{end}}><span class="choice-label">{{template "icon" "tag"}} Tags</span></label>
+      {{with index $f.Errors "kind"}}<p class="field-error" role="alert">{{.}}</p>{{end}}
     </fieldset>
     <div class="field">
       <label class="field-label" for="{{$id}}-pattern">Name or pattern</label>

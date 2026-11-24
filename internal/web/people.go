@@ -87,30 +87,27 @@ func (a *App) personByUsername(r *http.Request) (*auth.Person, error) {
 	return p, err
 }
 
-// personAction runs an admin action on the {username} person and
-// redirects back to /people with its outcome. ErrLastAdmin is an outcome
-// to explain, not a failure.
-func (a *App) personAction(w http.ResponseWriter, r *http.Request, act func(p *auth.Person) (string, error)) error {
+func (a *App) peopleDisable(w http.ResponseWriter, r *http.Request) error {
 	p, err := a.personByUsername(r)
 	if err != nil {
 		return err
 	}
-	message, err := act(p)
-	if errors.Is(err, auth.ErrLastAdmin) {
-		a.redirect(w, r, "/people", flashError, apperr.PublicMessage(err))
-		return nil
-	}
-	if err != nil {
+	if err := a.people.Disable(r.Context(), p.ID, personFrom(r).ID); err != nil {
+		if errors.Is(err, auth.ErrLastAdmin) {
+			a.redirect(w, r, "/people", flashError, apperr.PublicMessage(err))
+			return nil
+		}
 		return err
+	}
+	message := "Disabled " + p.Username + "."
+	if p.ID == personFrom(r).ID {
+		// The account is disabled and signed out; /people would be a 403.
+		a.clearSessionCookie(w)
+		a.redirect(w, r, "/login", flashSuccess, message)
+		return nil
 	}
 	a.redirect(w, r, "/people", flashSuccess, message)
 	return nil
-}
-
-func (a *App) peopleDisable(w http.ResponseWriter, r *http.Request) error {
-	return a.personAction(w, r, func(p *auth.Person) (string, error) {
-		return "Disabled " + p.Username + ".", a.people.Disable(r.Context(), p.ID, personFrom(r).ID)
-	})
 }
 
 func (a *App) peopleEnable(w http.ResponseWriter, r *http.Request) error {
@@ -135,13 +132,28 @@ func (a *App) peopleRole(w http.ResponseWriter, r *http.Request) error {
 		return apperr.New(apperr.KindInvalid, "Choose a valid role.")
 	}
 	isAdmin := role == "admin"
-	return a.personAction(w, r, func(p *auth.Person) (string, error) {
-		role := "a member"
-		if isAdmin {
-			role = "an admin"
+	p, err := a.personByUsername(r)
+	if err != nil {
+		return err
+	}
+	message := p.Username + " is now a member."
+	if isAdmin {
+		message = p.Username + " is now an admin."
+	}
+	if err := a.people.SetAdmin(r.Context(), p.ID, isAdmin, personFrom(r).ID); err != nil {
+		if errors.Is(err, auth.ErrLastAdmin) {
+			a.redirect(w, r, "/people", flashError, apperr.PublicMessage(err))
+			return nil
 		}
-		return p.Username + " is now " + role + ".", a.people.SetAdmin(r.Context(), p.ID, isAdmin, personFrom(r).ID)
-	})
+		return err
+	}
+	if p.ID == personFrom(r).ID && !isAdmin {
+		// /people is admin-only; go somewhere the new member can see.
+		a.redirect(w, r, "/", flashSuccess, message)
+		return nil
+	}
+	a.redirect(w, r, "/people", flashSuccess, message)
+	return nil
 }
 
 // peopleResetPassword gives a person a new, generated password. Not one's

@@ -58,6 +58,11 @@ on("click", "[data-attention-dismiss]", (_event, button) => {
   else dismissed.add(item.dataset.attentionKey);
   save(region, dismissed);
   refresh();
+  // Hiding the focused item would drop focus to the document; keep the
+  // keyboard on the next visible action instead.
+  const next = [...region.querySelectorAll("[data-attention-dismiss]")]
+    .find((candidate) => !candidate.closest("[data-attention-key]").hidden);
+  (next || region.querySelector("[data-attention-toggle]"))?.focus();
 });
 
 on("click", "[data-attention-toggle]", () => {

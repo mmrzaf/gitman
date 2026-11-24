@@ -33,6 +33,11 @@ func (a *App) sessionsRevoke(w http.ResponseWriter, r *http.Request) error {
 	case err != nil:
 		return err
 	}
+	if session.ID == sessionIDFrom(r) {
+		a.clearSessionCookie(w)
+		a.redirect(w, r, "/login", flashSuccess, "You have been signed out.")
+		return nil
+	}
 	a.redirect(w, r, "/sessions", flashSuccess, "Revoked "+session.Username+"'s session.")
 	return nil
 }

@@ -18,8 +18,15 @@ function paramsOf(dialog) {
   return cleared;
 }
 
+const reopening = new WeakSet();
+
 function showModal(dialog) {
-  if (dialog.open) dialog.close();
+  if (dialog.open) {
+    // close() queues a close event. The address handler below must not
+    // treat that internal close as the user dismissing the dialog.
+    reopening.add(dialog);
+    dialog.close();
+  }
   dialog.showModal();
   const target = dialog.querySelector("[aria-invalid=true], [autofocus]");
   target?.focus();
@@ -67,6 +74,7 @@ on("click", "dialog[data-dialog]", (event, dialog) => {
 document.addEventListener("close", (event) => {
   const dialog = event.target;
   if (!(dialog instanceof HTMLDialogElement) || !dialog.matches("[data-dialog]")) return;
+  if (reopening.delete(dialog)) return;
   if (new URL(location.href).searchParams.get("dialog") !== dialog.id) return;
   if (history.state?.dialog === dialog.id) history.back();
   else replace(withParams(paramsOf(dialog)));

@@ -133,7 +133,7 @@ func TestSignInFlow(t *testing.T) {
 	if !strings.Contains(resp.Header.Get("Content-Security-Policy"), "script-src 'self'") {
 		t.Error("missing Content-Security-Policy")
 	}
-	if resp.Header.Get("Cache-Control") != "no-cache" {
+	if resp.Header.Get("Cache-Control") != "private, no-cache" {
 		t.Errorf("HTML Cache-Control = %q", resp.Header.Get("Cache-Control"))
 	}
 
