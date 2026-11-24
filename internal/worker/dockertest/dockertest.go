@@ -93,6 +93,10 @@ system)
  printf '%s\n' "$FAKE_DOCKER_DF"
  exit 0 ;;
 builder)
+ if [ "${3:-}" = "--help" ]; then
+  printf '%s\n' "${FAKE_DOCKER_BUILDER_HELP:-      --max-used-space bytes  Maximum amount of disk space allowed}"
+  exit 0
+ fi
  if [ -n "$FAKE_DOCKER_BUILDER_PRUNE_FAIL" ]; then echo "builder prune unavailable" >&2; exit 1; fi
  printf '%s\n' "$FAKE_DOCKER_BUILDER_PRUNE"
  exit 0 ;;

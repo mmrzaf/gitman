@@ -106,8 +106,8 @@
       <header class="panel-header"><h2 class="panel-title" id="deployments-title">{{template "icon" "ship"}}Deployed <span class="count">{{len .Data.Deployments}}</span></h2></header>
       <div class="panel-scroll" data-live-scroll="deployments">
         {{- if .Data.Deployments}}
-        <div class="table-scroll">
-          <table class="table table-cards">
+        <div class="table-scroll deployments-scroll">
+          <table class="table table-cards deployments-table">
             <thead><tr>
               <th scope="col">Repository</th>
               <th scope="col">Target</th>

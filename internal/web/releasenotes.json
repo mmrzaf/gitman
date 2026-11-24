@@ -1,6 +1,14 @@
 {
   "releases": [
     {
+      "version": "1.1.1",
+      "releasedOn": "2026-11-24",
+      "items": [
+        "Build-cache enforcement works with or without the Docker buildx plugin, using the cap flag the client actually supports.",
+        "Dashboard panels no longer scroll horizontally; repository and deployment rows wrap cleanly at every screen size."
+      ]
+    },
+    {
       "version": "1.1.0",
       "releasedOn": "2026-11-24",
       "items": [

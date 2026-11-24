@@ -320,16 +320,39 @@ func (d *Docker) BuildCache(ctx context.Context) (int64, int64, error) {
 	return 0, 0, nil
 }
 
+// pruneCapFlag returns the cache-size ceiling flag this Docker client
+// supports. A client with buildx exposes --max-used-space; the legacy
+// builder exposes --keep-storage. Probe rather than assume either.
+func (d *Docker) pruneCapFlag(ctx context.Context) (string, error) {
+	out, err := d.command(ctx, "builder", "prune", "--help").CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("read Docker build-cache options: %s", strings.TrimSpace(lastLines(string(out), 3)))
+	}
+	help := string(out)
+	switch {
+	case strings.Contains(help, "--max-used-space"):
+		return "--max-used-space", nil
+	case strings.Contains(help, "--keep-storage"):
+		return "--keep-storage", nil
+	default:
+		return "", errors.New("the Docker client offers no build-cache size limit")
+	}
+}
+
 // PruneBuildCache enforces the storage cap and, when olderThanHours is
-// positive, the age limit. Docker 29 renamed the cap flag: --keep-storage is
-// deprecated and now means --reserved-space (a floor), while --max-used-space
-// is the actual ceiling. --all includes internal/frontend cache; it still
-// removes only unused records, so cache a running build holds is kept. A zero
-// age omits the age filter, for the second pass that makes the cap effective.
+// positive, the age limit. The client chooses the cap flag: --max-used-space
+// with buildx, or the legacy --keep-storage ceiling. --all includes
+// internal/frontend cache; it still removes only unused records, so cache a
+// running build holds is kept. A zero age omits the age filter, for the second
+// pass that makes the cap effective.
 func (d *Docker) PruneBuildCache(ctx context.Context, keepGiB, olderThanHours int) (int64, error) {
 	ctx, cancel := context.WithTimeout(ctx, cachePruneTimeout)
 	defer cancel()
-	args := []string{"builder", "prune", "--force", "--all", "--max-used-space", fmt.Sprintf("%dGiB", keepGiB)}
+	capFlag, err := d.pruneCapFlag(ctx)
+	if err != nil {
+		return 0, err
+	}
+	args := []string{"builder", "prune", "--force", "--all", capFlag, fmt.Sprintf("%dGiB", keepGiB)}
 	if olderThanHours > 0 {
 		args = append(args, "--filter", fmt.Sprintf("until=%dh", olderThanHours))
 	}
