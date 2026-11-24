@@ -23,6 +23,16 @@ func ImageTagForVersion(repository, version string) string {
 	return repository + ":" + version
 }
 
+// versionAliases returns the recorded deployment version and its v-prefixed
+// or unprefixed counterpart, so a pipeline that strips the tag prefix still
+// maps to the image it built.
+func versionAliases(version string) []string {
+	if strings.HasPrefix(version, "v") {
+		return []string{version, strings.TrimPrefix(version, "v")}
+	}
+	return []string{version, "v" + version}
+}
+
 // NormalizeImageReference matches Docker's default registry, namespace and tag.
 // Digests and daemon image IDs retain their identity.
 func NormalizeImageReference(ref string) string {

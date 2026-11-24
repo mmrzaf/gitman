@@ -12,6 +12,11 @@ import (
 	"github.com/mmrzaf/gitman/internal/config"
 )
 
+// maxImageOperationAttempts bounds retries of one durable image operation
+// after infrastructure failures. A wedged daemon must eventually surface an
+// error instead of spinning forever.
+const maxImageOperationAttempts = 5
+
 // images runs the worker's image duties: publishing its host's inventory,
 // enforcing the build-cache policy, and executing operations an admin queued.
 // It is separate from the run loop because a large inventory or prune must not
@@ -127,12 +132,23 @@ func (w *Worker) runImageOperations(ctx context.Context) {
 
 func (w *Worker) executeImageOperation(ctx context.Context, operation *ci.ImageOperation) {
 	result := ci.ImageOperationResult{}
+	// A floor is not a successful trim: the cache remains above its cap.
+	cacheSucceeded := true
 	switch operation.Kind {
 	case ci.ImageOperationCache:
 		reclaimed, err := w.pruneCachePolicy(ctx, operation.Cache)
 		result.ReclaimedBytes = reclaimed
+		var floor *cacheFloorError
+		if errors.As(err, &floor) {
+			// Nothing to free; the host is at its shared-cache floor.
+			w.log.Debug("build cache is above its cap but cannot be reduced by a prune",
+				"operation", operation.ID, "error", floor)
+			cacheSucceeded = false
+			err = nil
+		}
 		if err != nil {
 			result.Error = err.Error()
+			cacheSucceeded = false
 		}
 	case ci.ImageOperationRemove, ci.ImageOperationPrune:
 		var err error
@@ -140,11 +156,15 @@ func (w *Worker) executeImageOperation(ctx context.Context, operation *ci.ImageO
 		if err != nil {
 			if ctx.Err() != nil {
 				result.Error = "The worker shut down before the operation finished."
+			} else if operation.Attempts >= maxImageOperationAttempts {
+				w.log.Warn("image operation failed too many times", "operation", operation.ID, "attempts", operation.Attempts, "error", err)
+				result.Error = fmt.Sprintf("could not apply the operation after %d attempts: %v", operation.Attempts, err)
 			} else {
 				w.log.Warn("could not apply an image operation", "operation", operation.ID, "error", err)
 				// Nothing was removed: return the lease so another worker
-				// can retry, rather than making the admin queue it again.
-				if releaseErr := w.ci.ReleaseImageOperation(context.WithoutCancel(ctx), operation.ID); releaseErr != nil {
+				// can retry with a backoff, rather than making the admin
+				// queue it again.
+				if releaseErr := w.ci.ReleaseImageOperation(context.WithoutCancel(ctx), operation.ID, err.Error()); releaseErr != nil {
 					w.log.Warn("could not release an image operation", "operation", operation.ID, "error", releaseErr)
 				}
 				return
@@ -156,7 +176,7 @@ func (w *Worker) executeImageOperation(ctx context.Context, operation *ci.ImageO
 
 	w.publishInventory(context.WithoutCancel(ctx), true)
 	if operation.Kind == ci.ImageOperationCache {
-		if _, err := w.ci.RecordCachePrune(context.WithoutCancel(ctx), operation.EngineID, result.ReclaimedBytes, result.Error); err != nil {
+		if _, err := w.ci.RecordCachePrune(context.WithoutCancel(ctx), operation.EngineID, result.ReclaimedBytes, result.Error, cacheSucceeded && result.Error == ""); err != nil {
 			w.log.Warn("could not record a cache prune result", "error", err)
 		}
 	}
@@ -194,6 +214,12 @@ func (w *Worker) applyImageTargets(ctx context.Context, targets []ci.ImageTarget
 	refused := make(map[string]string, len(plan.Refuse))
 	for _, image := range plan.Refuse {
 		refused[ci.ImageKey(image)] = image.Refusal
+	}
+	tagsByID := map[string]int{}
+	for _, image := range classified {
+		if image.Tag != "" {
+			tagsByID[image.ID]++
+		}
 	}
 
 	for _, target := range targets {
@@ -240,8 +266,17 @@ func (w *Worker) applyImageTargets(ctx context.Context, targets []ci.ImageTarget
 			result.Results = append(result.Results, ci.ImageResult{Ref: target.Ref, Status: "failed", Reason: err.Error()})
 			continue
 		}
-		result.Results = append(result.Results, ci.ImageResult{Ref: target.Ref, Status: "removed", Bytes: image.Size})
-		result.ReclaimedBytes += image.Size
+		// docker image rm on a tag only untags while another tag still
+		// points at the same image; the layers are freed with the last tag.
+		status, freed := "removed", image.Size
+		if image.Tag != "" {
+			tagsByID[image.ID]--
+			if tagsByID[image.ID] > 0 {
+				status, freed = "untagged", 0
+			}
+		}
+		result.Results = append(result.Results, ci.ImageResult{Ref: target.Ref, Status: status, Bytes: freed})
+		result.ReclaimedBytes += freed
 	}
 	sort.Slice(result.Results, func(i, j int) bool {
 		if result.Results[i].Ref != result.Results[j].Ref {
@@ -262,6 +297,16 @@ func findImage(images []ci.ClassifiedImage, target ci.ImageTarget) (ci.Classifie
 	return ci.ClassifiedImage{}, false
 }
 
+// cacheFloorError reports a cache whose total size cannot reach the cap
+// because most of it is shared with images and Docker will not free it.
+type cacheFloorError struct {
+	size, reclaimable, cap int64
+}
+
+func (e *cacheFloorError) Error() string {
+	return fmt.Sprintf("build cache is %d bytes with %d reclaimable; the cap is %d bytes and the rest is in use or shared with images, so a prune cannot reach it", e.size, e.reclaimable, e.cap)
+}
+
 // pruneCachePolicy enforces the age and cap together, then the cap alone if
 // recent unused cache still keeps the host above it. Only unused cache is
 // removed, so a build using the cache is safe.
@@ -269,28 +314,35 @@ func (w *Worker) pruneCachePolicy(ctx context.Context, policy ci.ImageCachePolic
 	if policy.KeepGiB < 1 || policy.OlderThanHours < 1 {
 		return 0, errors.New("invalid build-cache policy")
 	}
+	capBytes := policy.CacheSizeBytes()
+	// Enforce the age limit even while under the cap: an unused cache older
+	// than the policy should still go, and that is the only way to know.
 	reclaimed, err := w.docker.PruneBuildCache(ctx, policy.KeepGiB, policy.OlderThanHours)
 	if err != nil {
 		return reclaimed, err
 	}
-	size, _, err := w.docker.BuildCache(ctx)
+	size, reclaimable, err := w.docker.BuildCache(ctx)
 	if err != nil {
 		return reclaimed, err
 	}
-	if size <= policy.CacheSizeBytes() {
+	if size <= capBytes || reclaimable == 0 {
 		return reclaimed, nil
 	}
+	// Recent unused cache still keeps the host above the cap; a second
+	// pass without the age filter frees it.
 	more, err := w.docker.PruneBuildCache(ctx, policy.KeepGiB, 0)
 	reclaimed += more
 	if err != nil {
 		return reclaimed, err
 	}
-	size, _, err = w.docker.BuildCache(ctx)
+	size, reclaimable, err = w.docker.BuildCache(ctx)
 	if err != nil {
 		return reclaimed, err
 	}
-	if size > policy.CacheSizeBytes() {
-		return reclaimed, fmt.Errorf("build cache is still %d bytes; active cache may be in use", size)
+	if size > capBytes {
+		// Freeing everything reclaimable still leaves the host above the
+		// cap: the remainder is shared with images or in use.
+		return reclaimed, &cacheFloorError{size: size, reclaimable: reclaimable, cap: capBytes}
 	}
 	return reclaimed, nil
 }
@@ -321,11 +373,22 @@ func (w *Worker) enforceCache(ctx context.Context, trigger string) {
 	policy := ci.ImageCachePolicy{KeepGiB: w.cfg.ImageCache.KeepGiB, OlderThanHours: w.cfg.ImageCache.OlderThanHours()}
 	reclaimed, err := w.pruneCachePolicy(ctx, policy)
 	cacheError := ""
+	success := true
+	var floor *cacheFloorError
+	if errors.As(err, &floor) {
+		// The cap is below what Docker can free because most of the cache
+		// is shared with images.
+		w.log.Debug("build cache is above its cap but cannot be reduced by a prune",
+			"trigger", trigger, "error", floor)
+		err = nil
+		success = false
+	}
 	if err != nil {
 		cacheError = err.Error()
+		success = false
 		w.log.Warn("build cache enforcement failed", "trigger", trigger, "error", err)
 	}
-	previous, recordErr := w.ci.RecordCachePrune(context.WithoutCancel(ctx), engine, reclaimed, cacheError)
+	previous, recordErr := w.ci.RecordCachePrune(context.WithoutCancel(ctx), engine, reclaimed, cacheError, success)
 	if recordErr != nil {
 		w.log.Warn("could not record build cache enforcement", "error", recordErr)
 	}
@@ -335,10 +398,17 @@ func (w *Worker) enforceCache(ctx context.Context, trigger string) {
 	}
 	detail := fmt.Sprintf("automation on %s (%s): cache policy %d GiB, %d hours; reclaimed %d bytes",
 		w.cfg.Hostname, engine, policy.KeepGiB, policy.OlderThanHours, reclaimed)
-	if cacheError != "" {
-		detail += "; error: " + cacheError
+	action := activity.ImageCachePruned
+	if cacheError != "" || floor != nil {
+		action = activity.ImageCachePruneFailed
+		if cacheError != "" {
+			detail += "; error: " + cacheError
+		}
+		if floor != nil {
+			detail += "; " + floor.Error()
+		}
 	}
-	if err := w.ci.RecordImageAudit(context.WithoutCancel(ctx), "", activity.ImageCachePruned, detail); err != nil {
+	if err := w.ci.RecordImageAudit(context.WithoutCancel(ctx), "", action, detail); err != nil {
 		w.log.Warn("could not audit build cache enforcement", "error", err)
 	}
 }
@@ -432,7 +502,11 @@ func (w *Worker) autoPruneBuilt(ctx context.Context, trigger string) {
 	}
 	detail := fmt.Sprintf("automation on %s (%s): %s; removed %d image(s), failed %d, reclaimed %d bytes",
 		w.cfg.Hostname, engine, trigger, removed, failed, result.ReclaimedBytes)
-	if err := w.ci.RecordImageAudit(context.WithoutCancel(ctx), "", activity.ImagesPruned, detail); err != nil {
+	action := activity.ImagesPruned
+	if failed > 0 {
+		action = activity.ImagesPruneFailed
+	}
+	if err := w.ci.RecordImageAudit(context.WithoutCancel(ctx), "", action, detail); err != nil {
 		w.log.Warn("could not audit automatic image pruning", "error", err)
 	}
 }

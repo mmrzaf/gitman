@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"strings"
@@ -83,7 +84,7 @@ func TestPruneBuildCacheArgumentsAndOutput(t *testing.T) {
 	}
 	joined := strings.Join(calls[0], " ")
 	// Without --all Docker prunes only dangling cache, which cannot meet a cap.
-	for _, want := range []string{"prune --force --all", "--keep-storage 3GiB", "--filter until=168h"} {
+	for _, want := range []string{"prune --force --all", "--max-used-space 3GiB", "--filter until=168h"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("prune arguments lack %q: %s", want, joined)
 		}
@@ -93,6 +94,39 @@ func TestPruneBuildCacheArgumentsAndOutput(t *testing.T) {
 	}
 	if calls := fake.CallsTo(t, "builder"); len(calls) != 2 || strings.Contains(strings.Join(calls[1], " "), "until=") {
 		t.Errorf("cap-only call = %v", calls)
+	}
+}
+
+func TestCachePolicyEnforcesAgeUnderCapAndReportsSharedFloor(t *testing.T) {
+	t.Setenv("FAKE_DOCKER_BUILDER_PRUNE", "Total reclaimed space: 0B\n")
+	fake := newFakeDocker(t)
+	worker := &Worker{docker: fake.docker}
+
+	// Under the cap the age limit still applies, so one filtered prune runs.
+	t.Setenv("FAKE_DOCKER_DF", `{"Active":"0","Reclaimable":"0B","Size":"512MB","TotalCount":"1","Type":"Build Cache"}`)
+	reclaimed, err := worker.pruneCachePolicy(t.Context(), ci.ImageCachePolicy{KeepGiB: 1, OlderThanHours: 1})
+	if err != nil || reclaimed != 0 {
+		t.Fatalf("under-cap policy = %d, %v", reclaimed, err)
+	}
+	calls := fake.CallsTo(t, "builder")
+	if len(calls) != 1 || !strings.Contains(strings.Join(calls[0], " "), "until=1h") {
+		t.Fatalf("under-cap age prune = %v", calls)
+	}
+
+	// Two of three gigabytes are shared with images. Both passes free what
+	// they can, then the remainder is reported as a floor, not a failure.
+	t.Setenv("FAKE_DOCKER_DF", `{"Active":"0","Reclaimable":"1GB","Size":"3GB","TotalCount":"3","Type":"Build Cache"}`)
+	_, err = worker.pruneCachePolicy(t.Context(), ci.ImageCachePolicy{KeepGiB: 1, OlderThanHours: 1})
+	var floor *cacheFloorError
+	if !errors.As(err, &floor) {
+		t.Fatalf("shared floor error = %v", err)
+	}
+	calls = fake.CallsTo(t, "builder")
+	if len(calls) != 3 {
+		t.Fatalf("floor enforcement calls = %v, want age pass then cap pass", calls)
+	}
+	if !strings.Contains(strings.Join(calls[1], " "), "until=1h") || strings.Contains(strings.Join(calls[2], " "), "until=") {
+		t.Fatalf("floor passes = %v, want filtered then unfiltered", calls)
 	}
 }
 

@@ -135,6 +135,43 @@ func TestClassifyDeployedVersionAndFallback(t *testing.T) {
 	}
 }
 
+func TestClassifyDeployedAliasesAndMultipleTargets(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	images := []InventoryImage{
+		inventoryImage("app", "1.0.2", "sha256:1", now.Add(-2*time.Hour)),
+		inventoryImage("app", "1.0.2-rc", "sha256:2", now.Add(-time.Hour)),
+	}
+	facts := NewImageFacts()
+	facts.Built[NormalizeImageRepository("app")] = BuiltPolicy{Keep: 2, Deployments: []string{"v1.0.2"}}
+	classified := Classify(images, facts)
+	if !classified[0].Deployed || classified[0].DeployedFallback {
+		t.Fatalf("v-prefixed deployment did not match app:1.0.2: %+v", classified[0])
+	}
+
+	// A staging target may record a commit hash while production records an
+	// image tag. One matched version identifies the deployed image; the
+	// unrelated hash must not force a newest-tag fallback.
+	facts.Built[NormalizeImageRepository("app")] = BuiltPolicy{Keep: 2, Deployments: []string{"v1.0.2", "0dcb74c35c6c"}}
+	classified = Classify(images, facts)
+	if !classified[0].Deployed || classified[0].DeployedFallback {
+		t.Fatalf("unmatched staging version poisoned the match: %+v", classified)
+	}
+}
+
+func TestClassifyFallbackUsesLastTagTime(t *testing.T) {
+	created := time.Unix(1_700_000_000, 0)
+	facts := NewImageFacts()
+	facts.Built[NormalizeImageRepository("app")] = BuiltPolicy{Keep: 2, Deployments: []string{"v9"}}
+	images := []InventoryImage{
+		{Repository: "app", NormalizedRepository: NormalizeImageRepository("app"), Tag: "old", ID: "sha256:1", Created: created, LastTagTime: created},
+		{Repository: "app", NormalizedRepository: NormalizeImageRepository("app"), Tag: "new", ID: "sha256:2", Created: created.Add(-time.Hour), LastTagTime: created.Add(time.Hour)},
+	}
+	classified := Classify(images, facts)
+	if !classified[1].Deployed || !classified[1].DeployedFallback {
+		t.Fatalf("fallback protected the wrong tag: %+v", classified)
+	}
+}
+
 func TestClassifyKeepTiesAreDeterministic(t *testing.T) {
 	at := time.Unix(1_700_000_000, 0)
 	facts := NewImageFacts()
@@ -187,6 +224,24 @@ func TestPlanPruneRefusalsAndOrdering(t *testing.T) {
 	}
 	if plan.ReclaimableBytes != 10 {
 		t.Errorf("reclaimable = %d, want 10", plan.ReclaimableBytes)
+	}
+}
+
+func TestPlanPruneCountsMultiTagImageOnce(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	facts := NewImageFacts()
+	facts.Built[NormalizeImageRepository("app")] = BuiltPolicy{Keep: 0}
+	images := []InventoryImage{
+		inventoryImage("app", "one", "sha256:same", now),
+		inventoryImage("app", "two", "sha256:same", now.Add(-time.Hour)),
+		inventoryImage("app", "three", "sha256:same", now.Add(-2*time.Hour)),
+	}
+	plan := PlanPrune(Classify(images, facts))
+	if len(plan.Remove) != 3 {
+		t.Fatalf("remove = %+v, want all three tags", plan.Remove)
+	}
+	if plan.ReclaimableBytes != plan.Remove[0].Size {
+		t.Fatalf("reclaimable = %d, want one image size %d", plan.ReclaimableBytes, plan.Remove[0].Size)
 	}
 }
 

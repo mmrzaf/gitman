@@ -191,6 +191,7 @@ type imageHostRow struct {
 	OlderHours       int
 	CacheDisabled    bool
 	Automation       string
+	AttemptedAt      *time.Time
 	PrunedAt         *time.Time
 	Reclaimed        int64
 	CacheError       string
@@ -202,7 +203,7 @@ func selectImageHosts(ctx context.Context, q postgres.Querier) ([]imageHostRow, 
 		       collected_at < now() - make_interval(secs => $1),
 		       images, cache_size_bytes, cache_reclaimable_bytes,
 		       cache_keep_gib, cache_older_than_hours, cache_disabled, automation_mode,
-		       cache_pruned_at, cache_reclaimed_bytes, cache_error
+		       cache_attempt_at, cache_pruned_at, cache_reclaimed_bytes, cache_error
 		FROM image_hosts
 		ORDER BY hostname, host_id
 	`, ImageInventoryStaleAfter.Seconds())
@@ -215,7 +216,7 @@ func selectImageHosts(ctx context.Context, q postgres.Querier) ([]imageHostRow, 
 		var host imageHostRow
 		if err := rows.Scan(&host.EngineID, &host.WorkerID, &host.Hostname, &host.CollectedAt, &host.Stale,
 			&host.Images, &host.CacheSize, &host.CacheReclaimable, &host.KeepGiB, &host.OlderHours,
-			&host.CacheDisabled, &host.Automation, &host.PrunedAt, &host.Reclaimed, &host.CacheError); err != nil {
+			&host.CacheDisabled, &host.Automation, &host.AttemptedAt, &host.PrunedAt, &host.Reclaimed, &host.CacheError); err != nil {
 			return nil, fmt.Errorf("scan image host: %w", err)
 		}
 		hosts = append(hosts, host)
@@ -252,15 +253,19 @@ func upsertImageHost(ctx context.Context, q postgres.Querier, inventory HostInve
 
 // recordCachePrune stores one cache-prune attempt and returns the error text
 // it replaced, so an unchanged recurring failure is not audited every pass.
-func recordCachePrune(ctx context.Context, tx postgres.Tx, hostID string, reclaimed int64, cacheError string) (string, error) {
+func recordCachePrune(ctx context.Context, tx postgres.Tx, hostID string, reclaimed int64, cacheError string, success bool) (string, error) {
 	var previous string
 	if err := tx.QueryRow(ctx, `SELECT cache_error FROM image_hosts WHERE host_id = $1 FOR UPDATE`, hostID).Scan(&previous); err != nil {
 		return "", postgres.NormalizeNotFound(err)
 	}
 	if _, err := tx.Exec(ctx, `
-		UPDATE image_hosts SET cache_pruned_at = now(), cache_reclaimed_bytes = $2, cache_error = $3
+		UPDATE image_hosts SET
+			cache_attempt_at = now(),
+			cache_pruned_at = CASE WHEN $4 THEN now() ELSE cache_pruned_at END,
+			cache_reclaimed_bytes = CASE WHEN $4 THEN $2 ELSE cache_reclaimed_bytes END,
+			cache_error = $3
 		WHERE host_id = $1
-	`, hostID, reclaimed, cacheError); err != nil {
+	`, hostID, reclaimed, cacheError, success); err != nil {
 		return "", fmt.Errorf("record cache prune: %w", err)
 	}
 	return previous, nil
@@ -369,12 +374,12 @@ func claimImageOperation(ctx context.Context, tx postgres.Tx, engineID, workerID
 			  AND o.completed_at IS NULL
 			  AND NOT (SELECT maintenance FROM instance)
 			  AND (o.claimed_at IS NULL
-			       OR o.worker_id IS NULL
+			       OR (o.worker_id IS NULL AND o.claimed_at <= now())
 			       OR o.claimed_at < now() - interval '30 minutes'
-			       OR NOT EXISTS (
+			       OR (o.worker_id IS NOT NULL AND NOT EXISTS (
 			            SELECT 1 FROM workers w
 			            WHERE w.id = o.worker_id AND w.stopped_at IS NULL
-			              AND w.heartbeat_at >= now() - interval '5 minutes'))
+			              AND w.heartbeat_at >= now() - interval '5 minutes')))
 			ORDER BY o.created_at, o.id
 			FOR UPDATE SKIP LOCKED
 			LIMIT 1
@@ -389,11 +394,17 @@ func claimImageOperation(ctx context.Context, tx postgres.Tx, engineID, workerID
 	return op, nil
 }
 
-func releaseImageOperation(ctx context.Context, q postgres.Querier, id string) error {
+// releaseImageOperation returns an operation to the queue with an
+// exponential backoff based on its attempt count. A zero delay would make a
+// broken daemon or inventory query spin against the exclusive host lock.
+func releaseImageOperation(ctx context.Context, q postgres.Querier, id, reason string) error {
 	if _, err := q.Exec(ctx, `
-		UPDATE repository_operations SET claimed_at = NULL, worker_id = NULL
+		UPDATE repository_operations SET
+			claimed_at = now() + make_interval(secs => LEAST(30 * power(2, attempts), 1800)),
+			worker_id = NULL,
+			error = $2
 		WHERE id = $1 AND completed_at IS NULL
-	`, id); err != nil {
+	`, id, reason); err != nil {
 		return fmt.Errorf("release image operation: %w", err)
 	}
 	return nil
