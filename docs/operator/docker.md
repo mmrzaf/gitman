@@ -156,12 +156,13 @@ default, separately from image automation.
 - **Enforcement:** on by default. A worker enforces the policy after every run
   that used Docker (once its containers are gone) and every 15 minutes. It uses
   `docker builder prune --force --all --max-used-space <cap> --filter until=<age>`
-  and, if recent unused cache still leaves the cache above the cap, a second
-  pass with the cap alone. `--all` is required: without it Docker removes only
-  dangling cache and leaves the layer cache of build steps, so the cap could
-  never be met. Records a running build holds are never removed. Enforcement
-  never touches images, containers or volumes. Enforcement is serialized with runs by the host lock,
-  so it never races a build.
+  when the client has buildx, or the legacy `--keep-storage <cap>` ceiling
+  otherwise, and, if recent unused cache still leaves the cache above the cap, a
+  second pass with the cap alone. `--all` is required: without it Docker removes
+  only dangling cache and leaves the layer cache of build steps, so the cap
+  could never be met. Records a running build holds are never removed.
+  Enforcement never touches images, containers or volumes. Enforcement is
+  serialized with runs by the host lock, so it never races a build.
 - **A ceiling after enforcement:** the cache can exceed the cap while a build is
   using it. The cap is what enforcement leaves behind, not a limit during a
   build; size `GITMAN_DISK_RESERVE_GIB` with that headroom in mind.

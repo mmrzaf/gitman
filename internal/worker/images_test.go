@@ -71,6 +71,18 @@ func TestImageInventoryParsesTagsDanglingContainersAndCache(t *testing.T) {
 	}
 }
 
+func builderPruneCalls(t *testing.T, fake *fakeDocker) [][]string {
+	t.Helper()
+	var calls [][]string
+	for _, call := range fake.CallsTo(t, "builder") {
+		if len(call) >= 3 && call[2] == "--help" {
+			continue
+		}
+		calls = append(calls, call)
+	}
+	return calls
+}
+
 func TestPruneBuildCacheArgumentsAndOutput(t *testing.T) {
 	fake := newFakeDocker(t)
 	t.Setenv("FAKE_DOCKER_BUILDER_PRUNE", "Total reclaimed space: 1.5GB\n")
@@ -78,7 +90,7 @@ func TestPruneBuildCacheArgumentsAndOutput(t *testing.T) {
 	if err != nil || reclaimed != 1_500_000_000 {
 		t.Fatalf("PruneBuildCache = %d, %v", reclaimed, err)
 	}
-	calls := fake.CallsTo(t, "builder")
+	calls := builderPruneCalls(t, fake)
 	if len(calls) != 1 {
 		t.Fatalf("builder calls = %v", calls)
 	}
@@ -92,8 +104,33 @@ func TestPruneBuildCacheArgumentsAndOutput(t *testing.T) {
 	if _, err := fake.docker.PruneBuildCache(t.Context(), 3, 0); err != nil {
 		t.Fatal(err)
 	}
-	if calls := fake.CallsTo(t, "builder"); len(calls) != 2 || strings.Contains(strings.Join(calls[1], " "), "until=") {
+	if calls := builderPruneCalls(t, fake); len(calls) != 2 || strings.Contains(strings.Join(calls[1], " "), "until=") {
 		t.Errorf("cap-only call = %v", calls)
+	}
+}
+
+func TestPruneBuildCacheUsesLegacyCapFlag(t *testing.T) {
+	fake := newFakeDocker(t)
+	t.Setenv("FAKE_DOCKER_BUILDER_HELP", "      --keep-storage bytes  Amount of disk space to keep for cache")
+	t.Setenv("FAKE_DOCKER_BUILDER_PRUNE", "Total reclaimed space: 0B\n")
+	if _, err := fake.docker.PruneBuildCache(t.Context(), 3, 24); err != nil {
+		t.Fatal(err)
+	}
+	calls := builderPruneCalls(t, fake)
+	if len(calls) != 1 {
+		t.Fatalf("builder calls = %v", calls)
+	}
+	joined := strings.Join(calls[0], " ")
+	if !strings.Contains(joined, "--keep-storage 3GiB") || strings.Contains(joined, "--max-used-space") {
+		t.Fatalf("legacy prune arguments = %s", joined)
+	}
+}
+
+func TestPruneBuildCacheRequiresCapFlag(t *testing.T) {
+	fake := newFakeDocker(t)
+	t.Setenv("FAKE_DOCKER_BUILDER_HELP", "Usage:  docker builder prune")
+	if _, err := fake.docker.PruneBuildCache(t.Context(), 3, 0); err == nil {
+		t.Fatal("pruned without a cache-size option")
 	}
 }
 
@@ -108,7 +145,7 @@ func TestCachePolicyEnforcesAgeUnderCapAndReportsSharedFloor(t *testing.T) {
 	if err != nil || reclaimed != 0 {
 		t.Fatalf("under-cap policy = %d, %v", reclaimed, err)
 	}
-	calls := fake.CallsTo(t, "builder")
+	calls := builderPruneCalls(t, fake)
 	if len(calls) != 1 || !strings.Contains(strings.Join(calls[0], " "), "until=1h") {
 		t.Fatalf("under-cap age prune = %v", calls)
 	}
@@ -121,7 +158,7 @@ func TestCachePolicyEnforcesAgeUnderCapAndReportsSharedFloor(t *testing.T) {
 	if !errors.As(err, &floor) {
 		t.Fatalf("shared floor error = %v", err)
 	}
-	calls = fake.CallsTo(t, "builder")
+	calls = builderPruneCalls(t, fake)
 	if len(calls) != 3 {
 		t.Fatalf("floor enforcement calls = %v, want age pass then cap pass", calls)
 	}
