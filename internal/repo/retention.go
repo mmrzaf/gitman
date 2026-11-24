@@ -63,12 +63,22 @@ func (s *Service) PruneGitPins(ctx context.Context) error {
 		})
 		stop()
 		if err == nil && gr != nil {
-			// GC runs without the mutation lock so a push never waits
-			// behind a repack, and with its own budget in case the
-			// reconciliation used most of the repository's time.
-			gcCtx, stopGC := context.WithTimeout(ctx, repoGitPruneTimeout)
-			err = gr.AutoGC(gcCtx)
-			stopGC()
+			// Do not repack while a push may be writing refs: a push's
+			// objects are still in quarantine, and git gc cannot see them.
+			// Skip this pass if a push holds the lock; otherwise repack
+			// while holding it, so a push cannot start mid-repack.
+			release, locked, lockErr := gr.TryMutationLock(r.ID)
+			switch {
+			case lockErr != nil:
+				err = lockErr
+			case !locked:
+				// A push holds the lock; the next retention pass retries.
+			default:
+				gcCtx, stopGC := context.WithTimeout(ctx, repoGitPruneTimeout)
+				err = gr.AutoGC(gcCtx)
+				stopGC()
+				release()
+			}
 		}
 		if err != nil {
 			failures = append(failures, err)
