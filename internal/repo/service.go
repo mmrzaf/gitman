@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -437,8 +438,34 @@ func (s *Service) SaveRule(ctx context.Context, repoID string, r Rule, actorID s
 		if err := upsertRule(ctx, tx, id.New(), repoID, r, actorID); err != nil {
 			return err
 		}
-		return activity.Record(ctx, tx, repoID, actorID, activity.RuleSaved, string(r.Kind)+" "+r.Pattern)
+		return activity.Record(ctx, tx, repoID, actorID, activity.RuleSaved, ruleDetail(r))
 	})
+}
+
+// ruleDetail records the effective grant, not just the pattern: a change from
+// admins to everyone, or a new Docker/deploy grant, must be visible in the
+// audit trail.
+func ruleDetail(r Rule) string {
+	detail := string(r.Kind) + " " + r.Pattern + "; push " + string(r.PushPolicy)
+	if len(r.PushPeople) > 0 {
+		detail += " (" + strconv.Itoa(len(r.PushPeople)) + " people)"
+	}
+	for _, grant := range []struct {
+		on   bool
+		name string
+	}{
+		{r.AllowForce, "force"},
+		{r.AllowDelete, "delete"},
+		{r.RunOnPush, "run"},
+		{r.AllowDocker, "docker"},
+		{r.AllowSecrets, "secrets"},
+		{r.AllowDeploy, "deploy"},
+	} {
+		if grant.on {
+			detail += ", " + grant.name
+		}
+	}
+	return detail
 }
 
 // DeleteRule removes the rule for (kind, pattern).
