@@ -5,14 +5,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"github.com/mmrzaf/gitman/internal/auth"
-	"github.com/mmrzaf/gitman/internal/ci"
-	"github.com/mmrzaf/gitman/internal/config"
-	"github.com/mmrzaf/gitman/internal/git"
-	"github.com/mmrzaf/gitman/internal/postgres"
-	"github.com/mmrzaf/gitman/internal/push"
-	reposvc "github.com/mmrzaf/gitman/internal/repo"
-	"github.com/mmrzaf/gitman/internal/worker"
 	"io"
 	"os"
 	"path/filepath"
@@ -21,6 +13,15 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+
+	"github.com/mmrzaf/gitman/internal/auth"
+	"github.com/mmrzaf/gitman/internal/ci"
+	"github.com/mmrzaf/gitman/internal/config"
+	"github.com/mmrzaf/gitman/internal/git"
+	"github.com/mmrzaf/gitman/internal/postgres"
+	"github.com/mmrzaf/gitman/internal/push"
+	reposvc "github.com/mmrzaf/gitman/internal/repo"
+	"github.com/mmrzaf/gitman/internal/worker"
 )
 
 // adminEnv is what every admin action works with.
@@ -43,7 +44,7 @@ type adminAction struct {
 	run   func(ctx context.Context, env *adminEnv, args []string) error
 }
 
-const ruleSetUsage = "[--push everyone|admins|people] [--people a,b] [--force] [--delete] [--run] [--docker] [--secrets] [--deploy] <repo> branch|tag <pattern>"
+const ruleSetUsage = "[--replace] [--push everyone|admins|people] [--people a,b] [--force] [--delete] [--run] [--docker] [--secrets] [--deploy] <repo> branch|tag <pattern>"
 
 const defaultPushUsage = "[--push everyone|admins|people] [--people a,b] <name>"
 
@@ -52,7 +53,7 @@ var adminGroups = map[string]map[string]adminAction{
 	"maintenance": {
 		"enable":  {"", adminMaintenanceEnable},
 		"disable": {"", adminMaintenanceDisable},
-		"status":  {"", adminMaintenanceStatus},
+		"status":  {"[--require-ready]", adminMaintenanceStatus},
 		"backup":  {"<destination-directory>", adminBackup},
 	},
 	"operation": {
@@ -83,7 +84,7 @@ var adminGroups = map[string]map[string]adminAction{
 	"repo": {
 		"create":         {"[--description TEXT] [--default-branch NAME] <name>", adminRepoCreate},
 		"list":           {"", adminRepoList},
-		"delete":         {"<name>", adminRepoDelete},
+		"delete":         {"[--confirm] <name>", adminRepoDelete},
 		"size":           {"<name>", adminRepoSize},
 		"gc":             {"<name>", adminRepoGC},
 		"sync":           {"<name>", adminRepoSync},
@@ -173,15 +174,19 @@ func runAdmin(args []string) error {
 		return err
 	}
 	defer database.Close()
-	if err := database.Migrate(ctx); err != nil {
-		return err
-	}
 	root, err := filepath.Abs(cfg.ReposPath())
 	if err != nil {
 		return err
 	}
-	if err := database.BindRepositoryStorage(ctx, root); err != nil {
-		return err
+	if err := database.MigrateAndBind(ctx, root); err != nil {
+		// A beta database cannot be migrated in place, but its maintenance
+		// commands only need tables the beta already has. Let an operator
+		// take a consistent backup before choosing a clean install.
+		allowLegacy := len(args) > 1 && args[0] == "maintenance" &&
+			(args[1] == "enable" || args[1] == "status" || args[1] == "backup")
+		if !allowLegacy || !errors.Is(err, postgres.ErrLegacyLedger) {
+			return err
+		}
 	}
 	store := git.NewStore(cfg.ReposPath())
 	store.SetDiskReserve(uint64(cfg.Resources.DiskReserveGiB) << 30)
@@ -595,13 +600,18 @@ func formatSize(n int64) string {
 }
 
 func adminRepoDelete(ctx context.Context, env *adminEnv, args []string) error {
-	pos, err := parseArgs(flag.NewFlagSet("repo delete", flag.ContinueOnError), args, 1, "gitman admin repo delete <name>")
+	fs := flag.NewFlagSet("repo delete", flag.ContinueOnError)
+	confirm := fs.Bool("confirm", false, "")
+	pos, err := parseArgs(fs, args, 1, "gitman admin repo delete [--confirm] <name>")
 	if err != nil {
 		return err
 	}
 	repo, err := repoByName(ctx, env, pos[0])
 	if err != nil {
 		return err
+	}
+	if !*confirm {
+		return fmt.Errorf("refusing to delete %s without --confirm; this removes its Git history, runs, deployments and rules. Run `gitman admin repo delete --confirm %s`", repo.Name, repo.Name)
 	}
 	if err := env.repos.Delete(ctx, repo.ID, ""); err != nil {
 		return err
@@ -876,6 +886,7 @@ func parseKind(s string) (git.Kind, error) {
 
 func adminRuleSet(ctx context.Context, env *adminEnv, args []string) error {
 	fs := flag.NewFlagSet("rule set", flag.ContinueOnError)
+	replace := fs.Bool("replace", false, "")
 	push := fs.String("push", string(reposvc.PushEveryone), "")
 	pushPeople := fs.String("people", "", "")
 	force := fs.Bool("force", false, "")
@@ -888,6 +899,9 @@ func adminRuleSet(ctx context.Context, env *adminEnv, args []string) error {
 	if err != nil {
 		return err
 	}
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+
 	repo, err := repoByName(ctx, env, pos[0])
 	if err != nil {
 		return err
@@ -896,25 +910,76 @@ func adminRuleSet(ctx context.Context, env *adminEnv, args []string) error {
 	if err != nil {
 		return err
 	}
-	rule := reposvc.Rule{
-		Kind: kind, Pattern: pos[2], PushPolicy: reposvc.PushPolicy(*push),
-		AllowForce: *force, AllowDelete: *del, RunOnPush: *runOnPush,
-		AllowDocker: *docker, AllowSecrets: *secrets, AllowDeploy: *deploy,
+	rules, err := env.repos.ListRules(ctx, repo.ID)
+	if err != nil {
+		return err
 	}
-	if *pushPeople != "" {
-		for _, username := range strings.Split(*pushPeople, ",") {
-			p, err := personByName(ctx, env, strings.TrimSpace(username))
-			if err != nil {
-				return err
-			}
-			rule.PushPeople = append(rule.PushPeople, p.ID)
+	rule := reposvc.Rule{Kind: kind, Pattern: pos[2], PushPolicy: reposvc.PushEveryone}
+	existing := false
+	for _, candidate := range rules {
+		if candidate.Kind == kind && candidate.Pattern == pos[2] {
+			rule = candidate
+			existing = true
+			break
 		}
+	}
+	// Set is an edit by default: only the flags given change, so adding
+	// --run or --docker cannot silently reopen pushes or revoke other
+	// capabilities. Use --replace to reset the whole rule.
+	if *replace || !existing {
+		rule.Kind, rule.Pattern = kind, pos[2]
+		rule.PushPolicy = reposvc.PushPolicy(*push)
+		rule.PushPeople = nil
+		rule.AllowForce, rule.AllowDelete = *force, *del
+		rule.RunOnPush, rule.AllowDocker = *runOnPush, *docker
+		rule.AllowSecrets, rule.AllowDeploy = *secrets, *deploy
+	} else {
+		if set["push"] {
+			rule.PushPolicy = reposvc.PushPolicy(*push)
+		}
+		if set["force"] {
+			rule.AllowForce = *force
+		}
+		if set["delete"] {
+			rule.AllowDelete = *del
+		}
+		if set["run"] {
+			rule.RunOnPush = *runOnPush
+		}
+		if set["docker"] {
+			rule.AllowDocker = *docker
+		}
+		if set["secrets"] {
+			rule.AllowSecrets = *secrets
+		}
+		if set["deploy"] {
+			rule.AllowDeploy = *deploy
+		}
+	}
+	if set["people"] || !existing || *replace {
+		rule.PushPeople = nil
+		if *pushPeople != "" {
+			for _, username := range strings.Split(*pushPeople, ",") {
+				p, err := personByName(ctx, env, strings.TrimSpace(username))
+				if err != nil {
+					return err
+				}
+				rule.PushPeople = append(rule.PushPeople, p.ID)
+			}
+		}
+	}
+	if rule.PushPolicy != reposvc.PushPeople {
+		// Silently dropping the names would make --people look applied.
+		if *pushPeople != "" {
+			return fmt.Errorf("--people applies only with --push people; add --push people")
+		}
+		rule.PushPeople = nil
 	}
 	if err := env.repos.SaveRule(ctx, repo.ID, rule, ""); err != nil {
 		return err
 	}
 	fmt.Fprintf(env.out, "Saved the rule for %s %q on %s.\n", kind, rule.Pattern, repo.Name)
-	return nil
+	return adminRuleList(ctx, env, []string{repo.Name})
 }
 
 func adminRuleDelete(ctx context.Context, env *adminEnv, args []string) error {
@@ -994,6 +1059,7 @@ func adminOperationList(ctx context.Context, env *adminEnv, args []string) error
 	}
 	return nil
 }
+
 func adminOperationRecover(ctx context.Context, env *adminEnv, args []string) error {
 	if len(args) != 0 {
 		return fmt.Errorf("usage: gitman admin operation recover")
@@ -1022,26 +1088,40 @@ func adminOperationAbandon(ctx context.Context, env *adminEnv, args []string) er
 	fmt.Fprintf(env.out, "Abandoned %s operation %s on repository %s. Git and database rows were left for inspection.\n", op.Kind, op.ID, op.RepoID)
 	return nil
 }
+
 func adminMaintenanceEnable(ctx context.Context, env *adminEnv, args []string) error {
 	if len(args) != 0 {
 		return fmt.Errorf("usage: gitman admin maintenance enable")
 	}
 	return env.db.SetMaintenance(ctx, true)
 }
+
 func adminMaintenanceDisable(ctx context.Context, env *adminEnv, args []string) error {
 	if len(args) != 0 {
 		return fmt.Errorf("usage: gitman admin maintenance disable")
 	}
 	return env.db.SetMaintenance(ctx, false)
 }
+
 func adminMaintenanceStatus(ctx context.Context, env *adminEnv, args []string) error {
-	if len(args) != 0 {
-		return fmt.Errorf("usage: gitman admin maintenance status")
+	fs := flag.NewFlagSet("maintenance status", flag.ContinueOnError)
+	requireReady := fs.Bool("require-ready", false, "")
+	if _, err := parseArgs(fs, args, 0, "gitman admin maintenance status [--require-ready]"); err != nil {
+		return err
 	}
 	paused, err := env.db.Maintenance(ctx)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(env.out, "maintenance=%t\n", paused)
-	return env.db.BackupReady(ctx)
+	readyErr := env.db.BackupReady(ctx)
+	if readyErr == nil {
+		fmt.Fprintln(env.out, "backup_ready=true")
+		return nil
+	}
+	fmt.Fprintf(env.out, "backup_ready=false (%v)\n", readyErr)
+	if *requireReady {
+		return readyErr
+	}
+	return nil
 }

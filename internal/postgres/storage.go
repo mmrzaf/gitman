@@ -9,6 +9,27 @@ import (
 	"strings"
 )
 
+// MigrateAndBind upgrades an existing database only after verifying that its
+// repository storage is the one it belongs to. A wrong or empty data
+// directory must fail before pending migrations make the upgrade
+// irreversible. A fresh database has no instance row yet, so it migrates
+// first.
+func (d *DB) MigrateAndBind(ctx context.Context, root string) error {
+	var present bool
+	if err := d.Q.QueryRow(ctx, `SELECT to_regclass('instance') IS NOT NULL`).Scan(&present); err != nil {
+		return err
+	}
+	if present {
+		if err := d.BindRepositoryStorage(ctx, root); err != nil {
+			return err
+		}
+	}
+	if err := d.Migrate(ctx); err != nil {
+		return err
+	}
+	return d.BindRepositoryStorage(ctx, root)
+}
+
 // BindRepositoryStorage pairs a database with its repository storage by instance
 // identity. The marker travels with the files when an operator moves storage.
 func (d *DB) BindRepositoryStorage(ctx context.Context, root string) (result error) {
@@ -16,7 +37,7 @@ func (d *DB) BindRepositoryStorage(ctx context.Context, root string) (result err
 	if err := d.Q.QueryRow(ctx, `SELECT id FROM instance`).Scan(&instance); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(root, 0750); err != nil {
+	if err := os.MkdirAll(root, 0o750); err != nil {
 		return err
 	}
 	marker := filepath.Join(root, ".gitman-instance")

@@ -388,13 +388,17 @@ func (a *App) fileRaw(w http.ResponseWriter, r *http.Request, gitRepo *git.Repo,
 	if size > maxRawDownloadBytes {
 		return apperr.New(apperr.KindTooLarge, "This file is too large to download from the web. Clone the repository to fetch it.")
 	}
-	sniff := &rawWriter{dst: &deadlineWriter{dst: w, controller: http.NewResponseController(w)}, header: w.Header(), filename: path.Base(entryPath)}
-	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+	sniff := &rawWriter{dst: &deadlineWriter{dst: w, controller: http.NewResponseController(w)}, header: w.Header(), filename: path.Base(entryPath), size: size}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Minute)
 	defer cancel()
 	if err := gitRepo.StreamBlob(ctx, entry.Hash, sniff); err != nil {
-		// Streaming may already have committed headers. Do not append HTML
-		// to downloaded bytes after a client disconnect or command failure.
+		if !sniff.started {
+			// Nothing was written, so the page can still show a real error
+			// instead of a 200 with a declared length and no body.
+			return err
+		}
+		// Streaming already committed headers. Do not append HTML to
+		// downloaded bytes after a client disconnect or command failure.
 		a.log.Warn("raw download ended", "path", entryPath, "error", err)
 	} else if err := sniff.flush(); err != nil {
 		a.log.Warn("raw download ended", "path", entryPath, "error", err)
@@ -567,7 +571,8 @@ func setRawHeaders(h http.Header, contentType, filename string) {
 	h.Set("Content-Disposition", mime.FormatMediaType(disposition, map[string]string{"filename": filename}))
 	h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
 	h.Set("X-Content-Type-Options", "nosniff")
-	h.Set("Cache-Control", "no-cache")
+	h.Set("Cache-Control", "private, no-store")
+	h.Add("Vary", "Cookie")
 }
 
 // deadlineWriter renews the write budget for each download block.
@@ -587,6 +592,7 @@ type rawWriter struct {
 	dst      io.Writer
 	header   http.Header
 	filename string
+	size     int64
 	prefix   []byte
 	started  bool
 }
@@ -606,11 +612,15 @@ func (w *rawWriter) flush() error {
 		}
 	}
 	setRawHeaders(w.header, kind, w.filename)
+	if w.size > 0 {
+		w.header.Set("Content-Length", strconv.FormatInt(w.size, 10))
+	}
 	w.started = true
 	_, err := w.dst.Write(w.prefix)
 	w.prefix = nil
 	return err
 }
+
 func (w *rawWriter) Write(p []byte) (int, error) {
 	if w.started {
 		return w.dst.Write(p)

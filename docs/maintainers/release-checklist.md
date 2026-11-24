@@ -17,7 +17,7 @@ is green and the operator pilot is complete.
    [`internal/web/releasenotes.json`](../../internal/web/releasenotes.json).
    Check the content against the actual shipped behavior; do not mark unrun
    tests as passed.
-3. Run `make verify` with **Go 1.27, Node 24, ShellCheck, PostgreSQL 18** and
+3. Run `make verify` with **Go 1.27.4, Node 24, ShellCheck, PostgreSQL 18** and
    `GITMAN_TEST_DATABASE_URL` pointing to a dedicated empty `_test` database.
    CI requires ShellCheck (it does not silently skip it).
 4. Run the complete host integration suite on a separate test system. See

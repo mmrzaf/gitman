@@ -40,6 +40,13 @@ func refLabel(kind git.Kind, name string) string {
 // what the run's status, target and steps should be — everything
 // decidable at creation time, decided then, so a run that cannot
 // proceed fails immediately with a reason that says why.
+// Preview reports what a manual run would do, without writing a run. The web
+// form uses it to refuse a request that admission would fail at once.
+func Preview(p CreateParams) (Status, string) {
+	pl := planRun(p)
+	return pl.status, pl.reason
+}
+
 func planRun(p CreateParams) plan {
 	rc := RunContext{Commit: p.Commit, RefKind: p.RefKind, RefName: p.RefName}
 	pl := plan{version: rc.Version()}

@@ -2,8 +2,8 @@
 
 ## People
 
-- There are no anonymous users: every request, over the web or over Git,
-  authenticates as a specific person.
+- Apart from the health checks, the sign-in page and static assets, every
+  request over the web or over Git authenticates as a specific person.
 - Anyone signed in can create up to 100 repositories and 10 per hour.
 - Raw file downloads from the web are capped at 1 GiB; use a Git clone for
   larger files.
@@ -33,9 +33,9 @@ at most 365 days. Repository permissions still apply on every Git request.
 Live streams recheck credentials and permissions before each batch and
 close after revocation.
 
-The account page lists every signed-in browser by an opaque session ID, with its
-address, user agent, last-seen time and expiry; a session can be revoked there
-without exposing its cookie. Admins see all sessions under **Sessions** and can
+The account page lists every signed-in browser with its sign-in time, address,
+user agent, last-seen time and expiry; its opaque session ID is used to revoke it
+without exposing the cookie. Admins see all sessions under **Sessions** and can
 revoke anyone's; that action is recorded in Activity. The session cookie's token
 hash is never shown. The same opaque handles and last-used times are available
 with `gitman admin session list` / `revoke` and `gitman admin token list`.
@@ -43,9 +43,9 @@ with `gitman admin session list` / `revoke` and `gitman admin token list`.
 Sign-in is limited per username and address, and per username across
 addresses, so parallel guesses cannot pass the check before bcrypt finishes.
 IPv6 clients are counted by their /64. Wrong current-password checks on the
-account page are limited the same way. A generated password is shown once in
-the response that creates it; refreshing that page re-submits the action, so
-copy the password before leaving it.
+account page are limited the same way. A generated password is shown once in a
+redirect response. The destination page does not contain it, so refreshing that
+page does not show it again; copy the password before leaving it.
 
 ## Repository read access
 
@@ -161,9 +161,9 @@ Every state-changing web request (anything but GET/HEAD/OPTIONS) is checked
 against where it came from: the browser's `Sec-Fetch-Site` header, or
 failing that its `Origin` header, must say the request is same-origin. A
 cross-site request — from another site's form or script — is refused
-before it reaches a handler. A request carrying neither header does not
-come from a browser, so there is no forgery to prevent; this, together
-with the session cookie's `SameSite=Lax`, is the whole defense — there
+before it reaches a handler. A request carrying neither header is refused:
+missing headers are not proof that it did not come from a browser. This,
+together with the session cookie's `SameSite=Lax`, is the whole defense — there
 are no separate per-form CSRF tokens to keep in sync. Git's smart HTTP
 POST routes authenticate with HTTP Basic access tokens instead of a session
 cookie, so they are outside this check; a token is not sent by a browser
@@ -177,8 +177,8 @@ scheme automatically. If Gitman is behind a reverse proxy, set
 otherwise the sign-in rate limiter (and anything else keyed on client IP)
 treats every proxied client as the same one. With no trusted proxies, one
 person's failed attempts can exhaust the shared address budget and lock out
-sign-in for everyone behind that proxy for fifteen minutes. Gitman warns at
-startup the first time a request arrives from a private address in that state.
+sign-in for everyone behind that proxy for fifteen minutes. Gitman warns on the
+first request that arrives from a private address in that state.
 The production Compose example defaults the trusted range to `172.16.0.0/12`;
 override it if the Compose network uses another range.
 

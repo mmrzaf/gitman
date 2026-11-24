@@ -120,8 +120,10 @@ func New(cfg Config, db *postgres.DB, ciService *ci.Service, repos *repo.Service
 	if docker != nil {
 		docker.Resources = cfg.Resources
 	}
-	return &Worker{id: id.New(), cfg: cfg, db: db, ci: ciService, repos: repos, docker: docker, log: log,
-		heartbeatEvery: heartbeatInterval, cleanupEvery: cleanupInterval, pollEvery: pollInterval}
+	return &Worker{
+		id: id.New(), cfg: cfg, db: db, ci: ciService, repos: repos, docker: docker, log: log,
+		heartbeatEvery: heartbeatInterval, cleanupEvery: cleanupInterval, pollEvery: pollInterval,
+	}
 }
 
 // PrepareWorkspaceRoot creates the directory run workspaces live under,
@@ -266,7 +268,15 @@ func (w *Worker) drain(ctx context.Context) {
 func (w *Worker) handle(ctx context.Context, claim *ci.Claim, releaseHost func()) {
 	w.active.Add(1)
 	defer w.active.Add(-1)
-	defer releaseHost()
+	released := false
+	release := func() {
+		if released {
+			return
+		}
+		released = true
+		releaseHost()
+	}
+	defer release()
 	start := time.Now()
 	log := w.log.With("repo", claim.RepoName, "run", claim.Number)
 	log.Info("run started")
@@ -281,6 +291,10 @@ func (w *Worker) handle(ctx context.Context, claim *ci.Claim, releaseHost func()
 			log.Warn("could not remove the finished run's workspace", "error", err)
 		}
 		log.Info("run finished", "status", outcome.Status, "duration", time.Since(start).Round(time.Second))
+		// afterRun takes the exclusive side of the host lock for cache and
+		// image work. Release the run's shared side first or the same-process
+		// flock makes every after-run action skip silently.
+		release()
 		w.afterRun(ctx, claim, outcome)
 	}
 }
@@ -507,7 +521,8 @@ func (w *Worker) removeLeftovers(ctx context.Context) {
 // yet, so nothing belonging to a live run is ever removed — which
 // asking first and listing second could not promise.
 func RemoveLeftovers(ctx context.Context, docker *Docker, workspaceRoot string,
-	runningRuns func(context.Context) (map[string]bool, error), recordExit func(context.Context, string, string, int) error, confirmedStopped func(context.Context, string) error) (containers, workspaces int, err error) {
+	runningRuns func(context.Context) (map[string]bool, error), recordExit func(context.Context, string, string, int) error, confirmedStopped func(context.Context, string) error,
+) (containers, workspaces int, err error) {
 	listed, err := docker.runContainers(ctx)
 	if err != nil {
 		return 0, 0, err

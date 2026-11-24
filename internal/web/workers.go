@@ -155,10 +155,16 @@ func (a *App) runnerAttention(page *workersPage, blocks []ci.BlockGroup) []atten
 	}
 	for _, host := range page.Hosts {
 		anchor := "#host-" + host.EngineID
-		if host.Cache.Error != "" {
-			items = append(items, attentionItem{Icon: "warning", Text: host.Hostname + ": build cache enforcement failed: " + host.Cache.Error, URL: anchor})
-		} else if host.Cache.AboveCap {
-			items = append(items, attentionItem{Icon: "warning", Text: host.Hostname + ": build cache is above its cap.", URL: anchor})
+		// A stale error must not show while enforcement is off.
+		if !host.Cache.Disabled {
+			switch {
+			case host.Cache.Error != "":
+				items = append(items, attentionItem{Icon: "warning", Text: host.Hostname + ": build cache enforcement failed: " + host.Cache.Error, URL: anchor})
+			case host.Cache.SharedFloor():
+				items = append(items, attentionItem{Icon: "warning", Text: host.Hostname + ": build cache is above its cap but only " + formatBytes(host.Cache.Reclaimable) + " is reclaimable.", URL: anchor})
+			case host.Cache.AboveCap:
+				items = append(items, attentionItem{Icon: "warning", Text: host.Hostname + ": build cache is above its cap.", URL: anchor})
+			}
 		}
 		if host.FactsIncomplete {
 			items = append(items, attentionItem{Icon: "warning", Text: host.Hostname + ": image facts are incomplete, so image removal is disabled.", URL: anchor})

@@ -2,7 +2,9 @@
 
 ## Prerequisites
 
-Go 1.27 and Git. Most of the test suite needs a reachable PostgreSQL;
+Go 1.27.4 and Git. The module requires the 1.27.4 patch for GO-2026-6859; with
+an older local toolchain set `GOTOOLCHAIN=auto` so Go downloads the pinned
+toolchain. Most of the test suite needs a reachable PostgreSQL;
 tests that need it skip themselves when `GITMAN_TEST_DATABASE_URL` isn't
 set.
 

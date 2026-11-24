@@ -21,7 +21,18 @@ func CheckDir(dir, reposPath, repoID string) error {
 	if err != nil {
 		return err
 	}
-	if filepath.Clean(dir) != filepath.Clean(want) {
+	// Git canonicalizes the repository path before starting the hook, so a
+	// data directory behind a symlink would otherwise look like a different
+	// repository and every push would be refused.
+	gotPath, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return fmt.Errorf("resolve hook directory: %w", err)
+	}
+	wantPath, err := filepath.EvalSymlinks(want)
+	if err != nil {
+		return fmt.Errorf("resolve repository directory: %w", err)
+	}
+	if gotPath != wantPath {
 		return fmt.Errorf("hook is running in %s, not in the repository the push was authorized for", dir)
 	}
 	return nil

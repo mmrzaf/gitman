@@ -35,6 +35,7 @@ func newAdminEnv(t *testing.T) (*adminEnv, *postgres.DB, *git.Store) {
 	var out bytes.Buffer
 	env := &adminEnv{
 		cfg:    &config.Config{Retention: config.DefaultRetention(), PublicURL: "http://gitman.test"},
+		db:     database,
 		people: auth.NewService(database),
 		repos:  reposvc.NewService(database, store, "a very secret passphrase, at least 32 bytes long"),
 		ci:     ci.NewService(database),
@@ -446,7 +447,13 @@ func TestAdminRepoCreateListDelete(t *testing.T) {
 		t.Errorf("output = %q", got)
 	}
 
-	if err := adminRepoDelete(ctx, env, []string{"demo"}); err != nil {
+	if err := adminRepoDelete(ctx, env, []string{"demo"}); err == nil {
+		t.Fatal("expected delete without --confirm to be refused")
+	}
+	if _, err := env.repos.GetByName(ctx, "demo"); err != nil {
+		t.Fatal("refused delete removed the repository")
+	}
+	if err := adminRepoDelete(ctx, env, []string{"--confirm", "demo"}); err != nil {
 		t.Fatalf("adminRepoDelete: %v", err)
 	}
 	if _, err := env.repos.GetByName(ctx, "demo"); err == nil {
@@ -520,6 +527,35 @@ func TestAdminRuleListSetDelete(t *testing.T) {
 		t.Fatalf("ListRules after adminRuleSet = %+v, %v", rules, err)
 	}
 
+	// rule set is an edit unless --replace is given: adding a capability
+	// must not reopen pushes to everyone or revoke the other grants.
+	if err := adminRuleSet(ctx, env, []string{"--docker", "demo", "branch", "main"}); err != nil {
+		t.Fatalf("adminRuleSet (merge): %v", err)
+	}
+	rules, err = env.repos.ListRules(ctx, repo.ID)
+	if err != nil || len(rules) != 1 {
+		t.Fatalf("ListRules after merge = %+v, %v", rules, err)
+	}
+	if got := rules[0]; got.PushPolicy != reposvc.PushPeople || len(got.PushPeople) != 1 || !got.AllowForce || !got.RunOnPush || !got.AllowDocker {
+		t.Fatalf("merge changed existing grants: %+v", got)
+	}
+	if err := adminRuleSet(ctx, env, []string{"--replace", "--push", "everyone", "demo", "branch", "main"}); err != nil {
+		t.Fatalf("adminRuleSet (replace): %v", err)
+	}
+	rules, err = env.repos.ListRules(ctx, repo.ID)
+	if err != nil || len(rules) != 1 || rules[0].PushPolicy != reposvc.PushEveryone || rules[0].AllowDocker || rules[0].AllowForce {
+		t.Fatalf("replace did not reset the rule: %+v, %v", rules, err)
+	}
+	// Naming people without the people policy must be refused, not dropped
+	// silently.
+	if err := adminRuleSet(ctx, env, []string{"--people", "alice", "demo", "branch", "main"}); err == nil {
+		t.Fatal("--people without --push people was accepted")
+	}
+	// Restore the people/force/run rule for the list and delete checks.
+	if err := adminRuleSet(ctx, env, []string{"--replace", "--push", "people", "--people", "alice", "--force", "--run", "demo", "branch", "main"}); err != nil {
+		t.Fatalf("adminRuleSet (restore): %v", err)
+	}
+
 	env.out.(*bytes.Buffer).Reset()
 	if err := adminRuleList(ctx, env, []string{"demo"}); err != nil {
 		t.Fatalf("adminRuleList: %v", err)
@@ -537,6 +573,21 @@ func TestAdminRuleListSetDelete(t *testing.T) {
 	}
 	if err := adminRuleDelete(ctx, env, []string{"demo", "branch", "main"}); err == nil {
 		t.Error("expected deleting an already-deleted rule to be rejected")
+	}
+}
+
+func TestAdminMaintenanceStatusIsNotAnErrorWhenOff(t *testing.T) {
+	env, _, _ := newAdminEnv(t)
+	env.out.(*bytes.Buffer).Reset()
+	if err := adminMaintenanceStatus(t.Context(), env, nil); err != nil {
+		t.Fatalf("status with maintenance off: %v", err)
+	}
+	out := outputOf(env)
+	if !strings.Contains(out, "maintenance=false") || !strings.Contains(out, "backup_ready=false") {
+		t.Fatalf("status output = %q", out)
+	}
+	if err := adminMaintenanceStatus(t.Context(), env, []string{"--require-ready"}); err == nil {
+		t.Fatal("--require-ready did not fail while maintenance was off")
 	}
 }
 

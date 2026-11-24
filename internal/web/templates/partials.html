@@ -128,7 +128,7 @@ git push -u origin {{.Branch}}</code></pre>
     {{- else if eq .Kind "push"}}{{template "icon" "push"}}
     {{- else if eq .Kind "deployment"}}{{template "icon" "ship"}}
     {{- else}}{{template "icon" "settings"}}{{end}}
-    <p class="feed-text" tabindex="0">
+    <p class="feed-text">
       {{- if and $.ShowRepo .RepoName}}<a class="feed-repo" href="/{{.RepoName}}">{{.RepoName}}</a> · {{end}}
       {{- if eq .Kind "push"}}
         {{template "person" .Actor}} pushed
@@ -142,7 +142,7 @@ git push -u origin {{.Branch}}</code></pre>
       {{- else if eq .Kind "deployment"}}
         {{template "person" .Actor}} deployed {{if ownVersion .Version .Commit}}<span class="version">{{.Version}}</span>{{else}}{{template "commit" (commitModel .RepoName .Commit)}}{{end}} to <strong>{{.Target}}</strong>
       {{- else if eq .Kind "event"}}
-        {{template "person" .Actor}} {{eventText .Action .Detail}}
+        {{actorLabel .Action .Actor .Detail}} {{eventText .Action .Detail}}
       {{- end}}
     </p>
     <span class="feed-time">{{template "time" .At}}</span>
@@ -198,9 +198,9 @@ git push -u origin {{.Branch}}</code></pre>
     {{- else if eq .Kind "deployment"}}{{template "icon" "ship"}}
     {{- else if eq .Change "deleted"}}{{template "icon" "trash"}}
     {{- else}}{{template "icon" "push"}}{{end}}
-    <p class="feed-text" tabindex="0">
+    <p class="feed-text">
       {{- if eq .Kind "event"}}
-      {{template "person" .Actor}} {{eventText .Action .Detail}}
+      {{actorLabel .Action .Actor .Detail}} {{eventText .Action .Detail}}
       {{- else if eq .Kind "refusal"}}
       {{template "person" .Actor}}'s push was refused
       {{- range .Refused}}

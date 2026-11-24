@@ -237,7 +237,8 @@ func (a *App) events(w http.ResponseWriter, r *http.Request) error {
 
 	h := w.Header()
 	h.Set("Content-Type", "text/event-stream")
-	h.Set("Cache-Control", "no-cache")
+	h.Set("Cache-Control", "private, no-store")
+	h.Add("Vary", "Cookie")
 	h.Set("X-Accel-Buffering", "no")
 	rc := http.NewResponseController(w)
 	// A stream outlives the page deadlines; it ends after liveLifetime.

@@ -13,6 +13,9 @@ import (
 type commitComparison struct {
 	State         string
 	Ahead, Behind int
+	// Source is the branch or tag that produced the deployment, when the
+	// comparison knows it.
+	Source string
 }
 
 func (c commitComparison) Label() string {
@@ -25,6 +28,10 @@ func (c commitComparison) Label() string {
 		return fmt.Sprintf("Deployment is %d commit%s ahead", c.Behind, plural(c.Behind))
 	case "diverged":
 		return fmt.Sprintf("Diverged: %d not deployed, %d only in deployment", c.Ahead, c.Behind)
+	case "no_source":
+		return "Source ref not recorded"
+	case "missing_ref":
+		return "Source ref " + c.Source + " no longer exists"
 	default:
 		return "Comparison unavailable"
 	}
@@ -55,6 +62,7 @@ func comparisonsFromCounts(head string, deployed []string, counts map[string]git
 	}
 	return result
 }
+
 func compareDeployments(ctx context.Context, repository *git.Repo, head string, deployed []string) map[string]commitComparison {
 	var counts map[string]git.Divergence
 	if repository != nil && head != "" {
@@ -76,11 +84,14 @@ func compareDeploymentTargets(ctx context.Context, repository *git.Repo, refs []
 	for _, deployment := range deployments {
 		result[deployment.Target] = commitComparison{State: "unknown"}
 		if deployment.SourceName == "" {
+			result[deployment.Target] = commitComparison{State: "no_source"}
 			continue
 		}
 		key := string(deployment.SourceKind) + "/" + deployment.SourceName
 		if heads[key] != "" {
 			groups[key] = append(groups[key], deployment)
+		} else {
+			result[deployment.Target] = commitComparison{State: "missing_ref", Source: deployment.SourceName}
 		}
 	}
 

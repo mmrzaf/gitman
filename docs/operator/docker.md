@@ -1,5 +1,9 @@
 # Docker deployment
 
+Gitman requires Go 1.27.4 for GO-2026-6859. The image defaults to
+`golang:1.27.4-alpine`; a worker that builds with `--pull=false` needs that base
+image preloaded.
+
 The standalone Compose configuration includes PostgreSQL, web, a worker,
 and initialization of the data directory. It needs no external Docker
 networks or pre-existing reverse proxy. Copy `.env.example` to `.env`, set
@@ -151,7 +155,7 @@ default, separately from image automation.
   workspaces, PostgreSQL and a build that temporarily exceeds the cache cap.
 - **Enforcement:** on by default. A worker enforces the policy after every run
   that used Docker (once its containers are gone) and every 15 minutes. It uses
-  `docker builder prune --force --all --keep-storage <cap> --filter until=<age>`
+  `docker builder prune --force --all --max-used-space <cap> --filter until=<age>`
   and, if recent unused cache still leaves the cache above the cap, a second
   pass with the cap alone. `--all` is required: without it Docker removes only
   dangling cache and leaves the layer cache of build steps, so the cap could
@@ -161,6 +165,11 @@ default, separately from image automation.
 - **A ceiling after enforcement:** the cache can exceed the cap while a build is
   using it. The cap is what enforcement leaves behind, not a limit during a
   build; size `GITMAN_DISK_RESERVE_GIB` with that headroom in mind.
+- **Shared cache has a floor:** `docker system df` separates total build-cache
+  size from reclaimable size. Cache shared with images cannot be freed by a
+  prune. If `size - reclaimable` is already above the cap, the Workers page
+  shows an advisory floor instead of a failed enforcement; raise
+  `GITMAN_IMAGE_CACHE_KEEP_GIB` or remove unused images.
 - **Tune or disable:** `GITMAN_IMAGE_CACHE_KEEP_GIB`,
   `GITMAN_IMAGE_CACHE_MAX_AGE_HOURS` and `GITMAN_IMAGE_CACHE_ENABLED`. Turning
   enforcement off is an explicit choice, not the default, and leaves the cache

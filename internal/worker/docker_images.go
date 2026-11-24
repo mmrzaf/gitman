@@ -321,15 +321,15 @@ func (d *Docker) BuildCache(ctx context.Context) (int64, int64, error) {
 }
 
 // PruneBuildCache enforces the storage cap and, when olderThanHours is
-// positive, the age limit. It passes --all because without it Docker removes
-// only dangling cache and leaves the layer cache of build steps, which is
-// nearly all of it, so the cap would never be met. --all still removes only
-// unused records: cache a running build holds is kept. A zero age omits the age
-// filter, for the second pass that makes the cap effective.
+// positive, the age limit. Docker 29 renamed the cap flag: --keep-storage is
+// deprecated and now means --reserved-space (a floor), while --max-used-space
+// is the actual ceiling. --all includes internal/frontend cache; it still
+// removes only unused records, so cache a running build holds is kept. A zero
+// age omits the age filter, for the second pass that makes the cap effective.
 func (d *Docker) PruneBuildCache(ctx context.Context, keepGiB, olderThanHours int) (int64, error) {
 	ctx, cancel := context.WithTimeout(ctx, cachePruneTimeout)
 	defer cancel()
-	args := []string{"builder", "prune", "--force", "--all", "--keep-storage", fmt.Sprintf("%dGiB", keepGiB)}
+	args := []string{"builder", "prune", "--force", "--all", "--max-used-space", fmt.Sprintf("%dGiB", keepGiB)}
 	if olderThanHours > 0 {
 		args = append(args, "--filter", fmt.Sprintf("until=%dh", olderThanHours))
 	}

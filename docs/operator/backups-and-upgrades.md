@@ -102,6 +102,34 @@ For recoverable data, use the maintenance backup and restore process above.
 Do not copy bare repository directories independently of their database
 metadata: their internal IDs are linked to database records.
 
+## Upgrading from a beta
+
+A database created by `1.0.0-beta.*` uses the old five-row migration ledger
+without checksums. Gitman 1.x refuses it rather than guessing at the schema:
+
+```
+this database uses the pre-1.0 beta migration ledger; 1.x cannot upgrade it in place
+```
+
+The 1.0 baseline added `deployments.source_kind` and `deployments.source_name`
+and consolidated the beta migrations into `0001_init.sql`. There is no
+supported automatic conversion. Choose one:
+
+1. **Clean install.** Start a new, empty database and data directory, create
+   an admin, create the repositories, and push from your existing clones
+   (including tags). Recreate readers, ref rules, tokens and secrets manually.
+   Keep the beta `database.dump` and `repos.tar.gz` archived read-only.
+2. **Guarded adoption (operator, one time).** With the beta binary, take a
+   maintenance backup and keep the encryption key separately. Then add the two
+   missing `deployments` columns and constraints, and rebuild the ledger with
+   the checksum of the embedded `0001_init.sql`. Verify the result with
+   `gitman doctor` and a backup/restore rehearsal before resuming writes.
+
+Do not hand-edit `schema_migrations` without verifying the exact schema: the
+ledger only proves which files were applied, not that every column, index and
+constraint exists. `admin maintenance enable`, `status` and `backup` remain
+available on a beta database so a safety snapshot can be taken first.
+
 ## Upgrading
 
 Versioned migrations and advisory locking apply any new schema changes.

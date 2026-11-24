@@ -14,7 +14,9 @@ import (
 const workersURL = "/workers"
 
 func (a *App) imagesPrune(w http.ResponseWriter, r *http.Request) error {
-	if err := parseForm(w, r); err != nil {
+	// A plan names every removable image, so its form can be larger than
+	// an ordinary settings form.
+	if err := parseFormLimit(w, r, 1<<20); err != nil {
 		return err
 	}
 	host := r.PostForm.Get("host")
@@ -24,6 +26,10 @@ func (a *App) imagesPrune(w http.ResponseWriter, r *http.Request) error {
 		if ok && ref != "" && id != "" {
 			requested = append(requested, ci.ImageTarget{Ref: ref, ID: id})
 		}
+	}
+	if len(requested) == 0 {
+		a.redirect(w, r, workersURL, flashError, "Select at least one image to prune.")
+		return nil
 	}
 	id, plan, err := a.ci.QueueImagePruneTargets(r.Context(), host, personFrom(r).ID, requested)
 	switch {

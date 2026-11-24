@@ -204,23 +204,35 @@ func Classify(images []InventoryImage, facts *ImageFacts) []ClassifiedImage {
 			out[index].WithinKeep = rank < built.Keep
 		}
 
-		// A deployment version protects the tag it names. If no live tag
-		// names a version, the live image cannot be identified; protect the
-		// newest tag rather than risk removing what is still deployed.
-		unmatched := false
+		// A deployment version protects the tag it names. Try both the
+		// version as recorded and the same version with the v prefix
+		// toggled: pipelines commonly tag raedar:1.0.2 for a v1.0.2 tag.
+		// If no live tag names any version, the live image cannot be
+		// identified; protect the newest tag by last-tag time rather than
+		// risk removing what is still deployed.
+		matchedAny := false
 		for _, version := range built.Deployments {
-			matched := false
-			for _, index := range indices {
-				if out[index].NormalizedRef() == ImageTagForVersion(repository, version) {
-					out[index].Deployed = true
-					matched = true
+			for _, candidate := range versionAliases(version) {
+				for _, index := range indices {
+					if out[index].NormalizedRef() == ImageTagForVersion(repository, candidate) {
+						out[index].Deployed = true
+						matchedAny = true
+					}
 				}
 			}
-			unmatched = unmatched || !matched
 		}
-		if unmatched {
-			out[indices[0]].Deployed = true
-			out[indices[0]].DeployedFallback = true
+		if len(built.Deployments) > 0 && !matchedAny && len(indices) > 0 {
+			fallback := indices[0]
+			for _, index := range indices[1:] {
+				switch {
+				case out[index].LastTagTime.After(out[fallback].LastTagTime):
+					fallback = index
+				case out[index].LastTagTime.Equal(out[fallback].LastTagTime) && out[index].Created.After(out[fallback].Created):
+					fallback = index
+				}
+			}
+			out[fallback].Deployed = true
+			out[fallback].DeployedFallback = true
 		}
 	}
 	return out
@@ -305,10 +317,34 @@ func PlanPrune(images []ClassifiedImage) PrunePlan {
 		default:
 			image.Prunable = true
 			plan.Remove = append(plan.Remove, image)
-			plan.ReclaimableBytes += image.Size
 			continue
 		}
 		plan.Refuse = append(plan.Refuse, image)
+	}
+	// One image ID with several tags frees its layers only when the last
+	// tag goes. Do not report the same size once per tag.
+	tagsByID := map[string]int{}
+	for _, image := range images {
+		if image.Tag != "" {
+			tagsByID[image.ID]++
+		}
+	}
+	removedByID := map[string]int{}
+	for _, image := range plan.Remove {
+		if image.Tag != "" {
+			removedByID[image.ID]++
+		}
+	}
+	added := map[string]bool{}
+	for _, image := range plan.Remove {
+		if image.Tag == "" {
+			plan.ReclaimableBytes += image.Size
+			continue
+		}
+		if removedByID[image.ID] == tagsByID[image.ID] && !added[image.ID] {
+			plan.ReclaimableBytes += image.Size
+			added[image.ID] = true
+		}
 	}
 	sortClassified(plan.Remove)
 	sortClassified(plan.Refuse)
@@ -417,9 +453,16 @@ type ImageCacheState struct {
 	Policy      ImageCachePolicy `json:"policy"`
 	Disabled    bool             `json:"disabled"`
 	AboveCap    bool             `json:"above_cap"`
+	AttemptedAt *time.Time       `json:"attempted_at,omitempty"`
 	PrunedAt    *time.Time       `json:"pruned_at,omitempty"`
 	Reclaimed   int64            `json:"reclaimed_bytes"`
 	Error       string           `json:"error,omitempty"`
+}
+
+// SharedFloor reports that the cap is below the cache Docker can actually
+// free, so a prune cannot bring the host under it.
+func (c ImageCacheState) SharedFloor() bool {
+	return c.AboveCap && c.Size-c.Reclaimable > c.Policy.CacheSizeBytes()
 }
 
 // ImageHost is one Docker host's images and cache, as the page and CLI show

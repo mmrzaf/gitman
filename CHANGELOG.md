@@ -5,6 +5,72 @@ Each release's section is also its GitHub release notes.
 
 ## Unreleased
 
+## [1.1.0] - 2026-11-24
+
+Gitman 1.1.0 fixes build-cache enforcement on Docker 29, restores deployment
+comparisons after an upgrade, and makes rule editing and destructive commands
+safer. It adds a scriptable backup-readiness check and clearer cache reporting,
+and requires Go 1.27.4 for the `net/http` security fix.
+
+### Added
+
+- `gitman admin maintenance status --require-ready` fails until the instance is
+  ready for a backup; plain `status` reports `maintenance` and `backup_ready`
+  and exits 0.
+- The Workers page shows reclaimable cache, a shared-cache floor advisory, and
+  the last attempted trim separately from the last successful one.
+
+### Fixed
+
+- Build-cache enforcement now uses Docker's `--max-used-space` cap instead of
+  the deprecated `--keep-storage`/reserved-space flag, and reports a shared
+  cache floor as an advisory instead of a permanent failure.
+- Cache enforcement and after-deploy image automation now run after a run
+  releases the host execution lock, so they actually execute.
+- Image retention matches `v`-prefixed deployment versions to unprefixed tags
+  and no longer protects a repository's newest tag because a different target
+  recorded a commit-hash version.
+- Removing one tag of a multi-tag image reports it as untagged and frees no
+  bytes until the last tag is removed.
+- Failed image operations are retried with backoff and a bounded attempt count
+  instead of being re-claimed in a tight loop.
+- Deployment source refs are backfilled from their originating runs, restoring
+  comparisons for existing deployments.
+- An inadmissible manual run no longer cancels queued work for its ref, and the
+  Run form refuses a run that admission would fail immediately.
+- Backup and restore no longer pass the encryption key or ambient credentials
+  to `pg_dump`/`pg_restore`, check the client version before touching data, and
+  stage repository extraction so a failed restore can be retried.
+- Pending migrations run only after an existing installation's repository
+  storage is verified, so a wrong data directory cannot make an upgrade
+  irreversible.
+- Automatic `git gc` skips while a push holds the repository lock and uses the
+  full GC budget.
+- A symlinked data directory no longer rejects every push.
+- Home's blocked-run count is limited to repositories the person can read.
+- Activity names command-line and automatic actors instead of "someone" and
+  distinguishes a failed image prune from a successful one.
+- Account pages and repository content are served with private, non-storable
+  cache headers; empty or failed raw downloads no longer return a misleading
+  200.
+- Browser dialogs keep their deep link across reloads; bootstrap accounts no
+  longer see token actions that silently redirect; self-demote and self-revoke
+  end on a page the person can see.
+- Several form validation errors, accessible names, keyboard focus and mobile
+  feed wrapping were fixed.
+
+### Changed
+
+- `gitman admin rule set` edits the existing rule by default and changes only
+  the flags given; `--replace` resets the whole rule, so adding `--run` cannot
+  silently reopen pushes to everyone.
+- `gitman admin repo delete` requires `--confirm`.
+- A database migration backfills existing deployment source refs, adds the
+  index comparisons use, and records the last cache-trim attempt separately
+  from the last success.
+- Go 1.27.4 is the minimum toolchain; the image builder defaults to
+  `golang:1.27.4-alpine`.
+
 ## [1.0.4] - 2026-11-18
 
 Gitman 1.0.4 makes release artifact verification independent of file modes.

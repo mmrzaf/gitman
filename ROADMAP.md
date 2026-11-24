@@ -15,6 +15,19 @@ changes belong in [CHANGELOG.md](CHANGELOG.md).
 
 ## Later
 
+- Complete a push only after Git has migrated its quarantine objects, and
+  verify every new ref and receipt before marking the operation complete.
+- Add a live schema fingerprint to `doctor` and backup manifests so a ledger
+  that disagrees with the schema cannot hide a missing column, index or
+  constraint.
+- Compute retention's protected-run set once per pass, and bound Home's
+  deployment comparisons instead of walking every deployed repository.
+- Show a deployment owner that stopped without finishing from the Workers
+  page, and release it there instead of requiring the CLI.
+- Complete the live-region and focus sweep for streamed updates, including
+  announcements when a run or activity feed changes under the reader.
+- Add shell completion for the admin CLI and a consistent `--help` path for
+  every command group.
 - Evaluate retention of historical pipeline and repository-operation payloads.
 - Investigate receive-pack quarantine directories left after abrupt termination.
 - Design a clearer protocol outcome for pushes applied successfully but recorded late.

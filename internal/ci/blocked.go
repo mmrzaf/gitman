@@ -177,7 +177,7 @@ func (s *Service) QueuedCount(ctx context.Context) (int, error) {
 func (s *Service) QueuedBlockGroups(ctx context.Context) ([]BlockGroup, error) {
 	index := map[string]int{}
 	var groups []BlockGroup
-	err := s.eachQueuedBlock(ctx, s.db.Q, func(id string, b *Blocker) error {
+	err := s.eachQueuedBlock(ctx, s.db.Q, nil, func(id string, b *Blocker) error {
 		if b == nil {
 			return nil
 		}
@@ -204,8 +204,19 @@ func (s *Service) QueuedBlockGroups(ctx context.Context) ([]BlockGroup, error) {
 // QueuedBlockCounts reports how many queued runs wait for each reason, for a
 // dashboard or a doctor check. Runs only waiting their turn are not counted.
 func (s *Service) QueuedBlockCounts(ctx context.Context) (map[BlockKind]int, error) {
+	return s.queuedBlockCounts(ctx, nil)
+}
+
+// QueuedBlockCountsForRepos counts only blocked runs the caller can read.
+// Home uses this so an aggregate count never discloses activity in a
+// restricted repository.
+func (s *Service) QueuedBlockCountsForRepos(ctx context.Context, repoIDs []string) (map[BlockKind]int, error) {
+	return s.queuedBlockCounts(ctx, repoIDs)
+}
+
+func (s *Service) queuedBlockCounts(ctx context.Context, repoIDs []string) (map[BlockKind]int, error) {
 	counts := map[BlockKind]int{}
-	err := s.eachQueuedBlock(ctx, s.db.Q, func(_ string, b *Blocker) error {
+	err := s.eachQueuedBlock(ctx, s.db.Q, repoIDs, func(_ string, b *Blocker) error {
 		if b != nil {
 			counts[b.Kind]++
 		}
@@ -214,8 +225,9 @@ func (s *Service) QueuedBlockCounts(ctx context.Context) (map[BlockKind]int, err
 	return counts, err
 }
 
-// eachQueuedBlock classifies currently queued runs.
-func (s *Service) eachQueuedBlock(ctx context.Context, q postgres.Querier, fn func(runID string, b *Blocker) error) error {
+// eachQueuedBlock classifies currently queued runs. A non-nil repoIDs
+// restricts the scan to those repositories.
+func (s *Service) eachQueuedBlock(ctx context.Context, q postgres.Querier, repoIDs []string, fn func(runID string, b *Blocker) error) error {
 	workers, err := selectWorkers(ctx, q)
 	if err != nil {
 		return err
@@ -226,8 +238,8 @@ func (s *Service) eachQueuedBlock(ctx context.Context, q postgres.Querier, fn fu
 	}
 	rows, err := q.Query(ctx, `
 		SELECT id, required_images FROM runs
-		WHERE status = 'queued'
-		ORDER BY queued_at, id LIMIT 1000`)
+		WHERE status = 'queued' AND ($1::text[] IS NULL OR repo_id = ANY($1))
+		ORDER BY queued_at, id LIMIT 1000`, repoIDs)
 	if err != nil {
 		return fmt.Errorf("list queued runs: %w", err)
 	}

@@ -1,6 +1,18 @@
 {
   "releases": [
     {
+      "version": "1.1.0",
+      "releasedOn": "2026-11-24",
+      "items": [
+        "Build-cache enforcement works with Docker 29 and treats shared cache it cannot free as an advisory, not a permanent failure.",
+        "Image retention matches version tags with or without a v prefix and no longer protects the wrong newest tag.",
+        "Existing deployments get their source refs backfilled, so comparisons work again.",
+        "Rule editing is incremental, repository deletion asks for confirmation, and backups no longer hand the encryption key to external clients.",
+        "Queued runs are not cancelled by a run that admission would fail, and the Run form refuses such a run before creating it.",
+        "Browser dialogs keep deep links, account pages use private cache headers, and several keyboard and screen-reader rough edges are fixed."
+      ]
+    },
+    {
       "version": "1.0.4",
       "releasedOn": "2026-11-18",
       "items": [

@@ -25,6 +25,21 @@ import (
 	"github.com/mmrzaf/gitman/internal/postgres"
 )
 
+func TestActorLabelDistinguishesAutomationFromTheCLI(t *testing.T) {
+	cases := []struct{ action, actor, detail, want string }{
+		{activity.ImageCachePruned, "darius", "on host: cache policy", "darius"},
+		{activity.ImageCachePruned, "", "automation on host (fake): cache policy", "Gitman automation"},
+		{activity.ImageCachePruned, "", "on host: cache policy", "the command line"},
+		{activity.WorkerReleased, "", "host (w1), 2 run(s)", "the command line"},
+		{activity.PersonAdded, "", "sara", "the command line"},
+	}
+	for _, c := range cases {
+		if got := actorLabel(c.action, c.actor, c.detail); got != c.want {
+			t.Errorf("actorLabel(%q, %q, %q) = %q, want %q", c.action, c.actor, c.detail, got, c.want)
+		}
+	}
+}
+
 func TestSafeNext(t *testing.T) {
 	cases := map[string]string{
 		"":                      "/",
@@ -223,7 +238,6 @@ func TestAssetsAreFingerprinted(t *testing.T) {
 }
 
 func TestRawContentNeverRunsAsAPage(t *testing.T) {
-
 	h := http.Header{}
 	setRawHeaders(h, "text/plain; charset=utf-8", `we"ird;name.txt`)
 	if got := h.Get("Content-Security-Policy"); got != "default-src 'none'; sandbox" {

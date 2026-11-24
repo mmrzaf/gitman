@@ -32,7 +32,7 @@ interrupted deployment while its external effects are unknown.
 
 ## Environment
 
-- Go 1.27, PostgreSQL 18, `pg_dump`/`pg_restore` v18, Git and Docker/Compose.
+- Go 1.27.4, PostgreSQL 18, `pg_dump`/`pg_restore` v18, Git and Docker/Compose.
 - Node.js 24; browser tests need pinned npm dependencies and Chromium.
 - `GITMAN_TEST_DATABASE_URL` must reference an isolated `_test` database.
 - All integration scripts create their own isolated databases and data folders.
@@ -42,5 +42,3 @@ interrupted deployment while its external effects are unknown.
 The release candidate is *not* accepted solely because a browser screenshot
 looks correct or a source parser finishes without errors. Actual CI, Docker,
 PostgreSQL, restore and installed-artifact checks must pass.
-
-for which gates have and have not been executed.

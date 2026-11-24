@@ -42,6 +42,7 @@ column image_hosts.automation_mode text null=NO default='off'::text
 column image_hosts.cache_pruned_at timestamp with time zone null=YES default=
 column image_hosts.cache_reclaimed_bytes bigint null=NO default=0
 column image_hosts.cache_error text null=NO default=''::text
+column image_hosts.cache_attempt_at timestamp with time zone null=YES default=
 column instance.maintenance boolean null=NO default=false
 column instance.id text null=NO default=
 column instance.singleton boolean null=NO default=true
@@ -230,6 +231,7 @@ index deployments deployments_pkey
 index deployments deployments_step_id_key
 index deployments idx_deployments_created
 index deployments idx_deployments_repo_created
+index deployments idx_deployments_repo_source
 index deployments idx_deployments_repo_target
 index deployments idx_deployments_run
 index events events_pkey

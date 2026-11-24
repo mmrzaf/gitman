@@ -46,8 +46,11 @@ const (
 	SessionRevoked           = "person.session_revoked"
 	WorkerReleased           = "worker.released"
 	ImageRemoved             = "image.removed"
+	ImageRemoveFailed        = "image.remove_failed"
 	ImagesPruned             = "image.pruned"
+	ImagesPruneFailed        = "image.prune_failed"
 	ImageCachePruned         = "image.cache_pruned"
+	ImageCachePruneFailed    = "image.cache_prune_failed"
 )
 
 // NotifyChannel is the PostgreSQL channel that carries a repository's ID

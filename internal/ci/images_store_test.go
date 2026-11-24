@@ -198,17 +198,24 @@ func TestPublishInventoryReplacesInPlace(t *testing.T) {
 		t.Fatalf("image_hosts rows = %d, %v; want 1", count, err)
 	}
 
-	previous, err := svc.RecordCachePrune(ctx, "engine-1", 123, "first failure")
+	previous, err := svc.RecordCachePrune(ctx, "engine-1", 123, "first failure", false)
 	if err != nil || previous != "" {
 		t.Fatalf("RecordCachePrune = %q, %v", previous, err)
 	}
-	previous, err = svc.RecordCachePrune(ctx, "engine-1", 456, "second failure")
+	previous, err = svc.RecordCachePrune(ctx, "engine-1", 456, "second failure", false)
 	if err != nil || previous != "first failure" {
 		t.Fatalf("RecordCachePrune previous = %q, %v", previous, err)
 	}
 	hosts, err = svc.ImageHosts(ctx)
-	if err != nil || hosts[0].Cache.Reclaimed != 456 || hosts[0].Cache.Error != "second failure" || hosts[0].Cache.PrunedAt == nil {
-		t.Fatalf("cache state = %+v, %v", hosts[0].Cache, err)
+	if err != nil || hosts[0].Cache.Reclaimed != 0 || hosts[0].Cache.Error != "second failure" || hosts[0].Cache.PrunedAt != nil || hosts[0].Cache.AttemptedAt == nil {
+		t.Fatalf("failed cache state = %+v, %v", hosts[0].Cache, err)
+	}
+	if _, err := svc.RecordCachePrune(ctx, "engine-1", 123, "", true); err != nil {
+		t.Fatal(err)
+	}
+	hosts, err = svc.ImageHosts(ctx)
+	if err != nil || hosts[0].Cache.Reclaimed != 123 || hosts[0].Cache.Error != "" || hosts[0].Cache.PrunedAt == nil {
+		t.Fatalf("successful cache state = %+v, %v", hosts[0].Cache, err)
 	}
 }
 
@@ -232,7 +239,13 @@ func TestImageOperationClaimReleaseAndIdempotentFinish(t *testing.T) {
 	if second, err := svc.ClaimImageOperation(ctx, "engine-1", "w2"); err != nil || second != nil {
 		t.Fatalf("a live lease was stolen: %+v, %v", second, err)
 	}
-	if err := svc.ReleaseImageOperation(ctx, "op1"); err != nil {
+	if err := svc.ReleaseImageOperation(ctx, "op1", "daemon unavailable"); err != nil {
+		t.Fatal(err)
+	}
+	if operation, err = svc.ClaimImageOperation(ctx, "engine-1", "w2"); err != nil || operation != nil {
+		t.Fatalf("released operation was claimable during its backoff: %+v, %v", operation, err)
+	}
+	if _, err := database.Pool.Exec(ctx, `UPDATE repository_operations SET claimed_at = now() - interval '1 minute' WHERE id = 'op1'`); err != nil {
 		t.Fatal(err)
 	}
 	operation, err = svc.ClaimImageOperation(ctx, "engine-1", "w2")

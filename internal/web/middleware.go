@@ -94,7 +94,14 @@ const maxFormBytes = 64 << 10
 
 // parseForm reads a url-encoded form with a size limit.
 func parseForm(w http.ResponseWriter, r *http.Request) error {
-	r.Body = http.MaxBytesReader(w, r.Body, maxFormBytes)
+	return parseFormLimit(w, r, maxFormBytes)
+}
+
+// parseFormLimit is parseForm with a route-specific bound. The image prune
+// plan names every image, so a busy host can legitimately exceed the
+// ordinary form limit.
+func parseFormLimit(w http.ResponseWriter, r *http.Request, limit int64) error {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	err := r.ParseForm()
 	var tooLarge *http.MaxBytesError
 	switch {

@@ -40,7 +40,7 @@ gitman admin token list <username>
 gitman admin session list [username]
 gitman admin session revoke <id>
 gitman admin repo create [--description TEXT] [--default-branch NAME] <name>
-gitman admin repo list | delete <name> | sync <name>
+gitman admin repo list | delete [--confirm] <name> | sync <name>
 gitman admin repo size <name>
 gitman admin repo gc <name>
 gitman admin repo visibility <name> everyone|restricted
@@ -49,7 +49,7 @@ gitman admin repo default-push [--push everyone|admins|people] [--people a,b] <n
 gitman admin reader add | remove <repo> <username>
 gitman admin reader list <repo>
 gitman admin rule list <repo>
-gitman admin rule set [--push everyone|admins|people] [--people a,b] [--force] [--delete]
+gitman admin rule set [--replace] [--push everyone|admins|people] [--people a,b] [--force] [--delete]
                       [--run] [--docker] [--secrets] [--deploy] <repo> branch|tag <pattern>
 gitman admin rule delete <repo> branch|tag <pattern>
 gitman admin run cancel <repo> <number>
@@ -62,7 +62,7 @@ gitman admin images prune --cache [--worker ID] [--confirm] [--keep-storage GiB]
 gitman admin images remove [--confirm] <worker-id> <image>
 gitman admin operation list | recover
 gitman admin operation abandon --reason TEXT <id>
-gitman admin maintenance enable | disable | status
+gitman admin maintenance enable | disable | status [--require-ready]
 gitman admin maintenance backup <new-directory>
 gitman admin migrate
 ```
@@ -92,10 +92,11 @@ Flags go before the positional arguments.
 - `admin repo default-branch` moves a repository's default branch — what
   a clone checks out — to a branch it already has. See [Default
   branch](../user-guide.md#default-branch).
-- `admin rule set` flags map directly to what a rule grants: `--force`/
+- `admin rule set` edits the existing rule by default: only the flags given change, so adding `--run` or `--docker` cannot silently reopen pushes or revoke other grants. Use `--replace` to reset the whole rule. The flags map directly to what a rule grants: `--force`/
   `--delete` (force-push/deletion), `--run` (pushes trigger the
   pipeline), `--docker`/`--secrets`/`--deploy` (what a triggered run may
   use). See [Security model](../operator/security.md).
+- `admin repo delete` requires `--confirm`; it removes the bare repository and all of its runs, deployments and rules.
 - `admin run cancel` stops a run in progress; the same is available from
   a run's page in the UI to anyone allowed to push to its ref.
 - `admin token list` shows a person's tokens, their scope, expiry, last
@@ -146,6 +147,9 @@ Flags go before the positional arguments.
   changed Git. It leaves Git and database rows untouched for inspection;
   it only clears the mutation block. See
   [Troubleshooting](../troubleshooting.md).
+- `admin maintenance status` prints `maintenance` and `backup_ready` and exits
+  0 even when maintenance is off. Add `--require-ready` when a script must fail
+  until a backup can be taken.
 - `admin migrate` runs pending database migrations by hand; normally
   unnecessary, since `web` and `worker` both run migrations automatically
   on start. Gitman requires an empty database or a compatible

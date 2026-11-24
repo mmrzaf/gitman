@@ -96,7 +96,9 @@ func supersedeQueued(ctx context.Context, tx postgres.Querier, repoID string, re
 
 const summaryColumns = `
 	r.id, repos.name, r.number, r.ref_kind, r.ref_name, r.commit_hash, r.trigger, r.status, r.reason, r.target,
-	COALESCE(p.username, ''), r.queued_at, r.started_at, r.finished_at, EXISTS(SELECT 1 FROM deployments WHERE run_id = r.id)
+	COALESCE(p.username, ''), r.queued_at, r.started_at, r.finished_at,
+	(EXISTS(SELECT 1 FROM deployments WHERE run_id = r.id)
+	 OR EXISTS(SELECT 1 FROM steps s WHERE s.run_id = r.id AND s.type = 'deploy' AND s.status = 'passed'))
 `
 
 func scanSummary(row interface{ Scan(...any) error }) (Summary, error) {

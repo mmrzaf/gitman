@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"embed"
+	"errors"
 	"fmt"
 	"io/fs"
 	"sort"
@@ -21,6 +22,16 @@ var migrationFiles embed.FS
 // migration across processes, so a web process and a worker starting at
 // the same moment never apply the same migration twice.
 const migrationLockKey int64 = 0x676974_6d616e // "gitman"
+
+// migrationLockTimeout bounds waiting for another process to finish
+// migrating, and lock_timeout bounds DDL waiting behind a long transaction.
+// Startup must fail with a diagnosis rather than hang forever.
+const migrationLockTimeout = 30 * time.Second
+
+// ErrLegacyLedger marks a database created by a pre-1.0 beta. The beta
+// ledger has no checksum and the consolidated 1.0 schema added columns the
+// beta never recorded; 1.x refuses it rather than guessing.
+var ErrLegacyLedger = errors.New("this database uses the pre-1.0 beta migration ledger")
 
 type migration struct {
 	version  int64
@@ -94,7 +105,7 @@ func inspectMigrationSchema(ctx context.Context, q migrationSchemaReader) (bool,
 		return false, fmt.Errorf("inspect migration ledger columns: %w", err)
 	}
 	if !hasChecksum {
-		return false, fmt.Errorf("migration ledger is missing a checksum column; this database format is unsupported")
+		return false, fmt.Errorf("%w; 1.x cannot upgrade it in place. Take a maintenance backup with the beta binary, then either install clean and push the repositories again, or follow docs/operator/backups-and-upgrades.md#upgrading-from-a-beta", ErrLegacyLedger)
 	}
 	return true, nil
 }
@@ -223,8 +234,10 @@ func (d *DB) Migrate(ctx context.Context) error {
 	}
 	defer conn.Release()
 
-	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock($1)`, migrationLockKey); err != nil {
-		return fmt.Errorf("take migration lock: %w", err)
+	lockCtx, cancelLock := context.WithTimeout(ctx, migrationLockTimeout)
+	defer cancelLock()
+	if _, err := conn.Exec(lockCtx, `SELECT pg_advisory_lock($1)`, migrationLockKey); err != nil {
+		return fmt.Errorf("take migration lock within %s: %w", migrationLockTimeout, err)
 	}
 	defer func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -290,6 +303,10 @@ func (d *DB) Migrate(ctx context.Context) error {
 		tx, err := conn.Begin(ctx)
 		if err != nil {
 			return fmt.Errorf("begin migration %s: %w", m.name, err)
+		}
+		if _, err := tx.Exec(ctx, `SET LOCAL lock_timeout = '30s'`); err != nil {
+			_ = tx.Rollback(ctx)
+			return fmt.Errorf("set migration lock timeout: %w", err)
 		}
 		if _, err := tx.Exec(ctx, m.sql); err != nil {
 			_ = tx.Rollback(ctx)

@@ -190,10 +190,17 @@ func (r *Repo) ReconcilePins(ctx context.Context, objects, operations []string) 
 }
 
 // AutoGC lets Git repack when it decides the repository has grown enough.
-// It is deliberately separate from ReconcilePins: a push may run during
-// it, and Git's own locks handle that safely, but the repository mutation
-// lock must not be held for a repack.
+// It is separate from ReconcilePins: the caller decides
+// whether to take the repository mutation lock. Retention takes it, so a
+// repack cannot race a push's quarantine migration; a push that arrives
+// during a repack waits for it, while one already holding the lock makes
+// the repack skip this pass.
 func (r *Repo) AutoGC(ctx context.Context) error {
-	_, err := run(ctx, r.opts(), "gc", "--auto")
+	opts := r.opts()
+	// A repack gets the same long budget as an explicit gc. The default
+	// two-minute command timeout kills it on exactly the large repositories
+	// automatic GC exists to protect.
+	opts.timeout = gcTimeout
+	_, err := run(ctx, opts, "gc", "--auto")
 	return err
 }

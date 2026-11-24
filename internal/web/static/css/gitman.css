@@ -841,6 +841,13 @@ time { white-space: nowrap; }
 .table .cell-end { text-align: right; }
 /* The cell that gives way when a row is too wide, never below what reads. */
 .table .cell-truncate { max-width: 0; min-width: 11rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Home's last-run column is content, not a 1%-wide shrink column: the
+   shift status and ref need room, and an internally scrolling cell clips
+   them at the panel edge. The card layout below 641px keeps width: auto. */
+@media (min-width: 641px) {
+  .table.home-repos .home-run { width: 13rem; min-width: 13rem; }
+  .table.home-repos .home-run .table-cell { overflow: hidden; }
+}
 .table .cell-muted { color: var(--muted); }
 .table .cell-actions { display: inline-flex; align-items: center; gap: var(--sp-1); }
 .table-rowheader { font-weight: var(--weight-medium); }
@@ -1682,7 +1689,7 @@ h1.path { font-size: var(--text-xl); letter-spacing: -0.01em; }
 /* A compact desktop toolbar expands on touch screens. */
 @media (pointer: coarse), (max-width: 640px) {
   .feed { --feed-row-h: 44px; }
-  .feed-text { overflow-x: auto; }
+  .feed-text { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
   :root { --control-h: 44px; --control-h-sm: 44px; }
   .table { --table-row-h: 64px; }
   .table.tree { --table-row-h: 44px; }

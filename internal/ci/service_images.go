@@ -132,7 +132,7 @@ func (s *Service) ImageHosts(ctx context.Context) ([]ImageHost, error) {
 			Cache: ImageCacheState{
 				Size: row.CacheSize, Reclaimable: row.CacheReclaimable,
 				Policy:   ImageCachePolicy{KeepGiB: row.KeepGiB, OlderThanHours: row.OlderHours},
-				Disabled: row.CacheDisabled, PrunedAt: row.PrunedAt, Reclaimed: row.Reclaimed, Error: row.CacheError,
+				Disabled: row.CacheDisabled, AttemptedAt: row.AttemptedAt, PrunedAt: row.PrunedAt, Reclaimed: row.Reclaimed, Error: row.CacheError,
 				AboveCap: !row.CacheDisabled && row.KeepGiB > 0 && row.CacheSize > int64(row.KeepGiB)<<30,
 			},
 		}
@@ -348,10 +348,10 @@ func (s *Service) ImageOperation(ctx context.Context, id string) (*ImageOperatio
 
 // ReleaseImageOperation returns an unstarted operation to the queue, for a
 // worker that could not reach Docker and should retry later.
-func (s *Service) ReleaseImageOperation(ctx context.Context, id string) error {
+func (s *Service) ReleaseImageOperation(ctx context.Context, id, reason string) error {
 	ctx, stop := context.WithTimeout(ctx, 10*time.Second)
 	defer stop()
-	return releaseImageOperation(ctx, s.db.Q, id)
+	return releaseImageOperation(ctx, s.db.Q, id, reason)
 }
 
 // FinishImageOperation records results and audits them in one transaction. A
@@ -371,20 +371,21 @@ func (s *Service) FinishImageOperation(ctx context.Context, operation *ImageOper
 		if !finished {
 			return nil
 		}
-		return activity.RecordAdmin(ctx, tx, "", operation.ActorID, imageOperationAction(operation.Kind),
+		failed := operationFailed(result) || result.Error != ""
+		return activity.RecordAdmin(ctx, tx, "", operation.ActorID, imageOperationAction(operation.Kind, failed),
 			imageOperationDetail(operation, result))
 	})
 }
 
 // RecordCachePrune stores the last cache-prune attempt and returns the error
 // it replaced, so an unchanged recurring failure is not audited every pass.
-func (s *Service) RecordCachePrune(ctx context.Context, hostID string, reclaimed int64, cacheError string) (string, error) {
+func (s *Service) RecordCachePrune(ctx context.Context, hostID string, reclaimed int64, cacheError string, success bool) (string, error) {
 	ctx, stop := context.WithTimeout(ctx, 10*time.Second)
 	defer stop()
 	var previous string
 	err := s.db.Tx(ctx, func(tx postgres.Tx) error {
 		var err error
-		previous, err = recordCachePrune(ctx, tx, hostID, reclaimed, cacheError)
+		previous, err = recordCachePrune(ctx, tx, hostID, reclaimed, cacheError, success)
 		return err
 	})
 	return previous, err
@@ -457,27 +458,29 @@ func operationFailed(result ImageOperationResult) bool {
 	return false
 }
 
-func imageOperationAction(kind ImageOperationKind) string {
-	switch kind {
-	case ImageOperationRemove:
+func imageOperationAction(kind ImageOperationKind, failed bool) string {
+	switch {
+	case kind == ImageOperationRemove && failed:
+		return activity.ImageRemoveFailed
+	case kind == ImageOperationRemove:
 		return activity.ImageRemoved
-	case ImageOperationPrune:
+	case kind == ImageOperationPrune && failed:
+		return activity.ImagesPruneFailed
+	case kind == ImageOperationPrune:
 		return activity.ImagesPruned
+	case failed:
+		return activity.ImageCachePruneFailed
 	default:
 		return activity.ImageCachePruned
 	}
 }
 
 func imageOperationDetail(operation *ImageOperation, result ImageOperationResult) string {
-	by := "the command line"
-	if operation.ActorID != "" {
-		by = "a person"
-	}
 	host := operation.EngineID
 	if operation.Kind == ImageOperationCache {
 		policy := operation.Cache
-		return fmt.Sprintf("%s on %s: cache policy %d GiB, %d hours; reclaimed %d bytes",
-			by, host, policy.KeepGiB, policy.OlderThanHours, result.ReclaimedBytes)
+		return fmt.Sprintf("on %s: cache policy %d GiB, %d hours; reclaimed %d bytes",
+			host, policy.KeepGiB, policy.OlderThanHours, result.ReclaimedBytes)
 	}
 	parts := make([]string, 0, len(result.Results))
 	for i, image := range result.Results {
@@ -491,5 +494,5 @@ func imageOperationDetail(operation *ImageOperation, result ImageOperationResult
 		}
 		parts = append(parts, part)
 	}
-	return fmt.Sprintf("%s on %s: %s; reclaimed %d bytes", by, host, strings.Join(parts, ", "), result.ReclaimedBytes)
+	return fmt.Sprintf("on %s: %s; reclaimed %d bytes", host, strings.Join(parts, ", "), result.ReclaimedBytes)
 }

@@ -48,15 +48,11 @@ func runWeb(args []string) error {
 		return err
 	}
 	defer database.Close()
-	if err := database.Migrate(ctx); err != nil {
-		return err
-	}
-
 	root, err := filepath.Abs(cfg.ReposPath())
 	if err != nil {
 		return err
 	}
-	if err := database.BindRepositoryStorage(ctx, root); err != nil {
+	if err := database.MigrateAndBind(ctx, root); err != nil {
 		return err
 	}
 	store := git.NewStore(cfg.ReposPath())

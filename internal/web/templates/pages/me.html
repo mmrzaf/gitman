@@ -9,11 +9,14 @@
 </header>
 
 <nav class="tabs tabs-page" data-tabs aria-label="Account">
+  {{- if not $d.Bootstrap}}
   <a class="tab" id="tab-tokens" href="/me" data-tab="tokens"{{if eq $d.Tab "tokens"}} aria-current="page"{{end}}>{{template "icon" "key"}}Access tokens <span class="count">{{len $d.Tokens}}</span></a>
   <a class="tab" id="tab-sessions" href="/me?tab=sessions" data-tab="sessions"{{if eq $d.Tab "sessions"}} aria-current="page"{{end}}>{{template "icon" "monitor"}}Sessions <span class="count">{{len $d.Sessions}}</span></a>
+  {{- end}}
   <a class="tab" id="tab-password" href="/me?tab=password" data-tab="password"{{if eq $d.Tab "password"}} aria-current="page"{{end}}>{{template "icon" "lock"}}Password</a>
 </nav>
 
+{{- if not $d.Bootstrap}}
 <div class="stack" id="panel-tokens" data-tab-panel="tokens"{{if ne $d.Tab "tokens"}} hidden{{end}}>
   {{- with $d.NewToken}}{{template "reveal" (revealModel "Your new token" . "Copy it now: it won't be shown again.")}}{{end}}
   <section class="panel" aria-labelledby="tokens-title">
@@ -35,7 +38,7 @@
             <td data-label="Expires" class="cell-muted"><div class="table-cell">{{if .ExpiresAt}}{{template "time" .ExpiresAt}}{{else}}never{{end}}</div></td>
             <td data-label="Actions" class="cell-shrink cell-end"><div class="table-cell">
               <form method="post" action="/me/tokens/{{.ID}}/delete" data-confirm="Revoke the token “{{.Name}}”?" data-confirm-detail="Anything that uses it stops working at once." data-confirm-action="Revoke token">
-                <button type="submit" class="btn btn-sm btn-danger">Revoke</button>
+                <button type="submit" class="btn btn-sm btn-danger" aria-label="Revoke token {{.Name}}">Revoke</button>
               </form>
             </div></td>
           </tr>
@@ -48,7 +51,9 @@
     {{- end}}
   </section>
 </div>
+{{- end}}
 
+{{- if not $d.Bootstrap}}
 <div class="stack" id="panel-sessions" data-tab-panel="sessions" aria-labelledby="sessions-title"{{if ne $d.Tab "sessions"}} hidden{{end}}>
   <section class="panel" aria-labelledby="sessions-title">
     <header class="panel-header"><h2 class="panel-title" id="sessions-title">{{template "icon" "monitor"}}Sessions</h2></header>
@@ -67,7 +72,7 @@
             <td data-label="Expires"><div class="table-cell">{{template "time" .ExpiresAt}}</div></td>
             <td data-label="Actions" class="cell-shrink cell-end"><div class="table-cell">
               <form method="post" action="/me/sessions/{{.ID}}/revoke" data-confirm="Revoke this session?" data-confirm-detail="{{if eq .ID $d.CurrentSession}}This is the session you are using, so you will be signed out.{{else}}That browser is signed out at once.{{end}}" data-confirm-action="Revoke session">
-                <button type="submit" class="btn btn-sm btn-danger">Revoke</button>
+                <button type="submit" class="btn btn-sm btn-danger" aria-label="Revoke this session">Revoke</button>
               </form>
             </div></td>
           </tr>
@@ -80,6 +85,7 @@
     {{- end}}
   </section>
 </div>
+{{- end}}
 
 <section class="panel" id="panel-password" data-tab-panel="password" aria-labelledby="password-title"{{if ne $d.Tab "password"}} hidden{{end}}>
   <header class="panel-header"><h2 class="panel-title" id="password-title">{{template "icon" "lock"}}Change password</h2></header>
@@ -101,6 +107,7 @@
   <div class="form-actions form-actions-start"><button class="btn btn-danger" type="submit">Revoke all and sign out</button></div>
  </form>
 </section>
+{{- if not $d.Bootstrap}}
 <dialog class="dialog" id="token-new" aria-labelledby="token-new-title" data-dialog{{if eq $d.Dialog "token-new"}} open{{end}}>
   <form method="post" action="/me/tokens" class="form">
     <header class="dialog-header"><h2 class="dialog-title" id="token-new-title">New access token</h2>{{template "dialog-close" "/me"}}</header>
@@ -133,10 +140,12 @@
             <option value="365"{{if eq ($d.TokenForm.Get "expires") "365"}} selected{{end}}>In 365 days</option>
           </select>
         </span>
+        {{with index $d.TokenForm.Errors "expires"}}<p class="field-error" role="alert">{{.}}</p>{{end}}
       </div>
     </div>
     <footer class="dialog-footer"><button type="button" class="btn js-only" data-dialog-close>Cancel</button><button type="submit" class="btn btn-primary">Create token</button></footer>
   </form>
 </dialog>
+{{- end}}
 </div>
 {{end}}

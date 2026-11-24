@@ -197,7 +197,7 @@ func (s *Service) SetAdmin(ctx context.Context, personID string, isAdmin bool, a
 		if isAdmin {
 			role = "admin"
 		}
-		return activity.RecordAdmin(ctx, tx, "", actorID, activity.PersonRole, p.Username+" "+role)
+		return activity.RecordAdmin(ctx, tx, "", actorID, activity.PersonRole, "changed "+p.Username+"'s role to "+role)
 	})
 }
 

@@ -91,7 +91,7 @@ Not runtime settings — passed at `docker build` time, so the image itself can 
 
 | Build arg | Default | Purpose |
 |---|---|---|
-| `GO_IMAGE` | `golang:1.27-alpine` | Builder base image. |
+| `GO_IMAGE` | `golang:1.27.4-alpine` | Builder base image. |
 | `RUNTIME_IMAGE` | `alpine:3.24` | Runtime base image. |
 | `DOCKER_CLI_IMAGE` | `docker:29-cli` | The image the worker's `docker` client is copied from. |
 | `APK_MIRROR` | `https://dl-cdn.alpinelinux.org/alpine` | Alpine package mirror for the runtime image. It needs Alpine's `/vMAJOR.MINOR/{main,community}` layout. |

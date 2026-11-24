@@ -54,7 +54,7 @@
         {{- if .Data.Repos}}
         {{$run := .Data.HasRun}}
         <div class="table-scroll">
-          <table class="table table-cards table-rich">
+          <table class="table table-cards table-rich home-repos">
             <thead><tr>
               <th scope="col">Repository</th>
               <th scope="col">Latest on the default branch</th>
@@ -79,7 +79,7 @@
                   {{- else}}<span class="muted">Nothing pushed yet</span>{{end}}
                 </div></td>
                 {{- if $run}}
-                <td data-label="Run" class="cell-shrink"><div class="table-cell">
+                <td data-label="Run" class="cell-shrink home-run"><div class="table-cell">
                   {{- $name := .Name}}
 
                   {{with .Run}}<span class="cell-stack"><a class="run-ref" href="/{{$name}}/runs/{{.Number}}">{{template "status" .Status}}<span>#{{.Number}}</span></a><span class="muted run-origin">{{.RefKind}} {{.RefName}}</span></span>{{else}}<span class="muted">—<span class="visually-hidden"> No runs yet</span></span>{{end}}
@@ -139,7 +139,7 @@
         {{- if .Data.Attention}}
         <ul class="attention-list">
           {{- range .Data.Attention}}
-          <li class="attention-item" data-attention-key="{{.Key}}">{{template "icon" .Icon}}{{if .URL}}<a href="{{.URL}}">{{.Text}}</a>{{else}}<span>{{.Text}}</span>{{end}}<button class="attention-dismiss js-only" type="button" data-attention-dismiss>Ignore</button></li>
+          <li class="attention-item" data-attention-key="{{.Key}}">{{template "icon" .Icon}}{{if .URL}}<a href="{{.URL}}">{{.Text}}</a>{{else}}<span>{{.Text}}</span>{{end}}<button class="attention-dismiss js-only" type="button" data-attention-dismiss aria-label="Ignore: {{.Text}}">Ignore</button></li>
           {{- end}}
         </ul>
         <div class="empty" data-attention-empty hidden><p class="empty-title">Nothing needs attention</p></div>

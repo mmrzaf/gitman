@@ -49,6 +49,7 @@ func loadViews(assets *assets) (*views, error) {
 		"repoFeedModel": repoFeedModel, "commitTableModel": commitTableModel, "diffModel": diffModel,
 		"refsModel": refsModel, "refFieldModel": refFieldModel, "ruleFormModel": ruleFormModel,
 		"eventText":   eventText,
+		"actorLabel":  actorLabel,
 		"add":         func(a, b int) int { return a + b },
 		"sub":         func(a, b int) int { return a - b },
 		"duration":    formatDuration,
@@ -187,8 +188,12 @@ func (a *App) render(w http.ResponseWriter, r *http.Request, status int, name, t
 	// Forward, which restore them instantly from the browser's cache — all
 	// but a page showing a secret, which noStore has already marked.
 	if h.Get("Cache-Control") == "" {
-		h.Set("Cache-Control", "no-cache")
+		// The page is specific to the signed-in person. no-cache keeps
+		// Back/Forward fast; private and Vary keep a shared cache from
+		// storing one person's page for another.
+		h.Set("Cache-Control", "private, no-cache")
 	}
+	h.Add("Vary", "Cookie")
 	w.WriteHeader(status)
 	_, _ = w.Write(buf.Bytes())
 }
@@ -197,7 +202,8 @@ func (a *App) render(w http.ResponseWriter, r *http.Request, status int, name, t
 // including the browser's history: it shows a secret meant to be seen
 // once.
 func noStore(w http.ResponseWriter) {
-	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Add("Vary", "Cookie")
 }
 
 // failForm puts a refused submission's reason on f — on field, or on the
@@ -383,14 +389,17 @@ var eventDescriptions = map[string]string{
 	activity.PersonAdded:            "added a person",
 	activity.PersonDisabled:         "disabled a person",
 	activity.PersonEnabled:          "enabled a person",
-	activity.PersonRole:             "changed a role",
+	activity.PersonRole:             "",
 	activity.PasswordReset:          "reset a password",
 	activity.CredentialsRevoked:     "revoked credentials",
 	activity.SessionRevoked:         "revoked a session",
 	activity.WorkerReleased:         "released a worker confirmed gone",
 	activity.ImageRemoved:           "removed an image",
+	activity.ImageRemoveFailed:      "could not remove an image",
 	activity.ImagesPruned:           "pruned built images",
+	activity.ImagesPruneFailed:      "could not prune built images",
 	activity.ImageCachePruned:       "pruned the Docker build cache",
+	activity.ImageCachePruneFailed:  "could not prune the Docker build cache",
 
 	activity.RepoVisibilityChanged:    "changed who may read the repository",
 	activity.RepoReaderAdded:          "added a reader",
@@ -399,12 +408,29 @@ var eventDescriptions = map[string]string{
 	activity.RepoDefaultBranchChanged: "changed the default branch",
 }
 
+// actorLabel names who acted when the stored actor is empty. A worker's own
+// cache and image automation writes a detail beginning "automation on"; an
+// operation queued from the admin CLI has no person either but is not
+// automatic.
+func actorLabel(action, actor, detail string) string {
+	if actor != "" {
+		return actor
+	}
+	if strings.HasPrefix(action, "image.") && strings.HasPrefix(detail, "automation on ") {
+		return "Gitman automation"
+	}
+	return "the command line"
+}
+
 // eventText renders a settings-change event's action and detail as one
 // line of prose for the activity.
 func eventText(action, detail string) string {
 	phrase, ok := eventDescriptions[action]
 	if !ok {
 		phrase = action
+	}
+	if phrase == "" {
+		return detail
 	}
 	if detail == "" {
 		return phrase

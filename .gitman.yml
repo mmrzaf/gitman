@@ -6,7 +6,7 @@
 image: docker:29-cli
 docker: true
 requires:
-  - golang:1.27-alpine
+  - golang:1.27.4-alpine
   - alpine:3.24
 images:
   gitman: {keep: 2}
