@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,7 +25,6 @@ import (
 	"github.com/mmrzaf/gitman/internal/git"
 	"github.com/mmrzaf/gitman/internal/postgres"
 	"github.com/mmrzaf/gitman/internal/repo"
-	"strconv"
 )
 
 type backupManifest struct {
@@ -47,6 +47,7 @@ func keyFingerprint(key string) (string, error) {
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:]), nil
 }
+
 func hashFile(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -60,6 +61,40 @@ func hashFile(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
+// checkDatabaseClient fails before a backup or restore touches anything when
+// the client is missing or older than the server. A PostgreSQL 15 client
+// cannot dump an 18 server, and the generic exit status hides that.
+func checkDatabaseClient(ctx context.Context, db *postgres.DB, name string) error {
+	path, err := exec.LookPath(name)
+	if err != nil {
+		return fmt.Errorf("%s is required for backup and restore; install a client matching or newer than the server", name)
+	}
+	out, err := exec.CommandContext(ctx, path, "--version").Output()
+	if err != nil {
+		return fmt.Errorf("%s --version: %w", name, err)
+	}
+	client := 0
+	for _, field := range strings.Fields(string(out)) {
+		major, err := strconv.Atoi(strings.Split(field, ".")[0])
+		if err == nil && major > 0 {
+			client = major
+			break
+		}
+	}
+	if client == 0 {
+		return fmt.Errorf("read the %s version from %q", name, strings.TrimSpace(string(out)))
+	}
+	var serverNum int
+	if err := db.Q.QueryRow(ctx, `SELECT current_setting('server_version_num')::int`).Scan(&serverNum); err != nil {
+		return err
+	}
+	server := serverNum / 10000
+	if client < server {
+		return fmt.Errorf("%s is PostgreSQL %d; the server is PostgreSQL %d. Install a client matching or newer than the server", name, client, server)
+	}
+	return nil
+}
+
 // Credentials stay in environment variables, never process arguments or logs.
 func databaseTool(ctx context.Context, name, dsn string, args ...string) error {
 	u, err := url.Parse(dsn)
@@ -70,9 +105,19 @@ func databaseTool(ctx context.Context, name, dsn string, args ...string) error {
 	if err != nil {
 		return errors.New("invalid backup database connection")
 	}
+	// The client needs a shell, a home for its config and locale, and the
+	// PG* values parsed from the application URL. It does not need the
+	// application's encryption key or any other credential in the
+	// operator's environment.
+	keep := map[string]bool{
+		"PATH": true, "HOME": true, "TMPDIR": true, "TZ": true, "LANG": true,
+		"LC_ALL": true, "LD_LIBRARY_PATH": true, "DYLD_LIBRARY_PATH": true,
+		"SSL_CERT_FILE": true, "SSL_CERT_DIR": true,
+	}
 	env := []string{}
 	for _, v := range os.Environ() {
-		if !strings.HasPrefix(v, "PG") {
+		name, _, _ := strings.Cut(v, "=")
+		if keep[name] || strings.HasPrefix(name, "LC_") {
 			env = append(env, v)
 		}
 	}
@@ -97,7 +142,7 @@ func databaseTool(ctx context.Context, name, dsn string, args ...string) error {
 }
 
 func archiveRepositories(ctx context.Context, root, destination string) error {
-	f, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	f, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
@@ -152,6 +197,9 @@ func adminBackup(ctx context.Context, env *adminEnv, args []string) error {
 	if len(args) != 1 {
 		return errors.New("usage: gitman admin maintenance backup <destination-directory>")
 	}
+	if err := checkDatabaseClient(ctx, env.db, "pg_dump"); err != nil {
+		return err
+	}
 	release, err := env.db.SnapshotLease(ctx)
 	if err != nil {
 		return err
@@ -169,7 +217,7 @@ func adminBackup(ctx context.Context, env *adminEnv, args []string) error {
 		return errors.New("backup destination must be outside the data directory")
 	}
 	// Refuse replacement: a backup becomes valid only after its manifest is durable.
-	if err := os.Mkdir(dest, 0700); err != nil {
+	if err := os.Mkdir(dest, 0o700); err != nil {
 		return err
 	}
 	m := backupManifest{Format: 1, Version: version, CreatedAt: time.Now().UTC(), Files: map[string]string{}}
@@ -187,7 +235,7 @@ func adminBackup(ctx context.Context, env *adminEnv, args []string) error {
 	if err := syncFile(dump); err != nil {
 		return err
 	}
-	if err := os.Chmod(dump, 0600); err != nil {
+	if err := os.Chmod(dump, 0o600); err != nil {
 		return err
 	}
 	if err := archiveRepositories(ctx, env.cfg.ReposPath(), filepath.Join(dest, "repos.tar.gz")); err != nil {
@@ -203,7 +251,7 @@ func adminBackup(ctx context.Context, env *adminEnv, args []string) error {
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(filepath.Join(dest, "manifest.json"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	f, err := os.OpenFile(filepath.Join(dest, "manifest.json"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
@@ -280,14 +328,14 @@ func extractRepositories(ctx context.Context, source, root string) error {
 		path := filepath.Join(root, clean)
 		switch h.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(path, 0750); err != nil {
+			if err := os.MkdirAll(path, 0o750); err != nil {
 				return err
 			}
 		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
+			if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 				return err
 			}
-			out, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, fs.FileMode(h.Mode)&0770)
+			out, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, fs.FileMode(h.Mode)&0o770)
 			if err != nil {
 				return err
 			}
@@ -322,6 +370,9 @@ func runRestore(args []string) error {
 		return err
 	}
 	defer db.Close()
+	if err := checkDatabaseClient(ctx, db, "pg_restore"); err != nil {
+		return err
+	}
 	var populated bool
 	if err := db.Q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema'))`).Scan(&populated); err != nil {
 		return err
@@ -336,10 +387,26 @@ func runRestore(args []string) error {
 	if len(entries) != 0 {
 		return errors.New("restore requires an empty data directory")
 	}
-	if err := os.MkdirAll(cfg.ReposPath(), 0750); err != nil {
+	// Stage the repository archive. A failure in pg_restore, a migration or
+	// binding must leave the data directory empty so the restore can be
+	// retried instead of requiring manual cleanup.
+	if err := os.MkdirAll(cfg.DataDir, 0o750); err != nil {
 		return err
 	}
-	if err := extractRepositories(ctx, filepath.Join(args[0], "repos.tar.gz"), cfg.ReposPath()); err != nil {
+	staging, err := os.MkdirTemp(cfg.DataDir, "repos.restore-")
+	if err != nil {
+		return err
+	}
+	if err := os.Chmod(staging, 0o750); err != nil {
+		return err
+	}
+	stagingPath := staging
+	defer func() {
+		if stagingPath != "" {
+			_ = os.RemoveAll(stagingPath)
+		}
+	}()
+	if err := extractRepositories(ctx, filepath.Join(args[0], "repos.tar.gz"), staging); err != nil {
 		return err
 	}
 	if err := databaseTool(ctx, "pg_restore", cfg.DatabaseURL, "--exit-on-error", "--single-transaction", "--no-owner", "--dbname="+envDatabaseName(cfg.DatabaseURL), filepath.Join(args[0], "database.dump")); err != nil {
@@ -348,6 +415,13 @@ func runRestore(args []string) error {
 	if err := db.Migrate(ctx); err != nil {
 		return err
 	}
+	if err := db.BindRepositoryStorage(ctx, staging); err != nil {
+		return err
+	}
+	if err := os.Rename(staging, cfg.ReposPath()); err != nil {
+		return err
+	}
+	stagingPath = ""
 	root, err := filepath.Abs(cfg.ReposPath())
 	if err != nil {
 		return err
@@ -374,6 +448,7 @@ func runRestore(args []string) error {
 	fmt.Fprintln(os.Stdout, "Restore verified. Maintenance remains enabled; inspect the restored installation before resuming.")
 	return nil
 }
+
 func envDatabaseName(dsn string) string {
 	u, err := url.Parse(dsn)
 	if err != nil {

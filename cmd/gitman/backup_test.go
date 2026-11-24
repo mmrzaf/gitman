@@ -16,7 +16,7 @@ func TestBackupManifestChecksEveryFileAndKey(t *testing.T) {
 	root := t.TempDir()
 	m := backupManifest{Format: 1, InstanceID: "test", Files: map[string]string{}}
 	for _, name := range []string{"database.dump", "repos.tar.gz"} {
-		if err := os.WriteFile(filepath.Join(root, name), []byte(name), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(name), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		sum, err := hashFile(filepath.Join(root, name))
@@ -26,7 +26,7 @@ func TestBackupManifestChecksEveryFileAndKey(t *testing.T) {
 		m.Files[name] = sum
 	}
 	b, _ := json.Marshal(m)
-	if err := os.WriteFile(filepath.Join(root, "manifest.json"), b, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "manifest.json"), b, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := verifyBackup(root, ""); err != nil {
@@ -35,7 +35,7 @@ func TestBackupManifestChecksEveryFileAndKey(t *testing.T) {
 	if _, err := verifyBackup(root, "invalid"); err == nil {
 		t.Fatal("accepted a mismatched key")
 	}
-	if err := os.WriteFile(filepath.Join(root, "database.dump"), []byte("tampered"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "database.dump"), []byte("tampered"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := verifyBackup(root, ""); err == nil {
@@ -45,10 +45,10 @@ func TestBackupManifestChecksEveryFileAndKey(t *testing.T) {
 
 func TestRepositoryArchiveRoundTrip(t *testing.T) {
 	source := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(source, "test.git", "objects"), 0750); err != nil {
+	if err := os.MkdirAll(filepath.Join(source, "test.git", "objects"), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(source, "test.git", "objects", "data"), []byte("repository"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(source, "test.git", "objects", "data"), []byte("repository"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	archive := filepath.Join(t.TempDir(), "repos.tar.gz")
@@ -66,7 +66,7 @@ func TestRepositoryArchiveRoundTrip(t *testing.T) {
 }
 
 func TestRestoreRejectsTraversalAndLinks(t *testing.T) {
-	for _, hdr := range []*tar.Header{{Name: "../../outside", Typeflag: tar.TypeReg, Mode: 0600, Size: 1}, {Name: "link", Typeflag: tar.TypeSymlink, Linkname: "../../outside"}, {Name: "hard", Typeflag: tar.TypeLink, Linkname: "../../outside"}} {
+	for _, hdr := range []*tar.Header{{Name: "../../outside", Typeflag: tar.TypeReg, Mode: 0o600, Size: 1}, {Name: "link", Typeflag: tar.TypeSymlink, Linkname: "../../outside"}, {Name: "hard", Typeflag: tar.TypeLink, Linkname: "../../outside"}} {
 		var b bytes.Buffer
 		gz := gzip.NewWriter(&b)
 		tw := tar.NewWriter(gz)
@@ -79,7 +79,7 @@ func TestRestoreRejectsTraversalAndLinks(t *testing.T) {
 		_ = tw.Close()
 		_ = gz.Close()
 		archive := filepath.Join(t.TempDir(), "archive.gz")
-		if err := os.WriteFile(archive, b.Bytes(), 0600); err != nil {
+		if err := os.WriteFile(archive, b.Bytes(), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		if err := extractRepositories(context.Background(), archive, t.TempDir()); err == nil {
@@ -92,11 +92,10 @@ func TestDatabaseToolUsesURLParametersAndInheritedPassword(t *testing.T) {
 	root := t.TempDir()
 	capture := filepath.Join(root, "connection")
 	binary := filepath.Join(root, "pg-client")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$PGHOST\" \"$PGPORT\" \"$PGDATABASE\" \"$PGUSER\" \"$PGPASSWORD\" \"$PGSSLMODE\" \"${PGOPTIONS-unset}\" > \"$CAPTURE_CONNECTION\"\n"
-	if err := os.WriteFile(binary, []byte(script), 0700); err != nil {
+	script := "#!/bin/sh\nprintf '%s\\n' \"$PGHOST\" \"$PGPORT\" \"$PGDATABASE\" \"$PGUSER\" \"$PGPASSWORD\" \"$PGSSLMODE\" \"${PGOPTIONS-unset}\" > '" + capture + "'\n"
+	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("CAPTURE_CONNECTION", capture)
 	t.Setenv("PGPASSWORD", "test-only-password")
 	t.Setenv("PGOPTIONS", "-c search_path=wrong")
 	if err := databaseTool(t.Context(), binary, "postgresql:///fixture_test?host=/socket/path&port=5544&user=fixture&sslmode=disable"); err != nil {
@@ -112,14 +111,42 @@ func TestDatabaseToolUsesURLParametersAndInheritedPassword(t *testing.T) {
 	}
 }
 
+func TestDatabaseToolDoesNotInheritApplicationSecrets(t *testing.T) {
+	root := t.TempDir()
+	capture := filepath.Join(root, "environment")
+	binary := filepath.Join(root, "pg-client")
+	script := "#!/bin/sh\nenv > '" + capture + "'\n"
+	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GITMAN_SECRET_KEY", "do-not-leak")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "do-not-leak")
+	t.Setenv("CAPTURE_MARKER", "do-not-leak")
+	if err := databaseTool(t.Context(), binary, "postgresql:///fixture_test?host=/socket/path&port=5544&user=fixture&sslmode=disable"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(capture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"GITMAN_SECRET_KEY", "AWS_SECRET_ACCESS_KEY", "CAPTURE_MARKER", "do-not-leak"} {
+		if strings.Contains(string(got), forbidden) {
+			t.Fatalf("database client inherited %q", forbidden)
+		}
+	}
+	if !strings.Contains(string(got), "PGPASSWORD=") {
+		t.Fatal("database client did not receive its parsed connection")
+	}
+}
+
 func TestDatabaseToolPrefersPasswordFromURL(t *testing.T) {
 	root := t.TempDir()
 	capture := filepath.Join(root, "password")
 	binary := filepath.Join(root, "pg-client")
-	if err := os.WriteFile(binary, []byte("#!/bin/sh\nprintf '%s\n' \"$PGPASSWORD\" > \"$CAPTURE_PASSWORD\"\n"), 0700); err != nil {
+	script := "#!/bin/sh\nprintf '%s\n' \"$PGPASSWORD\" > '" + capture + "'\n"
+	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("CAPTURE_PASSWORD", capture)
 	t.Setenv("PGPASSWORD", "ambient-password")
 	if err := databaseTool(t.Context(), binary, "postgresql://fixture:url%20password@/fixture_test?host=/socket/path&port=5544&sslmode=disable"); err != nil {
 		t.Fatal(err)
